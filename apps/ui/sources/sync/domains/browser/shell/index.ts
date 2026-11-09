@@ -3,6 +3,7 @@ export {
     normalizeBrowserAddressInput,
     resolveExternalUrlTargetFromInput,
     selectBrowserEndedPreviewLastPage,
+    selectBrowserViewAddress,
     selectBrowserViewDisplayHost,
     type BrowserAddressNormalizationOptions,
     type BrowserAddressNormalizationResult,

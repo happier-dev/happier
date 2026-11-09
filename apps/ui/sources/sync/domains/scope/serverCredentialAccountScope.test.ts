@@ -53,6 +53,37 @@ describe('resolveServerCredentialAccountScope', () => {
         restoreWebLocks = null;
     });
 
+    it('reads a Home credential once for every concurrent reader of that Home', async () => {
+        const home = await upsertServerProfile({ name: 'Concurrent readers', serverUrl: 'https://concurrent-credential.test' });
+        const token = `e30.${Buffer.from(JSON.stringify({ sub: 'concurrent' })).toString('base64url')}.signature`;
+        await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.id }, { token });
+        const read = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl');
+        // A settings screen mounts one credential reader per setting; each must not pay its own storage read.
+        const readers = await Promise.all(Array.from({ length: 39 }, () => resolveServerCredentialAccountScope(home.id)));
+        expect(read).toHaveBeenCalledTimes(1);
+        expect(readers.map((reader) => (reader.kind === 'bound' ? reader.scope.accountId : reader.kind))).toEqual(
+            Array.from({ length: 39 }, () => 'concurrent'),
+        );
+        // Only an in-flight read is shared; a later reader always reads storage again.
+        await resolveServerCredentialAccountScope(home.id);
+        expect(read).toHaveBeenCalledTimes(2);
+    });
+
+    it('never serves a read begun before a credential change to a reader after the change', async () => {
+        const home = await upsertServerProfile({ name: 'Changed credential', serverUrl: 'https://changed-credential.test' });
+        const token = (subject: string) => `e30.${Buffer.from(JSON.stringify({ sub: subject })).toString('base64url')}.signature`;
+        await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.id }, { token: token('original') });
+        let releaseStaleRead: (credentials: { token: string } | null) => void = () => {};
+        const staleRead = new Promise<{ token: string } | null>((resolve) => { releaseStaleRead = resolve; });
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementationOnce(async () => await staleRead as never);
+        const before = resolveServerCredentialAccountScope(home.id);
+        await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.id }, { token: token('replacement') });
+        const after = await resolveServerCredentialAccountScope(home.id);
+        expect(after.kind === 'bound' ? after.scope.accountId : after.kind).toBe('replacement');
+        releaseStaleRead({ token: token('original') });
+        expect(await before.then((resolved) => (resolved.kind === 'bound' ? resolved.scope.accountId : resolved.kind))).toBe('original');
+    });
+
     it('retains one exact credential lifetime between readers and retires it on a hidden credential replacement', async () => {
         const home = await upsertServerProfile({ name: 'Retained Account', serverUrl: 'https://retained-credential.test' });
         const token = (subject: string) => `e30.${Buffer.from(JSON.stringify({ sub: subject })).toString('base64url')}.signature`;

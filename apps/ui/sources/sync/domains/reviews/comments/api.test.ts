@@ -2,22 +2,27 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
     ReviewCommentPublicationTransportRequestV1Schema,
+    type ReviewCommentPublicationTransportRequestV1} from '@happier-dev/protocol/reviews/comments/publicationTransport';
+import {
     ReviewCommentPrepareMutationRequestV1Schema,
     ReviewCommentPrepareMutationResponseV1Schema,
     ReviewCommentCommitMutationRequestV1Schema,
-    createReviewCommentPublicationSettlementRequestV1,
     deriveReviewCommentStructuralMutationV1,
+    type ReviewCommentPrepareMutationResponseV1,
+} from '@happier-dev/protocol/reviews/comments/mutation';
+import {
+    createReviewCommentPublicationSettlementRequestV1,
+    type ReviewCommentClaimPublicationDispatchResponseV1,
+    type ReviewCommentPublicationPlanV1} from '@happier-dev/protocol/reviews/comments/actions';
+import {
     openStoredReviewCommentV1,
     sealReviewCommentSensitiveEnvelopeV1,
     splitReviewCommentV1,
-    type AccountScopedCryptoMaterial,
-    type ReviewCommentClaimPublicationDispatchResponseV1,
-    type ReviewCommentPublicationPlanV1,
-    type ReviewCommentPublicationTransportRequestV1,
-    type ReviewCommentV1,
-    type StoredReviewCommentV1,
-    type ReviewCommentPrepareMutationResponseV1,
-} from '@happier-dev/protocol';
+    type StoredReviewCommentV1} from '@happier-dev/protocol/reviews/comments/content';
+import {
+    type AccountScopedCryptoMaterial} from '@happier-dev/protocol/crypto/accountScopedCipher';
+import {
+    type ReviewCommentV1} from '@happier-dev/protocol/reviews/comments/v1';
 
 const serverFetchSpy = vi.hoisted(() => vi.fn());
 

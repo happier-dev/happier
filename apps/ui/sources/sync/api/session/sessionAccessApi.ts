@@ -183,7 +183,10 @@ async function materializeSessionGrant(params: Readonly<{
     checkEncryptionScope();
     const payload: unknown = await response.json();
     checkEncryptionScope();
-    if (!response.ok) throw new SessionAccessApiError(response.status === 404 ? 'session_access_subject_not_found' : 'session_access_request_failed', response.status);
+    if (!response.ok) {
+        if (response.status === 404) throw new SessionAccessApiError('session_access_subject_not_found', response.status);
+        throw createSessionAccessApiErrorFromResponse(payload, response.status);
+    }
     const recipientProjection = UserRecipientEnvelopeResponseSchema.safeParse(payload);
     if (!recipientProjection.success) throw new SessionAccessApiError('unsupported_action');
     const recipient = recipientProjection.data.user;

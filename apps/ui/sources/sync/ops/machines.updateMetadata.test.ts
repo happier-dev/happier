@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { decodePlainMachineStoredContent, type MachineUpdateMetadataRequest, type MachineUpdateMetadataResponse } from '@happier-dev/protocol';
+import { decodePlainMachineStoredContent} from '@happier-dev/protocol/machines/machineStoredContent';
+import { type MachineUpdateMetadataRequest, type MachineUpdateMetadataResponse } from '@happier-dev/protocol/machines/metadataUpdate';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';

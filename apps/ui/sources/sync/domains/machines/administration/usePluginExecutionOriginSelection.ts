@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { t } from '@/text';
 import { useCurrentUiContextMountedCommand } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import type { CurrentUiContextPluginExecutionOriginCommand } from '@/components/appShell/currentUiContext/currentUiContextModel';
@@ -10,7 +9,7 @@ import { PluginExecutionOriginActionOutputSchemas, type PluginExecutionOriginAct
 
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
-import { getServerProfileById, listServerProfiles } from '@/sync/domains/server/serverProfiles';
+import { captureServerProfileScopeResolver, getServerProfileById, listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
 import { useAllProfileMachineInventorySnapshots } from '@/sync/domains/machines/useMachineInventorySnapshots';
 import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
@@ -25,6 +24,7 @@ import { useActiveServerAccountScope } from '@/sync/store/hooks';
 
 import {
     resolvePluginMachineMaterializationValidation,
+    readPluginMachineMaterializations,
     combinePluginMachineExecutionOriginCandidates,
     resolvePluginMachineExecutionOriginState,
     getPluginExecutionOriginCandidateOrigin,
@@ -44,8 +44,10 @@ import { readPluginExecutionOriginAutomaticHints } from './pluginExecutionOrigin
 export { readPluginExecutionOriginAutomaticHints } from './pluginExecutionOriginAutomaticHints';
 import { areAccountSettingsScopesEqual, type AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { captureActiveServerAccountScopeLifetime, getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
-import { readCurrentPluginMachineExecutionTargetPreference, readPluginMachineExecutionTargetPreference,
+import { readCurrentPluginMachineExecutionTargetPreference, readPluginMachineExecutionLastUsedTarget, readPluginMachineExecutionTargetPreference,
     rememberPluginMachineExecutionOriginUse } from './selectionPreferences';
+import { readMachineRequestReachabilityRevision } from '@/sync/domains/machines/reachability/machineReachability';
+import { readMachinePresenceRevision } from '@/sync/domains/machines/machineActivity';
 import { useMachineAdministrationTargetObservation } from '@/sync/domains/state/machineAdministrationUiState';
 import { getSystemTasksRunner } from '@/components/systemTasks/systemTasksRuntime';
 import { readLocalDaemonSharedState, subscribeLocalDaemonSharedState } from '@/components/settings/machines/localControl/localDaemonSharedState';
@@ -80,6 +82,25 @@ const EMPTY_PLUGIN_EXECUTION_STATE: PluginMachineExecutionOriginStateV1 = Object
 
 type StorageState = ReturnType<typeof storage.getState>;
 
+function observedOrigin(snapshot: ExecutionOriginMachineSnapshotSelection): PluginMachineExecutionOriginV1 | null {
+    const state = snapshot.selection?.state;
+    return state?.kind === 'selected' ? state.origin : state?.kind === 'unavailable' ? state.storedOrigin : null;
+}
+
+function sameObservedOrigins(left: ExecutionOriginMachineSnapshotSelection, right: ExecutionOriginMachineSnapshotSelection): boolean {
+    const beforeTarget = left.selection?.projectionTarget;
+    const afterTarget = right.selection?.projectionTarget;
+    if (beforeTarget?.serverIdentityId !== afterTarget?.serverIdentityId || beforeTarget?.machineId !== afterTarget?.machineId) return false;
+    const leftOrigin = observedOrigin(left);
+    const rightOrigin = observedOrigin(right);
+    if (leftOrigin === null ? rightOrigin !== null : rightOrigin === null || !arePluginMachineExecutionOriginsEqual(leftOrigin, rightOrigin)) return false;
+    const selectable = (snapshot: ExecutionOriginMachineSnapshotSelection) => (snapshot.selection?.candidates ?? EMPTY_PLUGIN_EXECUTION_CANDIDATES)
+        .filter(isPluginMachineExecutionOriginCandidateSelectable).map(getPluginExecutionOriginCandidateOrigin);
+    const before = selectable(left);
+    const after = selectable(right);
+    return before.length === after.length && before.every((origin, index) => arePluginMachineExecutionOriginsEqual(origin, after[index]!));
+}
+
 function usePluginExecutionOriginMachineSnapshots(params: Readonly<{
     enabled: boolean;
     pluginId: string;
@@ -87,7 +108,9 @@ function usePluginExecutionOriginMachineSnapshots(params: Readonly<{
     sources: readonly PluginMachineSourceExecutionOriginCandidateV1[];
     readinessServerIdentityId?: string;
     selection?: PluginExecutionOriginDescriptiveInputs;
+    observeOriginsOnly?: boolean;
 }>): ExecutionOriginMachineSnapshotSelection {
+    const { observeOriginsOnly = false } = params;
     const activeServerId = useActiveServerSnapshot().serverId;
     const activeAccountScope = useActiveServerAccountScope(activeServerId);
     const profilesGeneration = useServerProfilesGeneration();
@@ -102,8 +125,8 @@ function usePluginExecutionOriginMachineSnapshots(params: Readonly<{
         params.readinessServerIdentityId
             ?? rememberedHome
             ?? getServerProfileById(activeServerId)?.serverIdentityId,
-        ...params.materializations.filter(entry => entry.pluginId === params.pluginId).map(entry => entry.serverIdentityId),
-        ...params.sources.filter(entry => entry.source.origin.sourceRef.pluginId === params.pluginId).map(entry => entry.source.origin.serverIdentityId),
+        ...readPluginMachineMaterializations(params.materializations, params.pluginId).map(entry => entry.serverIdentityId),
+        ...params.sources.filter(entry => getPluginMachineExecutionOriginRef(entry.source.origin).pluginId === params.pluginId).map(entry => entry.source.origin.serverIdentityId),
         ]);
         return params.enabled ? profiles
         .filter(profile => profile.serverIdentityId !== activeHome && relevantServerIdentityIds.has(profile.serverIdentityId))
@@ -132,8 +155,22 @@ function usePluginExecutionOriginMachineSnapshots(params: Readonly<{
         const notify = () => {
             for (const listener of listeners) queueMicrotask(() => { if (listeners.has(listener)) listener(); });
         };
+        // An origins-only observer reads the selected origin and the selectable
+        // origins. React wakes it only when that projection changes; render still
+        // reads the current owner snapshot, so nothing it presents is stale.
+        let delivered: ExecutionOriginMachineSnapshotSelection | null = null;
+        let deliveredFrom: ExecutionOriginMachineSnapshotSelection | null = null;
+        const getDelivered = () => {
+            const snapshot = connection?.getSnapshot() ?? EMPTY_EXECUTION_ORIGIN_MACHINE_SELECTION;
+            if (!observeOriginsOnly) return snapshot;
+            if (snapshot === deliveredFrom && delivered) return delivered;
+            deliveredFrom = snapshot;
+            if (delivered && sameObservedOrigins(delivered, snapshot)) return delivered;
+            delivered = snapshot;
+            return snapshot;
+        };
         return {
-            get: () => connection?.getSnapshot() ?? EMPTY_EXECUTION_ORIGIN_MACHINE_SELECTION,
+            get: getDelivered,
             read: () => connection?.readCurrent() ?? EMPTY_EXECUTION_ORIGIN_MACHINE_SELECTION,
             subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
             publish(inputs: Parameters<typeof executionOriginMachineSnapshotPublication.connect>[0] | null) {
@@ -148,7 +185,7 @@ function usePluginExecutionOriginMachineSnapshots(params: Readonly<{
             },
             dispose() { connection?.dispose(); connection = null; },
         };
-    }, [params.pluginId, params.readinessServerIdentityId, activeServerId]);
+    }, [params.pluginId, params.readinessServerIdentityId, activeServerId, observeOriginsOnly]);
     React.useLayoutEffect(() => {
         snapshots.publish(params.enabled ? { ...params, activeServerId, profiles, profilesGeneration,
             accountScopesByServerId, accountLifetime, bindings: bindingLifetimes } : null);
@@ -196,20 +233,45 @@ type FreshPluginExecutionOriginParams = Readonly<{
 export function readFreshPluginMachineExecutionOriginCandidates(params: FreshPluginExecutionOriginParams): readonly PluginExecutionOriginCandidateV1[] {
     const admission = params.reader?.readMaterializations();
     const materializationCandidates = admission?.kind === 'available'
-        ? admission.materializations.filter((entry) => entry.pluginId === params.pluginId).map((materialization) => {
+        ? readPluginMachineMaterializations(admission.materializations, params.pluginId).map((materialization) => {
             const release = params.classifyRelease(materialization);
             const machineRejection = !resolveFreshMachineAdministrationExecutionTarget({ serverIdentityId: materialization.serverIdentityId, machineId: materialization.machineId })
                 ? 'offline' : params.machineRejections?.find(entry => entry.serverIdentityId === materialization.serverIdentityId
                     && entry.machineId === materialization.machineId)?.reason ?? null;
             return { materialization, ...release, validation: resolvePluginMachineMaterializationValidation({ materialization, release, machineRejection }) };
         }) : [];
-    const sourceCandidates = (params.sourceCandidates ?? []).filter(candidate => candidate.source.origin.sourceRef.pluginId === params.pluginId)
+    const sourceCandidates = (params.sourceCandidates ?? []).filter(candidate => getPluginMachineExecutionOriginRef(candidate.source.origin).pluginId === params.pluginId)
         .map((candidate): PluginMachineSourceExecutionOriginCandidateV1 => {
         const origin = candidate.source.origin;
-        const machineTarget = resolveFreshMachineAdministrationExecutionTarget({ serverIdentityId: origin.serverIdentityId, machineId: origin.sourceRef.machineId });
+        const machineTarget = resolveFreshMachineAdministrationExecutionTarget({ serverIdentityId: origin.serverIdentityId, machineId: getPluginMachineExecutionOriginRef(origin).machineId });
         return machineTarget ? candidate : { ...candidate, validation: { kind: 'rejected', reason: 'offline' } };
     });
     return combinePluginMachineExecutionOriginCandidates(materializationCandidates, sourceCandidates);
+}
+
+/**
+ * Every input the election and its Machine admission read, as the owners' current objects and revisions:
+ * inventory rows (lock, revocation, replacement), list status, profiles, Account scope, request
+ * reachability and presence. Equal entries mean both would answer the same. Presence enters as the
+ * presence owner's revision, which also publishes a client-side grace lapse.
+ */
+function readFreshPluginExecutionOriginInputs(params: FreshPluginExecutionOriginParams,
+    lifetime: unknown, settingsScope: unknown): readonly unknown[] {
+    const state = storage.getState();
+    const scope = getActiveServerAccountScope();
+    return [lifetime, settingsScope, state.settingsScope, state.settings.machineAdministrationTargetsLocalV1,
+        params.pluginId, params.origin, params.reader, params.reader?.readMaterializations(), params.reader?.readInstalledPlugins(),
+        params.classifyRelease, params.sourceCandidates, params.machineRejections, params.declaredDefaultOrigins,
+        params.autoPick, params.renderedVersion, params.contextualTarget, scope, captureServerProfileScopeResolver(),
+        executionOriginMachineSnapshotPublication.readAutomaticOrigin(params.pluginId, captureActiveServerAccountScopeLifetime()),
+        state.machines, state.machineListByServerId, state.machineListStatusByServerId,
+        readMachineRequestReachabilityRevision(), readMachinePresenceRevision(),
+        readLocalDaemonSharedState<LocalDaemonStatusData>(getSystemTasksRunner()).status,
+        JSON.stringify(readPluginMachineExecutionLastUsedTarget(scope, params.pluginId))];
+}
+
+function sameFreshPluginExecutionOriginInputs(left: readonly unknown[], right: readonly unknown[]): boolean {
+    return left.length === right.length && left.every((value, index) => Object.is(value, right[index]));
 }
 
 /** Invocation-time closure over the current Availability and raw machine owners. */
@@ -287,6 +349,8 @@ export function usePluginMachineExecutionOriginSelection(params: Readonly<{
     readDeclaredDefaultOrigins?: () => readonly PluginMachineExecutionOriginV1[];
     /** Renderless app-shell consumers do not subscribe to machine labels or heartbeat timestamps. */
     includeMachineCandidates?: boolean;
+    /** The consumer reads only `selectedOrigin` and the selectable subset of `candidates`; other fact changes do not wake it. */
+    observeOriginsOnly?: boolean;
     contextualTarget?: PluginExecutionOriginContextualTarget | null;
 }>): PluginMachineExecutionOriginSelectionV1 {
     const reader = useActivePluginAccountAvailabilityReader(params.pluginId);
@@ -309,7 +373,7 @@ export function usePluginMachineExecutionOriginSelection(params: Readonly<{
     const selectStoredTarget = React.useCallback((state: StorageState) => params.contextualTarget !== undefined ? null
         : readPluginMachineExecutionTargetPreference(state.settings.machineAdministrationTargetsLocalV1, params.pluginId),
     [params.pluginId, params.contextualTarget !== undefined]);
-    const storedTarget = useStoreWithEqualityFn(storage, selectStoredTarget,
+    const storedTarget = storage(selectStoredTarget, { settings: ['machineAdministrationTargetsLocalV1'] },
         (left, right) => left?.serverIdentityId === right?.serverIdentityId && left?.machineId === right?.machineId);
     const expectedSettingsScope = useAccountSettingsScope();
     const expectedAccountLifetime = captureActiveServerAccountScopeLifetime();
@@ -357,7 +421,8 @@ export function usePluginMachineExecutionOriginSelection(params: Readonly<{
         params.machineRejections, params.declaredDefaultOrigins, params.establishingTargets, params.autoPick,
         params.renderedVersion, availabilityNotLoaded, localStatus]);
     const semanticMachineSelection = usePluginExecutionOriginMachineSnapshots({ enabled, pluginId: params.pluginId,
-        materializations, sources, readinessServerIdentityId: params.contextualTarget?.serverIdentityId, selection: descriptiveInputs });
+        materializations, sources, readinessServerIdentityId: params.contextualTarget?.serverIdentityId, selection: descriptiveInputs,
+        observeOriginsOnly: params.observeOriginsOnly });
     const machineFactsKey = semanticMachineSelection.key;
     const candidates = semanticMachineSelection.selection?.candidates ?? EMPTY_PLUGIN_EXECUTION_CANDIDATES;
     const state = semanticMachineSelection.selection?.state ?? EMPTY_PLUGIN_EXECUTION_STATE;
@@ -388,7 +453,7 @@ export function usePluginMachineExecutionOriginSelection(params: Readonly<{
             kind: 'pluginExecutionOrigin', pluginId: params.pluginId, account, target,
             read: () => {
                 const current = facts();
-                if (!current) return { status: 'unavailable' };
+                if (!current) return { status: 'unavailable', reason: { code: 'contextual_target_unavailable', phase: 'selection', retryable: false } };
                 const choice = contextualChoiceRef.current;
                 const storedOrigin = choice?.accountLifetime === account && choice.pluginId === params.pluginId
                     && choice.target.serverIdentityId === target.serverIdentityId && choice.target.machineId === target.machineId
@@ -462,7 +527,7 @@ export function usePluginMachineExecutionOriginSelection(params: Readonly<{
             origin,
             target,
         );
-        const resolved = resolveFreshPluginMachineExecutionOrigin({
+        const freshParams: FreshPluginExecutionOriginParams = {
             pluginId: params.pluginId,
             origin,
             storedTarget: target,
@@ -473,7 +538,15 @@ export function usePluginMachineExecutionOriginSelection(params: Readonly<{
             declaredDefaultOrigins: currentParamsRef.current.readDeclaredDefaultOrigins?.() ?? currentParamsRef.current.declaredDefaultOrigins,
             autoPick: currentParamsRef.current.autoPick, renderedVersion: currentParamsRef.current.renderedVersion,
             contextualTarget,
-        });
+        };
+        // Decided once at admission: host isCurrent/context reads return the held decision until one of its
+        // inputs publishes a change (inventory, presence, reachability, Account scope, profiles, preference).
+        // Invocation is still refused at the daemon for a stale occurrence.
+        const inputs = readFreshPluginExecutionOriginInputs(freshParams, expectedAccountLifetime, expectedSettingsScope);
+        const admitted = admittedOriginRef.current;
+        const resolved = admitted && sameFreshPluginExecutionOriginInputs(admitted.inputs, inputs)
+            ? admitted.resolved : resolveFreshPluginMachineExecutionOrigin(freshParams);
+        admittedOriginRef.current = resolved ? { inputs, resolved } : null;
         if (resolved && expectedSettingsScope && params.contextualTarget === undefined && options?.recordUse !== false) {
             rememberPluginMachineExecutionOriginUse(params.pluginId, resolved.origin, expectedSettingsScope);
         }
@@ -484,6 +557,7 @@ export function usePluginMachineExecutionOriginSelection(params: Readonly<{
                 selectionRevision: selectionRevisionRef.current.revision,
             });
     }, [enabled, expectedAccountLifetime, expectedSettingsScope, contextualTarget, params.contextualTarget, params.classifyRelease, params.pluginId, reader, storedOrigin]);
+    const admittedOriginRef = React.useRef<Readonly<{ inputs: readonly unknown[]; resolved: FreshPluginMachineExecutionOriginV1 }> | null>(null);
 
     // The app shell consumes candidates/origin without asking to execute.
     // Reopen fresh release and Machine authority only when a consumer reads

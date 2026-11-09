@@ -40,7 +40,7 @@ export function createUiProfileActionExecuteV1(account: LazyActionAccountContext
         let memoryOwner: Promise<ReturnType<typeof createAuthoringMemorySync>> | undefined;
         const resolveMemory = () => memoryOwner ??= (async () => {
             const { encryption } = await account.resolveAccountEncryption();
-            const storage = await resolveAccountStorageContext(account.credentials, { encryption, request: account.request });
+            const storage = await resolveAccountStorageContext(account.credentials, { encryption, request: account.request, usage: 'fresh-authority' });
             assertCurrent();
             return createAuthoringMemorySync({
                 transport: createApiAuthoringMemoryTransport({ request: (path, init) => account.request(path,

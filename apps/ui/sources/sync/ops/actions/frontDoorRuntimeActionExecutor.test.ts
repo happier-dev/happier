@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, onTestFailed, vi } from 'vitest';
+import * as React from 'react';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { ClipboardWriteResultSchema } from '@happier-dev/protocol/actions/clipboardActionFamily';
 import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { McpServerCatalogRowMutationV1Schema, McpServerCatalogRowMutationResponseV1Schema } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 import { MCP_SERVER_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/mcp/servers/serverActionsV1';
-import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
+import { resolveServerProfileScopeIdForIdentifier, setServerProfileIdentityForUrl } from '@/sync/domains/server/serverProfiles';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
@@ -15,12 +16,15 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
-
-import * as React from 'react';
-import { act, renderWithAppProviders } from '@/dev/testkit';
+import { act, renderHook, renderWithAppProviders } from '@/dev/testkit';
 import type { IModal } from '@/modal/types';
 import { LocalServicePublicPreviewSnapshotV1Schema } from '@happier-dev/protocol/local/services/public/v1';
+import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
+import { ScmChangeDiscardResponseSchema } from '@happier-dev/protocol/scm';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { AccountSettingsV2UpdateRequestSchema} from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import { type AccountSettingsStoredContentEnvelope } from '@happier-dev/protocol/account/settings/accountSettingsStoredContentEnvelope';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
 
@@ -50,7 +54,11 @@ const {
     createFrontDoorRuntimeActionExecutor,
     createFrontDoorUiActionExecutor,
 } = await import('./frontDoorRuntimeActionExecutor');
-const { runTeamAction } = await import('@/sync/ops/teams/teamActionClient');
+const { scopedHomeActionExecutor } = await import('./scopedHomeActionExecutor');
+// Keep cold executable graph loading out of each invocation's behavior deadline.
+await import('./defaultActionExecutor');
+await import('@/components/approvals/useMountedActionExecution');
+await import('@/components/sessions/actions/sessionActionExecution');
 
 describe('composed UI Action front-door adapters', () => {
     beforeEach(async () => {
@@ -60,6 +68,16 @@ describe('composed UI Action front-door adapters', () => {
         vi.stubGlobal('navigator', { clipboard: { writeText: clipboard } });
     });
     afterEach(() => standardCleanup());
+
+    it('retains the Browser download failure code at the file-save UI boundary', async () => {
+        const serverId = await homes.addHome({ name: 'Download Home', serverUrl: 'https://download-home.test',
+            serverIdentityId: 'srv_download_home', accountId: 'alice', currentAccount: true });
+        const { requestSaveFile } = await import('@/sync/runtime/files/requestSaveFile');
+        const result = await requestSaveFile({ fileName: 'download.bin', source: { kind: 'browserDownload',
+            reference: { machineId: 'machine', browserSessionId: 'missing-browser', viewId: 'missing-view', downloadId: 'download' },
+        } }, { serverId, accountId: 'alice' });
+        expect(result).toMatchObject({ status: 'failed', errorCode: 'browser_download_unavailable' });
+    });
 
     it('keeps the prepared Voice target through the full-context confirmed handoff when the primary Session changes', async () => {
         const serverId = await homes.addHome({ name: 'Prepared target Home', serverUrl: 'https://prepared-voice-target.test',
@@ -103,6 +121,93 @@ describe('composed UI Action front-door adapters', () => {
         expect(homes.artifacts(serverId).list()).toEqual([]);
     });
 
+    it('prepares and confirms through the captured Account host on a non-UI surface without borrowing focused Voice policy', async () => {
+        const serverId = await homes.addHome({ name: 'Requested Home', serverUrl: 'https://confirmed-voice-home.test',
+            serverIdentityId: 'srv_confirmed_voice_home', accountId: 'alice', currentAccount: true });
+        await setServerProfileIdentityForUrl('https://confirmed-voice-home.test', 'srv_confirmed_voice_home');
+        const focusedHome = await homes.addHome({ name: 'Focused Home', serverUrl: 'https://focused-voice-home.test',
+            accountId: 'bob', currentAccount: true });
+        const features = createRootLayoutFeaturesResponse();
+        expect(tryWriteServerEnabledBitInPlace(features, 'voice', true)).toBe(true);
+        homes.answer(serverId, '/v1/features', { body: features });
+        let content: Extract<AccountSettingsStoredContentEnvelope, { t: 'plain' }> = {
+            t: 'plain', v: { voice: { canApproveRequests: true } },
+        };
+        let version = 1;
+        homes.answer(serverId, 'GET /v2/account/settings', { select: () => ({ body: { version, content } }) });
+        homes.answer(focusedHome, 'GET /v2/account/settings', { body: {
+            version: 1, content: { t: 'plain', v: { voice: { canApproveRequests: false } } },
+        } });
+        homes.answer(serverId, 'POST /v2/account/settings', { select: raw => {
+            const update = AccountSettingsV2UpdateRequestSchema.parse(raw);
+            expect(update.expectedVersion).toBe(version);
+            if (update.content?.t !== 'plain') throw new Error('Expected captured Plain Account');
+            content = update.content;
+            return { body: { success: true, version: ++version } };
+        } });
+        const actionId = 'settings.set';
+        const input = { anchor: 'voiceConversations.canApproveRequests', value: false };
+        const context = { surface: 'voice', serverId, actionRequestId: 'confirmed-non-ui' } as const;
+        const execute = createFrontDoorActionExecute();
+        const prepared = await execute.prepare(actionId, input, context, { reviewOnly: true });
+        expect(prepared).toMatchObject({ kind: 'ready', operation: {
+            actionId, normalizedInput: input, inputDigest: expect.any(String), summary: expect.any(String),
+            safety: 'danger', canConfirmInFlow: true,
+        } });
+        expect(version).toBe(1);
+        expect(homes.artifacts(serverId).list()).toEqual([]);
+        // Native origination consumes the same captured authority. Invalid
+        // operation input must not become a spurious authority refusal.
+        const { captureLazyActionAccountContext } = await import('./actionAccountContext');
+        const { readOriginalAccountActionAuthentication } = await import('@/sync/api/externalActionAccountTransport');
+        const nativeAccount = await captureLazyActionAccountContext(serverId);
+        try {
+            expect(nativeAccount.serverIdentityId).toBe('srv_confirmed_voice_home');
+            expect(readOriginalAccountActionAuthentication(nativeAccount.credentials.token)).not.toBeNull();
+        } finally { nativeAccount.dispose(); }
+        expect(await execute('machines.setup.plan', {}, { ...context, actionRequestId: 'native-input-refusal' }))
+            .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+        if (prepared.kind !== 'ready' || !prepared.operation) throw new Error('Expected normalized host operation');
+        expect(await execute.confirmed(actionId, prepared.operation.normalizedInput, context))
+            .toMatchObject({ ok: true, result: { anchor: input.anchor, value: false } });
+        expect(version).toBe(2);
+        expect(homes.artifacts(serverId).list()).toEqual([]);
+        expect(homes.requests.filter(request => request.serverId === focusedHome && request.method === 'POST')).toEqual([]);
+    });
+
+    it('executes a confirmed present-user delete through the Session lifecycle wrapper without asking again', async () => {
+        const serverId = await homes.addHome({ name: 'Sessions', serverUrl: 'https://confirmed-session.test',
+            serverIdentityId: 'confirmed-session', accountId: 'alice' });
+        homes.answer(serverId, 'DELETE /v1/sessions/session-1', { body: { success: true } });
+        const { executeSessionLifecycleAction } = await import('@/components/sessions/actions/sessionActionExecution');
+        expect(await executeSessionLifecycleAction('session.delete', 'session-1', {
+            serverId, expectedAccountId: 'alice', confirmed: true,
+        })).toEqual({ success: true });
+        expect(homes.requestsFor('/v1/sessions/session-1')).toHaveLength(1);
+        expect(homes.artifacts(serverId).list()).toHaveLength(0);
+    });
+
+    it('uses the designed SCM review once through the shared invoker without a second dialog or approval', async () => {
+        const serverId = await homes.addHome({ name: 'SCM', serverUrl: 'https://confirmed-scm.test',
+            serverIdentityId: 'confirmed-scm', accountId: 'alice' });
+        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+        const { invokeUiScmAction } = await import('@/sync/ops/scm/scmActionInvocation');
+        const effects: unknown[] = [];
+        const executor = createDefaultActionExecutor({ scmActionExecute: async ({ input }) => {
+            effects.push(input);
+            return { success: true };
+        } });
+        const input = { cwd: '/repo', entries: [{ path: 'reviewed.ts', kind: 'modified' }] };
+        const pending = invokeUiScmAction({ actionId: 'scm.change.discard', input,
+            schema: ScmChangeDiscardResponseSchema, executor: createFrontDoorActionExecute(executor), confirmed: true,
+            context: { serverId, expectedAccountId: 'alice',
+                externalActionTarget: { kind: 'machine', machineId: 'machine-1' } } });
+        input.entries[0]!.path = 'changed-after-confirmation.ts';
+        expect(await pending).toEqual({ success: true });
+        expect(effects).toEqual([expect.objectContaining({ cwd: '/repo', entries: [{ path: 'reviewed.ts', kind: 'modified' }] })]);
+        expect(homes.artifacts(serverId).list()).toHaveLength(0);
+    });
+
     it('preserves a declined shared-policy confirmation as a typed failure without a webhook effect', async () => {
         const transport = vi.fn(async () => ({ kind: 'discarded', revision: 4 }));
         const settings = ActionsSettingsV1Schema.parse({ v: 1 });
@@ -121,7 +226,7 @@ describe('composed UI Action front-door adapters', () => {
         expect(transport).not.toHaveBeenCalled();
     });
 
-    it.each(['ui', 'scoped'] as const)('executes a confirmed present-user delete through %s while the Agent caller still asks through the real policy', async bridge => {
+    it.each(['ui', 'scoped', 'mounted'] as const)('executes a confirmed present-user delete through %s while the Agent caller still asks through the real policy', async bridge => {
         const serverId = await homes.addHome({ name: 'MCP', serverUrl: 'https://confirmed-mcp.test',
             serverIdentityId: 'confirmed-mcp', accountId: 'alice' });
         onTestFailed(() => console.error('Confirmed MCP boundary paths', homes.requests.map(request => request.path)));
@@ -138,15 +243,22 @@ describe('composed UI Action front-door adapters', () => {
             return { body: McpServerCatalogRowMutationResponseV1Schema.parse({ status: 'updated', revision: 4, cursor: 4 }) };
         } });
         const input = { serverId: 'throwaway', removeBindings: true, expectedRevision: 3 };
-        const confirmed = { presentUserConfirmation: { actionId: 'mcp.servers.delete' as const } };
+        const confirmed = { confirmed: true as const };
         const executeUi = createFrontDoorUiActionExecutor(undefined, { serverId, expectedAccountId: 'alice' });
-        const scoped = bridge === 'scoped' ? await runTeamAction({
-            scope: { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'alice' },
-            actionId: 'mcp.servers.delete', input, approval: 'surface_confirmed',
-            parse: value => MCP_SERVER_ACTION_OUTPUT_SCHEMAS_V1['mcp.servers.delete'].parse(value),
-        }) : null;
-        if (scoped && scoped.kind !== 'succeeded') throw new Error('Confirmed scoped delete failed');
-        const result = scoped?.kind === 'succeeded' ? scoped.value : await executeUi('mcp.servers.delete', input, confirmed);
+        const scoped = bridge === 'scoped' ? await scopedHomeActionExecutor({
+            serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'alice',
+        }).confirmed('mcp.servers.delete', input, { surface: 'ui', serverId, expectedAccountId: 'alice' }) : null;
+        if (scoped && !scoped.ok) throw new Error('Confirmed scoped delete failed');
+        const mounted = bridge === 'mounted' ? await (async () => {
+            const { useMountedActionExecution } = await import('@/components/approvals/useMountedActionExecution');
+            const hook = await renderHook(() => useMountedActionExecution({
+                serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'alice',
+            }));
+            await vi.waitFor(() => expect(hook.getCurrent().ready).toBe(true));
+            return hook.getCurrent().executeValue('mcp.servers.delete', input, confirmed);
+        })() : undefined;
+        const result = scoped?.ok ? scoped.result : bridge === 'mounted' ? mounted
+            : await executeUi('mcp.servers.delete', input, confirmed);
         expect(MCP_SERVER_ACTION_OUTPUT_SCHEMAS_V1['mcp.servers.delete'].parse(result)).toMatchObject({ status: 'updated', revision: 4 });
         expect(homes.artifacts(serverId).list()).toHaveLength(0);
         const writes = homes.requestsFor('/v1/account/entity-rows/mcp').filter(request =>
@@ -156,7 +268,7 @@ describe('composed UI Action front-door adapters', () => {
         const agent = createFrontDoorActionExecute()('mcp.servers.delete', input, {
             serverId, expectedAccountId: 'alice', surface: 'agent', authority: 'account_automation',
             defaultSessionId: 'agent-session', defaultSessionMachineId: 'agent-machine', actionRequestId: 'agent-delete-mcp',
-            actionCaller: { kind: 'host' }, ...confirmed, signal: controller.signal,
+            actionCaller: { kind: 'host' }, signal: controller.signal,
         });
         try {
             await vi.waitFor(() => expect(homes.artifacts(serverId).list()).toHaveLength(1));
@@ -166,6 +278,45 @@ describe('composed UI Action front-door adapters', () => {
             expect(homes.requestsFor('/v1/account/entity-rows/mcp').filter(request =>
                 McpServerCatalogRowMutationV1Schema.safeParse(request.input).success)).toHaveLength(writes);
         } finally { controller.abort(); await agent; }
+    });
+
+    it('retains mounted operands through lazy admission and the same pending approval after the caller mutates its draft', async () => {
+        const serverId = await homes.addHome({ name: 'Mounted custody', serverUrl: 'https://mounted-custody.test',
+            serverIdentityId: 'mounted-custody', accountId: 'alice' });
+        await homes.requireUiApproval(serverId, ['mcp.servers.delete']);
+        homes.answer(serverId, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture({ settingsVersion: 0 }) });
+        homes.answer(serverId, '/v1/account/entity-rows/profiles/transfer', { body: { status: 'absent' } });
+        homes.answer(serverId, '/v2/account/settings/history', { body: { snapshots: [] } });
+        const catalog = { v: 1, servers: [{ id: 'throwaway', name: 'throwaway', transport: 'stdio',
+            stdio: { command: 'mcp-tool', args: [] }, env: {}, createdAt: 1, updatedAt: 1 }], bindings: [] };
+        homes.answer(serverId, 'GET /v1/account/entity-rows/mcp', { body: { status: 'present', revision: 3, content: { t: 'plain', v: catalog } } });
+        homes.answer(serverId, 'POST /v1/account/entity-rows/mcp', { body: { status: 'updated', revision: 4, cursor: 4 } });
+        const { useMountedActionExecution } = await import('@/components/approvals/useMountedActionExecution');
+        const hook = await renderHook(() => useMountedActionExecution({
+            serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'alice',
+        }));
+        const input = { serverId: 'throwaway', removeBindings: true, expectedRevision: 3 };
+        let operation: ReturnType<ReturnType<typeof hook.getCurrent>['execute']> | undefined;
+        await act(async () => {
+            operation = hook.getCurrent().execute('mcp.servers.delete', input);
+            input.expectedRevision = 99;
+        });
+        try {
+            await waitForHomeGovernance(() => expect(homes.artifacts(serverId).list()).toHaveLength(1));
+            const artifact = homes.artifacts(serverId).list()[0]!;
+            expect(StoredApprovalRequestSchema.parse(JSON.parse(homes.artifacts(serverId).readPlainBody(artifact.id)!)))
+                .toMatchObject({ actionId: 'mcp.servers.delete', actionArgs: { expectedRevision: 3 } });
+            await waitForHomeGovernance(() => expect(hook.getCurrent().approval.approvalId).toBe(artifact.id));
+            input.expectedRevision = 100;
+            await expect(decideApprovalAsInbox(serverId, artifact.id, 'approve')).resolves.toMatchObject({ ok: true, result: { status: 'executed' } });
+            expect(await operation!).toMatchObject({ ok: true, result: { status: 'updated', revision: 4 } });
+            expect(homes.artifacts(serverId).list()).toHaveLength(1);
+            expect(homes.requestsFor('/v1/account/entity-rows/mcp').filter(request => request.method === 'POST')).toHaveLength(1);
+        } finally {
+            hook.getCurrent().cancel();
+            await hook.unmount();
+            await operation!;
+        }
     });
 
     it('executes the UI adapter through the default clipboard registration and produces the consumer result shape', async () => {

@@ -38,3 +38,4 @@ export function buildMachinePluginActionExecuteRequest(machineId: string, opts: 
         ...(opts.presentUserIntent ? { presentUserIntent: opts.presentUserIntent } : {}),
     });
 }
+

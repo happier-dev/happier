@@ -1,10 +1,13 @@
 import {
-    decodePeerTcpTunnelBinaryFrameV2,
-    encodeBase64,
-    PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
+    decodePeerTcpTunnelBinaryFrameV2} from '@happier-dev/protocol/machines/peer/mediation/tunnel/v2';
+import {
+    encodeBase64} from '@happier-dev/protocol/crypto/base64';
+import {
+    PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2} from '@happier-dev/protocol/machines/peer/mediation/tunnel/encoding';
+import {
     type PeerTcpTunnelOpenResponseV1,
     type PeerTcpTunnelOpenV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/machines/peer/mediation/tunnel/v1';
 import type { PeerTcpTunnelFrame } from '@happier-dev/peer-transport/duplexFrames';
 import { describe, expect, it, vi } from 'vitest';
 

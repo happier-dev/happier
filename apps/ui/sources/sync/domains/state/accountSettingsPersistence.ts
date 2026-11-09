@@ -256,9 +256,12 @@ function saveAccountSettingsEnvelope(
         }
     }
     storage.set(key, serialized);
-    publishAccountSettingsPersistenceMutation(scope,
-        isPlainRecord(previousEnvelope) && isPlainRecord(previousEnvelope.settings) ? previousEnvelope.settings : undefined,
-        persistedSettings);
+    // Exact-Home consumers also observe admission of synchronized policy, even
+    // when its consumed preferences equal the unsynchronized envelope's values.
+    const previousSettings = isPlainRecord(previousEnvelope) && isPlainRecord(previousEnvelope.settings)
+        && (typeof previousEnvelope.version === 'number') === (version !== null)
+        ? previousEnvelope.settings : undefined;
+    publishAccountSettingsPersistenceMutation(scope, previousSettings, persistedSettings);
 }
 
 export function loadAccountSettings(scope: AccountSettingsScope): { settings: unknown; version: number | null } {

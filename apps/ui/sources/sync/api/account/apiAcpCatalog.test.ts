@@ -4,6 +4,7 @@ import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentat
 import { act } from 'react-test-renderer';
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
@@ -26,7 +27,7 @@ import { REMOTE_HOST_ROWS_ROUTE_V1 } from '@happier-dev/protocol/remoteHosts/rem
 import { NOTIFICATION_CHANNELS_ROUTE_V1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
 import { PROMPT_LIBRARY_ROWS_ROUTE_V1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { KIRO_ACP_STDERR_RULES } from '@happier-dev/plugins-kiro/agent/acp/transport';
-import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol';
+import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
 import sodium from '@/encryption/libsodium.lib';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 
@@ -55,10 +56,15 @@ let catalogReads = 0;
 let pendingCatalogResponse: Promise<Response> | null = null;
 const promotionActionsSettings = normalizeActionsSettingsV1({ v: 1, actions: {},
     approvalWaivedSurfaces: { 'secrets.shared.promote': ['ui'] } });
-const credentialsFor = (name: string): AuthCredentials => ({ token: `e30.${Buffer.from(JSON.stringify({ sub: `account-${name}` })).toString('base64url')}.signature` });
+// The fake backend resets every test; its credentials identify a new fixture lifetime as well.
+let credentialFixtureRevision = 0;
+const credentialsFor = (name: string): AuthCredentials => ({ token: `e30.${Buffer.from(JSON.stringify({ sub: `account-${name}`,
+    jti: `acp-fixture-${credentialFixtureRevision}` })).toString('base64url')}.signature` });
+const testHomes = new Map<string, string>();
 async function activateHome(name: string) {
     await disconnectActiveServerConnection();
     const profile = await upsertAndActivateServer({ serverUrl: `https://acp-home-${name}.example.test`, name });
+    testHomes.set(profile.serverUrl, profile.id);
     const credentials = credentialsFor(name);
     await TokenStorage.setCredentialsForServerUrl(profile.serverUrl, { serverId: profile.id }, credentials);
     await restoreConnectionToActiveServer(credentials);
@@ -67,6 +73,7 @@ async function activateHome(name: string) {
     return next;
 }
 beforeEach(async () => {
+    credentialFixtureRevision += 1;
     catalogReads = 0;
     pendingCatalogResponse = null;
     raw = {};
@@ -90,9 +97,51 @@ beforeEach(async () => {
 afterEach(async () => {
     await standardCleanup();
     resetAcpCatalogEngineForTests(); resetAcpCatalogSnapshotsForTests();
-    await disconnectActiveServerConnection(); retireActiveServerAccountScopeLifetime(); resetRuntimeFetch();
+    await disconnectActiveServerConnection();
+    // Account-owned maintenance outlives the focused view; retire the fixture credentials too.
+    for (const [serverUrl, serverId] of testHomes) await TokenStorage.removeCredentialsForServerUrl(serverUrl, { serverId });
+    testHomes.clear();
+    retireActiveServerAccountScopeLifetime(); resetRuntimeFetch();
 });
 describe('ACP captured Account row snapshots', () => {
+    it.each([false, true])('retains a cold stale catalog only while its captured Account is admitted (retired: %s)', async retired => {
+        const first = createDeferred<Response>();
+        const trailing = createDeferred<Response>();
+        pendingCatalogResponse = first.promise;
+        const hook = await renderHook(() => useAcpCatalog(scope));
+        try {
+            await vi.waitFor(() => expect(catalogReads).toBe(1));
+            pendingCatalogResponse = trailing.promise;
+            await act(async () => { publishHomeAccountChange(scope.serverId, [ACP_CATALOG_ACCOUNT_ROW_KEY_V1]); });
+            if (retired) {
+                // Request Account custody follows credentials, independently of the UI's active lifetime.
+                await act(async () => { await TokenStorage.setCredentialsForServerUrl('https://acp-home-a.example.test',
+                    { serverId: scope.serverId }, credentialsFor('replacement')); });
+                const settled = refreshAcpCatalog(scope);
+                await act(async () => {
+                    first.resolve(Response.json(row));
+                    trailing.resolve(Response.json(row));
+                    await settled;
+                });
+                expect(hook.getCurrent().snapshot?.data).toBeNull();
+                await expect(hook.getCurrent().write({ v: 1, definitions: [definition] })).rejects.toMatchObject({ code: 'catalog-unavailable' });
+                return;
+            }
+            await act(async () => { first.resolve(Response.json(row)); });
+            await vi.waitFor(() => expect(catalogReads).toBe(2));
+            await vi.waitFor(() => expect(hook.getCurrent().snapshot?.data?.definitions).toEqual([definition]));
+            expect(hook.getCurrent().snapshot).toMatchObject({ stale: true, catalog: { status: 'loading' }, revision: 3 });
+            await expect(hook.getCurrent().write({ v: 1, definitions: [definition] })).rejects.toMatchObject({ code: 'catalog-unavailable' });
+            await act(async () => { trailing.resolve(Response.json(row)); });
+            await vi.waitFor(() => expect(hook.getCurrent().snapshot).toMatchObject({ stale: false, catalog: { status: 'ready' } }));
+            expect(catalogReads).toBe(2);
+        } finally {
+            first.resolve(Response.json(row));
+            trailing.resolve(Response.json(row));
+            await hook.unmount();
+        }
+    });
+
     it.each(['picker', 'retained-page'] as const)('defers a closed picker catalog and revalidates retained rows once on reopen (%s)', async mode => {
         let active = false;
         let renders = 0;
@@ -118,6 +167,7 @@ describe('ACP captured Account row snapshots', () => {
         renders = 0;
         await act(async () => applyAcpCatalogSnapshot(scope, { status: 'ready', revision: 4,
             record: { v: 1, definitions: [definition] } }, true));
+        row = { status: 'present', revision: 4, content: { t: 'plain', v: { v: 1, definitions: [definition] } } };
         expect(renders).toBe(0);
         const pending = createDeferred<Response>();
         pendingCatalogResponse = pending.promise;
@@ -164,6 +214,12 @@ describe('ACP captured Account row snapshots', () => {
             definitions: [definition, { id: 'malformed-sibling' }] } } };
         expect(await readAcpCatalog(scope)).toMatchObject({ catalog: { status: 'partial', revision: 10,
             record: { definitions: [definition] } } });
+    });
+    it('retains unreadable present row revision without granting catalog authority', async () => {
+        row = { status: 'present', revision: 10, content: { t: 'plain', v: { v: 99, definitions: [] } } };
+        expect(await readAcpCatalog(scope)).toMatchObject({ catalog: {
+            status: 'unavailable', reason: 'invalid-stored-content', revision: 10,
+        } });
     });
     it('renews a retired cold catalog read when the same Account is restored while another observer survives', async () => {
         const pending = createDeferred<Response>();
@@ -276,8 +332,8 @@ describe('ACP captured Account row snapshots', () => {
         const options = { agentId: 'row-review', machineId: null, serverId: invoked.serverId,
             accountScope: invoked, settings: getStorage().getState().settings, enabled: false };
         const hook = await renderHook(() => useResumeCapabilityOptions(options));
-        expect(hook.getCurrent().resumeCapabilityOptions.acpCatalogSnapshot).toMatchObject({ status: 'ready', revision: 3,
-            record: { definitions: [expect.objectContaining({ id: 'row-review' })] } });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().resumeCapabilityOptions.acpCatalogSnapshot).toMatchObject({ status: 'ready', revision: 3,
+            record: { definitions: [expect.objectContaining({ id: 'row-review' })] } }));
     });
     it.each(['record', 'action', 'foreign-source'] as const)('promotes the captured personal bindings before atomically transferring the original ACP row and cleanup, then its numeric user delta (%s)', async (entry) => {
         const { launch: _launch, ...predecessorDefinition } = definition;
@@ -483,7 +539,7 @@ describe('ACP captured Account row snapshots', () => {
                     sourceVersion += 1;
                     row = { status: 'present', revision: 1, content: mutation.content };
                     // The server committed the original source; retirement must not erase that ACK.
-                    retireActiveServerAccountScopeLifetime();
+                    await TokenStorage.removeCredentialsForServerUrl('https://acp-home-a.example.test', { serverId: scope.serverId });
                     return Response.json({ status: 'updated', revision: 1, cursor: 1 });
                 }
                 return Response.json(row);
@@ -577,7 +633,7 @@ describe('ACP captured Account row snapshots', () => {
                     if (mutation.settingsCleanup?.nextSettings?.t === 'plain') raw = mutation.settingsCleanup.nextSettings.v;
                     sourceVersion += 1;
                     acknowledged = true;
-                    if (maintenance === 'retired') retireActiveServerAccountScopeLifetime();
+                    if (maintenance === 'retired') await TokenStorage.removeCredentialsForServerUrl('https://acp-home-a.example.test', { serverId: scope.serverId });
                     return Response.json({ status: 'updated', revision: 1, cursor: 1 });
                 }
                 return Response.json(row);
@@ -850,7 +906,7 @@ describe('ACP captured Account row snapshots', () => {
         row = { status: 'present', revision: 4, content: { t: 'plain', v: { v: 1, definitions: [definition] } } };
         expect(await readAcpCatalog(scope)).toMatchObject({ catalog: { status: 'unavailable', reason: 'account-mode-mismatch' } });
     });
-    it('rejects mode mismatch before disclosure and does not publish a response from a retired Home', async () => {
+    it('rejects mode mismatch before disclosure and does not publish a response from a retired Account', async () => {
         row = { status: 'present', revision: 3, content: { t: 'encrypted', c: 'opaque' } };
         expect(await readAcpCatalog(scope)).toMatchObject({ catalog: { status: 'unavailable' } });
         const pending = createDeferred<Response>();
@@ -867,6 +923,7 @@ describe('ACP captured Account row snapshots', () => {
         const loading = refreshAcpCatalog(original);
         await vi.waitFor(() => expect(issued).toBe(true));
         scope = await activateHome('b');
+        await TokenStorage.setCredentialsForServerUrl('https://acp-home-a.example.test', { serverId: original.serverId }, credentialsFor('replacement'));
         pending.resolve(Response.json({ status: 'present', revision: 9, content: { t: 'plain', v: { v: 1, definitions: [definition] } } }));
         await loading;
         expect(getAcpCatalogSnapshot(original)?.catalog.status).not.toBe('ready');

@@ -1,5 +1,3 @@
-import { t } from '@/text';
-import { HappyError } from '@/utils/errors/errors';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent, isPlainArtifactDataKeyMarker } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { MACHINE_PLAIN_DATA_KEY_MARKER, decodePlainMachineStoredContent, encodePlainMachineStoredContent, isPlainMachineDataKeyMarker } from '@happier-dev/protocol/machines/machineStoredContent';
 import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
@@ -9,7 +7,7 @@ import { prepareArtifactRecipientKeyEnvelopesV1 } from '@happier-dev/protocol/ar
 import { retargetWorkflowDefinitionArtifactHeaderV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 import { workflowDefinitionArtifactSharingAdapterV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
 import { openSessionOwnerMetadataEnvelopeV1, sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
-import { projectSessionOwnerDisplayV1, sealSessionOwnerDisplayEnvelopeV1, validateSessionDisplayProjectionV1, type SessionDisplayProjectionV1 } from '@happier-dev/protocol';
+import { projectSessionOwnerDisplayV1, sealSessionOwnerDisplayEnvelopeV1, validateSessionDisplayProjectionV1, type SessionDisplayProjectionV1 } from '@happier-dev/protocol/sessions';
 import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
 import { AccountEncryptionMigrateReviewCommentsDirectiveSchema, type AccountEncryptionMigrateArtifactsDirective, type AccountEncryptionMigrateMachinesDirective, type AccountEncryptionMigrateReviewCommentsDirective, type AccountEncryptionMigrateSessionsDirective, type AccountEncryptionMigrateSessionOrganizationDirective, type AccountEncryptionMigrateTodosDirective, type AccountEncryptionMigrateWorkspaceDirective, type AccountEncryptionMigrateAutomationsDirective, type AccountEncryptionMigrateAutomationsInventoryResponse } from '@happier-dev/protocol/account/encryptionMigrate';
 import { WorkspaceTabsV1StoredSchema } from '@happier-dev/protocol/workspace/workspaceTabsV1';
@@ -23,6 +21,8 @@ import { decodePackageAssetArchiveBodyV1, openPackageAssetArchiveV1 } from '@hap
 import { decodePluginUiArtifactArchiveBodyV1, openPluginUiArtifactArchiveV1 } from '@happier-dev/protocol/plugins/ui';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { HappyError } from '@/utils/errors/errors';
+import { t } from '@/text';
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import { hashArtifactBinaryContent, openArtifactBinaryContent, sealArtifactBinaryContent } from '@/sync/domains/artifacts/artifactBinaryContent';
 import { getRandomBytes } from '@/platform/cryptoRandom';
@@ -34,10 +34,6 @@ import {
 } from '@/sync/domains/state/storageTypes';
 import { ArtifactEncryption } from '@/sync/encryption/artifactEncryption';
 import { openArtifactPrivateRevisionMetadata, sealArtifactPrivateRevisionMetadata } from '@/sync/domains/artifacts/accountArtifactEnvelope';
-import {
-    decodeTodoStoredContent,
-    encodeTodoStoredContent,
-} from '@/sync/domains/todos/todoStoredContent';
 import type { Encryption } from '@/sync/encryption/encryption';
 import { normalizeSessionAccessProjection } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
 import { readSessionLayout1OwnerMetadata } from '@/sync/engine/sessions/readSessionLayout1OwnerProjection';
@@ -52,6 +48,11 @@ import { buildAccountEncryptionMigrationAutomations } from './buildAccountEncryp
 import { decodeAccountStoredJsonContent, encodeAccountStoredJsonContent } from '@/sync/encryption/accountStoredJsonContent';
 import type { DiscussionAccountEncryptionInventoryV1, AccountEncryptionMigrateDiscussionsDirectiveV1 } from '@happier-dev/protocol/discussions/accountEncryptionMigration';
 import { buildAccountEncryptionDiscussionsDirective, type DiscussionMigrationAttachmentTransport } from './buildAccountEncryptionDiscussionsDirective';
+import type { SavedSecretResourceMaterialV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import type { AccountEncryptionMigrateSavedSecretResourcesDirectiveV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
+import { buildAccountEncryptionSavedSecretResourcesDirective } from './buildAccountEncryptionSavedSecretResourcesDirective';
+import { buildAccountEncryptionTodosDirective } from './buildAccountEncryptionTodosDirective';
+import type { ResourceAccessRecipientCensusV1 } from '@happier-dev/protocol/teams/resourceGrantAccessV1';
 
 export type AccountEncryptionMigrationMachineRow = Readonly<{
     id: string;
@@ -66,6 +67,7 @@ export type AccountEncryptionMigrationKvRow = Readonly<{
     key: string;
     value: string;
     version: number;
+    resource?: ResourceAccessRecipientCensusV1;
 }>;
 
 export type AccountEncryptionMigrationArtifactRow = Readonly<{
@@ -104,6 +106,7 @@ export type AccountEncryptionMigrationStorageDirectives = Readonly<{
     sessionOrganization:
         AccountEncryptionMigrateSessionOrganizationDirective;
     pets: Readonly<{ action: 'assert_empty' }>;
+    savedSecretResources?: AccountEncryptionMigrateSavedSecretResourcesDirectiveV1;
 }>;
 
 function requireEncryption(
@@ -291,36 +294,6 @@ async function buildMachineDirective(params: Readonly<{
     return { action: 'migrate', items };
 }
 
-async function buildTodoDirective(params: Readonly<{
-    fromMode: 'plain' | 'e2ee';
-    toMode: 'plain' | 'e2ee';
-    rows: readonly AccountEncryptionMigrationKvRow[];
-    sourceEncryption: Encryption | null;
-    targetEncryption: Encryption | null;
-}>): Promise<AccountEncryptionMigrateTodosDirective> {
-    if (params.rows.length === 0) return { action: 'assert_empty' };
-    const items = [];
-    for (const row of params.rows) {
-        const content = await decodeTodoStoredContent({
-            key: row.key,
-            encoded: row.value,
-            expectedMode: params.fromMode,
-            encryption: params.sourceEncryption,
-        });
-        items.push({
-            key: row.key,
-            expectedVersion: row.version,
-            value: await encodeTodoStoredContent({
-                key: row.key,
-                mode: params.toMode,
-                value: content.value,
-                encryption: params.targetEncryption,
-            }),
-        });
-    }
-    return { action: 'migrate', items };
-}
-
 async function buildWorkspaceDirective(params: Readonly<{
     fromMode: 'plain' | 'e2ee';
     toMode: 'plain' | 'e2ee';
@@ -331,7 +304,7 @@ async function buildWorkspaceDirective(params: Readonly<{
     if (params.rows.length === 0) return { action: 'assert_empty' };
     const items = [];
     for (const row of params.rows) {
-        if (classifyAccountJsonKvKey(row.key) !== 'workspace') throw new Error('Invalid Workspace migration key');
+        if (classifyAccountJsonKvKey(row.key) !== 'workspace') throw new Error('Invalid Account JSON KV migration key');
         const decoded = await decodeAccountStoredJsonContent({ encoded: row.value, expectedMode: params.fromMode, encryption: params.sourceEncryption });
         const value = row.key === 'workspace:tabs:v1' || row.key.startsWith('workspace:handoff-tabs:v1:')
             ? WorkspaceTabsV1StoredSchema.parse(decoded) : decoded;
@@ -734,6 +707,8 @@ export async function buildAccountEncryptionMigrationStorageDirectives(
         readArtifactRecipients?: (artifactId: string) => Promise<ArtifactAccessRecipientCensusResponseV1>;
         readArtifactBlob?: (artifactId: string, blobId: string) => Promise<ArtifactBlobReadResponseV1>;
         stageArtifactBlob?: (artifactId: string, blobId: string, content: ArtifactBlobStoredContentV1) => Promise<ArtifactBlobAccountEncryptionStageV1>;
+        /** The owner's Saved Secret materials read for this exact transition. */
+        savedSecretResources?: readonly SavedSecretResourceMaterialV1[];
     }>,
 ): Promise<AccountEncryptionMigrationStorageDirectives> {
     assertAccountEncryptionMigrationScopeCurrent(params.scope);
@@ -749,12 +724,13 @@ export async function buildAccountEncryptionMigrationStorageDirectives(
         targetEncryption: params.targetEncryption,
     });
     assertAccountEncryptionMigrationScopeCurrent(params.scope);
-    const todos = await buildTodoDirective({
+    const todos = await buildAccountEncryptionTodosDirective({
         fromMode: params.fromMode,
         toMode: params.toMode,
         rows: params.todos,
         sourceEncryption: params.sourceEncryption,
         targetEncryption: params.targetEncryption,
+        scope: params.scope,
     });
     assertAccountEncryptionMigrationScopeCurrent(params.scope);
     const workspace = params.workspace === undefined ? undefined : await buildWorkspaceDirective({
@@ -826,8 +802,20 @@ export async function buildAccountEncryptionMigrationStorageDirectives(
             resolveSession: params.resolveSession })
         : undefined;
     assertAccountEncryptionMigrationScopeCurrent(params.scope);
+    const savedSecretResources = params.savedSecretResources
+        ? await buildAccountEncryptionSavedSecretResourcesDirective({
+            accountId: params.scope.scope.accountId, fromMode: params.fromMode, toMode: params.toMode,
+            resources: params.savedSecretResources,
+            openSourceDataKey: async encryptedDataKey => params.sourceEncryption
+                ? await params.sourceEncryption.decryptEncryptionKey(encryptedDataKey, params.scope.scope)
+                : null,
+            targetContentPublicKey: params.targetEncryption?.contentDataKey ?? null,
+        })
+        : undefined;
+    assertAccountEncryptionMigrationScopeCurrent(params.scope);
     return {
         ...(automations ? { automations } : {}),
+        ...(savedSecretResources ? { savedSecretResources } : {}),
         ...(params.discussionsInventory ? { discussions: await buildAccountEncryptionDiscussionsDirective({
             inventory: params.discussionsInventory, fromMode: params.fromMode, toMode: params.toMode,
             sourceEncryption: params.sourceEncryption, targetEncryption: params.targetEncryption, scope: params.scope,

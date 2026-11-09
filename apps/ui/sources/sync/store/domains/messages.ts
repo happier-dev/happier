@@ -53,7 +53,7 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { persistSessionPermissionData } from './sessionPermissionPersistence';
 import type { SessionPending } from './pending';
 import type { StoreGet, StoreSet } from './_shared';
-import { finalizeSessionListIndexUpdate } from './sessionListIndexFinalization';
+import { buildNextSessionListRenderableDelta, finalizeSessionListIndexUpdate } from './sessionListIndexFinalization';
 import { resolveSessionListRenderableChangeImpact } from './sessionListRenderableChange';
 import { hasSessionMessageToolChanges, publishSessionMessageChanges, type SessionMessageChange } from '../sessionMessageChanges';
 import { applyLatestWorkerUpdateChanges, EMPTY_LATEST_WORKER_UPDATES, type LatestWorkerUpdates } from '../latestWorkerUpdates';
@@ -1061,7 +1061,14 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                     sessionPending: updatedSessionPending
                 };
                 if (updatedSessionListRowsByServerId === state.sessionListRowsByServerId) {
-                    return nextStateBase;
+                    return updatedSessions === state.sessions ? nextStateBase : {
+                        ...nextStateBase,
+                        sessionListRenderableDelta: buildNextSessionListRenderableDelta({
+                            previous: state.sessionListRenderableDelta,
+                            changedSessionIds: [], removedSessionIds: [], hydratedSessionIds: [sessionId],
+                            rebuiltSessionListIndex: false, ordinaryMembershipChanges: [],
+                        }),
+                    };
                 }
                 return finalizeSessionListIndexUpdate(
                     state,
@@ -1158,6 +1165,12 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                     sessionUserMessageHistory: applySessionUserMessageHistory(state.sessionUserMessageHistory, sessionId,
                         { messageIdsOldestFirst, messagesById }, null),
                     sessions: updatedSessions,
+                    sessionListRenderableDelta: updatedSessions === state.sessions ? state.sessionListRenderableDelta
+                        : buildNextSessionListRenderableDelta({
+                            previous: state.sessionListRenderableDelta,
+                            changedSessionIds: [], removedSessionIds: [], hydratedSessionIds: [sessionId],
+                            rebuiltSessionListIndex: false, ordinaryMembershipChanges: [],
+                        }),
                     sessionMessageToolVersion: state.sessionMessageToolVersion + 1,
                     sessionMessages: {
                         ...state.sessionMessages,

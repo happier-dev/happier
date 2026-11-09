@@ -134,10 +134,12 @@ it.each(['e2ee', 'plain'] as const)('preserves an opened Agent-state document wh
     const secret = new Uint8Array(32).fill(51);
     const key = new Uint8Array(32).fill(52);
     const credentials = { token: 'partial-state-account', secret: encodeBase64(secret) };
-    const accountCurrentness = createLegacyAccountEncryptionCurrentnessFixture({ secret });
+    const accountCurrentness = encryptionMode === 'plain'
+        ? createPlainAccountEncryptionCurrentnessFixture()
+        : createLegacyAccountEncryptionCurrentnessFixture({ secret });
     const encryption = await Encryption.create(secret);
     encryption.configureNativeCryptoWorker({ routing: { mode: 'off' } });
-    await encryption.initializeSessions(new Map([[id, key]]), { serverId });
+    if (encryptionMode === 'e2ee') await encryption.initializeSessions(new Map([[id, key]]), { serverId });
     const reader = encryption.getSessionEncryption(id)!;
     const oldState = { requests: { retained: { tool: 'Bash', arguments: { command: 'git status' }, createdAt: 1 } } };
     const full = { id, seq: 1, createdAt: 1, updatedAt: 1, active: true, activeAt: 1,
@@ -344,7 +346,9 @@ it('batches missing ordinary display documents even when no full Session hydrati
     const serverId = 'cold-ordinary-home';
     const full = { id: 'cold-ordinary', seq: 1, createdAt: 1, updatedAt: 1, active: false, activeAt: 1,
         encryptionMode: 'plain' as const, metadataLayoutVersion: 0, metadataVersion: 1, agentStateVersion: 0,
-        metadata: JSON.stringify({ path: '/cold', host: 'home', name: 'Cold ordinary label' }),
+        metadata: JSON.stringify({ path: '/cold', host: 'home', name: 'Cold ordinary label',
+            agentRuntimeCapabilitiesV1: { backend: { session: { media: { acceptsImageInput: { supported: false } } } } },
+        }),
         agentState: null, dataEncryptionKey: null, share: null };
     const { metadata: _metadata, agentState: _agentState, ...scalars } = full;
     const body = V2SessionListResponseSchema.parse({ sessions: [{ ...scalars, documents: 'omitted',
@@ -363,6 +367,8 @@ it('batches missing ordinary display documents even when no full Session hydrati
     });
     expect(bodyReads).toBe(1);
     expect(storage.getState().sessionListRowsByServerId[serverId]?.[full.id]?.metadata?.name).toBe('Cold ordinary label');
+    expect(storage.getState().sessionListRowsByServerId[serverId]?.[full.id]?.imageInputAvailability)
+        .toEqual({ available: false, reason: 'image_input_unsupported' });
     expect(storage.getState().sessions[full.id]).toBeUndefined();
 });
 
@@ -475,6 +481,7 @@ it('reuses 1000 admitted warm displays and batches only changed document demand 
     rows[2] = { ...rows[2]!, agentStateVersion: 1, pendingPermissionRequestCount: 1 };
     await refresh(true);
     expect(batches).toEqual([['compact-1', 'compact-2']]);
+    expect(storage.getState().sessionListRowsByServerId[serverId]?.['compact-1']?.currentRequestRef).not.toBeNull();
     expect(storage.getState().sessionListRowsByServerId[serverId]?.['compact-2']?.hasPendingPermissionRequests).toBe(true);
     expect(storage.getState().sessions['compact-1']?.agentStateVersion).toBe(0);
     batches.length = 0;

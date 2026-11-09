@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     MACHINE_LIVE_STREAM_SOCKET_EVENT,
     type MachineLiveStreamRelayEnvelopeV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 import type { createEphemeralServerSocketClient as createEphemeralServerSocketClientFn } from './createEphemeralServerSocketClient';
 import type { resolveServerScopedContext as resolveServerScopedContextFn } from './resolveServerScopedContext';
 import type { ScopedRpcEncryptionContext } from './serverScopedRpcTypes';

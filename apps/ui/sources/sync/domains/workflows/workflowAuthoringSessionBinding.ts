@@ -1,4 +1,4 @@
-import type { WorkflowConversationBindInputV1 } from '@happier-dev/protocol';
+import type { WorkflowConversationBindInputV1 } from '@happier-dev/protocol/actions/workflowAuthoringAction';
 import type { EntityDragScopeV1 } from '@happier-dev/protocol/plugins/ui';
 import { entityDragScopesEqualV1 } from '@happier-dev/protocol/plugins/ui';
 import { findWorkflowBlock, setWorkflowDefaultField, setWorkflowStepExecutionField } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';

@@ -4,17 +4,21 @@ import { Encryption } from '@/sync/encryption/encryption';
 import { ArtifactEncryption } from '@/sync/encryption/artifactEncryption';
 import type { ArtifactDataKeyCache } from './syncArtifacts';
 import type { ArtifactUpdateRequest, DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent, type ArtifactBlobReferenceV1 } from '@happier-dev/protocol';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent} from '@happier-dev/protocol/storage/artifactStoredContent';
+import { type ArtifactBlobReferenceV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { encodeBase64 } from '@/encryption/base64';
 import { hashArtifactBinaryContent } from '@/sync/domains/artifacts/artifactBinaryContent';
 import { ed25519, x25519 } from '@noble/curves/ed25519';
-import { signAccountContentKeyBindingV1, verifyAccountContentKeyBindingV1, openEncryptedDataKeyEnvelopeV1,
-  type ArtifactRecipientKeyEnvelopeCommitInputV1 } from '@happier-dev/protocol';
+import { signAccountContentKeyBindingV1, verifyAccountContentKeyBindingV1} from '@happier-dev/protocol/crypto/accountContentKeyBindingV1';
+import { openEncryptedDataKeyEnvelopeV1} from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import {
+  type ArtifactRecipientKeyEnvelopeCommitInputV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { decodeBase64 } from '@/encryption/base64';
 import { encodeHex } from '@/encryption/hex';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { openArtifactPrivateRevisionMetadata } from '@/sync/domains/artifacts/accountArtifactEnvelope';
-import { createWorkBoardV1, buildWorkBoardArtifactHeaderV1 } from '@happier-dev/protocol';
+import { createWorkBoardV1} from '@happier-dev/protocol/boards/workBoardV1';
+import { buildWorkBoardArtifactHeaderV1 } from '@happier-dev/protocol/boards/workBoardArtifactV1';
 
 
 const fileReference: ArtifactBlobReferenceV1 = { blobId: 'b6a4bb92-8b93-4b18-b8b4-230041388a62',

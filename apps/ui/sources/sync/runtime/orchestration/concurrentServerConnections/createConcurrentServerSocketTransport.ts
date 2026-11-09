@@ -8,6 +8,7 @@ import {
 import { resolveSocketIoTransportsForCarrier } from '@/sync/runtime/socketIoTransports';
 import type { HomeCarrier } from '@/sync/runtime/homeCarrier';
 import { resolveServerRuntimeOrigin } from '@/sync/runtime/nativeLoopbackTunnels/runtimeOrigin';
+import { SERVER_PEER_LIVENESS_WINDOW_MS } from '@/sync/runtime/connectivity/serverReachabilityTuning';
 
 export type ConcurrentServerSocket = HappierSocket;
 
@@ -23,6 +24,7 @@ export function createConcurrentServerSocketTransport(params: Readonly<{
 }> {
     return createHappierSocket({
         endpoint: resolveServerRuntimeOrigin(params),
+        connectTimeoutMs: SERVER_PEER_LIVENESS_WINDOW_MS,
         token: params.token,
         clientType: 'user-scoped',
         clientPurpose: 'concurrent-server-cache',

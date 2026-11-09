@@ -1,6 +1,6 @@
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
-import { MEMORY_SESSION_SYSTEM_RECORD_KINDS, SESSION_SYSTEM_RECORD_MEMORY_NAMESPACE } from '@happier-dev/protocol';
+import { MEMORY_SESSION_SYSTEM_RECORD_KINDS, SESSION_SYSTEM_RECORD_MEMORY_NAMESPACE } from '@happier-dev/protocol/sessions/system/records/memory/memorySystemRecordKinds';
 
 import { createSessionFixture, renderHook, standardCleanup } from '@/dev/testkit';
 import { createSessionMessagesFixture } from '@/dev/testkit/fixtures/transcriptFixtures';
@@ -14,6 +14,7 @@ import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serve
 import { useSessionRecap } from '@/components/sessions/companion/summary/useSessionRecap';
 import { getAppliedActiveServerSnapshot, publishAppliedActiveServerRuntimeAvailability, publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { observeSessionSynopses } from './sessionSynopsis';
+import { describeWorkerUpdateHeadline } from '@/components/work/status/resolveWorkStatusTone';
 
 vi.mock('socket.io-client', async (importOriginal) => (
     await import('@/dev/testkit/harness/serverAccountConnectionHarness')
@@ -53,15 +54,16 @@ describe('Recap synopsis Account lifetime', () => {
         });
         onTestFinished(connection.dispose);
         storage.getState().activateProfileScope({ serverId: connection.home.id, accountId: 'alice' });
-        const workerUpdate: Message = { kind: 'agent-event', id: 'worker-update', localId: null, seq: 1, createdAt: 1,
+        const workerUpdate = { kind: 'agent-event', id: 'worker-update', localId: null, seq: 1, createdAt: 1,
             event: { type: 'worker-update', update: { v: 1, workerKind: 'session', workerId: 'cworker0000000000000000000',
-                ownerState: 'settled', wake: 'finished', headline: 'Alice private worker report', canInspect: true } } };
+                ownerState: 'settled', wake: 'finished', headline: 'Alice private worker report', canInspect: true } } } satisfies Message;
         const retainedTranscript = createSessionMessagesFixture({ isLoaded: true,
             messageIdsOldestFirst: [workerUpdate.id], messagesById: { [workerUpdate.id]: workerUpdate } });
+        const workerHeadline = describeWorkerUpdateHeadline(workerUpdate.event.update);
         storage.setState({ sessions: { lead: createSessionFixture({ id: 'lead', serverId: connection.home.id, owner: 'alice' }, { memoryEnabled: true }) },
             sessionMessages: { lead: retainedTranscript } });
         const hook = await renderHook(() => useSessionRecap({ serverId: connection.home.id, sessionId: 'lead' }));
-        await vi.waitFor(() => expect(hook.getCurrent()?.text).toBe(hasSynopsis ? synopsis.synopsis : 'Alice private worker report'));
+        await vi.waitFor(() => expect(hook.getCurrent()?.text).toBe(hasSynopsis ? synopsis.synopsis : workerHeadline));
         const beforeLifetime = captureActiveServerAccountScopeLifetime();
         await act(async () => {
             if (transition === 'same_credential_refresh') {
@@ -77,7 +79,7 @@ describe('Recap synopsis Account lifetime', () => {
         });
         if (transition === 'same_credential_refresh') {
             expect(beforeLifetime?.isCurrent()).toBe(true);
-            expect(hook.getCurrent()).toMatchObject({ source: 'worker_update', text: 'Alice private worker report' });
+            expect(hook.getCurrent()).toMatchObject({ source: 'worker_update', text: workerHeadline });
             return;
         }
         expect(beforeLifetime?.isCurrent()).toBe(false);
@@ -99,12 +101,15 @@ describe('Recap synopsis Account lifetime', () => {
             await act(async () => {
                 publishAppliedActiveServerRuntimeAvailability(true);
                 // Recovery hydrates transcript input in the newly established lifetime.
-                storage.setState({ sessionMessages: { lead: createSessionMessagesFixture({ ...retainedTranscript }) } });
+                storage.getState().replaceSessionMessages('lead', [{
+                    id: workerUpdate.id, seq: workerUpdate.seq ?? undefined, localId: workerUpdate.localId,
+                    createdAt: workerUpdate.createdAt, role: 'event', isSidechain: false, content: workerUpdate.event,
+                }]);
             });
-            await vi.waitFor(() => expect(hook.getCurrent()?.text).toBe(hasSynopsis ? synopsis.synopsis : 'Alice private worker report'));
+            await vi.waitFor(() => expect(hook.getCurrent()?.text).toBe(hasSynopsis ? synopsis.synopsis : workerHeadline));
             await hook.unmount();
             const recovered = await renderHook(() => useSessionRecap({ serverId: connection.home.id, sessionId: 'lead' }));
-            await vi.waitFor(() => expect(recovered.getCurrent()?.text).toBe(hasSynopsis ? synopsis.synopsis : 'Alice private worker report'));
+            await vi.waitFor(() => expect(recovered.getCurrent()?.text).toBe(hasSynopsis ? synopsis.synopsis : workerHeadline));
             const appliedHome = getAppliedActiveServerSnapshot();
             onTestFinished(() => publishAppliedActiveServerSnapshot(appliedHome));
             await act(async () => {
@@ -120,7 +125,7 @@ describe('Recap synopsis Account lifetime', () => {
             onTestFinished(stop);
             if (hasSynopsis) await vi.waitFor(() => expect(backgroundText).toBe(synopsis.synopsis));
             const background = await renderHook(() => useSessionRecap({ serverId: connection.home.id, sessionId: 'lead' }));
-            await vi.waitFor(() => expect(background.getCurrent()?.text).toBe(hasSynopsis ? synopsis.synopsis : 'Alice private worker report'));
+            await vi.waitFor(() => expect(background.getCurrent()?.text).toBe(hasSynopsis ? synopsis.synopsis : workerHeadline));
         }
     });
 });

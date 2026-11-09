@@ -71,7 +71,7 @@ import { WindowsRemoteSessionLaunchModeSchema, type WindowsRemoteSessionLaunchMo
 import { readBackendTargetRefV2, writePersistedBackendTargetRefV2, type BackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { readPersistedAgentContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { readRuntimeDescriptorV1, type RuntimeDescriptorV1 } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
-import { PluginUiNewSessionSeedOriginV1Schema, StoredPluginUiNewSessionSeedOriginV1Schema, type PluginUiNewSessionSeedOriginV1, type PluginUiSessionPlacementCandidateV1 } from '@happier-dev/protocol/plugins/ui';
+import { PluginUiNewSessionActionDefaultV1Schema, type PluginUiNewSessionActionDefaultV1, PluginUiNewSessionSeedOriginV1Schema, StoredPluginUiNewSessionSeedOriginV1Schema, type PluginUiNewSessionSeedOriginV1, type PluginUiSessionPlacementCandidateV1 } from '@happier-dev/protocol/plugins/ui';
 import type { SessionTeamCredentialBindingIntentListV1 } from '@happier-dev/protocol/teams';
 import { getPersistenceStorage } from './persistenceStorage';
 import { loadLocalSettingsSnapshot, saveLocalSettings } from './settingsPersistence';
@@ -175,6 +175,7 @@ const NewSessionDraftExecutionTargetSchema = z.strictObject({
 });
 
 export interface NewSessionDraft {
+    actionDefault?: PluginUiNewSessionActionDefaultV1;
     input: string;
     sessionName?: string;
     initialSessionFacts?: SessionIdentityAdditions;
@@ -830,6 +831,7 @@ export function loadNewSessionDraft(scope?: ServerAccountScope | null): NewSessi
         const promptStack = SessionPromptStackV1StoredSchema.safeParse(parsed.promptStack);
         const instructionsDraft = readSessionInstructionsAuthoringDraft(parsed.instructionsDraft);
         const authoringOrigin = StoredPluginUiNewSessionSeedOriginV1Schema.safeParse(parsed.authoringOrigin);
+        const actionDefault = createStoredReadSchema(PluginUiNewSessionActionDefaultV1Schema).safeParse(parsed.actionDefault);
         // Released remote-dev local `new-session-draft-v1` records stored Codex
         // selection at top level. Normalize it once at this named persistence
         // ingress; current writers carry only the Agent-owned descriptor. Remove
@@ -858,6 +860,7 @@ export function loadNewSessionDraft(scope?: ServerAccountScope | null): NewSessi
             ...(promptStack.success ? { promptStack: promptStack.data } : {}),
             ...(instructionsDraft === undefined ? {} : { instructionsDraft }),
             ...(authoringOrigin.success ? { authoringOrigin: authoringOrigin.data } : {}),
+            ...(actionDefault.success ? { actionDefault: actionDefault.data } : {}),
             ...(composerAttachments !== undefined ? { composerAttachments } : {}),
             ...(launchUserAttemptId ? { launchUserAttemptId } : {}),
             selectedMachineId,
@@ -922,6 +925,9 @@ export function saveNewSessionDraft(draft: NewSessionDraft, scope?: ServerAccoun
         }),
         ...(canonicalDraft.managedMachineAcquisition === undefined ? {} : {
             managedMachineAcquisition: nullable(ManagedMachineAcquisitionDraftSchema).parse(canonicalDraft.managedMachineAcquisition),
+        }),
+        ...(canonicalDraft.actionDefault === undefined ? {} : {
+            actionDefault: PluginUiNewSessionActionDefaultV1Schema.parse(canonicalDraft.actionDefault),
         }),
         ...(canonicalDraft.authoringOrigin === undefined ? {} : {
             authoringOrigin: PluginUiNewSessionSeedOriginV1Schema.parse(canonicalDraft.authoringOrigin),

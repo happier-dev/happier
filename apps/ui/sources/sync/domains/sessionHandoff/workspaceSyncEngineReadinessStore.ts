@@ -1,4 +1,4 @@
-import type { WorkspaceSyncRuntimeReadinessV1 } from '@happier-dev/protocol';
+import type { WorkspaceSyncRuntimeReadinessV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 
 export type WorkspaceSyncEngineScope = Readonly<{
     serverId?: string | null;

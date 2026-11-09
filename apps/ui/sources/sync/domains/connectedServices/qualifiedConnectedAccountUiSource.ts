@@ -1,7 +1,3 @@
-import type {
-    AuthCredentials,
-} from '@/auth/storage/tokenStorage';
-import { listQualifiedConnectedAccountGroupsV4 } from '@/sync/api/account/apiQualifiedConnectedAccountsV4';
 import { BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID, type BuiltInLegacyConnectedAccountOperation } from '@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility';
 import { ConnectedServiceAuthGroupPolicyV1Schema, type ConnectedServiceAuthGroupMemberStateV1, type ConnectedServiceAuthGroupPolicyV1, type ConnectedServiceAuthGroupStateV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { CONNECTED_SERVICE_POOL_MEMBER_PRIORITY_STEP, type ConnectedServiceConfigurationActionIdV1 } from '@happier-dev/protocol/connect/configurationActionsV1';
@@ -63,25 +59,6 @@ export type QualifiedConnectedAccountUiGroup = Readonly<{
     members: readonly QualifiedConnectedAccountUiGroupMember[];
 }>;
 
-/** A response may settle only against its captured Account/source and pool revision. */
-export function isQualifiedConnectedAccountGroupRevisionCurrent(params: Readonly<{
-    state: Readonly<{ basis: object | null; groups: readonly QualifiedConnectedAccountUiGroup[] }>;
-    basis: object | null;
-    group: QualifiedConnectedAccountUiGroup;
-    allowAbsent?: boolean;
-}>): boolean {
-    if (params.state.basis !== params.basis) return false;
-    const current = params.state.groups.find((candidate) => (
-        sameQualifiedConnectedAccountGroupRef(candidate.ref, params.group.ref)
-    ));
-    // A successful DELETE may be reflected by a refresh before its acknowledgement.
-    // Absence can settle that DELETE, but cannot admit a late mutation or a replacement row.
-    if (!current) return params.allowAbsent === true;
-    return current.revision.generation === params.group.revision.generation
-        && current.revision.incarnation === params.group.revision.incarnation
-        && current.revision.runtimeStateRevision === params.group.revision.runtimeStateRevision;
-}
-
 /**
  * Spacing of the member priority ladder. Priorities are rewritten as
  * `(index + 1) * MEMBER_PRIORITY_STEP` on reorder, so the gap left between two
@@ -121,7 +98,7 @@ function assertQualifiedGroupService(
     }
 }
 
-function fromQualifiedGroup(
+export function fromQualifiedGroup(
     group: QualifiedConnectedAccountGroupV4,
     expectedService: PluginContributionIdentityV1,
 ): QualifiedConnectedAccountUiGroup {
@@ -205,7 +182,6 @@ export function isQualifiedConnectedAccountLegacyOperationSupported(params: Read
 }
 
 export type QualifiedConnectedAccountGroupsClient = Readonly<{
-    list(): Promise<readonly QualifiedConnectedAccountUiGroup[]>;
     create(params: Readonly<{
         groupId: string;
         displayName: string | null;
@@ -237,16 +213,14 @@ export type QualifiedConnectedAccountGroupsClient = Readonly<{
 }>;
 
 export function createQualifiedConnectedAccountGroupsClient(params: Readonly<{
-    credentials: AuthCredentials;
     service: PluginContributionIdentityV1;
-    source: QualifiedConnectedAccountUiSource;
-    /** Read-only list clients omit this port; edits never fall back to a raw writer. */
+    /** Edits never fall back to a raw writer when Action custody is absent. */
     mutation?: Readonly<{
         execute(actionId: ConnectedServiceConfigurationActionIdV1, input: unknown): Promise<unknown>;
         readGroup(ref: QualifiedConnectedAccountUiGroup['ref']): Promise<QualifiedConnectedAccountGroupV4>;
     }>;
 }>): QualifiedConnectedAccountGroupsClient {
-    const { credentials, service } = params;
+    const { service } = params;
     const mutation = () => {
         if (!params.mutation) throw new QualifiedConnectedAccountUiSourceError('action_authorization_unavailable');
         return params.mutation;
@@ -284,13 +258,6 @@ export function createQualifiedConnectedAccountGroupsClient(params: Readonly<{
     };
 
     return {
-        async list() {
-            const response = await listQualifiedConnectedAccountGroupsV4(
-                credentials,
-                { service },
-            );
-            return response.groups.map((group) => fromQualifiedGroup(group, service));
-        },
         async create(input) {
             return normalizeExpected(await mutateGroup('connectedServices.pools.create',
                 {

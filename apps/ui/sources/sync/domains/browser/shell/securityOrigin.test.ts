@@ -79,4 +79,17 @@ describe('selectBrowserSecurityOriginModel', () => {
         const model = selectBrowserSecurityOriginModel(view({ securityOrigin: null, currentUrl: null }));
         expect(model).toEqual({ securityLevel: 'unknown', originLabel: null });
     });
+
+    it('names a relay preview by the service it exposes, never the opaque per-preview host', () => {
+        const model = selectBrowserSecurityOriginModel(view({
+            target: {
+                kind: 'localServicePreview',
+                targetId: 'localServicePreview:x',
+                display: { addressLabel: 'localhost:5173' },
+            } as unknown as BrowserControlViewState['target'],
+            securityOrigin: 'http://p-7f3a9c.preview.relay.localhost:3030',
+            currentUrl: 'http://p-7f3a9c.preview.relay.localhost:3030/pricing',
+        }));
+        expect(model).toEqual({ securityLevel: 'local', originLabel: 'localhost:5173' });
+    });
 });

@@ -14,7 +14,7 @@ import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/sett
 import { SavedSecretSchema } from '@happier-dev/protocol/profiles/backendProfileSchema';
 import type { AccountSettingsHistorySavedSecretRecoveryV1 } from '@happier-dev/protocol/account/settings/accountSettingsHistoryClientV1';
 import type { SavedSecretResourceMaterialV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
-import { classifyAccountStorageReadFailure, resolveAccountStorageContext } from '@/sync/encryption/accountStorageContext';
+import { classifyAccountStorageReadFailure, resolveAccountStorageContextForDisclosure } from '@/sync/encryption/accountStorageContext';
 import { resolveSettingsSecretsKeySet } from '@/sync/encryption/resolveSettingsSecretsKeySet';
 import { normalizeAccountSettingsHistoryAfterTransfer } from '@/sync/engine/settings/accountSettingsHistoryRestore';
 import { applyAcknowledgedNotificationChannelCatalog } from '@/sync/store/settings/notificationChannelCatalogSnapshot';
@@ -177,7 +177,7 @@ async function readNotificationChannelCatalogWithMaintenanceInContext(context: N
             let source: Awaited<ReturnType<typeof context.readRawSettingsSnapshot>> | null = null;
             const project = async (catalog: NotificationChannelCatalogSnapshotV1): Promise<NotificationChannelCatalogProjection> => {
                 const { encryption } = await context.resolveAccountEncryption();
-                const current = await resolveAccountStorageContext(context.credentials, { encryption, request: context.request });
+                const current = await resolveAccountStorageContextForDisclosure(context.credentials, { encryption, request: context.request });
                 context.assertCurrent();
                 return { catalog: current.mode === mode ? catalog : { status: 'unavailable', reason: 'account-mode-mismatch' },
                     rawSettings: source?.raw ?? {}, sourceSettingsVersion: source?.version ?? 0 };

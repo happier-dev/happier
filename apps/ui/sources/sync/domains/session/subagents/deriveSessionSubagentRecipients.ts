@@ -29,6 +29,7 @@ export function deriveSessionSubagentRecipients(
             key: subagent.id,
             displayLabel,
             ...(subagent.display.accentName ? { accentName: subagent.display.accentName } : {}),
+            ...(subagent.kind === 'execution_run' && subagent.runRef?.intent ? { runIntent: subagent.runRef.intent } : {}),
             recipient: subagent.recipient.kind === 'execution_run' && subagent.runRef?.intent === 'scm_diff_summary'
                 ? { ...subagent.recipient, label: displayLabel } : subagent.recipient,
         });

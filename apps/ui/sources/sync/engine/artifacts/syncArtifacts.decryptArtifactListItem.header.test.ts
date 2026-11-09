@@ -4,7 +4,7 @@ import { encodeBase64 } from '@/encryption/base64';
 import { Encryption } from '@/sync/encryption/encryption';
 import { ArtifactEncryption } from '@/sync/encryption/artifactEncryption';
 import type { Artifact } from '@/sync/domains/artifacts/artifactTypes';
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 
 import { applySocketArtifactUpdate, decryptArtifactListItem, decryptArtifactWithBody, decryptSocketNewArtifactUpdate,
   fetchArtifactBodyRevisionsFromApi, restoreArtifactBodyRevisionViaApi } from './syncArtifacts';

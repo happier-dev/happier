@@ -1,10 +1,16 @@
+import 'fake-indexeddb/auto';
 import { Platform } from 'react-native';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createWorkspaceFileDownloadHarness } from '@/dev/testkit/harness/workspaceFileDownloadHarness';
 import { createDesktopSecureStorageBoundary } from '@/dev/testkit/mocks/desktopSecureStorage';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createBytesPreviewSource, createComposerStagedMediaPreviewSource, createSessionFilePreviewSource } from './createSessionFilePreviewSource';
+
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
+    Image: { getSize: (_uri: string, success: (width: number, height: number) => void) => success(40, 30) },
+}));
 
 const nativeFiles = vi.hoisted(() => ({
     current: null as ReturnType<typeof import('@/dev/testkit/mocks/expoFileSystem').createExpoFileSystemFileMock> | null,
@@ -23,8 +29,10 @@ await import('expo-file-system');
 describe('createSessionFilePreviewSource', () => {
     const previousPlatform = Platform.OS;
     let harness: Awaited<ReturnType<typeof createWorkspaceFileDownloadHarness>> | null;
+    let annotationConnection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null;
     beforeEach(() => {
         harness = null;
+        annotationConnection = null;
         Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
         const credentials = createDesktopSecureStorageBoundary();
         vi.stubGlobal('__TAURI_INTERNALS__', { invoke: async (command: string, args?: Readonly<Record<string, unknown>>) => {
@@ -38,6 +46,7 @@ describe('createSessionFilePreviewSource', () => {
         nativeFiles.current!.files.clear();
     });
     afterEach(async () => {
+        await annotationConnection?.dispose();
         await harness?.reset();
         Object.defineProperty(Platform, 'OS', { configurable: true, value: previousPlatform });
         vi.restoreAllMocks();
@@ -46,12 +55,15 @@ describe('createSessionFilePreviewSource', () => {
         vi.unstubAllEnvs();
     });
 
-    it('creates revocable Blob object URLs on web', async () => {
+    it.each([false, true])('creates revocable Blob object URLs on web and retains bytes only when requested (%s)', async (retainBytes) => {
         harness = await createWorkspaceFileDownloadHarness({ name: 'image.png', bytes: new Uint8Array([1, 2, 3, 4]) });
         const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:preview-1');
         const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+        const transferOwner = await import('@/sync/domains/transfers/runtime/transferRuntime');
+        const downloads = vi.spyOn(transferOwner, 'downloadDaemonWorkspaceFileToDestination');
         const source = await createSessionFilePreviewSource({
             scope: harness.scope, filePath: '.happier/uploads/messages/m1/image.png', mimeType: 'image/png', maxBytes: 16,
+            retainBytes,
         });
         expect(source.ok, source.ok ? undefined : source.error).toBe(true);
         if (!source.ok || source.source.kind !== 'object-url') throw new Error('Expected object-url preview source');
@@ -60,8 +72,109 @@ describe('createSessionFilePreviewSource', () => {
         expect(blob).toBeInstanceOf(Blob);
         if (!(blob instanceof Blob)) throw new Error('Expected preview Blob');
         expect(new Uint8Array(await blob.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3, 4]));
+        expect(source.source.bytes).toEqual(retainBytes ? new Uint8Array([1, 2, 3, 4]) : undefined);
+        expect(downloads).toHaveBeenCalledTimes(1);
         source.source.revoke();
         expect(revokeObjectURL).toHaveBeenCalledWith('blob:preview-1');
+    });
+
+    it('reads a daemon approval image through its Action from the settled Home inventory while the active map is empty', async () => {
+        harness = await createWorkspaceFileDownloadHarness({ name: 'approval.png', bytes: new Uint8Array([1, 2, 3, 4]) });
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const credentials = await TokenStorage.getCredentialsForServerUrl('https://workspace-download.example.test', { serverId: harness.scope.serverId });
+        if (!credentials) throw new Error('Expected the synthetic download Account');
+        annotationConnection = await restoreServerAccountForTest({ serverUrl: 'https://workspace-download.example.test',
+            serverIdentityId: 'srv_workspace_download', credentials, request: harness.request,
+            additionalRequestOrigins: ['http://127.0.0.1:46001', 'http://127.0.0.1:48126'] });
+        const { sync } = await import('@/sync/sync');
+        await sync.resumeSync('manual');
+        await sync.awaitBootstrapForegroundAcquisition();
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { getAppliedActiveServerId } = await import('@/sync/runtime/orchestration/connectionManager');
+        const { areServerProfileIdentifiersEquivalent } = await import('@/sync/domains/server/serverProfiles');
+        expect(areServerProfileIdentifiersEquivalent(getAppliedActiveServerId(), harness.scope.serverId)).toBe(true);
+        const machine = storage.getState().machines[harness.scope.machineId];
+        if (!machine) throw new Error('Expected the loaded download Machine');
+        storage.setState({ machines: {}, machineListByServerId: { [harness.scope.serverId]: [machine] },
+            machineListStatusByServerId: { [harness.scope.serverId]: 'idle' } });
+        vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:approval-image');
+        const result = await createSessionFilePreviewSource({ scope: harness.scope,
+            filePath: '.happier/uploads/artifacts/session/capture/approval.png', mimeType: 'image/png', maxBytes: 16 });
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, source: { byteLength: 4 } });
+        if (result.ok) {
+            if (result.source.kind === 'object-url') result.source.revoke();
+            else await result.source.delete();
+        }
+    });
+
+    it('applies session-image marks through the Action, real download and shared draft append without mutating the transcript', async () => {
+        harness = await createWorkspaceFileDownloadHarness({ name: 'source.png', bytes: new Uint8Array([1, 2, 3, 4]) });
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const credentials = await TokenStorage.getCredentialsForServerUrl('https://workspace-download.example.test', { serverId: harness.scope.serverId });
+        if (!credentials) throw new Error('Expected the synthetic download Account');
+        annotationConnection = await restoreServerAccountForTest({ serverUrl: 'https://workspace-download.example.test',
+            serverIdentityId: 'srv_workspace_download', credentials, request: harness.request,
+            // The download fixture publishes a loopback carrier and its native tunnel.
+            additionalRequestOrigins: ['http://127.0.0.1:46001', 'http://127.0.0.1:48126'] });
+        const { sync } = await import('@/sync/sync');
+        await sync.resumeSync('manual');
+        await sync.awaitBootstrapForegroundAcquisition();
+        const { SessionMediaItemV1Schema } = await import('@happier-dev/protocol');
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { createSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+        const { createSessionMessagesFixture } = await import('@/dev/testkit/fixtures/transcriptFixtures');
+        const { installImageAnnotationCanvasBoundary } = await import('@/dev/testkit/mocks/imageAnnotationCanvas');
+        await (await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage')).prepareSessionDraftPersistenceStorage();
+        const { writeExistingSessionDraft } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+        const { readSessionAttachmentDrafts, resolveSessionAttachmentDraftScope, clearSessionAttachmentDrafts } = await import('@/components/sessions/attachments/sessionAttachmentDraftStore');
+        const scope = { serverId: harness.scope.serverId, accountId: 'workspace-download-account' };
+        const destination = { ...scope, sessionId: 'annotation-destination' };
+        const originalState = storage.getState();
+        storage.getState().activateProfileScope(scope);
+        storage.getState().activateSessionLocalStateScope(scope);
+        const media = SessionMediaItemV1Schema.parse({ id: 'source-image', mediaKind: 'image', name: 'source.png',
+            path: '.happier/media/source.png', mimeType: 'image/png', sizeBytes: 4, category: 'attachment', role: 'input', origin: { source: 'user-upload' } });
+        const transcript = createSessionMessagesFixture({ isLoaded: true, messageIdsOldestFirst: ['message'], messagesById: {
+            message: { kind: 'user-text', id: 'message', localId: null, createdAt: 1, text: 'Original message',
+                meta: { happier: { kind: 'session_media.v1', payload: { media: [media] } } } },
+        } });
+        storage.setState(state => ({ ...state, sessions: { ...state.sessions,
+            'annotation-source': createSessionFixture({ id: 'annotation-source', serverId: scope.serverId, metadata: { path: '/repo', host: 'test.local', machineId: harness!.scope.machineId } }),
+            [destination.sessionId]: createSessionFixture({ id: destination.sessionId, serverId: scope.serverId }),
+        }, sessionMessages: { ...state.sessionMessages, 'annotation-source': transcript } }));
+        writeExistingSessionDraft({ scope, sessionId: destination.sessionId, patch: { text: '' } });
+        const canvas = installImageAnnotationCanvasBoundary();
+        vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:annotation-source');
+        const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+        try {
+            expect(storage.getState().profileScope).toEqual(scope);
+            expect(storage.getState().sessions['annotation-source']?.access?.capabilities.readTranscript).toBe(true);
+            const { readTranscriptSessionMediaMeta } = await import('@/components/sessions/transcript/structured/happierMetaEnvelope');
+            expect(readTranscriptSessionMediaMeta(transcript.messagesById.message!.meta)?.inlineImages[0]?.id).toBe('source-image');
+            const { resolveWorkspaceTargetForSession } = await import('@/sync/domains/session/resolveWorkspaceTargetForSession');
+            expect(resolveWorkspaceTargetForSession({ ...scope, sessionId: 'annotation-source' })).toMatchObject(harness.scope);
+            const executor = createDefaultActionExecutor();
+            const outcome = await executor.execute('media.annotation.apply', { scope,
+                target: { kind: 'sessionImage', sessionId: 'annotation-source', mediaId: 'source-image' }, into: { sessionId: destination.sessionId },
+                operations: [{ kind: 'mark.add', mark: { id: 'arrow', kind: 'arrow', from: { x: 1, y: 2 }, to: { x: 30, y: 20 }, color: 'red', size: 's' } }],
+            }, { surface: 'ui', authority: 'present_user', serverId: scope.serverId, expectedAccountId: scope.accountId });
+            expect(storage.getState().profileScope).toEqual(scope);
+            expect(storage.getState().sessionMessages['annotation-source']).toBe(transcript);
+            expect(harness.rpcRequests.length, 'The admitted source must reach the real download boundary').toBeGreaterThan(0);
+            expect(revoke, 'The temporary original is disposed after copy').toHaveBeenCalledWith('blob:annotation-source');
+            expect(outcome).toEqual({ ok: true, result: { status: 'appended', imageNumber: 1 } });
+            expect(readSessionAttachmentDrafts(resolveSessionAttachmentDraftScope(destination))).toHaveLength(1);
+            expect(storage.getState().sessionMessages['annotation-source']).toBe(transcript);
+            expect(canvas.encodeCount()).toBe(1);
+            const requests = harness.rpcRequests.length;
+            expect(await executor.execute('media.annotation.read', { scope: { ...scope, accountId: 'other-account' },
+                target: { kind: 'sessionImage', sessionId: 'annotation-source', mediaId: 'source-image' } },
+                { surface: 'ui', authority: 'present_user', serverId: scope.serverId, expectedAccountId: scope.accountId }))
+                .toEqual({ ok: true, result: { status: 'unavailable', reason: 'annotation.targetUnavailable' } });
+            expect(harness.rpcRequests).toHaveLength(requests);
+            expect(canvas.encodeCount()).toBe(1);
+        } finally { clearSessionAttachmentDrafts(resolveSessionAttachmentDraftScope(destination)); storage.setState(originalState, true); }
     });
 
     it('keeps cold workspace download preparation alive beyond the byte-request deadline', async () => {
@@ -175,11 +288,12 @@ describe('createSessionFilePreviewSource', () => {
         expect(revokeObjectURL).toHaveBeenCalledWith('blob:recording-preview-1');
     });
 
-    it('writes native previews through the shared cache file sink and deletes them on cleanup', async () => {
+    it.each([false, true])('writes native previews through the shared cache sink with opt-in retained bytes (%s)', async (retainBytes) => {
         Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios' });
         harness = await createWorkspaceFileDownloadHarness({ name: 'image.png', bytes: new Uint8Array([1, 2, 3]) });
         const source = await createSessionFilePreviewSource({
             scope: harness.scope, filePath: '.happier/uploads/messages/m1/image.png', mimeType: 'image/png', maxBytes: 16,
+            retainBytes,
         });
         expect(source.ok, source.ok ? undefined : source.error).toBe(true);
         if (!source.ok || source.source.kind !== 'cache-file') throw new Error('Expected cache-file preview source');
@@ -190,6 +304,7 @@ describe('createSessionFilePreviewSource', () => {
         await source.source.delete();
         expect(nativeFiles.current!.deleteFile).toHaveBeenCalledWith(source.source.uri);
         expect(nativeFiles.current!.files.size).toBe(0);
+        expect(source.source.bytes).toEqual(retainBytes ? new Uint8Array([1, 2, 3]) : undefined);
     });
 
     it.each([

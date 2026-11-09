@@ -1,4 +1,5 @@
-import type { AccountEncryptionAutomationTemplatesRecoverResultV1, ActionExecuteFailure } from '@happier-dev/protocol';
+import type { AccountEncryptionAutomationTemplatesRecoverResultV1} from '@happier-dev/protocol/auth/accountSecurity';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { getCurrentAuth } from '@/auth/context/currentAuth';
 import { isTokenOnlyAuthCredentials } from '@/auth/storage/tokenStorage';

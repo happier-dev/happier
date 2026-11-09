@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
     SessionReminderPresetsV1Schema,
-    applySessionReminderPresetIntentToAccountSettings,
+    applySessionReminderPresetIntent,
     formatSessionReminderPresetRuleLabel,
     inferSessionReminderPresetRule,
     resolveSessionReminderPresetRule,
@@ -33,21 +33,21 @@ describe('sessionReminderPreset', () => {
         const concurrent = { rule: { kind: 'next_weekday', weekday: 5, minuteOfDay: 600 } } as const;
         const added = { rule: { kind: 'relative_day', daysAhead: 2, minuteOfDay: 480 } } as const;
 
-        expect(applySessionReminderPresetIntentToAccountSettings(
-            { sessionReminderPresetsV1: [kept, concurrent], viewInline: true },
+        expect(applySessionReminderPresetIntent(
+            [kept, concurrent],
             { kind: 'upsert', preset: added },
-        )).toEqual({ sessionReminderPresetsV1: [kept, concurrent, added], viewInline: true });
+        )).toEqual([kept, concurrent, added]);
 
         // An unreadable stored value is treated as no presets, never as a reason to skip the write.
-        expect(applySessionReminderPresetIntentToAccountSettings(
-            { sessionReminderPresetsV1: 'corrupt' },
+        expect(applySessionReminderPresetIntent(
+            SessionReminderPresetsV1Schema.parse('corrupt'),
             { kind: 'upsert', preset: added },
-        )).toEqual({ sessionReminderPresetsV1: [added] });
+        )).toEqual([added]);
 
-        expect(applySessionReminderPresetIntentToAccountSettings(
-            { sessionReminderPresetsV1: [kept, concurrent] },
+        expect(applySessionReminderPresetIntent(
+            [kept, concurrent],
             { kind: 'replace', presets: [concurrent], expectedPresets: [kept, concurrent] },
-        )).toEqual({ sessionReminderPresetsV1: [concurrent] });
+        )).toEqual([concurrent]);
     });
 
     it('describes reusable weekday rules instead of formatting their first absolute date', () => {
@@ -63,14 +63,14 @@ describe('sessionReminderPreset', () => {
         const opened = { label: 'Morning', rule: { kind: 'relative_day', daysAhead: 1, minuteOfDay: 540 } } as const;
         const edited = { ...opened, label: 'Focus' };
         const concurrent = { ...opened, label: 'Other device' };
-        expect(() => applySessionReminderPresetIntentToAccountSettings(
-            { sessionReminderPresetsV1: [concurrent], viewInline: true },
+        expect(() => applySessionReminderPresetIntent(
+            [concurrent],
             { kind: 'replace', presets: [edited], expectedPresets: [opened] },
         )).toThrow();
-        expect(applySessionReminderPresetIntentToAccountSettings(
-            { sessionReminderPresetsV1: [opened], viewInline: true },
+        expect(applySessionReminderPresetIntent(
+            [opened],
             { kind: 'replace', presets: [edited], expectedPresets: [opened] },
-        )).toEqual({ sessionReminderPresetsV1: [edited], viewInline: true });
+        )).toEqual([edited]);
     });
 
     it('drops malformed synced entries and upserts duplicate semantic rules in place', () => {

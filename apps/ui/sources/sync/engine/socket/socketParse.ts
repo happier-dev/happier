@@ -1,5 +1,5 @@
 import { z } from 'zod/mini';
-import type { ExternalSessionTranscriptInvalidationV1 } from '@happier-dev/protocol';
+import type { ExternalSessionTranscriptInvalidationV1 } from '@happier-dev/protocol/sessions/external/secureRefreshV1';
 import { EphemeralUpdateSchema, UpdateContainerSchema } from '@happier-dev/protocol/updates';
 import type { UpdateContainer, EphemeralUpdate } from '@happier-dev/protocol/updates';
 

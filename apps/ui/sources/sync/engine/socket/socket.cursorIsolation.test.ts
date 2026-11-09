@@ -8,6 +8,8 @@ import { storage } from '@/sync/domains/state/storage';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { flushActivityUpdates, handleSocketUpdate, handleUpdateContainer } from './socket';
 import { markSessionSurfaceVisible, resetSessionSurfaceVisibilityForTests } from '@/sync/domains/session/sessionSurfaceVisibility';
+import { sessionRuntimeObservations } from '@/sync/domains/session/sessionRuntimeObservation';
+import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
 
 import { Encryption } from '@/sync/encryption/encryption';
 import { encodeBase64 } from '@/encryption/base64';
@@ -18,7 +20,8 @@ import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernance
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createDeferred } from '@/dev/testkit';
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
-import { V2SessionRecordSchema, projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol';
+import { V2SessionRecordSchema} from '@happier-dev/protocol/sessions/control/contract';
+import { projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { SessionOrganizationSnapshotResponseSchema } from '@happier-dev/protocol/sessions/organization/snapshot';
 import { SESSION_ORGANIZATION_SNAPSHOT_VERSION } from '@happier-dev/protocol/sessions/organization/constants';
 
@@ -67,7 +70,6 @@ function buildBaseParams(overrides: Partial<Omit<Parameters<typeof handleUpdateC
         invalidateSessions: vi.fn(),
         invalidateArtifacts: vi.fn(),
         invalidateFriends: vi.fn(),
-        invalidateFriendRequests: vi.fn(),
         invalidateFeed: vi.fn(),
         invalidateAutomations: vi.fn(),
         invalidateTodos: vi.fn(),
@@ -81,6 +83,7 @@ describe('socket update handling cursor isolation', () => {
     let runtime: typeof import('@/sync/syncEngine')['sync'];
     const sessionRequests: string[] = [];
     let heldSessionDetail: Promise<Response> | null = null;
+    const servedSessionRecords = new Map<string, unknown>();
 
     beforeEach(async () => {
         storage.setState(initialStorageState, true);
@@ -89,6 +92,7 @@ describe('socket update handling cursor isolation', () => {
         encryption = await Encryption.create(secret);
         sessionRequests.length = 0;
         heldSessionDetail = null;
+        servedSessionRecords.clear();
         account = await restoreServerAccountForTest({
             serverUrl: 'https://socket-cursor.example',
             credentials: { token: createAccountTokenForTests('account-a'), secret: encodeBase64(secret, 'base64url') },
@@ -110,6 +114,8 @@ describe('socket update handling cursor isolation', () => {
                 } }));
                 if (path.startsWith('/v2/sessions')) sessionRequests.push(path);
                 if (path === '/v2/sessions/s_new' && heldSessionDetail) return heldSessionDetail;
+                const servedRecord = servedSessionRecords.get(path.slice('/v2/sessions/'.length));
+                if (servedRecord) return Response.json({ session: servedRecord });
                 if (path === '/v2/sessions' || path === '/v2/sessions/active') {
                     return Response.json({ sessions: [], nextCursor: null, hasNext: false });
                 }
@@ -163,11 +169,12 @@ describe('socket update handling cursor isolation', () => {
     });
 
     it.each(['update-session', 'pending-changed', 'session-shared'] as const)(
-        'refreshes list projections instead of hydrating an unseen missing row after %s',
+        'reads an unseen missing row through the row owner instead of hydrating it after %s',
         async (type) => {
             const sessionId = `s_unseen_${type}`;
             const hydrateSessionById = vi.fn();
-            const params = buildBaseParams({ sourceServerId: account.serverId, hydrateSessionById });
+            const refreshSessionRows = vi.fn();
+            const params = buildBaseParams({ sourceServerId: account.serverId, hydrateSessionById, refreshSessionRows });
             const body = type === 'update-session'
                 ? { t: type, id: sessionId, active: true, activeAt: 2 }
                 : type === 'pending-changed'
@@ -176,10 +183,36 @@ describe('socket update handling cursor isolation', () => {
                         sharedBy: { id: 'owner', firstName: null, lastName: null, username: 'owner', avatar: null }, createdAt: 2 };
             await handleSocketUpdate({ ...params, update: { id: 'unseen-update', seq: 2, createdAt: 2, body } });
             expect(hydrateSessionById).not.toHaveBeenCalled();
-            expect(params.invalidateSessions).toHaveBeenCalled();
+            expect(refreshSessionRows).toHaveBeenCalledWith([sessionId]);
+            expect(params.invalidateSessions).not.toHaveBeenCalled();
             expect(storage.getState().sessions[sessionId]).toBeUndefined();
         },
     );
+
+    it('reads an unloaded streaming Session row through the row owner instead of re-reading the Session list', async () => {
+        const sessionId = 's_unloaded_stream';
+        servedSessionRecords.set(sessionId, V2SessionRecordSchema.parse({
+            id: sessionId, seq: 3, createdAt: 1, updatedAt: 2, active: true, activeAt: 2,
+            encryptionMode: 'plain', metadata: JSON.stringify({ path: '/elsewhere', host: 'test' }), metadataVersion: 1,
+            agentState: null, agentStateVersion: 0, dataEncryptionKey: null, share: null,
+            effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }],
+                capabilities: projectSessionAccessCapabilitiesV1({ owner: true, grants: [] }) },
+        }));
+        const socketOwner = runtime as unknown as { handleUpdate(update: unknown): Promise<void> };
+        const sessionsQueue = Reflect.get(runtime, 'sessionsSync') as { awaitQueue(): Promise<unknown> };
+        // Another device streams a turn in a Session this client has not loaded: each turn
+        // checkpoint arrives as a row-level update-session frame.
+        for (let seq = 2; seq <= 6; seq += 1) {
+            await socketOwner.handleUpdate({ id: `unloaded-${seq}`, seq, createdAt: seq,
+                body: { t: 'update-session', id: sessionId, active: true, activeAt: seq, thinking: seq % 2 === 0 } });
+            await sessionsQueue.awaitQueue();
+        }
+        const fullListReads = sessionRequests.filter((path) => path === '/v2/sessions' || path === '/v2/sessions/active');
+        expect(fullListReads).toEqual([]);
+        await vi.waitFor(() => expect(storage.getState().sessionListRowsByServerId[account.serverId]?.[sessionId]).toBeDefined());
+        expect(sessionRequests.filter((path) => path === `/v2/sessions/${sessionId}`).length).toBeGreaterThan(0);
+        expect(storage.getState().sessions[sessionId]).toBeUndefined();
+    });
 
     it('defers encrypted cache-only metadata until the Session has a content consumer', async () => {
         const sessionId = 's_unseen_cached_metadata';
@@ -215,7 +248,7 @@ describe('socket update handling cursor isolation', () => {
     it('targets an absent envelope and clears pending availability when a valid socket envelope arrives', async () => {
         const { Encryption } = await import('@/sync/encryption/encryption');
         const { encodeBase64 } = await import('@/encryption/base64');
-        const { sealEncryptedDataKeyEnvelopeV1 } = await import('@happier-dev/protocol');
+        const { sealEncryptedDataKeyEnvelopeV1} = await import('@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1');
         const sessionId = 'socket_pending_recipient';
         markSessionSurfaceVisible(sessionId);
         const encryption = await Encryption.create(new Uint8Array(32).fill(7));
@@ -278,7 +311,7 @@ describe('socket update handling cursor isolation', () => {
         const saveChangesCursorSpy = vi.spyOn(persistence, 'saveChangesCursor');
         const { Encryption } = await import('@/sync/encryption/encryption');
         const { encodeBase64 } = await import('@/encryption/base64');
-        const { sealEncryptedDataKeyEnvelopeV1 } = await import('@happier-dev/protocol');
+        const { sealEncryptedDataKeyEnvelopeV1} = await import('@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1');
         const encryption = runtime.encryption;
         if (!encryption) throw new Error('Expected the restored E2EE Account cipher');
         const writer = await Encryption.create(new Uint8Array(32).fill(7));
@@ -520,9 +553,12 @@ describe('socket update handling cursor isolation', () => {
 
         flushActivityUpdates({ updates, applySessions });
 
-        expect(applySessions).toHaveBeenCalledTimes(1);
-        const updatedSession = applySessions.mock.calls[0]?.[0]?.[0] as Session;
-        expect(updatedSession.activeAt).toBe(300);
+        // Liveness advances at its observation owner without republishing unchanged
+        // terminal Session content for a healthy timestamp-only heartbeat.
+        expect(applySessions).not.toHaveBeenCalled();
+        const address = normalizeSessionAddress(getActiveServerSnapshot().serverId, sessionId)!;
+        expect(sessionRuntimeObservations.read(address)?.activeAt).toBe(300);
+        const updatedSession = storage.getState().sessions[sessionId]!;
         expect(updatedSession.thinking).toBe(false);
         expect(updatedSession.latestTurnStatus).toBe('completed');
     });

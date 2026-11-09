@@ -1,4 +1,3 @@
-import { SESSION_SETTINGS } from '@/components/settings/session/sessionSettings';
 // Enter through the mounted catalog consumer, matching App-shell evaluation:
 // a cold owner-first import can observe the catalog mid-initialization.
 import '@/components/settings/catalog/runtime/useResolvedSettingsPageCatalog';
@@ -53,13 +52,18 @@ vi.mock('react-native-unistyles', async () => {
 
 import { settingsDefaults, applySettings, settingsParse, type Settings } from '@/sync/domains/settings/settings';
 import { localSettingsDefaults, applyLocalSettings } from '@/sync/domains/settings/localSettings';
+import { collapsedGroupsState, replaceCollapsedGroupKeys } from '@/sync/domains/state/disclosureUiState';
 import * as desktopHostBoundary from '@/utils/platform/desktopHost';
 import { createSettingsDeclarationAction, resolveSettingsDeclarationOperationApprovalPolicy } from './settingsDeclarationAction';
-import { changeComputerUseSettings } from '@/sync/domains/computer/computerProviderSettings';
-import { readComputerUseSettingsForMachine } from '@happier-dev/protocol/computer/v1';
 import { UI_FONT_SCALE_PRESETS } from '@/components/ui/text/uiFontScale';
 import { readSettingsPageGate } from '@/components/settings/catalog/pageCatalog';
-import { ActionsSettingsV1Schema, createActionExecutor, FeaturesResponseSchema, getModelPackCatalogEntry, isApprovalRequiredByActionsSettings, VoiceProviderContributionSchema, type ActionsSettingsV1, type AutomationV3Settings } from '@happier-dev/protocol';
+import { ActionsSettingsV1Schema, type ActionsSettingsV1} from '@happier-dev/protocol/actions/actionSettings';
+import { createActionExecutor} from '@happier-dev/protocol/actions/actionExecutor';
+import { FeaturesResponseSchema} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { getModelPackCatalogEntry} from '@happier-dev/protocol/voice/modelPacks/catalog';
+import { isApprovalRequiredByActionsSettings} from '@happier-dev/protocol/actions/actionApprovalPolicy';
+import { VoiceProviderContributionSchema} from '@happier-dev/protocol/plugins/contributions/voice';
+import { type AutomationV3Settings } from '@happier-dev/protocol/automations/automationApiV3';
 import { createVoiceProviderRegistry } from '@/voice/registry/providerRegistry';
 import { commitExternalVoiceProviderRegistration, removeExternalVoiceProviderRegistration } from '@/voice/registry/externalVoiceProviderRegistrations';
 import { getResolvedAgentCatalogEntries } from '@/agents/backendCatalog/agentCatalogProjection';
@@ -75,7 +79,7 @@ import { resolveVoiceConversationLanguageSetting } from '@/voice/settings/voiceS
 import { t } from '@/text';
 import { buildScmDiffSummaryModelProfiles } from '@/settings/scmDiffSummary/models';
 import { getAgentCore, getAgentStaticModels } from '@happier-dev/agents';
-import { readBackendTargetRefV2 } from '@happier-dev/protocol';
+import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { createScmDiffSummarySettingsCatalogReader } from './scmDiffSummarySettingsCatalog';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
@@ -97,10 +101,44 @@ import { createAtmosphereSettingServices } from './atmosphereSettingServices';
 import { ProjectAccountRowMutationRequestV1Schema, type ProjectAccountRowV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import * as systemTaskRuntimeBoundary from '@/components/systemTasks/systemTasksRuntime';
 import { createManualSystemTaskRunner } from '@/dev/testkit/harness/manualSystemTaskRunner';
+import { createDefaultCollectionSpaceV1 } from '@happier-dev/protocol/collections/spaces/collectionSpacesV1';
+import { accountSettingsScopeKeySuffix } from '@/sync/domains/settings/scope/accountSettingsScope';
+import { readCollectionSpaceId, selectCollectionSpace } from '@/sync/domains/session/listing/sessionListSpaces';
+import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
 import { publishLocalDaemonStatus, readLocalDaemonSharedState } from '@/components/settings/machines/localControl/localDaemonSharedState';
 import type { LocalDaemonStatusData } from '@/components/settings/machines/localControl/useLocalDaemonControl';
+import { buildSessionListCollapseContextKey, buildSessionListCollapseKey, readSessionListCollapsedGroups } from '@/sync/domains/session/listing/sessionListCollapseState';
+import { resolveNavigationPlacements } from '@/sync/domains/settings/mobileSurfacePinning';
+import { countStoreNotifications } from '@/dev/testkit/performance/counts';
+import { SESSION_SETTINGS } from '@/components/settings/session/sessionSettings';
+import { changeComputerUseSettings } from '@/sync/domains/computer/computerProviderSettings';
+import { readComputerUseSettingsForMachine } from '@happier-dev/protocol/computer/v1';
 
 describe('personal list Settings approval defaults', () => {
+    it.each([
+        ['agents.idleCompaction', 'sessionIdleCompactionEnabledByTargetKey', false],
+        ['agents.idleCompaction.minContextTokens', 'sessionIdleCompactionMinContextTokensByTargetKey', 0],
+        ['agents.idleCompaction.cacheWindowOverrideMs', 'sessionIdleCompactionCacheWindowOverrideMsByTargetKey', 2_147_483_647],
+    ] as const)('sets, reads and resets one Agent target through %s', async (anchor, key, value) => {
+        const target = 'agent:happier.agent.claude/claude';
+        const sibling = 'agent:happier.agent.codex/codex';
+        const initial = settingsParse({ sessionIdleCompactionEnabledByTargetKey: { [sibling]: true },
+            sessionIdleCompactionMinContextTokensByTargetKey: { [sibling]: 25 },
+            sessionIdleCompactionCacheWindowOverrideMsByTargetKey: { [sibling]: 60_000 } });
+        const owner = createOwner(undefined, true, true, initial);
+        const executor = throughActionExecutor(owner.action, () => owner.account().actionsSettingsV1);
+        const context = { surface: 'agent', authority: 'account_automation' } as const;
+        expect(await executor.execute('settings.set', { anchor, value: { agentTargetKey: target, value } }, context)).toMatchObject({ ok: true });
+        expect(await executor.execute('settings.get', { anchor }, context)).toMatchObject({ ok: true,
+            result: { value: { ...initial[key], [target]: value } } });
+        expect(await executor.execute('settings.reset', { anchor, key: target }, context)).toMatchObject({ ok: true });
+        expect(owner.account()[key]).toEqual(initial[key]);
+        for (const map of ['sessionIdleCompactionEnabledByTargetKey', 'sessionIdleCompactionMinContextTokensByTargetKey',
+            'sessionIdleCompactionCacheWindowOverrideMsByTargetKey'] as const) expect(owner.account()[map]).toEqual(initial[map]);
+        const before = owner.account();
+        expect(await executor.execute('settings.set', { anchor, value: { agentTargetKey: target, value: -1 } }, context)).toMatchObject({ ok: false, errorCode: 'invalid_setting_value' });
+        expect(owner.account()).toEqual(before);
+    });
     it.each(['ui', 'agent', 'cli'] as const)('enables, updates and removes one auto-link source with the same Settings Action on %s', async surface => {
         const identity = { machineId: 'machine-one', qualifiedIdentity: { v: 1 as const,
             agent: { pluginId: 'happier.agent.codex', localId: 'codex' }, source: { kind: 'codexHome', contractVersion: 1 } },
@@ -130,6 +168,29 @@ describe('personal list Settings approval defaults', () => {
             ...identity, enabled: true,
         } }, context)).toMatchObject({ ok: false, errorCode: 'invalid_setting_value' });
     });
+    it('lets an agent discover, add and remove reminder presets through safe Settings Actions', async () => {
+        const owner = createOwner();
+        const executor = throughActionExecutor(owner.action, () => owner.account().actionsSettingsV1);
+        const context = { surface: 'agent', authority: 'account_automation' } as const;
+        const anchor = 'session.reminderPresets';
+        const preset = { rule: { kind: 'relative_day', daysAhead: 1, minuteOfDay: 540 } } as const;
+        expect(await executor.execute('settings.list', { pageId: 'session' }, context))
+            .toMatchObject({ ok: true, result: { items: expect.arrayContaining([
+                expect.objectContaining({ anchor, readable: true, writable: true }),
+            ]) } });
+        expect(await executor.execute('settings.set', { anchor, value: { kind: 'upsert', preset } }, context))
+            .toMatchObject({ ok: true });
+        expect(owner.account().sessionReminderPresetsV1).toEqual([preset]);
+        expect(await executor.execute('settings.get', { anchor }, context))
+            .toEqual({ ok: true, result: { anchor, value: [preset] } });
+        expect(await executor.execute('settings.set', { anchor, value: {
+            kind: 'replace', expectedPresets: [preset], presets: [],
+        } }, context)).toMatchObject({ ok: true });
+        expect(owner.account().sessionReminderPresetsV1).toEqual([]);
+        expect(await executor.execute('settings.get', { anchor }, context))
+            .toEqual({ ok: true, result: { anchor, value: [] } });
+    });
+
     it('shares the opt-in status words preference through safe agent Actions and the Account writer', async () => {
         const owner = createOwner();
         const executor = throughActionExecutor(owner.action, () => owner.account().actionsSettingsV1);
@@ -149,35 +210,77 @@ describe('personal list Settings approval defaults', () => {
         expect(await executor.execute('settings.reset', { anchor }, context))
             .toMatchObject({ ok: true, result: { value: false } });
         expect(owner.account()).toHaveProperty('sessionListStatusWords', false);
-    })
+    });
 
-    it.each([
-        ['agents.idleCompaction', 'sessionIdleCompactionEnabledByTargetKey', false],
-        ['agents.idleCompaction.minContextTokens', 'sessionIdleCompactionMinContextTokensByTargetKey', 0],
-        ['agents.idleCompaction.cacheWindowOverrideMs', 'sessionIdleCompactionCacheWindowOverrideMsByTargetKey', 2_147_483_647],
-    ] as const)('sets, reads and resets one Agent target through %s', async (anchor, key, value) => {
-        const target = 'agent:happier.agent.claude/claude';
-        const sibling = 'agent:happier.agent.codex/codex';
-        const initial = settingsParse({ sessionIdleCompactionEnabledByTargetKey: { [sibling]: true },
-            sessionIdleCompactionMinContextTokensByTargetKey: { [sibling]: 25 },
-            sessionIdleCompactionCacheWindowOverrideMsByTargetKey: { [sibling]: 60_000 } });
-        const owner = createOwner(undefined, true, true, initial);
+    it('executes agent set and reset through the real declaration and executor without a waiver', async () => {
+        const owner = createOwner();
         const executor = throughActionExecutor(owner.action, () => owner.account().actionsSettingsV1);
         const context = { surface: 'agent', authority: 'account_automation' } as const;
-        expect(await executor.execute('settings.set', { anchor, value: { agentTargetKey: target, value } }, context)).toMatchObject({ ok: true });
-        expect(await executor.execute('settings.get', { anchor }, context)).toMatchObject({ ok: true,
-            result: { value: { ...initial[key], [target]: value } } });
-        expect(await executor.execute('settings.reset', { anchor, key: target }, context)).toMatchObject({ ok: true });
-        expect(owner.account()[key]).toEqual(initial[key]);
-        for (const map of ['sessionIdleCompactionEnabledByTargetKey', 'sessionIdleCompactionMinContextTokensByTargetKey',
-            'sessionIdleCompactionCacheWindowOverrideMsByTargetKey'] as const) expect(owner.account()[map]).toEqual(initial[map]);
-        const before = owner.account();
-        expect(await executor.execute('settings.set', { anchor, value: { agentTargetKey: target, value: -1 } }, context)).toMatchObject({ ok: false, errorCode: 'invalid_setting_value' });
-        expect(owner.account()).toEqual(before);
+        expect(await executor.execute('settings.set', { anchor: 'session.list.density', value: 'detailed' }, context))
+            .toMatchObject({ ok: true, result: { value: 'detailed' } });
+        expect(owner.account().sessionListDensity).toBe('detailed');
+        expect(await executor.execute('settings.reset', { anchor: 'session.list.density' }, context))
+            .toMatchObject({ ok: true });
+        expect(owner.account().sessionListDensity).toBe(settingsDefaults.sessionListDensity);
+    });
+
+    it('round-trips explicit privacy tag preferences through the Account Settings Action', async () => {
+        const owner = createOwner();
+        const executor = throughActionExecutor(owner.action, () => owner.account().actionsSettingsV1);
+        const context = { surface: 'ui', authority: 'present_user', bypassApprovals: true } as const;
+        const anchor = 'session.list.recordingHiddenTags';
+        const value = { 'server-a': ['private'], 'server-b': ['work'] };
+        expect(await executor.execute('settings.set', { anchor, value }, context)).toMatchObject({ ok: true });
+        expect(owner.account().sessionListHiddenTagIdsWhileRecording).toEqual(value);
+        expect(await executor.execute('settings.get', { anchor }, context)).toMatchObject({ ok: true, result: { value } });
+        expect(await executor.execute('settings.set', { anchor, value: { 'server-a': [false] } }, context))
+            .toMatchObject({ ok: false, errorCode: 'invalid_setting_value' });
+        expect(owner.account().sessionListHiddenTagIdsWhileRecording).toEqual(value);
+        expect(await executor.execute('settings.reset', { anchor }, context)).toMatchObject({ ok: true });
+        expect(owner.account().sessionListHiddenTagIdsWhileRecording).toEqual({});
     });
 });
 
 describe('Track device-local Settings declaration', () => {
+    it.each(['ui', 'agent', 'cli'] as const)('round-trips the local collapsed-group map through safe %s Settings without changing Account preferences', async surface => {
+        replaceCollapsedGroupKeys({});
+        const owner = createOwner();
+        const executor = throughActionExecutor(owner.action, () => owner.account().actionsSettingsV1);
+        const context = { surface, authority: 'account_automation' } as const;
+        const anchor = 'session.list.collapsedGroups';
+        const neighborKey = 'connectedServices:neighbor';
+        const collapseContext = buildSessionListCollapseContextKey({ retentionScopeKey: 'home/account/global', corpusStorage: 'active', selectedSpaceId: 'space' }, 'projects');
+        const groupKey = buildSessionListCollapseKey(collapseContext, 'project-a');
+        expect(await executor.execute('settings.list', { pageId: 'session' }, context)).toMatchObject({ ok: true,
+            result: { items: expect.arrayContaining([expect.objectContaining({ anchor, storageScope: 'local', readable: true, writable: true })]) } });
+        expect(await executor.execute('settings.get', { anchor }, context))
+            .toEqual({ ok: true, result: { anchor, value: {} } });
+        expect(await executor.execute('settings.set', { anchor, value: { [neighborKey]: true } }, context))
+            .toMatchObject({ ok: true });
+        expect(owner.writeLocalSettings).toHaveBeenCalledTimes(0);
+        const read = await owner.action({ actionId: 'settings.get', input: { anchor } });
+        if (!('value' in read) || read.value === null || typeof read.value !== 'object' || Array.isArray(read.value)) {
+            throw new Error('Expected the device-local collapse map');
+        }
+        expect(await executor.execute('settings.set', { anchor, value: { ...read.value, [groupKey]: true } }, context))
+            .toMatchObject({ ok: true, result: { value: { [neighborKey]: true, [groupKey]: true } } });
+        // PERF-L12-J S04: interaction state belongs to the device UI owner, not LocalSettings.
+        expect(collapsedGroupsState.readAll()).toEqual({ [neighborKey]: true, [groupKey]: true });
+        expect(readSessionListCollapsedGroups(collapsedGroupsState.readAll(), collapseContext)).toEqual({ 'project-a': true });
+        // The mounted per-key fold reads the same latest device map, including the agent's previous write.
+        collapsedGroupsState.set(buildSessionListCollapseKey(collapseContext, 'project-b'), true);
+        expect(await executor.execute('settings.get', { anchor }, context)).toMatchObject({ ok: true,
+            result: { value: { [neighborKey]: true, [groupKey]: true, [buildSessionListCollapseKey(collapseContext, 'project-b')]: true } } });
+        expect(owner.account()).toEqual(settingsDefaults);
+        expect(await executor.execute('settings.set', { anchor, value: { [groupKey]: 'true' } }, context))
+            .toMatchObject({ ok: false, errorCode: 'invalid_setting_value' });
+        expect(collapsedGroupsState.readAll()).toEqual({ [neighborKey]: true, [groupKey]: true,
+            [buildSessionListCollapseKey(collapseContext, 'project-b')]: true });
+        expect(await executor.execute('settings.reset', { anchor }, context)).toMatchObject({ ok: true, result: { value: {} } });
+        expect(collapsedGroupsState.readAll()).toEqual({});
+        expect(owner.writeLocalSettings).toHaveBeenCalledTimes(0);
+    });
+
     it('lets an agent read and write Track with SCM writes disabled without changing Account settings', async () => {
         const initialAccount = applySettings(settingsDefaults, { actionsSettingsV1: ActionsSettingsV1Schema.parse({
             ...settingsDefaults.actionsSettingsV1,
@@ -314,6 +417,26 @@ describe('exact Account Settings history purge declaration', () => {
 });
 
 describe('Home atmosphere settings declarations', () => {
+    it('follows layout defaults on layout changes while preserving a custom background place set', async () => {
+        const owner = createOwner();
+        const anchor = 'appearance.atmospherePictureLayout';
+        await owner.action({ actionId: 'settings.set', input: { anchor, value: 'wallpaper' } });
+        expect(owner.account().homeAtmosphere.showOn).toEqual(['home', 'new-session', 'projects', 'sessions', 'pages']);
+        await owner.action({ actionId: 'settings.set', input: { anchor: 'appearance.atmosphereShowOn', value: ['pages'] } });
+        await owner.action({ actionId: 'settings.set', input: { anchor, value: 'horizon' } });
+        expect(owner.account().homeAtmosphere.showOn).toEqual(['pages']);
+    });
+    it('round-trips the background place set through the existing settings Actions and rejects unknown places', async () => {
+        const owner = createOwner();
+        const anchor = 'appearance.atmosphereShowOn';
+        for (const value of [[], ['home'], ['sessions', 'pages']]) {
+            expect(await owner.action({ actionId: 'settings.set', input: { anchor, value } })).toEqual({ anchor, value });
+            expect(await owner.action({ actionId: 'settings.get', input: { anchor } })).toMatchObject({ anchor, value });
+            expect(owner.account().homeAtmosphere.showOn).toEqual(value);
+        }
+        expect(await owner.action({ actionId: 'settings.set', input: { anchor, value: ['future-place'] } }))
+            .toMatchObject({ errorCode: 'invalid_setting_value' });
+    });
     it('discovers and edits every Home control while rebasing nested edits over sibling changes', async () => {
         const owner = createOwner(undefined, false, true, settingsDefaults, undefined, settings => ({
             ...settings, homeAtmosphere: { ...settings.homeAtmosphere, moments: { ...settings.homeAtmosphere.moments, welcome: false } },
@@ -321,7 +444,7 @@ describe('Home atmosphere settings declarations', () => {
         const choices = [
             ['atmosphereSource', 'picture'], ['atmospherePlanetPlacement', 'rise'], ['atmospherePlanetStyle', 'rich'],
             ['atmospherePlanetDigits', false], ['atmospherePictureRef', { kind: 'builtin', id: 'calm-sea' }],
-            ['atmospherePictureLayout', 'wallpaper'], ['atmosphereBehindSessions', true],
+            ['atmospherePictureLayout', 'wallpaper'], ['atmosphereShowOn', ['home', 'new-session', 'projects', 'sessions']],
             ['atmosphereMoments', { send: false, loading: true }],
         ] as const;
         const listing = await owner.action({ actionId: 'settings.list', input: { pageId: 'appearance' } });
@@ -576,6 +699,20 @@ describe('Home atmosphere picture and Project mutations', () => {
         expect(await owner.action({ actionId: 'settings.set', input: { anchor: 'appearance.projectAtmosphere', target,
             value: projectAtmosphereEdit(settingsDefaults.homeAtmosphere, undefined, current => ({ ...current, source: 'none' })) } })).toMatchObject({ value: { source: 'none' } });
         expect(row.content).toMatchObject({ t: 'plain', v: { value: { pinned: true, label: 'Keep me', atmosphere: { source: 'none' } } } });
+        const selectedAtMs = 1_800_000_000_000;
+        const clock = vi.spyOn(Date, 'now').mockReturnValue(selectedAtMs);
+        onTestFinished(() => clock.mockRestore());
+        const chosen = { ...atmosphere, source: 'picture', picture: { ...atmosphere.picture,
+            ref: { kind: 'builtin', id: 'calm-sea' } } };
+        expect(await owner.action({ actionId: 'settings.set', input: { anchor: 'appearance.projectAtmosphere', target,
+            value: chosen } })).toMatchObject({ value: { picture: { selectedAtMs } } });
+        clock.mockReturnValue(selectedAtMs + 3_600_000);
+        expect(await owner.action({ actionId: 'settings.set', input: { anchor: 'appearance.projectAtmosphere', target,
+            value: { ...chosen, picture: { ...chosen.picture, selectedAtMs, layout: 'wallpaper' } } } }))
+            .toMatchObject({ value: { picture: { layout: 'wallpaper', selectedAtMs } } });
+        expect(await owner.action({ actionId: 'settings.set', input: { anchor: 'appearance.projectAtmosphere', target,
+            value: { ...chosen, picture: { ...chosen.picture, selectedAtMs, ref: { kind: 'builtin', id: 'dune-grass' } } } } }))
+            .toMatchObject({ value: { picture: { ref: { kind: 'builtin', id: 'dune-grass' }, selectedAtMs: selectedAtMs + 3_600_000 } } });
         expect(await owner.action({ actionId: 'settings.reset', input: { anchor: 'appearance.projectAtmosphere', target } }))
             .toEqual({ anchor: 'appearance.projectAtmosphere', value: 'home' });
         // The same Project row/CAS owner selects acquired bytes; it must never select them in Home.
@@ -628,7 +765,7 @@ function throughActionExecutor(settingsDeclarationAction: ReturnType<typeof crea
         ? { isActionApprovalRequired: (actionId, context, input) => {
             const anchor = input && typeof input === 'object' && 'anchor' in input && typeof input.anchor === 'string' ? input.anchor : '';
             const operationPolicy = actionId === 'settings.invoke'
-                ? resolveSettingsDeclarationOperationApprovalPolicy(anchor, settingsDefaults) : undefined;
+                ? resolveSettingsDeclarationOperationApprovalPolicy(anchor, settingsDefaults, input) : undefined;
             const safety = operationPolicy ? operationPolicy.requiresApproval ? 'danger' : 'safe' : undefined;
             return isApprovalRequiredByActionsSettings(actionId, readActionsSettings(), context, safety, undefined, input,
                 operationPolicy?.uiConfirmationRequired);
@@ -659,6 +796,7 @@ function createOwner(host: { os: 'web' | 'ios'; desktop: boolean } = { os: 'web'
     let account = { ...initialAccount };
     let rawAccount: Record<string, unknown> = { ...initialAccount };
     let local = { ...localSettingsDefaults };
+    const writeLocalSettings = vi.fn((delta: Partial<typeof local>) => { local = applyLocalSettings(local, delta); });
     const openedInteractions: string[] = [];
     const readScmDiffSummaryCatalog: ReturnType<typeof createScmDiffSummarySettingsCatalogReader> = async (settings, storedValue) => {
         const captured = await readSummaryCatalogAccount();
@@ -696,11 +834,250 @@ function createOwner(host: { os: 'web' | 'ios'; desktop: boolean } = { os: 'web'
                 ...(options.capture ? { captured: options.capture({ before, applied: rawAccount, beforeVersion: 1 }) } : {}) };
         },
         readLocalSettings: () => local,
-        writeLocalSettings: (delta) => { local = applyLocalSettings(local, delta); },
+        writeLocalSettings,
         automationSettings,
     });
-    return { action, account: () => account, rawAccount: () => rawAccount, local: () => local, openedInteractions };
+    return { action, account: () => account, rawAccount: () => rawAccount, local: () => local, openedInteractions, writeLocalSettings };
 }
+
+describe('scoped policy mutation results', () => {
+    it('lists reusable approval profiles and updates one without replacing sibling Account policy', async () => {
+        const policy = ActionsSettingsV1Schema.parse({ v: 1, actions: {
+            'session.stop': { approvalRequiredSurfaces: ['agent'] },
+        }, approvalProfiles: [{ id: 'custom:retained', name: 'Retained', defaultMode: 'ask' }] });
+        const owner = createOwner(undefined, true, true, { ...settingsDefaults, actionsSettingsV1: policy });
+        const executor = throughActionExecutor(owner.action, () => owner.account().actionsSettingsV1);
+        const context = { surface: 'ui', authority: 'present_user' } as const;
+        const profile = { id: 'custom:deploy', name: 'Deploy safely', defaultMode: 'allow', categories: { danger: 'ask' } } as const;
+        expect(await executor.execute('actions.policy.set', { profileChange: { kind: 'upsert', profile } }, context))
+            .toMatchObject({ ok: true });
+        const listed = await executor.execute('actions.policy.get', { profiles: true }, context);
+        expect(listed).toMatchObject({ ok: true, result: { profiles: expect.arrayContaining([
+            expect.objectContaining({ id: 'builtin:read-propose' }), profile,
+            expect.objectContaining({ id: 'custom:retained' }),
+        ]) } });
+        expect(owner.account().actionsSettingsV1.actions).toEqual(policy.actions);
+        expect(await executor.execute('actions.policy.set', { profileChange: { kind: 'delete', id: profile.id } }, context))
+            .toMatchObject({ ok: true });
+        expect(owner.account().actionsSettingsV1.approvalProfiles).toEqual(policy.approvalProfiles);
+    });
+
+    it('keeps an oversized scoped UI choice unsaved and reports settings_too_large through the real Action', async () => {
+        const owner = createOwner(undefined, true);
+        const executor = throughActionExecutor(owner.action, () => owner.account().actionsSettingsV1);
+        const input = { actionId: 'session.stop', audience: 'agent', mode: 'allowed',
+            scope: { kind: 'environment', environmentId: '界'.repeat(22000) } } as const;
+        const before = owner.rawAccount();
+        expect(await executor.execute('actions.policy.set', input, { surface: 'ui', authority: 'present_user' }))
+            .toMatchObject({ ok: false, errorCode: 'settings_too_large' });
+        expect(owner.rawAccount()).toBe(before);
+        expect(input.scope.environmentId).toBe('界'.repeat(22000));
+    });
+
+    it('round-trips and clears the scoped UI intent without changing global or sibling policy', async () => {
+        const sibling = { actionId: 'future.action', scope: { kind: 'machine', machineId: 'B' },
+            approvalRequiredSurfaces: ['agent'], approvalWaivedSurfaces: [] };
+        const policy = ActionsSettingsV1Schema.parse({ v: 1, actions: {
+            'session.stop': { approvalRequiredSurfaces: ['agent'] },
+        }, scopedApprovalPreferences: [sibling] });
+        const owner = createOwner(undefined, true, true, { ...settingsDefaults, actionsSettingsV1: policy });
+        const executor = throughActionExecutor(owner.action, () => owner.account().actionsSettingsV1);
+        const target = { actionId: 'session.stop', audience: 'agent', scope: { kind: 'environment', environmentId: 'staging' } } as const;
+        const context = { surface: 'ui', authority: 'present_user' } as const;
+        expect(await executor.execute('actions.policy.set', { ...target, mode: 'allowed' }, context)).toMatchObject({ ok: true });
+        expect(await executor.execute('actions.policy.get', target, context)).toMatchObject({ ok: true, result: { ...target, mode: 'allowed' } });
+        expect(await executor.execute('actions.policy.reset', target, context)).toMatchObject({ ok: true });
+        expect(owner.account().actionsSettingsV1.scopedApprovalPreferences).toEqual([sibling]);
+        expect(owner.account().actionsSettingsV1.actions).toEqual(policy.actions);
+    });
+});
+
+describe('Collection space settings declarations', () => {
+    it.each(['spaces.enabled', 'session.list.spacesEnabled', 'workflow.list.spacesEnabled', 'discussion.list.spacesEnabled'])(
+        'shares the default-on Account preference through %s without touching another Account or the catalog', async anchor => {
+            const space = { ...createDefaultCollectionSpaceV1('sessionWork'), id: 'saved', name: 'Saved' };
+            const owner = createOwner(undefined, true, true, applySettings(settingsDefaults, { collectionSpacesV1: { v: 1, spaces: [space] } }));
+            const peer = createOwner(undefined, true, true, settingsDefaults);
+            const executor = throughActionExecutor(owner.action, () => owner.account().actionsSettingsV1);
+            const context = { surface: 'ui', authority: 'present_user' } as const;
+            expect(await executor.execute('settings.get', { anchor }, context)).toMatchObject({ ok: true, result: { value: true } });
+            expect(await executor.execute('settings.set', { anchor, value: false }, context)).toMatchObject({ ok: true });
+            expect(await executor.execute('settings.get', { anchor }, context)).toMatchObject({ ok: true, result: { value: false } });
+            expect(owner.account().collectionSpacesV1.spaces).toEqual([space]);
+            const peerExecutor = throughActionExecutor(peer.action, () => peer.account().actionsSettingsV1);
+            expect(await peerExecutor.execute('settings.get', { anchor }, context)).toMatchObject({ ok: true, result: { value: true } });
+            expect(await executor.execute('settings.reset', { anchor }, context)).toMatchObject({ ok: true });
+            expect(await executor.execute('settings.get', { anchor }, context)).toMatchObject({ ok: true, result: { value: true } });
+        });
+
+    it('honors Off, Ask and Allowed for deletion, restores its default approval and keeps reset safe', async () => {
+        const space = { ...createDefaultCollectionSpaceV1('sessionWork'), id: 'saved', name: 'Saved' };
+        const owner = createOwner(undefined, false, true, applySettings(settingsDefaults, {
+            collectionSpacesV1: { v: 1, spaces: [space] },
+        }), undefined, undefined, undefined, undefined, undefined, {});
+        const requests = new Map<string, ApprovalRequest>();
+        const executor = throughActionExecutor(owner.action, () => owner.account().actionsSettingsV1, {
+            approvalsCreate: async ({ request }) => {
+                const artifactId = `space-${requests.size}`;
+                requests.set(artifactId, request);
+                return { artifactId };
+            },
+            approvalsGet: async ({ artifactId }) => requests.get(artifactId) ?? null,
+            approvalsUpdate: async ({ artifactId, request }) => { requests.set(artifactId, request); return { ok: true }; },
+            isApprovalExecutionOriginCurrent: async () => true,
+        });
+        const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home-a', runtimeAccountId: 'account-a' } as const;
+        const target = { actionId: 'settings.invoke', audience: 'ui' } as const;
+        const deletion = { anchor: 'session.list.spaces', input: {
+            kind: 'collection_space', entityKind: 'sessionWork', mutation: { op: 'delete', spaceId: space.id },
+        } };
+        for (const mode of ['default', 'off', 'ask_first', 'allowed', 'default'] as const) {
+            // Recreate through the storage fixture between independent admission scenarios.
+            if (mode === 'default' && owner.account().collectionSpacesV1.spaces.length === 0) await owner.action({ actionId: 'settings.invoke', input: {
+                anchor: 'session.list.spaces', input: { kind: 'collection_space', entityKind: 'sessionWork', mutation: { op: 'create', space } },
+            } });
+            expect(await executor.execute(mode === 'default' ? 'actions.policy.reset' : 'actions.policy.set',
+                mode === 'default' ? target : { ...target, mode }, context)).toMatchObject({ ok: true });
+            const before = requests.size;
+            const result = await executor.execute('settings.invoke', deletion, { ...context, actionRequestId: `collection-${mode}-${before}`,
+                actionsSettings: owner.account().actionsSettingsV1 });
+            if (mode === 'off') {
+                expect(result).toMatchObject({ ok: false, errorCode: 'action_disabled' });
+                expect(requests.size).toBe(before);
+            } else if (mode === 'allowed') {
+                expect(result).toMatchObject({ ok: true, result: { status: 'completed' } });
+                expect(requests.size).toBe(before);
+            } else {
+                expect(result, result.ok ? undefined : result.errorCode).toMatchObject({ ok: true, result: { artifactId: `space-${before}` } });
+                expect(requests.get(`space-${before}`)).toMatchObject({ status: 'open', actionId: 'settings.invoke' });
+                if (before === 0) {
+                    expect(await executor.execute('approval.request.decide', { artifactId: 'space-0', decision: 'reject' }, context))
+                        .toMatchObject({ ok: true });
+                    expect(requests.get('space-0')?.status).toBe('rejected');
+                }
+            }
+            expect(owner.account().collectionSpacesV1.spaces).toEqual(mode === 'allowed' ? [] : [space]);
+        }
+        expect(await executor.execute('approval.request.decide', { artifactId: 'space-2', decision: 'approve' }, context))
+            .toMatchObject({ ok: true });
+        expect(owner.account().collectionSpacesV1.spaces).toEqual([]);
+        expect(requests.get('space-2')?.status).toBe('executed');
+        expect(await executor.execute('settings.invoke', { anchor: 'session.list.spaces', input: {
+            kind: 'collection_space', entityKind: 'sessionWork', mutation: { op: 'resetDefault' },
+        } }, context)).toMatchObject({ ok: true, result: { status: 'completed' } });
+        expect(requests.size).toBe(3);
+    });
+
+    it('does not advertise Account-scoped device selection before the answering Account is bound', async () => {
+        const owner = createOwner();
+        const result = await owner.action({ actionId: 'settings.list', input: { pageId: 'session' } });
+        if (!('items' in result) || !result.items) throw new Error('Expected settings discovery');
+        expect(result.items.find(item => item.anchor === 'session.list.selectedSpace'))
+            .toMatchObject({ readable: false, writable: false, unavailableReason: 'not_bound' });
+        expect(await owner.action({ actionId: 'settings.set', input: { anchor: 'session.list.selectedSpace', value: { spaceId: 'my-work' } } }))
+            .toMatchObject({ ok: false, errorCode: 'setting_not_bound' });
+        expect(owner.local()).not.toHaveProperty('collectionSpaceV1');
+    });
+
+    it('selects an accepted create on this device and returns to the default after deleting it', async () => {
+        const owner = createOwner(undefined, false, true, settingsDefaults, undefined, undefined, undefined, undefined, undefined, {});
+        const localBefore = owner.local();
+        const executor = throughActionExecutor(owner.action, () => owner.account().actionsSettingsV1);
+        const context = { surface: 'agent', authority: 'account_automation' } as const;
+        const space = { ...createDefaultCollectionSpaceV1('sessionWork'), id: 'created', name: 'Created' };
+        expect(await executor.execute('settings.invoke', { anchor: 'session.list.spaces', input: {
+            kind: 'collection_space', entityKind: 'sessionWork', mutation: { op: 'create', space },
+        } }, context)).toMatchObject({ ok: true, result: { status: 'completed' } });
+        expect(await executor.execute('settings.get', { anchor: 'session.list.selectedSpace' }, context))
+            .toMatchObject({ ok: true, result: { value: { spaceId: 'created' } } });
+        expect(owner.local()).toBe(localBefore);
+        const accountKey = accountSettingsScopeKeySuffix({ serverId: 'home-a', accountId: 'account-a' });
+        expect(readCollectionSpaceId(accountKey, 'sessionWork')).toBe('created');
+        expect(await executor.execute('settings.invoke', { anchor: 'session.list.spaces', input: {
+            kind: 'collection_space', entityKind: 'sessionWork', mutation: { op: 'delete', spaceId: 'created' },
+        } }, { ...context, bypassApprovals: true })).toMatchObject({ ok: true, result: { status: 'completed' } });
+        expect(await executor.execute('settings.get', { anchor: 'session.list.selectedSpace' }, context))
+            .toMatchObject({ ok: true, result: { value: { spaceId: 'my-work' } } });
+        expect(readCollectionSpaceId(accountKey, 'sessionWork')).toBe('my-work');
+    });
+
+    it('refuses a current space write containing an unavailable extension declaration', async () => {
+        const owner = createOwner(undefined, false, true, settingsDefaults, undefined, undefined, undefined, undefined, undefined, {});
+        const executor = throughActionExecutor(owner.action, () => owner.account().actionsSettingsV1);
+        const space = { ...createDefaultCollectionSpaceV1('sessionWork'), id: 'unsupported', filter: {
+            ...createDefaultCollectionSpaceV1('sessionWork').filter,
+            extensions: { 'removed.plugin/release': { kind: 'boolean', value: true } },
+        } };
+        expect(await executor.execute('settings.invoke', { anchor: 'session.list.spaces', input: {
+            kind: 'collection_space', entityKind: 'sessionWork', mutation: { op: 'create', space },
+        } }, { surface: 'agent', authority: 'account_automation' }))
+            .toMatchObject({ ok: true, result: { status: 'unavailable', reason: 'unsupported_filter_fields' } });
+        expect(owner.account().collectionSpacesV1.spaces).toEqual([]);
+    });
+
+    it('keeps selection through reordering and resets a materialized entity default at its current ordinal', async () => {
+        const session = { ...createDefaultCollectionSpaceV1('sessionWork'), id: 'sessions' };
+        const workflow = { ...createDefaultCollectionSpaceV1('workflow'), id: 'flows' };
+        const owner = createOwner(undefined, false, true, applySettings(settingsDefaults, {
+            collectionSpacesV1: { v: 1, spaces: [session, workflow] },
+        }), undefined, undefined, undefined, undefined, undefined, {});
+        const executor = throughActionExecutor(owner.action, () => owner.account().actionsSettingsV1);
+        const context = { surface: 'agent', authority: 'account_automation' } as const;
+        await executor.execute('settings.set', { anchor: 'workflow.list.selectedSpace', value: { spaceId: 'flows' } }, context);
+        for (const mutation of [
+            { op: 'reorder', spaceId: 'all-workflows', beforeSpaceId: null },
+            { op: 'edit', spaceId: 'all-workflows', changes: { name: 'Custom', includeNeedsYouEverywhere: true, filter: { view: 'running' } } },
+            { op: 'resetDefault' },
+        ]) {
+            expect(await executor.execute('settings.invoke', { anchor: 'workflow.list.spaces', input: {
+                kind: 'collection_space', entityKind: 'workflow', mutation,
+            } }, context)).toMatchObject({ ok: true, result: { status: 'completed' } });
+        }
+        expect(owner.account().collectionSpacesV1.spaces).toEqual([session, workflow,
+            expect.objectContaining({ id: 'all-workflows', filter: { view: 'all' }, includeNeedsYouEverywhere: false }),
+        ]);
+        expect(await executor.execute('settings.get', { anchor: 'workflow.list.selectedSpace' }, context))
+            .toMatchObject({ ok: true, result: { value: { spaceId: 'flows' } } });
+    });
+
+    it('selects device-local navigation synchronously and suppresses unchanged writes', () => {
+        const scope = { serverId: 'late-space-home', accountId: 'account-a' };
+        const write = vi.spyOn(getPersistenceStorage(), 'set');
+        onTestFinished(() => write.mockRestore());
+        const select = () => selectCollectionSpace(scope, 'sessionWork', 'my-work');
+        select();
+        expect(readCollectionSpaceId(accountSettingsScopeKeySuffix(scope), 'sessionWork')).toBe('my-work');
+        expect(write).toHaveBeenCalledTimes(1);
+        write.mockClear();
+        select();
+        expect(write).not.toHaveBeenCalled();
+    });
+
+    it('rebases typed mutations through the executor and selects only in the captured local Account', async () => {
+        const space = { ...createDefaultCollectionSpaceV1('sessionWork'), id: 'work', name: 'Work' } as Omit<ReturnType<typeof createDefaultCollectionSpaceV1<'sessionWork'>>, 'membership'>; // The default factory omits membership; no readonly tags enter this fixture.
+        const workflow = { ...createDefaultCollectionSpaceV1('workflow'), id: 'flows', name: 'Flows' };
+        const initial = applySettings(settingsDefaults, { collectionSpacesV1: { v: 1, spaces: [space, workflow] } });
+        const owner = createOwner(undefined, false, true, initial, undefined, settings => ({ ...settings,
+            collectionSpacesV1: { v: 1, spaces: [{ ...space, includeNeedsYouEverywhere: true }, workflow] },
+        }), undefined, undefined, undefined, {});
+        const executor = throughActionExecutor(owner.action, () => owner.account().actionsSettingsV1);
+        const context = { surface: 'agent', authority: 'account_automation' } as const;
+        expect(await executor.execute('settings.invoke', { anchor: 'session.list.spaces', input: {
+            kind: 'collection_space', entityKind: 'sessionWork', mutation: { op: 'edit', spaceId: 'work', changes: { name: 'Renamed' } },
+        } }, context)).toMatchObject({ ok: true, result: { status: 'completed', value: { spaces: [
+            expect.objectContaining({ id: 'work', name: 'Renamed', includeNeedsYouEverywhere: true }), workflow,
+        ] } } });
+        expect(await executor.execute('settings.set', { anchor: 'session.list.selectedSpace', value: { spaceId: 'work' } }, context))
+            .toMatchObject({ ok: true, result: { value: { spaceId: 'work' } } });
+        expect(await executor.execute('settings.get', { anchor: 'session.list.selectedSpace' }, context))
+            .toMatchObject({ ok: true, result: { value: { spaceId: 'work' } } });
+        expect(readCollectionSpaceId(accountSettingsScopeKeySuffix({ serverId: 'home-a', accountId: 'account-a' }), 'sessionWork')).toBe('work');
+        expect(owner.local()).not.toHaveProperty('collectionSpaceV1');
+        expect(await executor.execute('settings.set', { anchor: 'workflow.list.selectedSpace', value: { spaceId: 'work' } }, context))
+            .toMatchObject({ ok: false, errorCode: 'setting_value_unavailable' });
+        expect(owner.account().collectionSpacesV1.spaces[1]).toEqual(workflow);
+    });
+});
 
 describe('Voice public privacy policy destination', () => {
     it('discovers and opens the fixed public policy on the answering client without a Voice machine', async () => {
@@ -747,7 +1124,7 @@ describe('keyed machine offline Account consent', () => {
         const { deriveMachineResourceSuggestions } = await import('@/components/machines/resources/ask/machineResourceSuggestions');
         const { SettingsDeclarationActionInputSchemasV1 } = await import('@happier-dev/protocol/actions/settingsDeclarationActionFamily');
         const { deriveAccountRemoteAlertPolicyV1 } = await import('@happier-dev/protocol/account/settings/accountRemoteAlertPolicy');
-        const { AccountRemoteAlertPolicyV1Schema } = await import('@happier-dev/protocol');
+        const { AccountRemoteAlertPolicyV1Schema} = await import('@happier-dev/protocol/account/settings/accountRemoteAlertPolicy');
         const machine = { serverId: 'home-a', machineId: 'studio-"quoted', name: 'Studio', directory: '' };
         const suggestion = deriveMachineResourceSuggestions({ machine, online: false }).find(entry => entry.kind === 'notifyWhenBack')!;
         const input = SettingsDeclarationActionInputSchemasV1['settings.set'].parse(JSON.parse(suggestion.fill.text.split('\nsettings.set ')[1]!));
@@ -808,7 +1185,6 @@ describe('Agent HTML network Account setting', () => {
         const executor = throughActionExecutor(owner.action, () => owner.account().actionsSettingsV1, {
             approvalsGet: async ({ artifactId }) => requests.get(artifactId) ?? null,
             approvalsUpdate: async ({ artifactId, request }) => { requests.set(artifactId, request); return { ok: true }; },
-            approvalsWaitForDecision: async ({ request }) => ({ decision: 'reject', request }),
             approvalsCreate: async ({ request }) => {
                 const artifactId = `network-approval-${requests.size}`;
                 requests.set(artifactId, request);
@@ -820,14 +1196,18 @@ describe('Agent HTML network Account setting', () => {
                 actionRequestId: `network-${surface}`, actionsSettings: owner.account().actionsSettingsV1 };
             expect(await executor.execute('settings.get', { anchor }, context)).toMatchObject({ ok: true, result: { anchor, value: 'off' } });
             const setResult = await executor.execute('settings.set', { anchor, value: 'allowed' }, context);
-            expect(setResult, JSON.stringify(setResult)).toMatchObject({ ok: false, errorCode: 'approval_rejected' });
+            expect(setResult, JSON.stringify(setResult)).toMatchObject({ ok: true, result: {
+                kind: 'approval_request_created', actionId: 'settings.set',
+            } });
             expect(await executor.execute('settings.reset', { anchor }, context))
-                .toMatchObject({ ok: false, errorCode: 'approval_rejected' });
+                .toMatchObject({ ok: true, result: { kind: 'approval_request_created', actionId: 'settings.reset' } });
+            expect(owner.account()).toHaveProperty('agentHtmlNetworkPolicy', 'off');
         }
         expect(owner.account()).toHaveProperty('agentHtmlNetworkPolicy', 'off');
+        expect(requests.size).toBe(4);
         expect([...requests.values()]).toEqual(expect.arrayContaining([
-            expect.objectContaining({ status: 'rejected', actionId: 'settings.set', actionArgs: { anchor, value: 'allowed' } }),
-            expect.objectContaining({ status: 'rejected', actionId: 'settings.reset', actionArgs: { anchor } }),
+            expect.objectContaining({ status: 'open', actionId: 'settings.set', actionArgs: { anchor, value: 'allowed' } }),
+            expect.objectContaining({ status: 'open', actionId: 'settings.reset', actionArgs: { anchor } }),
         ]));
         const waived = createOwner(undefined, false, true, settingsParse({ agentHtmlNetworkPolicy: 'off',
             actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'settings.set': ['agent', 'mcp'], 'settings.reset': ['agent', 'mcp'] } },
@@ -868,7 +1248,7 @@ describe('Instructions Agent edits policy declaration', () => {
             .toMatchObject({ ok: false, errorCode: 'invalid_setting_value' });
     });
 
-    it('never lets automation grant itself a waiver, even when settings.set is waived', async () => {
+    it('applies an agent policy-mode write once the user waives settings.set (no person-only setting floor)', async () => {
         const owner = createOwner(undefined, true, true, settingsParse({ actionsSettingsV1: { v: 1,
             actions: {}, approvalWaivedSurfaces: { 'settings.set': ['agent', 'mcp'] },
         } }));
@@ -876,33 +1256,17 @@ describe('Instructions Agent edits policy declaration', () => {
         for (const surface of ['agent', 'mcp'] as const) {
             expect(await executor.execute('settings.set', { anchor, value: 'allowed' }, { surface,
                 actionsSettings: owner.account().actionsSettingsV1 }))
-                .toMatchObject({ ok: false, errorCode: 'present_user_required' });
+                .not.toMatchObject({ ok: false, errorCode: 'present_user_required' });
         }
-        expect(owner.account().actionsSettingsV1.approvalWaivedSurfaces?.['prompt_doc.update']).toBeUndefined();
+        expect(owner.account().actionsSettingsV1.approvalWaivedSurfaces?.['prompt_doc.update']).toBeDefined();
     });
 
-    it('lets an Agent request the exact mode and applies it only after a human decision', async () => {
+    it('never applies an Agent policy-mode request without the user approving or waiving it', async () => {
         const owner = createOwner(undefined, true);
-        const requests = new Map<string, ApprovalRequest>();
-        // Approval Artifacts are the persistence boundary; admission, review and replay remain real.
-        const executor = throughActionExecutor(owner.action, () => owner.account().actionsSettingsV1, {
-            approvalsCreate: async ({ request }) => { requests.set('policy-approval', request); return { artifactId: 'policy-approval' }; },
-            approvalsGet: async ({ artifactId }) => requests.get(artifactId) ?? null,
-            approvalsUpdate: async ({ artifactId, request }) => { requests.set(artifactId, request); return { ok: true }; },
-            isApprovalExecutionOriginCurrent: async () => true,
-        });
+        const executor = throughActionExecutor(owner.action, () => owner.account().actionsSettingsV1);
         const agent = { surface: 'agent', serverId: 'home-a', defaultSessionId: 'worker', actionRequestId: 'policy-request' } as const;
-        expect(await executor.execute('settings.set', { anchor, value: 'allowed' }, agent)).toMatchObject({ ok: true });
-        expect(requests.get('policy-approval')).toMatchObject({ status: 'open', actionId: 'settings.set', actionArgs: { anchor, value: 'allowed' } });
+        await executor.execute('settings.set', { anchor, value: 'allowed' }, agent);
         expect(owner.account().actionsSettingsV1.approvalWaivedSurfaces?.['prompt_doc.update']).toBeUndefined();
-        expect(await executor.execute('approval.request.decide', { artifactId: 'policy-approval', decision: 'approve' }, agent))
-            .toMatchObject({ ok: false });
-        expect(requests.get('policy-approval')?.status).toBe('open');
-        expect(await executor.execute('approval.request.decide', { artifactId: 'policy-approval', decision: 'approve' }, {
-            surface: 'ui', authority: 'present_user', serverId: 'home-a',
-        })).toMatchObject({ ok: true });
-        expect(owner.account().actionsSettingsV1.approvalWaivedSurfaces?.['prompt_doc.update']).toEqual(['agent']);
-        expect(requests.get('policy-approval')?.status).toBe('executed');
     });
 });
 
@@ -969,10 +1333,11 @@ describe('exact Action audience policy', () => {
             const waived = createOwner(undefined, true, true, settingsParse({ actionsSettingsV1: { v: 1,
                 approvalWaivedSurfaces: { 'actions.policy.set': [surface] },
             } }));
+            // The user's explicit waiver of actions.policy.set runs it (owner ruling 2026-10-29, no present-user floor).
             expect(await throughActionExecutor(waived.action, () => waived.account().actionsSettingsV1)
                 .execute('actions.policy.set', input, { surface, actionsSettings: waived.account().actionsSettingsV1 }))
-                .toMatchObject({ ok: false, errorCode: 'present_user_required' });
-            expect(waived.account().actionsSettingsV1.approvalWaivedSurfaces?.['prompt_doc.update']).toBeUndefined();
+                .toMatchObject({ ok: true });
+            expect(waived.account().actionsSettingsV1.approvalWaivedSurfaces?.['prompt_doc.update']).toEqual([surface]);
         }
     });
 });
@@ -1100,6 +1465,56 @@ describe('keyboard and desktop Settings Actions', () => {
         expect(owner.account()).toEqual(before);
     });
 
+    it('reads and writes capture preferences through their declared device owners, including native window shadow', async () => {
+        let includeWindowShadow = false;
+        const preferences: Record<string, string | null> = {
+            captureShortcut: 'CmdOrCtrl+Shift+2', instantWindowShortcut: null, recordingShortcut: null, libraryFolder: null,
+        };
+        const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
+            if (command === 'desktop_capture_window_shadow') {
+                if (typeof args?.enabled === 'boolean') includeWindowShadow = args.enabled;
+                return { enabled: includeWindowShadow, supported: true };
+            }
+            if (command === 'desktop_capture_preference') return preferences[String(args?.key)];
+            if (command === 'desktop_capture_set_library_folder') { preferences.libraryFolder = String(args?.path); return; }
+            if (command === 'desktop_capture_set_shortcut') {
+                preferences[String(args?.key)] = String(args?.binding);
+                return { backend: 'native', availability: 'ready', configureSupported: false, editing: false,
+                    bindings: Object.entries(preferences).filter(([key]) => key !== 'libraryFolder')
+                        .map(([key, requested]) => ({ key, requested, active: requested, failure: null })) };
+            }
+            throw new Error('unexpected capture settings IPC');
+        });
+        vi.stubGlobal('__TAURI_INTERNALS__', { invoke });
+        onTestFinished(() => { vi.unstubAllGlobals(); });
+        const owner = createOwner({ os: 'web', desktop: true });
+        for (const [anchor, initial, value] of [
+            ['desktop.captureShortcut', 'CmdOrCtrl+Shift+2', 'Alt+Shift+2'],
+            ['desktop.instantWindowShortcut', null, 'Alt+Shift+3'],
+            ['desktop.recordingShortcut', null, 'Alt+Shift+4'],
+            ['desktop.captureFolder', null, '/Pictures/Captures'],
+            ['desktop.captureSound', true, false],
+            ['desktop.captureIncludeWindowText', false, true],
+            ['desktop.captureIncludeWindowShadow', false, true],
+        ] as const) {
+            expect(await owner.action({ actionId: 'settings.get', input: { anchor } })).toMatchObject({ anchor, value: initial });
+            expect(await owner.action({ actionId: 'settings.set', input: { anchor, value } })).toMatchObject({ anchor, value });
+            expect(await owner.action({ actionId: 'settings.get', input: { anchor } })).toMatchObject({ anchor, value });
+        }
+        expect(owner.local()).toMatchObject({ screenCaptureSound: false, screenCaptureIncludeWindowText: true });
+        expect(invoke.mock.calls.filter(([command]) => command === 'desktop_capture_set_shortcut')).toHaveLength(3);
+        expect(invoke.mock.calls.filter(([command]) => command === 'desktop_capture_set_library_folder')).toHaveLength(1);
+        expect(await createOwner().action({ actionId: 'settings.get', input: { anchor: 'desktop.captureShortcut' } }))
+            .toMatchObject({ errorCode: 'setting_unsupported_host' });
+    });
+
+    it('rejects retired desktop placement declarations', async () => {
+        const owner = createOwner({ os: 'web', desktop: true });
+        for (const anchor of ['desktop.placementMode', 'desktop.anchorPreset', 'desktop.presentationMode']) {
+            expect(await owner.action({ actionId: 'settings.set', input: { anchor, value: 'custom' } }))
+                .toMatchObject({ ok: false, errorCode: 'setting_not_found' });
+        }
+    });
 });
 
 describe('navigation placement Settings Actions', () => {
@@ -1373,21 +1788,225 @@ describe('navigation placement Settings Actions', () => {
         expect(await owner.action({ actionId: 'settings.set', input: { anchor: 'machines.defaults.creationEnabled', value: 'false' } }))
             .toMatchObject({ ok: false, errorCode: 'invalid_setting_value' });
     });
-    it('reads the effective device-local placement map and writes strict current preferences', async () => {
+    it('opens the mounted plugin kind through settings.invoke and refuses it after retirement', async () => {
+        const { renderHook, act } = await import('@/dev/testkit');
+        const React = await import('react');
+        const { PresentedDetailNavigationProvider } = await import('@/components/appShell/rightSidebar/usePresentedDetailNavigation');
+        const { usePluginDetailNavigation } = await import('@/components/plugins/pages/pluginDetailNavigation');
+        const { Modal } = await import('@/modal');
+        const mounted = await renderHook(() => usePluginDetailNavigation({ identity: 'customize-test', lifetime: null,
+            scope: null, live: true, presented: true, title: 'Issue' }), {
+            wrapper: ({ children }) => React.createElement(PresentedDetailNavigationProvider, null, children),
+        });
+        onTestFinished(() => mounted.unmount());
+        await act(async () => {
+            mounted.getCurrent().owner.setPageNavigation({ navigation: {
+                pageKind: { pluginId: 'happier.triage', localId: 'issue' }, value: 'overview',
+                items: [{ value: 'overview', title: 'Overview', kind: 'page', phonePlacement: 'bar' }],
+            } });
+        });
+        vi.mocked(Modal.show).mockClear();
         const owner = createOwner();
-        expect(await owner.action({ actionId: 'settings.get', input: { anchor: 'appearance.navigationPlacements' } }))
-            .toMatchObject({ anchor: 'appearance.navigationPlacements', value: { sessionTabBar: { orderedIds: ['browse', 'git', 'companion', 'terminal'] } } });
+        const executor = throughActionExecutor(owner.action, () => owner.account().actionsSettingsV1);
+        const input = { anchor: 'appearance.navigationPlacements' };
+        const context = { surface: 'plugin', authority: 'present_user',
+            actionCaller: { kind: 'plugin', pluginId: 'happier.triage', contributionLocalId: 'issue' } } as const;
+        expect(await executor.execute('settings.invoke', input, context)).toEqual({ ok: true,
+            result: { anchor: input.anchor, status: 'interaction_opened' } });
+        const { DetailNavigationCustomizer } = await import('@/components/ui/navigation/NavigationPlacementCustomizer');
+        const { buildQualifiedPluginContributionKey } = await import('@happier-dev/protocol/plugins/contribution-identity');
+        const pageKind = buildQualifiedPluginContributionKey({ pluginId: 'happier.triage', localId: 'issue' });
+        expect(Modal.show).toHaveBeenCalledWith({ component: DetailNavigationCustomizer,
+            props: expect.objectContaining({ pageKind, pageTitle: 'Issue', device: 'desktop',
+                desktop: [expect.objectContaining({ address: { pageKind, device: 'desktop', section: 'pages' },
+                    items: [expect.objectContaining({ id: 'overview' })] })] }) });
+        await mounted.unmount();
+        vi.mocked(Modal.show).mockClear();
+        expect(await executor.execute('settings.invoke', input, context)).toMatchObject({ ok: true,
+            result: { anchor: input.anchor, status: 'unavailable', reason: 'current_ui_command_unavailable' } });
+        expect(Modal.show).not.toHaveBeenCalled();
+    });
+    it('keeps one plugin catalog across settlement and preference updates and separates desktop companions', async () => {
+        const { renderHook, act } = await import('@/dev/testkit');
+        const catalog = await import('@/components/appShell/rightSidebar/detailNavigationItems');
+        const resolution = vi.spyOn(catalog, 'resolveDetailNavigationItems');
+        onTestFinished(() => resolution.mockRestore());
+        const { usePluginDetailNavigation } = await import('@/components/plugins/pages/pluginDetailNavigation');
+        const { pluginDetailNavigationCustomizer } = await import('@/components/plugins/pages/PluginDetailNavigationViews');
+        const { getStorage } = await import('@/sync/domains/state/storageStore');
+        const store = getStorage();
+        const previousLocal = store.getState().localSettings;
+        onTestFinished(() => store.setState({ localSettings: previousLocal }));
+        const mounted = await renderHook(() => usePluginDetailNavigation({ identity: 'companion-customize-test', lifetime: null,
+            scope: null, live: true, presented: true, title: 'Review' }));
+        onTestFinished(() => mounted.unmount());
+        const items = [
+            { value: 'overview', title: 'Overview', kind: 'both', phonePlacement: 'bar', companion: { pluginId: 'acme.review', localId: 'overview-tools' } },
+            { value: 'notes', title: 'Notes', kind: 'both', phonePlacement: 'more', companion: { pluginId: 'acme.review', localId: 'notes' } },
+        ] as const;
+        const navigation = { pageKind: { pluginId: 'acme.review', localId: 'review' }, value: 'overview', items };
+        const count = () => resolution.mock.calls.filter(([input]: readonly [{ scope: string }]) => input.scope === 'plugin').length;
+        await act(async () => { mounted.getCurrent().owner.setPageNavigation({ navigation }); });
+        expect(count()).toBe(1);
+        await act(async () => { mounted.getCurrent().owner.select('notes'); });
+        await act(async () => { mounted.getCurrent().owner.setPageNavigation({ navigation }); });
+        expect(count()).toBe(1);
+        await act(async () => { store.getState().applyLocalSettings({ themePreference: previousLocal.themePreference === 'dark' ? 'light' : 'dark' }, { persist: false }); });
+        await mounted.rerender();
+        expect(count()).toBe(1);
+        await act(async () => { store.getState().applyLocalSettings({ navigationSurfacePlacementsV1: {
+            detailPages: { 'acme.review/review': { desktop: { companions: {
+                orderedIds: [], placements: { overview: 'hidden', notes: 'hidden' },
+            } } } },
+        } }, { persist: false }); });
+        expect(count()).toBe(1);
+        const model = mounted.getCurrent().model;
+        if (!model) throw new Error('mounted_navigation_missing');
+        expect(model.readColumn('main').items?.find(item => item.id === 'notes')?.placement).toBe('pinned');
+        expect(model.readColumn('main').items?.find(item => item.id === 'overview')?.placement).toBe('pinned');
+        expect(model.readColumn('side').items?.find(item => item.id === 'overview')?.placement).toBe('hidden');
+        expect(model.readColumn('side').items?.find(item => item.id === 'notes')?.placement).toBe('hidden');
+        expect(pluginDetailNavigationCustomizer(model, 'desktop').desktop).toEqual([
+            expect.objectContaining({ id: 'pages', items: expect.arrayContaining([expect.objectContaining({ id: 'overview' }), expect.objectContaining({ id: 'notes' })]) }),
+            expect.objectContaining({ id: 'companions', address: { pageKind: model.pageKind, device: 'desktop', section: 'companions' },
+                items: [expect.objectContaining({ id: 'overview' }), expect.objectContaining({ id: 'notes' })] }),
+        ]);
+        await act(async () => { mounted.getCurrent().owner.setPageNavigation({ navigation: { ...navigation,
+            items: [...items, { value: 'files', title: 'Files', kind: 'page', phonePlacement: 'bar' }] } }); });
+        expect(count()).toBe(2);
+    });
+    it('opens a both Item from the desktop companion rail without selecting its main page', async () => {
+        const React = await import('react');
+        const { renderHook, renderScreen, act } = await import('@/dev/testkit');
+        const { usePluginDetailNavigation } = await import('@/components/plugins/pages/pluginDetailNavigation');
+        const { PluginDetailNavigationRail } = await import('@/components/plugins/pages/PluginDetailNavigationViews');
+        const account = await readSummaryCatalogAccount();
+        const active = await activateStorageAccountScope(account.accountLifetime.scope);
+        onTestFinished(() => active.dispose());
+        const requests: unknown[] = [];
+        const mounted = await renderHook(() => usePluginDetailNavigation({ identity: 'rail-test', lifetime: account.accountLifetime,
+            scope: account.accountLifetime.scope, live: true, presented: true, title: 'Review',
+            openSurface: request => { requests.push(request); return { ok: true }; } }));
+        onTestFinished(() => mounted.unmount());
+        const items = [
+            { value: 'overview', title: 'Overview', kind: 'page', phonePlacement: 'bar', glyph: 'info' },
+            { value: 'notes', title: 'Notes', kind: 'both', phonePlacement: 'bar', glyph: 'info',
+                companion: { pluginId: 'acme.review', localId: 'notes' } },
+        ] as const;
+        await act(async () => { mounted.getCurrent().owner.setPageNavigation({ navigation: {
+            pageKind: { pluginId: 'acme.review', localId: 'review' }, value: 'overview', items } }); });
+        const model = mounted.getCurrent().model;
+        if (!model) throw new Error('mounted_navigation_missing');
+        const screen = await renderScreen(React.createElement(PluginDetailNavigationRail, { model,
+            pane: { scopeState: null, closeRight: () => {}, closeDetails: () => {} } }));
+        expect(screen.findHostByTestId('plugin-detail-navigation-rail:overview')).toBeNull();
+        await screen.pressByTestIdAsync('plugin-detail-navigation-rail:notes');
+        expect(requests).toEqual([{ destination: { pluginId: 'acme.review', localId: 'notes' } }]);
+        expect(mounted.getCurrent().owner.getSnapshot()).toMatchObject({ navigation: { value: 'overview' }, request: null });
+        const { appPaneReduce, createAppPaneState } = await import('@/components/appShell/panes/model/appPaneReducer');
+        const selected = appPaneReduce(createAppPaneState({ maxScopesInMemory: 1 }), { type: 'selectRightDestination', scopeId: 'rail-test',
+            destination: { kind: 'plugin', destination: { pluginId: 'acme.review', localId: 'notes' } } }).scopes['rail-test']!;
+        let closed = 0;
+        await screen.update(React.createElement(PluginDetailNavigationRail, { model, pane: {
+            scopeState: { ...selected, details: { isOpen: false, tabState: {}, tabs: [], activeTabKey: null } },
+            closeRight: () => { closed++; }, closeDetails: () => {},
+        } }));
+        await screen.pressByTestIdAsync('plugin-detail-navigation-rail:notes');
+        expect(closed).toBe(1);
+        expect(requests).toHaveLength(1);
+        expect(mounted.getCurrent().owner.getSnapshot()).toMatchObject({ navigation: { value: 'overview' }, request: null });
+    });
+    it('keeps plugin phone placement separate from desktop defaults and refuses unsupported phone pinning', async () => {
+        const { renderHook } = await import('@/dev/testkit');
+        const { useDetailPhonePlacement } = await import('@/components/navigation/mobile/chrome/bars/detailPhoneNavigation');
+        const { resolveDetailNavigationItems } = await import('@/components/appShell/rightSidebar/detailNavigationItems');
+        const items = resolveDetailNavigationItems({ scope: 'plugin', items: [
+            { value: 'overview', title: 'Overview', kind: 'page', phonePlacement: 'bar' },
+            { value: 'notes', title: 'Notes', kind: 'page', phonePlacement: 'more' },
+            { value: 'files', title: 'Files', kind: 'page', phonePlacement: 'none' },
+        ] });
+        const phone = await renderHook(() => useDetailPhonePlacement(items,
+            { pageKind: 'happier.triage/phone-placement-test', device: 'phone', section: 'items' }, 'happier.triage/phone-placement-test'));
+        onTestFinished(() => phone.unmount());
+        expect(phone.getCurrent().placements.pinned.map(item => item.id)).toEqual(['overview']);
+        expect(phone.getCurrent().placements.overflow.map(item => item.id)).toEqual(['notes']);
+        expect(phone.getCurrent().placements.hidden.map(item => item.id)).toEqual(['files']);
+        expect(resolveNavigationPlacements(phone.getCurrent().placements.ordered,
+            { orderedIds: [], placements: { files: 'pinned' } }).hidden.map(item => item.id)).toEqual(['files']);
+    });
+    it('reads the effective device-local placement map and writes strict current preferences', async () => {
+        const { getStorage } = await import('@/sync/domains/state/storageStore');
+        const store = getStorage();
+        const previousLocal = store.getState().localSettings;
+        store.setState({ localSettings: structuredClone(localSettingsDefaults) });
+        const local = () => store.getState().localSettings;
+        const unexpectedAccountWrite = async () => { throw new Error('unexpected_account_write'); };
+        const action = createSettingsDeclarationAction({
+            host: { os: 'web', desktop: false }, tauriDesktop: false, readPageGate: readSettingsPageGate,
+            isFeatureEnabled: async () => false,
+            readAccountSettings: async () => settingsDefaults,
+            writeAccountSettings: unexpectedAccountWrite,
+            mutateAccountSettings: unexpectedAccountWrite,
+            readLocalSettings: local,
+            writeLocalSettings: delta => store.getState().applyLocalSettings(delta, { persist: false }),
+        });
+        const executor = throughActionExecutor(action);
+        const context = { surface: 'ui', authority: 'present_user' } as const;
+        const anchor = 'appearance.navigationPlacements';
+        const notifications = countStoreNotifications(store);
+        onTestFinished(() => { notifications.stop(); store.setState({ localSettings: previousLocal }); });
+        expect(await executor.execute('settings.get', { anchor }, context))
+            .toMatchObject({ ok: true, result: { anchor, value: { sessionTabBar: { orderedIds: ['browse', 'git', 'companion', 'terminal'] } } } });
         const value = { appRail: { orderedIds: ['plugin:removed', 'sessions'], placements: { 'plugin:removed': 'hidden', sessions: 'overflow' } }, sessionTabBar: { orderedIds: [], placements: { git: 'hidden' } } };
-        expect(await owner.action({ actionId: 'settings.set', input: { anchor: 'appearance.navigationPlacements', value } }))
-            .toMatchObject({ anchor: 'appearance.navigationPlacements', value });
-        expect(owner.local().navigationSurfacePlacementsV1).toEqual(value);
-        expect(owner.local().sessionCockpitBarSurfaceIds).toBeNull();
-        expect(owner.local().compactAppDestinationPreferencesV1).toEqual({ orderedDestinationIds: [], hiddenDestinationIds: [] });
-        const before = owner.local();
+        expect(await executor.execute('settings.set', { anchor, value }, context))
+            .toMatchObject({ ok: true, result: { anchor, value } });
+        expect(local().navigationSurfacePlacementsV1).toEqual(value);
+        expect(local().sessionCockpitBarSurfaceIds).toBeNull();
+        expect(local().compactAppDestinationPreferencesV1).toEqual({ orderedDestinationIds: [], hiddenDestinationIds: [] });
+        const appRail = local().navigationSurfacePlacementsV1.appRail;
+        const composerPatch = { composer: { orderedIds: ['goal', 'permission'], placements: { goal: 'hidden', permission: 'hidden' } } };
+        expect(await executor.execute('settings.set', { anchor, value: composerPatch }, context))
+            .toMatchObject({ ok: true, result: { value: composerPatch } });
+        const composer = local().navigationSurfacePlacementsV1.composer;
+        expect(composer?.placements.permission).toBe('hidden');
+        expect(local().navigationSurfacePlacementsV1.appRail).toBe(appRail);
+        expect(await executor.execute('settings.get', { anchor }, context))
+            .toMatchObject({ ok: true, result: { value: { ...value, ...composerPatch } } });
+        const effective = resolveNavigationPlacements([
+            { id: 'goal', defaultPlacement: 'overflow' },
+            { id: 'permission', defaultPlacement: 'pinned', allowedPlacements: ['pinned', 'overflow'] },
+        ], composer);
+        expect(effective.pinned.map(item => item.id)).toEqual(['permission']);
+        expect(effective.hidden.map(item => item.id)).toEqual(['goal']);
+
+        const railPatch = { sessionRail: { orderedIds: ['terminal'], placements: { terminal: 'overflow' } } };
+        expect(await executor.execute('settings.set', { anchor, value: railPatch }, context))
+            .toMatchObject({ ok: true });
+        expect(local().navigationSurfacePlacementsV1.composer).toBe(composer);
+        const sessionRail = local().navigationSurfacePlacementsV1.sessionRail;
+        notifications.reset();
+        expect(await executor.execute('settings.set', { anchor, value: railPatch }, context))
+            .toMatchObject({ ok: true });
+        expect(notifications.read()).toEqual([]);
+
+        expect(await executor.execute('settings.set', { anchor, value: { composer: {} } }, context))
+            .toMatchObject({ ok: true });
+        expect(local().navigationSurfacePlacementsV1.composer).toEqual({ orderedIds: [], placements: {} });
+        expect(local().navigationSurfacePlacementsV1.sessionRail).toBe(sessionRail);
+        expect(local().navigationSurfacePlacementsV1.appRail).toBe(appRail);
+        expect(await executor.execute('settings.get', { anchor }, context))
+            .toMatchObject({ ok: true, result: { value: { ...value, ...railPatch, composer: { orderedIds: [], placements: {} } } } });
+        notifications.reset();
+        expect(await executor.execute('settings.set', { anchor, value: { composer: { orderedIds: [], placements: {} } } }, context))
+            .toMatchObject({ ok: true });
+        expect(notifications.read()).toEqual([]);
+
+        const before = local();
         for (const bad of [{ ...value, futureSurface: {} }, { appRail: { ...value.appRail, future: true } }, { appRail: { orderedIds: [], placements: { sessions: 'visible' } } }]) {
-            expect(await owner.action({ actionId: 'settings.set', input: { anchor: 'appearance.navigationPlacements', value: bad } })).toMatchObject({ ok: false, errorCode: 'invalid_setting_value' });
+            expect(await executor.execute('settings.set', { anchor, value: bad }, context))
+                .toMatchObject({ ok: false, errorCode: 'invalid_setting_value' });
         }
-        expect(owner.local()).toEqual(before);
+        expect(local()).toBe(before);
     });
 });
 
@@ -2422,6 +3041,45 @@ describe('declared settings owner', () => {
             .toMatchObject({ items: expect.arrayContaining([
                 expect.objectContaining({ anchor: 'accountSecurity.recoveryKey', sensitive: true, readable: false, writable: false }),
             ]) });
+    });
+
+    it('declares plugin collection presentation on this device while update review stays Account-scoped without a Machine', async () => {
+        const owner = createOwner();
+        expect(await owner.action({ actionId: 'settings.list', input: { pageId: 'plugins' } }))
+            .toMatchObject({ items: expect.arrayContaining([
+                expect.objectContaining({ anchor: 'plugins.collectionView', storageScope: 'local', readable: true, writable: true }),
+                expect.objectContaining({ anchor: 'plugins.updateReview', storageScope: 'account', readable: true, writable: true }),
+            ]) });
+        expect(await owner.action({ actionId: 'settings.set', input: {
+            anchor: 'plugins.collectionView', value: { installed: 'list', discover: 'grid' },
+        } })).toEqual({ anchor: 'plugins.collectionView', value: { installed: 'list', discover: 'grid' } });
+        expect(owner.local().pluginsCollectionViewV1).toEqual({ installed: 'list', discover: 'grid' });
+        expect(await owner.action({ actionId: 'settings.set', input: {
+            anchor: 'plugins.updateReview', value: 'autoApply',
+        } })).toEqual({ anchor: 'plugins.updateReview', value: 'autoApply' });
+        expect(owner.account().pluginUpdateReviewModeV1).toBe('autoApply');
+        expect(await owner.action({ actionId: 'settings.set', input: {
+            anchor: 'plugins.collectionView', value: { installed: 'board' },
+        } })).toMatchObject({ ok: false, errorCode: 'invalid_setting_value' });
+        expect(owner.local().pluginsCollectionViewV1).toEqual({ installed: 'list', discover: 'grid' });
+    });
+
+    it('shares the Connected services view through safe agent and UI Settings Actions on this device', async () => {
+        const owner = createOwner();
+        const executor = throughActionExecutor(owner.action, () => owner.account().actionsSettingsV1);
+        const anchor = 'connectedServices.indexView';
+        const agent = { surface: 'agent', authority: 'account_automation' } as const;
+        expect(await executor.execute('settings.list', { pageId: 'connectedServices' }, agent))
+            .toMatchObject({ ok: true, result: { items: expect.arrayContaining([
+                expect.objectContaining({ anchor, storageScope: 'local', readable: true, writable: true }),
+            ]) } });
+        expect(await executor.execute('settings.set', { anchor, value: 'grid' }, agent))
+            .toMatchObject({ ok: true, result: { anchor, value: 'grid' } });
+        expect(owner.local().connectedServicesIndexViewV1).toBe('grid');
+        expect(await executor.execute('settings.set', { anchor, value: 'board' }, agent))
+            .toMatchObject({ ok: false, errorCode: 'invalid_setting_value' });
+        expect(await executor.execute('settings.get', { anchor }, agent))
+            .toMatchObject({ ok: true, result: { anchor, value: 'grid' } });
     });
 
     it('switches All machines between List and Grid on this device through its declared local setting', async () => {

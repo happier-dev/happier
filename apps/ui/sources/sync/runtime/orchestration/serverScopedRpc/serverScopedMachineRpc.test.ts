@@ -9,7 +9,7 @@ import {
 } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { resetScopedMachineTransportCacheForTests } from './serverScopedRpcPool';
-import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import * as deviceLocalStorage from '@/auth/storage/deviceLocalStorage';
 import { resetRunnerCreatorMachineContentKeyTrustProjectionForTests } from '@/sync/domains/ephemeralRunner/runnerCreatorMachineContentKeyTrust';
@@ -21,7 +21,7 @@ import type { AuthCredentials, HomeCredentialMutationEvent } from '@/auth/storag
 import { createDeferred, createRootLayoutFeaturesResponse } from '@/dev/testkit';
 import { FeatureGatesSchema } from '@happier-dev/protocol/features/payload/featureGatesSchema';
 import { createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createAccountEncryptionCurrentnessFixtureForCredentials, createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import {
     clearMachineRequestReachabilityForTest,
@@ -85,6 +85,9 @@ vi.mock('@/sync/api/session/apiSocket', () => ({
     apiSocket: {
         machineRPC: (...args: Parameters<MachineRpcSpy>) => machineRpcSpy(...args),
         getMachineRequestScope: () => ({ serverId: getAppliedActiveServerSnapshotSpy()?.serverId, accountId: 'account-a' }),
+        // No applied Sync projection is bound here: scoped calls take the Home row path.
+        // Projection binding is covered by serverScopedMachineRpc.projection.composed.test.ts.
+        captureBoundMachineRpcContent: () => null,
     },
 }));
 
@@ -304,10 +307,15 @@ describe('machineRpcWithServerScope', () => {
     });
 
     beforeEach(async () => {
-        setRuntimeFetch((input, init) => runtimeFetchWithServerReachabilitySpy({
-            url: typeof input === 'string' ? input : input instanceof URL ? input.href : input.url,
-            init,
-        }));
+        setRuntimeFetch(async (input, init) => {
+            const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+            // The Home reports the persisted identity of the fixture Account's own material.
+            if (new URL(url).pathname === '/v1/account/encryption/currentness') {
+                return Response.json(createAccountEncryptionCurrentnessFixtureForCredentials(
+                    await getCredentialsSpy() ?? { token: TOKEN_A }));
+            }
+            return runtimeFetchWithServerReachabilitySpy({ url, init });
+        });
         retireFixtureAccountMaterial();
         const actual = await vi.importActual<typeof import('@/auth/encryption/createEncryptionFromAuthCredentials')>(
             '@/auth/encryption/createEncryptionFromAuthCredentials');
@@ -375,6 +383,8 @@ describe('machineRpcWithServerScope', () => {
         expect(createEphemeralSocketSpy).not.toHaveBeenCalled();
         expect(readMachineRequestReachabilityObservation({ serverId: 'server-a', accountId: 'account-a' }, 'machine-1'))
             .toMatchObject({ outcome: 'succeeded' });
+        const answered = readMachineRequestReachabilityObservation({ serverId: 'server-a', accountId: 'account-a' }, 'machine-1');
+        expect(answered).toHaveProperty('lastAnsweredAtMs', answered?.observedAtMs);
     });
 
     it('binds an omitted peer-mediated RPC to the applied Home while another Home is staged', async () => {
@@ -574,6 +584,39 @@ describe('machineRpcWithServerScope', () => {
             remoteMachineId: 'machine-1',
         })).toEqual({ status: 'unknown' });
         expect(createEphemeralSocketSpy).not.toHaveBeenCalled();
+    });
+
+    it('keeps an RPC that names the applied Account on the active socket; another Account still gets its own', async () => {
+        getActiveServerSnapshotSpy.mockReturnValue({
+            serverId: 'server-a',
+            serverUrl: 'https://server-a.example.test',
+            kind: 'custom',
+            generation: 1,
+        });
+        machineRpcSpy.mockResolvedValue({ ok: true });
+        // The real peer-mediation client forwards the caller's Account to the server fallback.
+        machineRpcWithPeerMediationRouteSpy.mockImplementation(async (params: {
+            serverFallback: (input: Record<string, unknown>) => Promise<unknown>;
+        } & Record<string, unknown>) => await params.serverFallback({
+            serverId: params.serverId, accountId: params.accountId, machineId: params.machineId, method: params.method,
+            payload: params.payload, timeoutMs: params.timeoutMs, reasonCode: 'server_required',
+        }));
+        const { machineRpcWithServerScope } = await import('./serverScopedMachineRpc');
+
+        // Naming the Account the active socket already serves must not open a second
+        // connection to the same Home (one socket per Home and Account).
+        await expect(machineRpcWithServerScope({
+            serverId: 'server-a', accountId: 'account-a', machineId: 'machine-1', method: 'method-test', payload: {},
+        })).resolves.toEqual({ ok: true });
+        expect(machineRpcSpy).toHaveBeenCalledTimes(1);
+        expect(createEphemeralSocketSpy).not.toHaveBeenCalled();
+
+        getCredentialsSpy.mockResolvedValue({ token: TOKEN_B, secret: SECRET_B });
+        createEphemeralSocketSpy.mockRejectedValueOnce(new Error('scoped socket requested'));
+        await expect(machineRpcWithServerScope({
+            serverId: 'server-a', accountId: 'account-b', machineId: 'machine-1', method: 'method-test', payload: {}, timeoutMs: 1_000,
+        })).rejects.toThrow();
+        expect(machineRpcSpy).toHaveBeenCalledTimes(1);
     });
 
     it('does not fall back after an exact active machine RPC has been issued', async () => {

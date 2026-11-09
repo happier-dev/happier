@@ -30,6 +30,8 @@ export type EndpointConnectivityStatus = 'idle' | 'offline' | 'connecting' | 'on
 
 export type EndpointConnectivitySnapshot = Readonly<{
   status: EndpointConnectivityStatus;
+  /** `connecting` only because we restarted supervision of an online endpoint: no evidence about the Home. */
+  onlineRetained?: boolean;
   reason: string | null;
   attempt: number;
   nextRetryAt: number | null;
@@ -48,6 +50,7 @@ export type RealtimeDomain = {
   accountSettingsSyncStatus: AccountSettingsSyncStatus;
   lastSyncAt: number | null;
   endpointStatus: EndpointConnectivityStatus;
+  endpointOnlineRetained: boolean;
   endpointReason: string | null;
   endpointAttempt: number;
   endpointNextRetryAt: number | null;
@@ -75,7 +78,9 @@ export function createRealtimeDomain<S extends RealtimeDomain>({
   const setSyncError = (error: SyncError) => set((state) =>
     sameStrictJsonValue(state.syncError, error) ? state : { ...state, syncError: error });
   const setEndpointConnectivity = (snapshot: EndpointConnectivitySnapshot) => set((state) => {
+    const endpointOnlineRetained = snapshot.onlineRetained === true;
     if (state.endpointStatus === snapshot.status
+      && state.endpointOnlineRetained === endpointOnlineRetained
       && state.endpointReason === snapshot.reason
       && state.endpointAttempt === snapshot.attempt
       && state.endpointNextRetryAt === snapshot.nextRetryAt
@@ -84,6 +89,7 @@ export function createRealtimeDomain<S extends RealtimeDomain>({
       && state.endpointLastErrorMessage === snapshot.lastErrorMessage) return state;
     return { ...state,
       endpointStatus: snapshot.status,
+      endpointOnlineRetained,
       endpointReason: snapshot.reason,
       endpointAttempt: snapshot.attempt,
       endpointNextRetryAt: snapshot.nextRetryAt,
@@ -102,6 +108,7 @@ export function createRealtimeDomain<S extends RealtimeDomain>({
     accountSettingsSyncStatus: createAccountSettingsIdleStatus(),
     lastSyncAt: null,
     endpointStatus: 'idle',
+    endpointOnlineRetained: false,
     endpointReason: null,
     endpointAttempt: 0,
     endpointNextRetryAt: null,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createActionExecutor } from '@happier-dev/protocol';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { ScopeActionOutputSchemas, type FileViewMode } from '@happier-dev/protocol/actions/scopeActionFamily';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import { appPaneReduce, createAppPaneState } from '@/components/appShell/panes/model/appPaneReducer';

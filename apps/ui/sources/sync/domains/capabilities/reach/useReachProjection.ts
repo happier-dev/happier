@@ -8,7 +8,7 @@ import { isPersistentMachine } from '@happier-dev/protocol/machines/machineKind'
 import { useActiveServerAccountScope, useMachineDisplayById } from '@/sync/store/hooks';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { useMachinePresenceSummaries } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
-import { formatMachineDisplayNameParts, resolveMachineDisplayNameParts } from '@/utils/sessions/machineDisplayNames';
+import { resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
 import { useMachineAgentsByMachine } from '@/agents/machineAgents/useMachineAgents';
 import { areServerProfileIdentifiersEquivalent, captureServerProfileScopeResolver } from '@/sync/domains/server/serverProfiles';
 import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
@@ -23,11 +23,12 @@ import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountS
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { readInstalledMachineAgentInventory } from './installedMachineAgents';
 import { getAcpCatalogSnapshot, subscribeAcpCatalogSnapshots } from '@/sync/store/settings/acpCatalogSnapshot';
-import type { PluginProjectionV2 } from '@happier-dev/protocol';
+import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import {
   captureDaemonMergedProjectionReader,
   type DaemonMergedProjectionSummary,
 } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import { retainKeyedRows } from '@/sync/domains/state/structuralSharing';
 import { useSkillFeatureEnabled } from '@/sync/domains/skills/useSkillFeatureEnabled';
 
 export type ReachMachineProjection = Readonly<
@@ -75,7 +76,7 @@ export type ReachMachine = Readonly<{
   agentInventoryComplete?: boolean;
   /** Per-Machine declarations from the existing inert catalog cache; absent while cold. */
   agentDeclarationsById?: PluginProjectionV2['agentsById'] | null;
-  /** Display name from the presence owner; null while unknown. */
+  /** Display name from the admitted display owner; independent of presence. */
   name: string | null;
   /** null while this Home/Account has no current presence observation. */
   online: boolean | null;
@@ -88,9 +89,13 @@ export type ReachMachine = Readonly<{
  * Published install facts work on a fresh device and remain available offline. Retained
  * metadata without that projection can use device-cache facts without starting RPCs.
  */
+type InstalledReachMachine = Omit<ReachMachine, 'name' | 'online' | 'offline' | 'lastSeenAt'>;
+
 export function useReachMachines(): Readonly<{
   scope: Readonly<{ serverId: string; accountId: string }> | null;
   machines: readonly ReachMachine[];
+  placeMachines: readonly Readonly<{ machineId: string; name: string }>[];
+  agentIds: readonly string[];
 }> {
   const activeScope = useAccountSettingsScope();
   const serverId = activeScope?.serverId;
@@ -101,15 +106,53 @@ export function useReachMachines(): Readonly<{
   );
   const profileScope = useActiveServerAccountScope();
   const { binding } = useServerCredentialAccountScopeBinding(serverId);
-  const displays = useMachineDisplayById();
+  const admitted = Boolean(scope && profileScope && binding?.isCurrent()
+    && scope.accountId === binding.scope.accountId && scope.accountId === profileScope.accountId
+    && areServerProfileIdentifiersEquivalent(scope.serverId, binding.scope.serverId)
+    && areServerProfileIdentifiersEquivalent(scope.serverId, profileScope.serverId));
+  // Select the facts Reach reads, rather than heartbeat/version/home-directory carriers.
+  // Primitive inputs keep both subscriptions fact-local, including newly allocated
+  // but unchanged installed-Agent publications. Name disambiguation runs below,
+  // only when its actual inputs change, rather than on every root-store publication.
+  const displayNames = useMachineDisplayById(displays => admitted ? Object.values(displays)
+    .filter(isPersistentMachine).sort((left, right) => left.id.localeCompare(right.id))
+    .flatMap(machine => [machine.id, machine.metadata?.displayName ?? null, machine.metadata?.host ?? null,
+      machine.metadata !== null, machine.availability?.kind ?? null]) : []);
+  const capabilityInputs = useMachineDisplayById(displays => admitted ? Object.values(displays)
+    .filter(isPersistentMachine).sort((left, right) => left.id.localeCompare(right.id))
+    .flatMap(machine => [machine.id, machine.metadata?.platform ?? null, machine.metadata?.arch ?? null,
+      machine.metadata?.agentInventory?.installedAgentIds.length ?? null,
+      ...(machine.metadata?.agentInventory?.installedAgentIds ?? [])]) : []);
+  const placeMachines = React.useMemo(() => {
+    if (!admitted) return [];
+    const sources = [];
+    for (let index = 0; index < displayNames.length; index += 5) {
+      const [id, displayName, host, hasMetadata, availability] = displayNames.slice(index, index + 5) as [
+        string, string | null, string | null, boolean, string | null,
+      ];
+      sources.push({ id, metadata: hasMetadata ? { displayName, host } : null,
+        ...(availability ? { availability: { kind: availability } } : {}) });
+    }
+    return [...resolveMachineDisplayNames(sources)].map(([machineId, name]) => ({ machineId, name }));
+  }, [admitted, displayNames]);
+  const namesById = React.useMemo(() => new Map(placeMachines.map(machine => [machine.machineId, machine.name])), [placeMachines]);
   const machines = React.useMemo(
-    () => scope && profileScope && binding?.isCurrent()
-      && scope.accountId === binding.scope.accountId && scope.accountId === profileScope.accountId
-      && areServerProfileIdentifiersEquivalent(scope.serverId, binding.scope.serverId)
-      && areServerProfileIdentifiersEquivalent(scope.serverId, profileScope.serverId)
-      ? Object.values(displays).filter(isPersistentMachine).sort((left, right) => left.id.localeCompare(right.id))
-      : [],
-    [displays, profileScope, scope, binding],
+    () => {
+      if (!admitted) return [];
+      const result = [];
+      for (let index = 0; index < capabilityInputs.length;) {
+        const [id, platform, arch, installedCount] = capabilityInputs.slice(index, index + 4) as [
+          string, string | null, string | null, number | null,
+        ];
+        index += 4;
+        const agentInventory = installedCount === null ? undefined
+          : { installedAgentIds: capabilityInputs.slice(index, index + installedCount) as string[] };
+        index += installedCount ?? 0;
+        result.push({ id, platform, arch, agentInventory });
+      }
+      return result;
+    },
+    [admitted, capabilityInputs],
   );
   const machineIds = React.useMemo(
     () => machines.map((machine) => machine.id),
@@ -126,9 +169,6 @@ export function useReachMachines(): Readonly<{
     load: false,
   });
   const presence = useMachinePresenceSummaries(scope?.serverId, machineIds);
-  // Reach shows the Account's machines together (map, legend, Where it's on), so same-name machines
-  // carry the suffix every machine list uses to tell them apart.
-  const nameHints = React.useMemo(() => resolveMachineDisplayNameParts(machines), [machines]);
   const declarationsRef = React.useRef<readonly DaemonMergedProjectionSummary[]>([]);
   const readDeclarations = React.useCallback(() => {
     const next = projectionReaders.map(reader => reader.readSummary());
@@ -145,37 +185,38 @@ export function useReachMachines(): Readonly<{
   const readAcp = React.useCallback(() => getAcpCatalogSnapshot(scope), [scope]);
   const acp = React.useSyncExternalStore(subscribeAcpCatalogSnapshots, readAcp, readAcp);
   const definitionIds = React.useMemo(() => acp?.data?.definitions.map(definition => definition.id), [acp?.data]);
-  const reach = React.useMemo(
-    () =>
-      machines.map((machine, index): ReachMachine => {
-        const inventory = readInstalledMachineAgentInventory(machine.metadata?.agentInventory, installed.get(machine.id), definitionIds);
+  // An inventory or declaration re-read that finds the same facts keeps each machine's published row.
+  const retainedInstalled = React.useRef<readonly InstalledReachMachine[] | null>(null);
+  const installedMachines = React.useMemo(
+    () => retainedInstalled.current = retainKeyedRows(retainedInstalled.current,
+      machines.map((machine, index): InstalledReachMachine => {
+        const inventory = readInstalledMachineAgentInventory(machine.agentInventory, installed.get(machine.id), definitionIds);
         return {
           machineId: machine.id,
           platform:
-            machine.metadata?.platform === 'win32'
-              ? 'win32'
-              : machine.metadata?.platform
-                ? 'posix'
-                : null,
-          os: machine.metadata?.platform ?? null,
-          arch: machine.metadata?.arch ?? null,
+            machine.platform === 'win32' ? 'win32' as const : machine.platform ? 'posix' as const : null,
+          os: machine.platform,
+          arch: machine.arch,
           agentIds: inventory.agentIds,
           agentInventoryComplete: inventory.complete,
           agentDeclarationsById: declarations[index]?.inputs?.agentDeclarationsById ?? null,
-          name: withMachineNameHint(presence[index]?.name ?? null, nameHints.get(machine.id)?.hint ?? null),
-          online: presence[index]?.reachability === 'reachable' ? true
-            : presence[index]?.reachability === 'unreachable' ? false : null,
-          offline: presence[index]?.reachability === 'unreachable',
-          lastSeenAt: presence[index]?.lastSeenAt ?? null,
         };
-      }),
-    [machines, installed, presence, declarations, definitionIds, nameHints],
+      }), machine => machine.machineId, { freeze: false }),
+    [machines, installed, declarations, definitionIds],
   );
-  return React.useMemo(() => ({ scope, machines: reach }), [scope, reach]);
-}
-
-function withMachineNameHint(name: string | null, hint: string | null): string | null {
-  return name && hint ? formatMachineDisplayNameParts({ name, hint }) : name;
+  const agentIds = React.useMemo(() => [...new Set(installedMachines.flatMap(machine => machine.agentIds))], [installedMachines]);
+  const retainedReach = React.useRef<readonly ReachMachine[] | null>(null);
+  const reach = React.useMemo(
+    () => retainedReach.current = retainKeyedRows(retainedReach.current, installedMachines.map((machine, index): ReachMachine => ({ ...machine,
+      name: namesById.get(machine.machineId) ?? null,
+      online: presence[index]?.reachability === 'reachable' ? true
+        : presence[index]?.reachability === 'unreachable' ? false : null,
+      offline: presence[index]?.reachability === 'unreachable',
+      lastSeenAt: presence[index]?.lastSeenAt ?? null,
+    })), machine => machine.machineId, { freeze: false }),
+    [installedMachines, namesById, presence],
+  );
+  return React.useMemo(() => ({ scope, machines: reach, placeMachines, agentIds }), [scope, reach, placeMachines, agentIds]);
 }
 
 /** One item's reach on each Account machine, through P2's projection. */

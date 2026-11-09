@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { AutomationStoredWorkflowDefinitionRecipeV2Schema, AutomationTriggerIdSchema } from '@happier-dev/protocol';
+import { AutomationStoredWorkflowDefinitionRecipeV2Schema} from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
+import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
 import { createWorkflowDefinitionFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import {
     createAutomationEditorLifetimeIdentity,

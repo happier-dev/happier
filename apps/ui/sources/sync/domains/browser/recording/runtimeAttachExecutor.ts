@@ -1,4 +1,4 @@
-import type { ActionExecuteResult } from '@happier-dev/protocol';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import type {
     BrowserRecordingAttachResult,
@@ -11,9 +11,8 @@ export type BrowserRecordingAttachExecutorInput = Readonly<{
 }>;
 
 /**
- * Adapter that owns the UI-side recording attach (recording-state mutation + composer
- * attachment). The executor leaf only validates input shape and delegates here; the adapter
- * applies the canonical `attachBrowserRecordingToComposer` gate-checks + state update.
+ * Adapter for the UI-owned composer attachment effect. The executor leaf validates the
+ * Action input and delegates to the mounted composer owner.
  */
 export type BrowserRecordingAttachAdapter = Readonly<{
     attach(input: BrowserRecordingAttachExecutorInput): Promise<BrowserRecordingAttachResult> | BrowserRecordingAttachResult;
@@ -55,7 +54,7 @@ function readAttachInput(input: unknown): BrowserRecordingAttachExecutorInput | 
 /**
  * UI runtime executor leaf for `browser.recording.attachToComposer`. Validates the input,
  * resolves the recording-attach adapter, and routes the finalized recording's mediaRef into
- * the composer through the canonical `attachBrowserRecordingToComposer` owner. Fail-closed on
+ * the mounted composer owner. Fail-closed on
  * a missing adapter or any gate denial (returns the exact typed disabled reason).
  */
 export function createBrowserRecordingAttachExecutor(

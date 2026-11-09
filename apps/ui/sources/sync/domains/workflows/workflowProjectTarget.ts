@@ -1,5 +1,5 @@
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows';
-import type { SessionDirectoryIntentV1 } from '@happier-dev/protocol';
+import type { SessionDirectoryIntentV1 } from '@happier-dev/protocol/sessions/creation/sessionDirectoryIntentV1';
 
 import { resolveWorkspaceRefByScope } from '@/sync/domains/workspaces/workspaceRefs';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';

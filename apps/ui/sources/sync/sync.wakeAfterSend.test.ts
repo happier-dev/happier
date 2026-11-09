@@ -107,7 +107,8 @@ import {
     primeServerFeaturesSnapshot,
     resetServerFeaturesClientForTests,
 } from '@/sync/api/capabilities/serverFeaturesClient';
-import { FeaturesResponseSchema, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
+import { FeaturesResponseSchema} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { getActiveServerAccountScope } from './domains/scope/activeServerAccountScope';
@@ -365,6 +366,33 @@ describe('sync.sendMessage wake-after-send', () => {
         })));
     });
 
+    it('holds the user-request lease for the whole send, so a tab hidden mid-send tears down only after the send settles', async () => {
+        const sessionId = 's_lease';
+        storage.getState().applySessions([{ ...createPlainSession({ sessionId }),
+            metadata: { machineId: 'm1', path: '/tmp/project', flavor: 'codex' } as any }]);
+        const { sync } = await import('./sync');
+        const { userRequestLeaseOwner } = await import('@/sync/runtime/connectivity/userRequestLease');
+        vi.spyOn(apiSocket, 'sessionRPC').mockRejectedValue(createRpcMethodNotAvailableError());
+        const teardown = vi.fn();
+        let deferredAtHide: boolean | null = null;
+        sync.setMessageTransport({
+            emitWithAck: vi.fn(async (_event: string, payload: { localId: string }) => {
+                // The tab is hidden while the send is on the wire (a routine background report).
+                deferredAtHide = userRequestLeaseOwner.deferRoutineTeardown(teardown);
+                expect(teardown).not.toHaveBeenCalled();
+                return { ok: true, id: 'm1', seq: 37, localId: payload.localId, didWrite: true };
+            }) as any,
+            send: vi.fn(),
+        });
+        try {
+            await sync.sendMessage(sessionId, 'hello');
+            expect(deferredAtHide).toBe(true);
+            expect(teardown).toHaveBeenCalledTimes(1);
+        } finally {
+            userRequestLeaseOwner.cancelDeferredRoutineTeardown();
+        }
+    });
+
     it('wakes the daemon after sending a message via the server commit path', async () => {
         const sessionId = 's_test';
         const connectedServices = {
@@ -609,12 +637,18 @@ describe('sync.sendMessage wake-after-send', () => {
         }, 1);
 
         const { sync } = await import('./sync');
-        const sendMessageSpy = vi.spyOn(sync, 'sendMessage').mockRejectedValue(new Error('direct fallback should not run'));
-        vi.spyOn(apiSocket, 'request').mockRejectedValue(new Error('session unavailable'));
+        sync.resetMessageTransport();
+        const emitWithAck = vi.spyOn(apiSocket, 'emitWithAck');
+        const send = vi.spyOn(apiSocket, 'send');
+        const requestSpy = vi.spyOn(apiSocket, 'request').mockRejectedValue(new Error('session unavailable'));
 
-        await expect(sync.submitMessage(sessionId, 'should stay queued')).rejects.toThrow(/session.*not.*available|session.*not.*found/i);
+        await expect(sync.submitMessage(sessionId, 'should stay queued')).rejects.toThrowError(new Error('request_failed'));
 
-        expect(sendMessageSpy).not.toHaveBeenCalled();
+        expect(requestSpy).toHaveBeenCalled();
+        expect(emitWithAck).not.toHaveBeenCalled();
+        expect(send).not.toHaveBeenCalled();
+        expect(storage.getState().sessions[sessionId]).toBeUndefined();
+        expect(storage.getState().sessionPending[sessionId]).toBeUndefined();
     });
 
     it('rejects submitMessage when pending enqueue succeeds but wake fails', async () => {

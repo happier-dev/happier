@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { V2SessionRecord } from '@happier-dev/protocol';
+import type { V2SessionRecord } from '@happier-dev/protocol/sessions/control/contract';
 import { storage } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
@@ -234,7 +234,7 @@ describe('ensureSessionMetadataInventoryForServerAccountScope', () => {
         });
     });
 
-    it('keeps its own full-publication baseline current across a heartbeat and a later metadata page', async () => {
+    it('keeps compact heartbeat clocks separate from full-publication witnesses across metadata pages', async () => {
         const archivedPage = createDeferred<void>();
         let refreshing = false;
         const request = vi.fn(async (path: string) => {
@@ -266,7 +266,10 @@ describe('ensureSessionMetadataInventoryForServerAccountScope', () => {
         try {
             await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(6));
             expect(storage.getState().sessionListRowsByServerId['home-b']?.['heartbeat-row']).toBe(first);
-            expect(sessionRuntimeObservations.read({ serverId: 'home-b', sessionId: 'heartbeat-row' })?.fullPublicationUpdatedAt).toBe(2);
+            const observation = sessionRuntimeObservations.read({ serverId: 'home-b', sessionId: 'heartbeat-row' });
+            expect(observation?.activeAt).toBe(2);
+            // Compact-list clocks do not prove that a full Session document was published.
+            expect(observation?.fullPublicationUpdatedAt).toBeUndefined();
             archivedPage.resolve(undefined);
             await work;
             expect(storage.getState().sessionListRowsByServerId['home-b']?.['heartbeat-row']?.metadata?.name).toBe('Later metadata');

@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
@@ -23,15 +24,13 @@ describe('sync manual retry', () => {
         network.resetRequests();
         home = await network.addHome('https://manual-retry.example.test', 'account-retry');
         const { profileDefaults } = await import('./domains/profiles/profile');
-        network.setHttpResponder(async (input) => {
+        network.setHttpResponder(async (input, init) => {
             const path = new URL(String(input)).pathname;
             if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
             if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
             if (path === '/v1/account/profile') return Response.json({ ...profileDefaults, id: home.accountId });
             if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
-            if (path === '/v2/cursor') return Response.json({ cursor: 0 });
-            if (path === '/v2/changes') return Response.json({ changes: [], nextCursor: 1 });
             if (path === '/v2/sessions' || path === '/v2/sessions/active' || path === '/v2/sessions/query') return Response.json({
                 sessions: [], nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,
             });
@@ -39,7 +38,7 @@ describe('sync manual retry', () => {
             if (path === '/v1/artifacts') return Response.json([]);
             if (path === '/v1/friends') return Response.json({ friends: [] });
             if (path === '/v1/kv') return Response.json({ items: [] });
-            return null;
+            return createEmptyAccountBootstrapHttpResponse(path, init);
         });
         const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
         const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');

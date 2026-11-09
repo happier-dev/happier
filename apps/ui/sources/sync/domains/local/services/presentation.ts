@@ -75,22 +75,6 @@ export function resolveLocalServicePortLabel(row: PortBearingRow): string | null
 }
 
 /**
- * The persistent "N services · M running" header count. `total` is every detected
- * row on the surface; `running` is the subset currently listening.
- */
-export function selectLocalServiceServiceCounts(input: Readonly<{
-    inventoryRows: readonly LocalServiceInventoryRow[];
-}>): Readonly<{ total: number; running: number }> {
-    return {
-        total: input.inventoryRows.length,
-        running: input.inventoryRows.reduce(
-            (count, row) => count + (row.state === 'listening' ? 1 : 0),
-            0,
-        ),
-    };
-}
-
-/**
  * Returns the launch target itself when its service is openable in the browser —
  * i.e. it carries a daemon-projected `browserTarget` or a private-preview registration
  * action and is not `unavailable`.

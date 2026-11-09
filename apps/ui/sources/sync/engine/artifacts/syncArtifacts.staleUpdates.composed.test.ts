@@ -4,7 +4,7 @@ import { ArtifactEncryption } from '@/sync/encryption/artifactEncryption'
 import { Encryption } from '@/sync/encryption/encryption'
 import { sealArtifactPrivateRevisionMetadata } from '@/sync/domains/artifacts/accountArtifactEnvelope'
 import { decodeBase64 } from '@/encryption/base64'
-import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol'
+import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1'
 import tweetnacl from 'tweetnacl'
 import { buildNewArtifactUpdate, buildUpdateArtifactUpdate } from '../../../../../server/sources/app/events/artifactEventPayloadBuilders'
 const key = new Uint8Array(32).fill(1)

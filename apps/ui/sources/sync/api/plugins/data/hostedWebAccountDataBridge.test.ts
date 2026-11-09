@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { derivePluginCollectionIdentityTagV1, normalizePluginAccountCollectionContractV1, PluginAccountCollectionContributionV1Schema, PluginManifestV2Schema } from '@happier-dev/protocol';
+import { derivePluginCollectionIdentityTagV1} from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { normalizePluginAccountCollectionContractV1} from '@happier-dev/protocol/plugins/data/collectionsV1';
+import { PluginAccountCollectionContributionV1Schema} from '@happier-dev/protocol/plugins/data/collectionContributionV1';
+import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { defineAccountCollection } from '@happier-dev/plugin-sdk/collections';
 import type { PluginUiDataClient } from '@happier-dev/plugin-ui/data';

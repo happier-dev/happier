@@ -10,7 +10,7 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { getActionOperation } from '@/sync/ops/actionOperations';
 import { withActionAccountRequestSignal, type LazyActionAccountContext } from './actionAccountContext';
-import { projectUiAccountRequesterCaller } from './accountActionTransport';
+import { projectExternalActionRequesterCallerV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 
 const failure = (errorCode: string) => ({ ok: false as const, errorCode, error: errorCode });
 
@@ -93,10 +93,10 @@ function admitUiMachineWrite(account: LazyActionAccountContext | undefined, mach
         || context.serverId && !areServerProfileIdentifiersEquivalent(context.serverId, account.serverId)
         || context.runtimeAccountId && context.runtimeAccountId !== account.accountId) return null;
     const invocation = ExternalActionRequesterInvocationV1Schema.safeParse({
-        caller: projectUiAccountRequesterCaller(context.actionCaller ?? { kind: 'host' }), surface: context.surface ?? 'rpc',
+        caller: projectExternalActionRequesterCallerV1(context.actionCaller ?? { kind: 'host' }), surface: context.surface ?? 'rpc',
         authority: context.authority ?? 'account_automation', callerPermissionMode: context.callerPermissionMode,
         callerInputConstraints: context.callerInputConstraints, workspaceWrites: context.workspaceWrites,
-        defaultSessionId: context.defaultSessionId,
+        ...(context.defaultSessionId != null ? { defaultSessionId: context.defaultSessionId } : {}),
     });
     if (!invocation.success) return null;
     return { account, target, requestId: context.actionRequestId, invocation: invocation.data };
@@ -134,9 +134,12 @@ export function createUiLanguageIntelligenceApplyAction(account?: LazyActionAcco
     return async ({ machineId, request, actionId }, context) => {
         const admitted = admitUiMachineWrite(account, machineId, context);
         if (!admitted) return failure('admission_unavailable');
+        const target = { machineId, rootPath: request.rootPath, path: request.path,
+            ...(request.languageId ? { languageId: request.languageId } : {}) };
         const input = request.operation.kind === 'codeAction' ? { machineId, ...request }
-            : { machineId, rootPath: request.rootPath, path: request.path,
-                ...(request.languageId ? { languageId: request.languageId } : {}), files: request.operation.files };
+            : request.operation.kind === 'format' || request.operation.kind === 'organizeImports'
+                ? { ...target, operation: { kind: 'apply', files: request.operation.files } }
+                : { ...target, files: request.operation.files };
         const live = admitted.account;
         // Like replace: cancellation never abandons the terminal receipt and its inverse edits.
         return await withActionAccountRequestSignal({ accountLifetime: live.accountOnlyLifetime }, undefined, async signal => {

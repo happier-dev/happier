@@ -1,4 +1,4 @@
-import type { SimulatorPreviewRectV1 } from '@happier-dev/protocol';
+import type { SimulatorPreviewRectV1 } from '@happier-dev/protocol/devices/simulator/inputV1';
 import type { HappierLiveStreamPoint } from '@happier-dev/plugin-ui/presentation';
 
 export type {

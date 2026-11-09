@@ -19,7 +19,7 @@ describe('retained 0.2 Session full reads', () => {
     const sessionDataKeyEnvelopes = new Map<string, string>();
     const read = async (dataEncryptionKey: string | null) => fetchAndApplySessionById({
       sessionId: 'retained', credentials, encryption, sessionDataKeys, sessionDataKeyEnvelopes,
-      accountCurrentness: { mode: vector.encryptionMode === 'plain' ? 'plain' : 'e2ee', version: 1,
+      accountCurrentness: { mode: vector.encryptionMode === 'plain' ? 'plain' : 'e2ee',
         signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 },
       includeMetadataTupleMutationSnapshot: true,
       request: async () => { throw new Error('The captured full read must not issue a second request'); },

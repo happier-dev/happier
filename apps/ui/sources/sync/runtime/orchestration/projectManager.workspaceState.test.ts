@@ -4,6 +4,8 @@ import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 
 import { projectManager } from './projectManager';
+import { resolveProjectForSession } from './projectForSessionResolver';
+import { buildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
 
 function createSession(id: string, machineId: string, path: string) {
     return {
@@ -33,6 +35,43 @@ describe('projectManager workspace-scoped SCM state', () => {
         projectManager.clear();
     });
 
+    it('does not register managed Sessions as Projects through direct or bulk admission', () => {
+        const managed = createSessionFixture({ id: 'managed', metadata: {
+            machineId: 'm1', host: 'h', path: '/private/chat-1', sessionDirectoryV1: { v: 1, kind: 'managed' },
+        } });
+        const second = createSessionFixture({ id: 'second', metadataLayoutVersion: 1, ownerMetadataView: {
+            machineId: 'm1', host: 'h', path: '/private/chat-2', sessionDirectoryV1: { v: 1, kind: 'managed' },
+        } });
+        const folder = createSessionFixture({ id: 'folder', metadata: { machineId: 'm1', host: 'h', path: '/repo' } });
+
+        projectManager.addSession(managed, { serverId: 's' });
+        expect(projectManager.getProjectForSession(managed.id)).toBeNull();
+        expect(resolveProjectForSession({ managed }, managed.id)).toBeNull();
+
+        projectManager.updateSessions([managed, second, folder], undefined, 's');
+        expect(projectManager.getProjectForWorkspace({ serverId: 's', machineId: 'm1', rootPath: '/repo' })?.sessionIds).toEqual([folder.id]);
+        expect(projectManager.getProjectForSession(second.id)).toBeNull();
+        expect(resolveProjectForSession({ second }, second.id)).toBeNull();
+        expect(projectManager.getProjectForSession(folder.id)?.sessionIds).toEqual([folder.id]);
+    });
+
+    it('removes a stale Project mapping when owner metadata classifies the Session as managed', () => {
+        const folder = createSessionFixture({ id: 'chat', metadata: { machineId: 'm1', host: 'h', path: '/private/chat' } });
+        projectManager.addSession(folder, { serverId: 's' });
+        expect(projectManager.getProjectForSession(folder.id)).not.toBeNull();
+        const managed = createSessionFixture({ ...folder, metadata: {
+            machineId: 'm1', host: 'h', path: '/private/chat', sessionDirectoryV1: { v: 1, kind: 'managed' },
+        } });
+
+        expect(resolveProjectForSession({ chat: managed }, managed.id)).toBeNull();
+        projectManager.updateSessions([managed], undefined, 's');
+        expect(projectManager.getProjectForSession(managed.id)).toBeNull();
+        expect(projectManager.getProjectForWorkspace({ serverId: 's', machineId: 'm1', rootPath: '/private/chat' })).toBeNull();
+
+        projectManager.addSession(folder, { serverId: 's' });
+        expect(projectManager.getProjectForSession(folder.id)?.key.rootPath).toBe('/private/chat');
+    });
+
     it('publishes only real snapshot changes through every writer and clears/removals, until demand ends', () => {
         const scope = { serverId: 's', machineId: 'm1', rootPath: '/repo' };
         const snapshot: ScmWorkingSnapshot = {
@@ -45,12 +84,14 @@ describe('projectManager workspace-scoped SCM state', () => {
         const branches: (string | null)[] = [];
         const stop = projectManager.subscribeScmSnapshots(() => {
             branches.push(projectManager.getWorkspaceScmSnapshot(scope)?.branch.head ?? null);
-        });
+        }, new Set([buildWorkspaceCacheKey(scope)]));
         onTestFinished(stop);
         projectManager.updateWorkspaceScmSnapshot(scope, null);
         expect(branches).toEqual([]);
         projectManager.updateWorkspaceScmSnapshot(scope, snapshot);
         projectManager.updateWorkspaceScmSnapshot(scope, { ...snapshot, fetchedAt: 2 });
+        expect(branches).toEqual(['feature']);
+        projectManager.updateWorkspaceScmSnapshot({ ...scope, rootPath: '/unrelated' }, snapshot);
         expect(branches).toEqual(['feature']);
         projectManager.addSession(createSessionFixture({ id: 's1', metadata: { machineId: 'm1', path: '/repo', host: 'h' } }), { serverId: 's' });
         const projectId = projectManager.getProjectForWorkspace(scope)!.id;
@@ -69,12 +110,6 @@ describe('projectManager workspace-scoped SCM state', () => {
         expect(branches).toHaveLength(9);
     });
 
-    it('tracks touched paths for an explicit workspace even when no session exists', () => {
-        const scope = { serverId: 's', machineId: 'm1', rootPath: '/repo' };
-        projectManager.markWorkspaceScmTouchedPaths(scope, ['a.ts', 'b.ts'], 10);
-        expect(projectManager.getWorkspaceScmTouchedPaths(scope)).toEqual(['a.ts', 'b.ts']);
-    });
-
     it('locks operations per workspace even when no session exists', () => {
         const scope = { serverId: 's', machineId: 'm1', rootPath: '/repo' };
         const started = projectManager.beginWorkspaceScmOperation(scope, 'commit', 100);
@@ -82,18 +117,21 @@ describe('projectManager workspace-scoped SCM state', () => {
         if (!started.started) return;
 
         expect(projectManager.getWorkspaceScmInFlightOperation(scope)?.operation).toBe('commit');
+        expect(started.operation.sessionId).toBe('workspace');
         expect(projectManager.finishWorkspaceScmOperation(scope, started.operation.id)).toBe(true);
         expect(projectManager.getWorkspaceScmInFlightOperation(scope)).toBeNull();
+        projectManager.appendWorkspaceScmOperation(scope, { operation: 'commit', status: 'success', timestamp: 101 });
+        expect(projectManager.getWorkspaceScmOperationLog(scope)[0]?.sessionId).toBe('workspace');
     });
 
     it('does not duplicate SCM state between an explicit workspace and a session in the same folder', () => {
         const scope = { serverId: 's', machineId: 'm1', rootPath: '/repo' };
-        projectManager.markWorkspaceScmTouchedPaths(scope, ['a.ts'], 10);
+        projectManager.markWorkspaceScmCommitSelectionPaths(scope, ['a.ts'], 10);
 
         projectManager.addSession(createSession('s1', 'm1', '/repo') as any, { serverId: 's' });
-        expect(projectManager.getWorkspaceScmTouchedPathsForSession('s1')).toEqual(['a.ts']);
+        expect(projectManager.getSessionProjectScmCommitSelectionPaths('s1')).toEqual(['a.ts']);
 
-        projectManager.markWorkspaceScmTouchedPathsForSession('s1', ['b.ts'], 11);
-        expect(projectManager.getWorkspaceScmTouchedPaths(scope)).toEqual(['a.ts', 'b.ts']);
+        projectManager.markSessionProjectScmCommitSelectionPaths('s1', ['b.ts'], 11);
+        expect(projectManager.getWorkspaceScmCommitSelectionPaths(scope)).toEqual(['a.ts', 'b.ts']);
     });
 });

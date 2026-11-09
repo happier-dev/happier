@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto';
 import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { DIRECT_TRANSFER_SESSION_EXPIRES_AT_HEADER } from '@happier-dev/protocol/machines/transfer/directPeerUrls';
 import { ComposerAttachmentDraftV1Schema } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';

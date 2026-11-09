@@ -4,6 +4,7 @@ import type { SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/cre
 import {
     clearSpawnAttemptCustody,
     markSpawnAttemptCreated,
+    markSpawnAttemptRefused,
     type AcquireSpawnAttemptCustodyResult,
     type PersistedSpawnAttempt,
 } from '@/sync/domains/session/spawn/spawnAttemptNonceStore';
@@ -37,6 +38,9 @@ export async function settleManualSessionSpawnNewActionCustody(params: Readonly<
         action.ok && action.result.type === 'error' && action.result.retryable === false
     );
     if (noEffect && !committed && submitted.createdSessionId === null && acquired.previousSubmissionState !== 'submitted') {
+        if (!sourceAdmissionRetired && action.ok && action.result.type === 'error' && !action.result.retryable) {
+            return await markSpawnAttemptRefused({ record: submitted, result: action.result }) ?? submitted;
+        }
         // A later refusal says nothing about a previous submission's effect.
         // The store also checks for a concurrently committed receipt under its lock.
         await clearSpawnAttemptCustody({

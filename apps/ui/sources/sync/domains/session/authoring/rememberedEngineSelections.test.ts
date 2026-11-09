@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SessionModelSelectionV1Schema } from '@happier-dev/protocol';
+import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/selection/v1';
 
 import {
     RememberedEngineSelectionsByScopeV1Schema,

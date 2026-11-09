@@ -77,18 +77,12 @@ describe('resolveMachineSpawnReadiness', () => {
         })).toEqual({ status: 'offline', machineId: lockedMachine.id });
     });
 
-    it('allows an online machine attempt while exact readiness is unknown or probing', () => {
+    it('allows an online machine attempt while exact readiness is unknown', () => {
         expect(canAttemptMachineSpawn({
             scope,
             selectedMachineId: 'machine-1',
             machine: onlineMachine,
             spawnReadiness: { status: 'unknown', machineId: 'machine-1' },
-        })).toBe(true);
-        expect(canAttemptMachineSpawn({
-            scope,
-            selectedMachineId: 'machine-1',
-            machine: onlineMachine,
-            spawnReadiness: { status: 'probing', machineId: 'machine-1' },
         })).toBe(true);
     });
 

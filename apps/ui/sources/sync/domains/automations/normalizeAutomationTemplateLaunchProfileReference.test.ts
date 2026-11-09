@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
-    LaunchProfileV2Schema,
-    ProviderSettingsMigrationStateV1Schema,
+    LaunchProfileV2Schema} from '@happier-dev/protocol/profiles/v2/schema';
+import {
+    ProviderSettingsMigrationStateV1Schema} from '@happier-dev/protocol/providers/settings/v1';
+import {
     SessionModelSelectionV1Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/providers/selection/v1';
 
 import { normalizeAutomationTemplateLaunchProfileReference } from './normalizeAutomationTemplateLaunchProfileReference';
 

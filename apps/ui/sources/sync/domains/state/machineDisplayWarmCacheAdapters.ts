@@ -2,6 +2,7 @@ import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDi
 import { isPersistentMachine, MachineKindFromLegacyProjectionSchema } from '@happier-dev/protocol/machines/machineKind';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ServerProfile } from '@/sync/domains/server/serverProfiles';
+import { readMachineActivity } from '@/sync/domains/machines/machineActivity';
 
 import type { MachineDisplayCacheEntryV1 } from './warmCachePersistence';
 
@@ -78,8 +79,8 @@ export function buildMachineDisplayCacheEntryFromRenderable(
         kind: MachineKindFromLegacyProjectionSchema.parse(machine.kind),
         metadataVersion: preserveMetadata ? previousEntry.metadataVersion : machine.metadataVersion,
         updatedAt: machine.updatedAt,
-        active: machine.active,
-        activeAt: machine.activeAt,
+        active: readMachineActivity(machine).active,
+        activeAt: readMachineActivity(machine).activeAt ?? 0,
         revokedAt: machine.revokedAt ?? null,
         replacedByMachineId: machine.replacedByMachineId ?? null,
         replacedAt: machine.replacedAt ?? null,

@@ -12,18 +12,9 @@ import {
     normalizePetCompanionSizeScale,
 } from '@/sync/domains/pets/companionSizeScale';
 
-import {
-    PET_COMPANION_POSITION_DEFAULT,
-    PetCompanionStoredPositionSchema,
-} from '@/sync/domains/pets/companionPosition/companionPosition';
-const DesktopPetOverlayOffsetSchema = z.object({
-    x: z.number(),
-    y: z.number(),
-});
-
 export const PetEnabledOverrideSchema = z.enum(['inherit', 'enabled', 'disabled']);
 const PetSelectedOverrideSchema = createStoredReadSchema(PetDeviceOverrideV1Schema);
-const DesktopPetOverlayAnchorSchema = z.enum(['bottomRight', 'bottomLeft', 'topRight', 'topLeft']);
+export const DesktopPetOverlayAnchorSchema = z.enum(['bottomRight', 'bottomLeft', 'topRight', 'topLeft']);
 const PetCompanionSizeScaleSchema = z.catch(z.number(), PET_COMPANION_SIZE_SCALE_DEFAULT);
 
 function serializePetCompanionSizeScaleBucket(value: number): 'small' | 'default' | 'large' | 'xlarge' {
@@ -210,18 +201,6 @@ export const ACTIVITY_SURFACE_LOCAL_SETTING_DEFINITIONS = {
         description: 'Device-only pet package override',
         storageScope: 'local',
     },
-    petsCompanionPosition: {
-        schema: PetCompanionStoredPositionSchema,
-        default: PET_COMPANION_POSITION_DEFAULT,
-        description: 'Versioned normalized app-shell pet companion position on this device',
-        storageScope: 'local',
-    },
-    petsDismissedCompanionTrayItemKeys: {
-        schema: z.catch(z.array(z.string().check(z.minLength(1))), []),
-        default: [],
-        description: 'Device-local dismissed pet companion activity bubble keys',
-        storageScope: 'local',
-    },
     petsCompanionSizeScale: {
         schema: PetCompanionSizeScaleSchema,
         default: PET_COMPANION_SIZE_SCALE_DEFAULT,
@@ -256,12 +235,6 @@ export const ACTIVITY_SURFACE_LOCAL_SETTING_DEFINITIONS = {
         description: 'Desktop pet overlay anchor on this device',
         storageScope: 'local',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
-    },
-    desktopPetOverlayOffset: {
-        schema: DesktopPetOverlayOffsetSchema,
-        default: { x: 0, y: 0 },
-        description: 'Desktop pet overlay offset from the selected anchor on this device',
-        storageScope: 'local',
     },
     desktopPetOverlayLocked: {
         schema: z.boolean(),

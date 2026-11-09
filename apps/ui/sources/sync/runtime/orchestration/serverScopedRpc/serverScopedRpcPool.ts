@@ -6,6 +6,7 @@ import {
     isTerminalAuthError,
 } from '@/sync/runtime/connectivity/authErrors';
 import { createRpcCallError } from '@/sync/runtime/rpcErrors';
+import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
 import {
     isPlainMachineDataKeyMarker,
     resolvePublishedMachineDataEncryptionKeyV1,
@@ -17,8 +18,9 @@ import type { CapturedServerReadTransport } from './capturedServerReadTransport'
 import { readExplicitMachineTransportRow, readMachineRows, resetMachineRowReadsForTests, type PreparedMachineRows } from '@/sync/api/machines/machineRowsApi';
 import { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } from './serverScopedRpcTypes';
 import { mergeAbortSignals, throwIfAborted } from '@/utils/runtime/abortSignals';
+import { admitMachineRowPlainMode, type AccountE2eeCustody } from '@happier-dev/sync-client';
 
-type MachineContextAuthority = Pick<Encryption, 'captureMachineEncryptionContext' | 'captureMachineEncryptionContextForRead' | 'getMachineEncryptionContext'>;
+type MachineContextAuthority = Pick<Encryption, 'captureMachineEncryptionContext' | 'captureMachineEncryptionContextForRead' | 'getMachineEncryptionContext' | 'removeMachineEncryption'>;
 
 function machineRowTimeoutError() {
     return Object.assign(createRpcCallError({ error: 'Machine row request timed out', errorCode: 'MACHINE_RPC_TIMEOUT' }),
@@ -106,7 +108,13 @@ async function fetchMachineTransport(params: Readonly<{
             };
         };
         const machine = body?.machine;
-        if (!machine || normalizeId(machine.id) !== params.machineId) {
+        if (!machine) {
+            // Home deliberately conceals inaccessible and absent Machines alike.
+            // Preserve that access refusal before attempting any key opening.
+            params.encryption?.removeMachineEncryption(params.machineId);
+            throw createRpcCallError({ error: RPC_ERROR_MESSAGES.FORBIDDEN, errorCode: RPC_ERROR_CODES.FORBIDDEN });
+        }
+        if (normalizeId(machine.id) !== params.machineId) {
             return null;
         }
         const published = machine?.dataEncryptionKey;
@@ -171,6 +179,8 @@ export async function resolveScopedMachineTransport(params: Readonly<{
     token: string;
     machineId: string;
     accountId?: string;
+    /** This credential's E2EE custody, for the Account downgrade pin on Home-reported plain rows. */
+    accountE2eeCustody?: AccountE2eeCustody;
     encryption?: MachineContextAuthority;
     expectedAccountMode?: 'plain' | 'e2ee';
     readAccountMode?: () => Promise<'plain' | 'e2ee'>;
@@ -227,6 +237,16 @@ export async function resolveScopedMachineTransport(params: Readonly<{
     });
     if (resolution.status === 'unavailable') {
         return null;
+    }
+    if (resolution.status === 'plain') {
+        // The same Home serves the row: an own-Account Machine reported plain while this
+        // device holds active E2EE custody is a downgrade, never a plaintext transport.
+        try {
+            admitMachineRowPlainMode({ access: evidence.machine.access, viewerAccountId: params.accountId,
+                custody: params.accountE2eeCustody ?? 'absent' });
+        } catch {
+            return null;
+        }
     }
     const localContext = params.encryption?.captureMachineEncryptionContext(machineId, evidence.identity);
     const context: MachineEncryptionContext = {

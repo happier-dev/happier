@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildBackendTargetKey } from '@happier-dev/protocol';
+import { buildBackendTargetKey } from '@happier-dev/protocol/backends/targets/backendTargetRef';
 import { AIBackendProfileSchema } from './profileCompatibility';
 import { buildProfileGroups, toggleFavoriteProfileId } from './profileGrouping';
 

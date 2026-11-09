@@ -5,9 +5,47 @@ import {
     emitSyncPerformanceSummaryToConsole,
     installSyncPerformanceTelemetryGlobal,
     registerSyncPerformanceTelemetryGlobalLifecycleHooks,
+    type SyncPerformanceScopedRpcSetup,
 } from './syncPerformanceTelemetry';
 
 describe('sync performance telemetry', () => {
+    it('keeps scoped setup diagnostics inert without an observer and joins reused sockets while observed', () => {
+        const target = globalThis as typeof globalThis & { __HAPPIER_PERF_DIAGNOSTICS__?: boolean };
+        const previous = target.__HAPPIER_PERF_DIAGNOSTICS__;
+        const now = vi.fn(() => 42);
+        const telemetry = createSyncPerformanceTelemetry({ enabled: false, now });
+        const events: SyncPerformanceScopedRpcSetup[] = [];
+        const socket = { io: { engine: { id: '' } } };
+        try {
+            expect(telemetry.scopedRpcSetupAvailable()).toBe(false);
+            telemetry.registerScopedRpcSetupSource();
+            expect(telemetry.scopedRpcSetupAvailable()).toBe(true);
+            target.__HAPPIER_PERF_DIAGNOSTICS__ = false;
+            const detachDisabled = telemetry.subscribeScopedRpcSetup(event => events.push(event));
+            now.mockClear();
+            telemetry.recordScopedRpcSetup('acquire', socket, 'https://home.test');
+            expect(now).not.toHaveBeenCalled();
+            expect(events).toEqual([]);
+            detachDisabled();
+            target.__HAPPIER_PERF_DIAGNOSTICS__ = true;
+            const detach = telemetry.subscribeScopedRpcSetup(event => events.push(event));
+            telemetry.recordScopedRpcSetup('acquire', socket, 'https://home.test/path');
+            socket.io.engine.id = 'engine-one';
+            telemetry.recordScopedRpcSetup('connected', socket, 'https://home.test/path');
+            expect(events[1]?.engineId).toBe('engine-one');
+            expect(events.map(event => ({ phase: event.phase, connectionId: event.connectionId, atMs: event.atMs, origin: event.origin })))
+                .toEqual([{ phase: 'acquire', connectionId: 1, atMs: 42, origin: 'https://home.test' },
+                    { phase: 'connected', connectionId: 1, atMs: 42, origin: 'https://home.test' }]);
+            detach();
+            now.mockClear();
+            telemetry.recordScopedRpcSetup('connect', socket, 'https://home.test');
+            expect(now).not.toHaveBeenCalled();
+        } finally {
+            if (previous === undefined) delete target.__HAPPIER_PERF_DIAGNOSTICS__;
+            else target.__HAPPIER_PERF_DIAGNOSTICS__ = previous;
+        }
+    });
+
     it('honors explicit pre-boot timing/count capture modes over build tuning and exposes observed enablement', () => {
         const target = globalThis as typeof globalThis & { __HAPPIER_PERF_CAPTURE_MODE__?: string; __HAPPIER_SYNC_PERFORMANCE__?: { isEnabled?: () => boolean } };
         const previousMode = target.__HAPPIER_PERF_CAPTURE_MODE__;

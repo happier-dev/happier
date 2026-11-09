@@ -263,7 +263,7 @@ describe('Session envelope exact Account transport', () => {
         const { encodeBase64, decodeBase64 } = await import('@/encryption/base64');
         const { encodeHex } = await import('@/encryption/hex');
         const { encryptDataKeyForRecipientV0 } = await import('@/sync/encryption/directShareEncryption');
-        const { openEncryptedDataKeyEnvelopeV1, signAccountContentKeyBindingV1 } = await import('@happier-dev/protocol');
+        const [{ openEncryptedDataKeyEnvelopeV1}, { signAccountContentKeyBindingV1}] = await Promise.all([import('@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1'), import('@happier-dev/protocol/crypto/accountContentKeyBindingV1')]);
         const { prepareSessionDataKeyEnvelopesForScope } = await import('./sessionDataKeyEnvelopesApi');
 
         // The one Session DEK, sealed to the manager exactly as the Home stores it.

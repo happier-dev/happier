@@ -1,4 +1,5 @@
-import type { ExecutionRunLaunchOrigin, ParticipantRecipientV1 } from '@happier-dev/protocol';
+import type { ExecutionRunLaunchOrigin} from '@happier-dev/protocol/execution/runs/startRequest';
+import type { ParticipantRecipientV1 } from '@happier-dev/protocol/messages/structured/participantMessageV1';
 
 export type SessionSubagentKind = 'execution_run' | 'agent_team_member' | 'subagent_sidechain';
 export type SessionSubagentStatus = 'running' | 'succeeded' | 'failed' | 'timedOut' | 'cancelled' | 'terminated' | 'unknown';

@@ -1,18 +1,19 @@
 import { createPlainSessionOwnerMetadataEnvelopeV1, type SessionOwnerMetadataEnvelopeV1, type SessionOwnerMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
-import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
 import type { ComposerOptionsInputV1 } from '@happier-dev/protocol/embed';
+import type { ApiTokenGrantV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import type {
     SessionMetadataOwnerMigrationCurrentnessV1,
 } from '@happier-dev/cli-common/sessionMetadata';
 import type { DecryptOptions } from '@/sync/encryption/encryptor';
 import type { EncryptionScopeInput } from '@/sync/encryption/encryption';
 import { createSessionDisplayCrypto } from '@/sync/encryption/sessionDisplayCrypto';
-import { validateSessionDisplayProjectionV1 } from '@happier-dev/protocol';
+import { validateSessionDisplayProjectionV1 } from '@happier-dev/protocol/sessions';
 import { updateSessionMetadataWithRetry } from '@/sync/domains/session/metadata/updateSessionMetadataWithRetry';
 import { emitSessionMetadataTuplePatch } from './emitSessionMetadataUpdateWithServerScope';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { createNotAuthenticatedError, isAuthenticationResponseStatus } from '@/sync/runtime/connectivity/authErrors';
 import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { readCredentialAuthorityKind } from '@/auth/context/credentialAuthority';
@@ -21,8 +22,9 @@ import { resolveCurrentAccountScopedCryptoMaterialSnapshot } from '@/sync/domain
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { fetchAndApplySessionById, type SessionByIdContentDemand, type SessionByIdEncryption, type SessionByIdPrefetchedRead } from '@/sync/engine/sessions/sessionById';
-import { fetchAccountEncryptionCurrentness, captureAccountEncryptionCurrentness } from '@/sync/api/account/apiAccountEncryptionMode';
+import { fetchOperationAccountEncryptionIdentity, fetchAccountEncryptionIdentity, captureAccountEncryptionCurrentness } from '@/sync/api/account/apiAccountEncryptionMode';
 import { readSessionDetailAccessProjectionVersion } from '@/sync/api/session/sessionDetailAccessProjection';
+import { readAccountEncryptionObservationBinding } from '@/sync/http/accountEncryptionObservationBinding';
 
 import {
     createServerRequestForResolvedServerScope,
@@ -38,7 +40,7 @@ import {
 } from '@/sync/domains/settings/clientEncryptionRequirement';
 import { createServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { CapturedServerReadTransport } from './capturedServerReadTransport';
-import { sameAccountEncryptionIdentity } from '@happier-dev/sync-client';
+import { sameAccountEncryptionIdentity, type AccountEncryptionIdentity } from '@happier-dev/sync-client';
 
 type AppliedSession = Omit<Session, 'presence'> & { presence?: 'online' | number };
 
@@ -61,13 +63,13 @@ export type SessionMetadataTupleWriterContext = Readonly<{
 export function createOperationAccountCurrentnessSource(params: Readonly<{
     credentials: AuthCredentials;
     request: (path: string, init: RequestInit) => Promise<Response>;
-    initial?: AccountEncryptionCurrentnessResponse;
+    initial?: AccountEncryptionIdentity;
     serverId?: string | null;
 }>) {
     let currentness = params.initial;
     let expected = params.initial;
-    let inFlight: Promise<AccountEncryptionCurrentnessResponse> | null = null;
-    let proof: Readonly<{ accountCurrentness: AccountEncryptionCurrentnessResponse; snapshot: ReturnType<typeof resolveCurrentAccountOwnerMetadataMaterialSnapshot> }> | undefined;
+    let inFlight: Promise<AccountEncryptionIdentity> | null = null;
+    let proof: Readonly<{ accountCurrentness: AccountEncryptionIdentity; snapshot: ReturnType<typeof resolveCurrentAccountOwnerMetadataMaterialSnapshot> }> | undefined;
     let readWithdrawn = false;
     const observation = captureAccountEncryptionCurrentness(params.serverId, () => {
         currentness = undefined;
@@ -81,7 +83,7 @@ export function createOperationAccountCurrentnessSource(params: Readonly<{
             { code: 'account_encryption_currentness_changed' });
     };
     // One proof for this finite operation, however many of its steps need the Account's material.
-    const readAccountMaterialProof = (accountCurrentness: AccountEncryptionCurrentnessResponse) => {
+    const readAccountMaterialProof = (accountCurrentness: AccountEncryptionIdentity) => {
         assertCurrent();
         if (!proof || proof.accountCurrentness !== accountCurrentness) {
             proof = { accountCurrentness, snapshot: resolveCurrentAccountOwnerMetadataMaterialSnapshot({
@@ -89,12 +91,12 @@ export function createOperationAccountCurrentnessSource(params: Readonly<{
         }
         return proof.snapshot;
     };
-    const read = async (): Promise<AccountEncryptionCurrentnessResponse> => {
+    const read = async (): Promise<AccountEncryptionIdentity> => {
         assertCurrent();
         if (currentness) return currentness;
         if (!inFlight) {
             readWithdrawn = false;
-            inFlight = fetchAccountEncryptionCurrentness(params.credentials, { request: params.request });
+            inFlight = fetchOperationAccountEncryptionIdentity(params.credentials, { request: params.request });
         }
         const pending = inFlight;
         const observed = await pending;
@@ -132,8 +134,8 @@ export function createOperationAccountCurrentnessSource(params: Readonly<{
 }
 
 function resolveOwnerMigrationCurrentness(params: Readonly<{
-    readProof: (accountCurrentness: AccountEncryptionCurrentnessResponse) => ReturnType<typeof resolveCurrentAccountOwnerMetadataMaterialSnapshot>;
-    accountCurrentness: AccountEncryptionCurrentnessResponse;
+    readProof: (accountCurrentness: AccountEncryptionIdentity) => ReturnType<typeof resolveCurrentAccountOwnerMetadataMaterialSnapshot>;
+    accountCurrentness: AccountEncryptionIdentity;
 }>): SessionMetadataTupleWriterContext['ownerMigrationCurrentness'] {
     if (params.accountCurrentness.mode === 'plain') {
         return {
@@ -151,7 +153,7 @@ function resolveOwnerMigrationCurrentness(params: Readonly<{
 
 function resolveCurrentAccountOwnerMetadataMaterialSnapshot(params: Readonly<{
     credentials: AuthCredentials;
-    accountCurrentness: AccountEncryptionCurrentnessResponse;
+    accountCurrentness: AccountEncryptionIdentity;
 }>) {
     if (params.accountCurrentness.mode === 'plain') {
         throw new Error(
@@ -168,7 +170,7 @@ function resolveCurrentAccountOwnerMetadataMaterialSnapshot(params: Readonly<{
 }
 
 export function getScopedSessionByIdEncryption(context: Readonly<{
-    decryptEncryptionKey: (value: string) => Promise<Uint8Array | null>;
+    decryptEncryptionKey: SessionByIdEncryption['decryptEncryptionKey'];
     initializeSessions: SessionByIdEncryption['initializeSessions'];
     getSessionEncryption: (sessionId: string) => unknown;
     removeSessionEncryption?: (sessionId: string) => void;
@@ -183,7 +185,7 @@ export function getScopedSessionByIdEncryption(context: Readonly<{
         };
     }
     return {
-        decryptEncryptionKey: (value) => context.decryptEncryptionKey(value),
+        decryptEncryptionKey: (value, options) => context.decryptEncryptionKey(value, options),
         initializeSessions: (keys, options) => context.initializeSessions(keys, options),
         removeSessionEncryption: (sessionId) => context.removeSessionEncryption?.(sessionId),
         ...(context.getCurrentEncryptionGenerationScope ? {
@@ -490,6 +492,25 @@ async function completeAuthorizedFullRead(params: Parameters<typeof maintainAuth
     return params.result;
 }
 
+export function throwForFailedSessionHydration(result: Awaited<ReturnType<typeof fetchSessionByIdWithServerScope>>): void {
+    if (result.ok) {
+        return;
+    }
+
+    const errorCode = typeof result.errorCode === 'string' ? result.errorCode : '';
+    if (
+        isAuthenticationResponseStatus(result.httpStatus)
+        || errorCode === 'unauthorized'
+        || errorCode === 'forbidden'
+        || errorCode === 'not_authenticated'
+    ) {
+        const status = isAuthenticationResponseStatus(result.httpStatus) ? result.httpStatus : undefined;
+        throw createNotAuthenticatedError(status);
+    }
+
+    throw new Error(errorCode || 'Failed to hydrate session');
+}
+
 export async function fetchSessionByIdWithServerScope(params: Readonly<{
     sessionId: string;
     prefetched?: SessionByIdPrefetchedRead;
@@ -498,6 +519,7 @@ export async function fetchSessionByIdWithServerScope(params: Readonly<{
     activeCredentials: AuthCredentials;
     sessionKey?: string | null;
     composerOptionsInput?: ComposerOptionsInputV1 | null;
+    composerOptionsGrant?: ApiTokenGrantV1 | null;
     accountMode?: 'plain' | 'e2ee';
     activeEncryption?: SessionByIdEncryption | null;
     sessionDataKeys: Map<string, Uint8Array>;
@@ -507,19 +529,20 @@ export async function fetchSessionByIdWithServerScope(params: Readonly<{
     applySessions: (sessions: AppliedSession[]) => void;
     applySessionListRows?: Parameters<typeof fetchAndApplySessionById>[0]['applySessionListRows'];
     getExistingSession?: (sessionId: string) => Session | null | undefined;
+    ownerMetadataProjectionBaseline?: Parameters<typeof fetchAndApplySessionById>[0]['ownerMetadataProjectionBaseline'];
     getCurrentSessionListRenderable?: (sessionId: string) => SessionListRenderableSession | null | undefined;
     log: { log: (message: string) => void };
     timeoutMs?: number;
     signal?: AbortSignal;
     includeTurnsProjection?: boolean | 'required';
-    onSessionObservation?: Parameters<typeof fetchAndApplySessionById>[0]['onSessionObservation'];
     /** Explicit list maintenance awaits its CAS inside the containing concurrency budget. */
     awaitDisplayProjectionMaintenance?: true;
     authority?: ServerAccountRequestAuthority;
     /** Shares the exact Account reader selected here; consumers must not resolve it again. */
     onResolvedContext?: (context: ResolvedServerAccountRequestContext) => void;
-    accountCurrentness?: AccountEncryptionCurrentnessResponse;
+    accountCurrentness?: AccountEncryptionIdentity;
     isCurrent?: () => boolean;
+    onSessionObservation?: Parameters<typeof fetchAndApplySessionById>[0]['onSessionObservation'];
 }> & (
     | Readonly<{ includeMetadataTupleMutationSnapshot?: false;
         accountCurrentnessSource?: ReturnType<typeof createOperationAccountCurrentnessSource> }>
@@ -539,15 +562,18 @@ export async function fetchSessionByIdWithServerScope(params: Readonly<{
             contentDemand: params.contentDemand,
             credentials: params.activeCredentials, sessionKey: params.sessionKey,
             composerOptionsInput: params.composerOptionsInput ?? null,
+            composerOptionsGrant: params.composerOptionsGrant ?? null,
             accountMode: params.accountMode,
             encryption: getScopedSessionByIdEncryption(params.activeEncryption ?? null),
             sessionDataKeys: params.sessionDataKeys, sessionDataKeyEnvelopes: params.sessionDataKeyEnvelopes,
             request: params.activeRequest,
             applySessions: params.applySessions, applySessionListRows: params.applySessionListRows, getExistingSession: params.getExistingSession,
+            ownerMetadataProjectionBaseline: params.ownerMetadataProjectionBaseline,
             getCurrentSessionListRenderable: params.getCurrentSessionListRenderable,
             log: params.log, timeoutMs: params.timeoutMs,
             signal: params.signal,
             includeTurnsProjection: params.includeTurnsProjection, isCurrent: params.isCurrent,
+            onSessionObservation: params.onSessionObservation,
             accessProjectionVersion: 1,
         });
     }
@@ -579,6 +605,12 @@ export async function fetchSessionByIdWithServerScope(params: Readonly<{
                 serverId: activeCurrentnessServerId,
             }));
         const activeEncryption = getScopedSessionByIdEncryption(params.activeEncryption ?? null);
+        // The Session response enforces persisted Account mode. List-only
+        // projection needs identity, never Account/Settings cursor authority.
+        const fetchAccountCurrentness = params.contentDemand === 'list-projection' && params.includeMetadataTupleMutationSnapshot !== true
+            && readAccountEncryptionObservationBinding(request, params.activeCredentials)
+            ? () => fetchAccountEncryptionIdentity(params.activeCredentials, { request, usage: 'identity', signal: params.signal })
+            : accountCurrentnessSource.read;
         const readParams = {
             sessionId: params.sessionId,
             prefetched: params.prefetched,
@@ -586,8 +618,8 @@ export async function fetchSessionByIdWithServerScope(params: Readonly<{
             serverId: params.serverId ?? null,
             credentials: params.activeCredentials,
             accountCurrentness: accountCurrentnessSource.peek(),
-            fetchAccountCurrentness: accountCurrentnessSource.read,
-            readAccountMaterial: accountCurrentnessSource.readAccountMaterial,
+            fetchAccountCurrentness,
+            readAccountMaterial: fetchAccountCurrentness === accountCurrentnessSource.read ? accountCurrentnessSource.readAccountMaterial : undefined,
             ensureAccountCurrentness: accountCurrentnessSource.ensureCurrent,
             encryption: activeEncryption,
             sessionDataKeys: params.sessionDataKeys,
@@ -598,6 +630,7 @@ export async function fetchSessionByIdWithServerScope(params: Readonly<{
             applySessions: params.applySessions,
             applySessionListRows: params.applySessionListRows,
             getExistingSession: params.getExistingSession,
+            ownerMetadataProjectionBaseline: params.ownerMetadataProjectionBaseline,
             getCurrentSessionListRenderable: params.getCurrentSessionListRenderable,
             log: params.log,
             timeoutMs: params.timeoutMs,
@@ -652,6 +685,10 @@ export async function fetchSessionByIdWithServerScope(params: Readonly<{
             initial: params.accountCurrentness,
             serverId: context.targetServerId,
         }));
+    const fetchAccountCurrentness = params.contentDemand === 'list-projection' && params.includeMetadataTupleMutationSnapshot !== true
+        && readAccountEncryptionObservationBinding(request, context.credentials)
+        ? () => fetchAccountEncryptionIdentity(context.credentials!, { request, usage: 'identity', signal: params.signal })
+        : accountCurrentnessSource.read;
     const readParams = {
         sessionId: params.sessionId,
         prefetched: params.prefetched,
@@ -659,8 +696,8 @@ export async function fetchSessionByIdWithServerScope(params: Readonly<{
         serverId: context.targetServerId,
         credentials: context.credentials,
         accountCurrentness: accountCurrentnessSource.peek(),
-        fetchAccountCurrentness: accountCurrentnessSource.read,
-        readAccountMaterial: accountCurrentnessSource.readAccountMaterial,
+        fetchAccountCurrentness,
+        readAccountMaterial: fetchAccountCurrentness === accountCurrentnessSource.read ? accountCurrentnessSource.readAccountMaterial : undefined,
         ensureAccountCurrentness: accountCurrentnessSource.ensureCurrent,
         encryption: scopedEncryption,
         sessionDataKeys: params.sessionDataKeys,
@@ -671,6 +708,7 @@ export async function fetchSessionByIdWithServerScope(params: Readonly<{
         applySessions: params.applySessions,
         applySessionListRows: params.applySessionListRows,
         getExistingSession: params.getExistingSession,
+        ownerMetadataProjectionBaseline: params.ownerMetadataProjectionBaseline,
         getCurrentSessionListRenderable: params.getCurrentSessionListRenderable,
         log: params.log,
         timeoutMs: params.timeoutMs,
@@ -680,7 +718,7 @@ export async function fetchSessionByIdWithServerScope(params: Readonly<{
             ?? ((params.contentDemand === undefined || params.contentDemand === 'session')
                 && readCredentialAuthorityKind(context.credentials.token) === 'account'),
         fresh: params.includeMetadataTupleMutationSnapshot === true,
-            onSessionObservation: params.onSessionObservation,
+        onSessionObservation: params.onSessionObservation,
         isCurrent: () => accountCurrentnessSource.isCurrent() && params.isCurrent?.() !== false,
         accessProjectionVersion: params.prefetched ? params.prefetched.accessProjectionVersion : readSessionDetailAccessProjectionVersion(context.targetServerId),
         clientEncryptionRequirement: scopedClientEncryptionRequirement,

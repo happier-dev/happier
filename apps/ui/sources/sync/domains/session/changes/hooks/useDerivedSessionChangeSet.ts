@@ -64,8 +64,10 @@ export function useDerivedSessionChangeSet(
     );
     const sessionId = requestedAddress?.sessionId ?? '';
     const session = useSession(sessionId);
+    // Change sets read tool and user rows only; streamed agent text never changes them.
     const { messages: storedMessages } = useSessionMessages(sessionId, {
         enabled: requestedAddress !== null,
+        textUpdates: false,
     });
 
     const messages = React.useMemo(() => readStoredSessionMessagesForAddress(

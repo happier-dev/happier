@@ -1,6 +1,8 @@
 import type { BrowserControlViewState } from '../control';
 import { isLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
 
+import { selectBrowserViewDisplayHost } from './address';
+
 /**
  * Presentation model for the toolbar SecurityOriginIndicator. The browser already TRACKS the
  * resolved `securityOrigin` (and the navigated URL) on the view state; this selector is the ONE
@@ -61,7 +63,9 @@ export function selectBrowserSecurityOriginModel(
         return { securityLevel: 'unknown', originLabel: null };
     }
 
-    const host = parsed.host || parsed.hostname;
+    // The posture comes from the real origin; the name is the one the address field shows, so a relay
+    // preview reads as the service it exposes rather than its opaque per-preview host.
+    const host = selectBrowserViewDisplayHost(view) ?? (parsed.host || parsed.hostname);
     const originLabel = host.length > 0 ? host : null;
 
     if (parsed.protocol === 'https:' || parsed.protocol === 'wss:') {

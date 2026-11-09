@@ -1,4 +1,4 @@
-import type { DaemonWorkspaceFileSearchResponse, WorkspaceFileSearchFileV1 } from '@happier-dev/protocol';
+import type { DaemonWorkspaceFileSearchResponse, WorkspaceFileSearchFileV1 } from '@happier-dev/protocol/machines/workspaceFiles';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { machineWorkspaceFileSearch } from '@/sync/ops/machineWorkspaceFileSearch';

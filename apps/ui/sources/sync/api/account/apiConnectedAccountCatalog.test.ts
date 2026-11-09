@@ -1,12 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { installConnectedServicesCommonModuleMocks } from '@/components/settings/connectedServices/connectedServicesTestHelpers';
-import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createAccountEncryptionCurrentnessFixtureForCredentials, createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
-import { ConnectedAccountCatalogRowMutationV1Schema, ConnectedAccountCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
+import { ConnectedAccountCatalogRowMutationV1Schema, ConnectedAccountCatalogRowReadResponseV1Schema, sealConnectedAccountCatalogContentV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
+import { encodeBase64 } from '@/encryption/base64';
 import { AccountSettingsV2UpdateRequestSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
-import { PluginConnectedAccountAuthenticationModeV2Schema } from '@happier-dev/protocol';
+import { PluginConnectedAccountAuthenticationModeV2Schema } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import { executeConnectedServiceConfigurationActionV1 } from '@happier-dev/protocol/connect/execute-configuration-action';
+import { SavedSecretCatalogEntryV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 
 installConnectedServicesCommonModuleMocks();
 const home = createHomeGovernanceHarness();
@@ -21,6 +23,60 @@ beforeEach(async () => {
 afterEach(async () => { await home.reset(); resetRuntimeFetch(); });
 
 describe('Connected configuration Account transport', () => {
+    it.each(['plain', 'e2ee'] as const)('links, replaces and clears existing Secret references in a %s Account without material reads', async accountMode => {
+        const service = { pluginId: 'custom.reference-config', localId: 'service' };
+        const mode = PluginConnectedAccountAuthenticationModeV2Schema.parse({ id: 'manual', kind: 'manual', outcomeReconciliation: 'none', fields: [],
+            configuration: { scope: 'service', changeBehavior: 'refresh', fields: [{ id: 'token', title: 'Token', secret: true, schema: { type: 'string' } }] } });
+        const entries = ['first', 'second'].map(id => SavedSecretCatalogEntryV1Schema.parse({ ref: `happier:shared-secret:v1:${id}`,
+            source: 'shared_resource', relationship: 'owner', name: id, kind: 'token', revision: id === 'first' ? 7 : 9,
+            materialStatus: 'ready', capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } }));
+        const accountId = 'reference-config-owner';
+        const secret = new Uint8Array(32).fill(19);
+        const credentials = { token: createAccountTokenForTests(accountId),
+            ...(accountMode === 'e2ee' ? { secret: encodeBase64(secret, 'base64url') } : {}) };
+        let row = ConnectedAccountCatalogRowReadResponseV1Schema.parse({ status: 'present', revision: 3,
+            content: sealConnectedAccountCatalogContentV1({ mode: accountMode,
+                material: accountMode === 'e2ee' ? { type: 'legacy', secret } : null, record: {
+            key: 'configurations', value: { v: 1, entries: [{ service, modeId: mode.id, revision: 'before', values: {}, secretRefs: {} }] },
+        } }) });
+        const serverId = await home.addHome({ name: 'Reference configuration', serverUrl: 'https://reference-config.test',
+            accountId, credentials, currentAccount: true, accountEncryptionMode: accountMode, active: false });
+        home.answer(serverId, 'GET /v1/account/encryption/currentness', { body: createAccountEncryptionCurrentnessFixtureForCredentials(credentials) });
+        home.answer(serverId, 'GET /v1/account/entity-rows/connected-accounts/configurations', { select: () => ({ body: row }) });
+        home.answer(serverId, 'GET /v1/account/saved-secrets/resources', { body: { resources: entries } });
+        const writes: ReturnType<typeof ConnectedAccountCatalogRowMutationV1Schema.parse>[] = [];
+        home.answer(serverId, 'POST /v1/account/entity-rows/connected-accounts/configurations', { select: input => {
+            const mutation = ConnectedAccountCatalogRowMutationV1Schema.parse(input);
+            writes.push(mutation);
+            if (mutation.savedSecretRevisions.some(proof => !entries.some(entry => entry.ref === `happier:shared-secret:v1:${proof.resourceId}`
+                && entry.revision === proof.expectedRevision))) return { body: { status: 'invalid-reference' } };
+            const revision = Number(mutation.expectedRevision) + 1;
+            row = ConnectedAccountCatalogRowReadResponseV1Schema.parse({ status: 'present', revision, content: mutation.content });
+            return { body: { status: 'updated', revision, cursor: revision } };
+        } });
+        await withConnectedAccountCatalogAccount({ serverId, accountId }, undefined, async context => {
+            const host = { assertCurrent: context.assertCurrent, configurationCatalog: createUiConnectedServiceConfigurationCatalogHost(context, async () => mode),
+                async request() { throw new Error('unexpected_operation'); }, async mutatePurposeBindings() {}, async resolveAgent() { return null; }, async resetQuota() {} };
+            const target = { service, modeId: mode.id };
+            let expectedRevision = 'before';
+            for (const selection of [{ ref: entries[0]!.ref, resourceRevision: 7 }, { ref: entries[1]!.ref, resourceRevision: 9 }, null]) {
+                const result = await executeConnectedServiceConfigurationActionV1(host, 'connectedServices.configuration.replace', { ...target,
+                    expectedRevision, values: {}, secretValues: {}, selectedSecrets: { token: selection } });
+                expect(result).toMatchObject({ applied: true });
+                const observed = await executeConnectedServiceConfigurationActionV1(host, 'connectedServices.configuration.get', target);
+                expect(observed).toMatchObject({ configuration: { secretRefs: selection ? { token: selection.ref } : {} } });
+                expectedRevision = (result as { revision: string }).revision;
+            }
+            expect(await executeConnectedServiceConfigurationActionV1(host, 'connectedServices.configuration.replace', { ...target,
+                expectedRevision, values: {}, secretValues: {}, selectedSecrets: { token: { ref: entries[0]!.ref, resourceRevision: 6 } } }))
+                .toMatchObject({ ok: false, errorCode: 'invalid-reference' });
+        });
+        expect(writes[0]?.savedSecretRevisions).toEqual([{ resourceId: 'first', expectedRevision: 7 }]);
+        expect(writes[1]?.savedSecretRevisions).toEqual([{ resourceId: 'second', expectedRevision: 9 }]);
+        expect(writes[2]?.savedSecretRevisions).toEqual([]);
+        expect(home.requests.some(request => request.path.includes('/materials') || request.path.includes('/promote'))).toBe(false);
+    });
+
     it.each(['active', 'absent-empty', 'absent-legacy', 'active-maintenance'] as const)(
         'bounds a current catalog read to its destination while retaining real source maintenance (%s)', async initial => {
         const accountId = `current-config-${initial}`;

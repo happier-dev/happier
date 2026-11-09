@@ -12,6 +12,21 @@ const initial = { id: 'everywhere', target: { t: 'allMachines' as const }, enabl
 const source: ReachRulesSource = { key: 'account/server', kind: 'mcp_server', itemId: 'server', rules: [initial], revision: 1, status: 'ready', valueAvailable: true };
 
 describe('reach rule optimistic state', () => {
+    it('distinguishes unread rules from a read empty value, and keeps read data through refresh', async () => {
+        const execute = vi.fn<ExecuteReachRules>();
+        const hook = await renderHook((props: ReachRulesSource) => useReachRulesState(props, execute), {
+            initialProps: { ...source, status: 'loading', rules: [], valueAvailable: false },
+        });
+        expect(hook.getCurrent()).toMatchObject({ status: 'loading', valueAvailable: false });
+        await hook.rerender({ ...source, status: 'loading' });
+        expect(hook.getCurrent()).toMatchObject({ status: 'loading', valueAvailable: true, rules: [initial] });
+        expect(await hook.getCurrent().change({ kind: 'replace', rules: [] })).toEqual({ ok: false, message: 'catalog_unavailable' });
+        expect(execute).not.toHaveBeenCalled();
+        await hook.rerender({ ...source, rules: [] });
+        expect(hook.getCurrent()).toMatchObject({ status: 'ready', valueAvailable: true, rules: [] });
+        await hook.rerender({ ...source, status: 'loading', rules: [] });
+        expect(hook.getCurrent()).toMatchObject({ status: 'loading', valueAvailable: true, rules: [] });
+    });
     it('refuses Undo when no acknowledged write has a previous rule set', async () => {
         const execute = vi.fn<ExecuteReachRules>();
         const hook = await renderHook(() => useReachRulesState(source, execute));

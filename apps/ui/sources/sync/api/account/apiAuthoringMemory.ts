@@ -48,7 +48,7 @@ export function createApiAuthoringMemoryTransport(options: Readonly<{
 export async function createAuthoringMemorySyncInContext(account: LazyActionAccountContext,
     options: Pick<Parameters<typeof createAuthoringMemorySync>[0], 'apply' | 'isCurrent'>): Promise<ReturnType<typeof createAuthoringMemorySync>> {
     const { encryption } = await account.resolveAccountEncryption();
-    const storage = await resolveAccountStorageContext(account.credentials, { encryption, request: account.request });
+    const storage = await resolveAccountStorageContext(account.credentials, { encryption, request: account.request, usage: 'fresh-authority' });
     account.assertCurrent();
     return createAuthoringMemorySync({ ...options,
         transport: createApiAuthoringMemoryTransport({ request: account.request }),
@@ -67,7 +67,7 @@ export async function readAuthoringMemoryLastUsedProfileInContext(
     const request: typeof account.request = (path, init, options) => account.request(path,
         { ...init, signal }, { ...options, retry: 'none' });
     const { encryption } = await account.resolveAccountEncryption();
-    const storage = await resolveAccountStorageContext(account.credentials, { encryption, request });
+    const storage = await resolveAccountStorageContext(account.credentials, { encryption, request, usage: 'fresh-authority' });
     assertCurrent();
     const cipher = createAuthoringMemoryCipher({ mode: storage.mode,
         material: storage.mode === 'plain' ? null : resolveAccountScopedCryptoMaterialFromCredentials(account.credentials),

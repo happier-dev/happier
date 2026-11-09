@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol';
+import { CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 import { createSocketIoBoundaryStub } from '@/dev/testkit/mocks/socketIo';
 
 import type { HomeCarrier } from '@/sync/runtime/homeCarrier';
@@ -99,6 +99,7 @@ describe('serverScopedRpcSocketPool', () => {
         vi.useFakeTimers();
         const { setServerReachabilityNetworkAllowed } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
         const boundary = createSocketIoBoundaryStub({ autoConnect: false });
+        const emitWithAck = boundary.socket.emitWithAck;
         const controller = new AbortController();
         const releaseCarrier = vi.fn(async () => {});
         const pool = createServerScopedRpcSocketPool({ createSocket: () => boundary.socket });
@@ -117,7 +118,7 @@ describe('serverScopedRpcSocketPool', () => {
             expect(releaseCarrier).toHaveBeenCalledTimes(1);
             boundary.trigger('connect');
             await vi.advanceTimersByTimeAsync(0);
-            expect(boundary.socket.emitWithAck).not.toHaveBeenCalled();
+            expect(emitWithAck).not.toHaveBeenCalled();
         } finally {
             await pool.stopAll();
             pool.resetForTests();

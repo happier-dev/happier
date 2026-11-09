@@ -2,7 +2,7 @@ import { Platform } from 'react-native';
 
 import { isRunningOnMac } from '@/utils/platform/platform';
 
-import type { SentFrom } from '@happier-dev/protocol';
+import type { SentFrom } from '@happier-dev/protocol/sentFrom';
 
 export function resolveSentFromForEnvironment(params: { platformOs: string; runningOnMac: boolean }): SentFrom {
     const { platformOs, runningOnMac } = params;

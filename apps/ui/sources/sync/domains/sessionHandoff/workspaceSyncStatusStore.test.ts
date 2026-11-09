@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createWorkspaceSyncStatusWatchBoundary } from '@/dev/testkit/harness/workspaceSyncStatusWatchBoundary';
-import { createWorkspaceSyncHarness } from '@/dev/testkit/harness/workspaceSyncHarness';
+import { createWorkspaceSyncHarness, createWorkspaceSyncRelationshipsListFixture } from '@/dev/testkit/harness/workspaceSyncHarness';
 
 const watchBoundary = createWorkspaceSyncStatusWatchBoundary();
 
@@ -20,7 +20,7 @@ const workspace = createWorkspaceSyncHarness(async input => {
         return await watchWorkspaceSyncStatuses({ ...scope,
             ...(input.payload as Readonly<{ sinceRevision?: number }>), signal: input.signal });
     }
-    if (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_LIST) return { statuses: await listWorkspaceSyncStatuses(scope) };
+    if (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST) return createWorkspaceSyncRelationshipsListFixture(await listWorkspaceSyncStatuses(scope), input.machineId);
     if (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_GET) return { status: await getWorkspaceSyncStatus({ ...scope,
         relationshipId: (input.payload as Readonly<{ relationshipId: string }>).relationshipId }) };
     throw new Error(`Unexpected RPC: ${input.method}`);
@@ -35,12 +35,40 @@ const {
     refreshWorkspaceSyncStatuses,
     resetWorkspaceSyncStatusStoreForTests,
     setWorkspaceSyncStatus,
+    setWorkspaceSyncStatusError,
     subscribeWorkspaceSyncStatus,
 } = await import('./workspaceSyncStatusStore');
 const { applyWorkspaceSyncRuntimeEvent } = await import('./applyWorkspaceSyncRuntimeEvent');
 const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
 
 describe('workspaceSyncStatusStore', () => {
+    it('keeps a known engine state when a command is refused', () => {
+        const scope = { serverId: workspace.serverId, controllerMachineId: 'machine-a', relationshipId: 'relationship-1' };
+        const status = {
+            relationshipId: scope.relationshipId, controllerMachineId: scope.controllerMachineId,
+            state: 'watching' as const, alphaPath: '/alpha', betaPath: '/beta', mode: 'keep_synced' as const,
+            endpointStates: { alpha: null, beta: null }, conflictCount: 0, lastCycleObservedAtMs: null,
+        };
+        setWorkspaceSyncStatus(scope, status);
+        setWorkspaceSyncStatusError(scope, Object.assign(new Error('Refused'), { code: 'action_disabled' }));
+        expect(getWorkspaceSyncStatusSnapshot(scope)).toMatchObject({ phase: 'ready', status, error: null });
+    });
+    it('settles a refused command immediately and keeps a previous observation from clearing it', async () => {
+        const scope = { serverId: workspace.serverId, controllerMachineId: 'machine-a', relationshipId: 'relationship-1' };
+        let resolveRead!: (statuses: readonly unknown[]) => void;
+        listWorkspaceSyncStatuses.mockImplementation(() => new Promise(resolve => { resolveRead = resolve; }));
+        const pending = refreshWorkspaceSyncStatuses([scope]);
+        await vi.waitFor(() => expect(resolveRead).toBeTypeOf('function'));
+        const error = Object.assign(new Error('Controller unavailable'), { code: 'relationship_not_ready' });
+        try {
+            setWorkspaceSyncStatusError(scope, error);
+            expect(getWorkspaceSyncStatusSnapshot(scope)).toMatchObject({ phase: 'error', error });
+        } finally {
+            resolveRead([]);
+            await pending;
+        }
+        expect(getWorkspaceSyncStatusSnapshot(scope)).toMatchObject({ phase: 'error', error });
+    });
     beforeEach(async () => {
         await workspace.reset();
         getWorkspaceSyncStatus.mockReset();

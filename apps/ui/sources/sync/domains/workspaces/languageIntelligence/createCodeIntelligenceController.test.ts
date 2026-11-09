@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { CodeIntelligenceFallbackInput, CodeIntelligenceFallbackResult } from '@happier-dev/protocol/machines/codeIntelligenceFallback';
-import type { LanguageIntelligenceQueryResult, LanguageIntelligenceSyncResult, LanguageIntelligenceWatchInput, LanguageIntelligenceWatchResult } from '@happier-dev/protocol/machines/languageIntelligence';
+import type { LanguageIntelligenceQueryInput, LanguageIntelligenceQueryResult, LanguageIntelligenceSyncInput, LanguageIntelligenceSyncResult, LanguageIntelligenceWatchInput, LanguageIntelligenceWatchResult } from '@happier-dev/protocol/machines/languageIntelligence';
 import { createCodeIntelligenceController } from './createCodeIntelligenceController';
 import { selectDocumentOutline } from './documentOutline';
-import { selectCodeDiagnostics } from './codeDiagnostics';
+import { bindCodeDiagnosticDecorations, selectCodeDiagnostics } from './codeDiagnostics';
 
 const result: Extract<CodeIntelligenceFallbackResult, { status: 'ok' }> = {
     status: 'ok', source: 'text_matches', coverage: 'complete', hasMore: false,
@@ -28,6 +28,268 @@ function fixture() {
     });
     return { controller, requests, opened, setText: (value: string) => { text = value; }, retire: () => { current = false; retire?.(); } };
 }
+
+function editingFixture(initialText = 'answer()', flushPendingChange?: () => Promise<void>, withCapabilities = false) {
+    let text = initialText;
+    let completion = true;
+    const textListeners = new Set<() => void>();
+    const syncs: LanguageIntelligenceSyncInput[] = [];
+    const watches: Array<(value: LanguageIntelligenceWatchResult) => void> = [];
+    const requests: Array<{ input: LanguageIntelligenceQueryInput; signal: AbortSignal; resolve(value: LanguageIntelligenceQueryResult): void }> = [];
+    const controller = createCodeIntelligenceController({
+        scope: { serverId: 'home', machineId: 'machine', rootPath: '/repo' }, path: 'a.ts', languageId: 'typescript',
+        accountLifetime: { scope: { serverId: 'home', accountId: 'account' }, isCurrent: () => true,
+            onRetire: () => ({ dispose() {} }) },
+        getText: () => text, getUnsaved: () => true, flushPendingChange,
+        subscribeText: listener => { textListeners.add(listener); return () => { textListeners.delete(listener); }; },
+        query: async () => result, openLocation() {},
+        languageServer: {
+            sync: async input => { syncs.push(input); return { status: 'ok', generation: 'g1',
+                ...('version' in input.op ? { version: input.op.version } : {}), servers: [{ serverId: 'ts', label: 'TS', state: 'ready', loading: false, generation: 'g1' }], ...(withCapabilities ? { capabilities: {
+                    hover: true, definition: true, references: true, documentSymbol: true, diagnostics: 'none' as const, acceptsExternalChanges: false,
+                    completion, completionTriggerCharacters: ['.'],
+                } } : {}) }; },
+            query: (input, signal) => new Promise(resolve => { requests.push({ input, signal, resolve }); }),
+            watch: (_input, signal) => new Promise((resolve, reject) => { watches.push(resolve); signal.addEventListener('abort', () => reject(signal.reason), { once: true }); }),
+            restart: async () => ({ status: 'ok' }),
+        },
+    });
+    return { controller, syncs, requests, watches, setCompletion(value: boolean) { completion = value; },
+        edit(value: string) { text = value; for (const listener of textListeners) listener(); } };
+}
+
+describe('editing code intelligence requests', () => {
+    it('publishes no snapshots or markers for equal watch replies and updates only the diagnosed file', async () => {
+        const f = editingFixture();
+        const server = { serverId: 'ts', label: 'TS', state: 'ready' as const, loading: false, generation: 'g1' };
+        const entry = (path: string, message: string) => ({ state: 'ready' as const, version: 1, generation: 'g1', items: [{
+            serverId: 'ts', path, severity: 'error' as const, message,
+            range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } },
+        }] });
+        const receive = async (answer: LanguageIntelligenceWatchResult) => {
+            await vi.waitFor(() => expect(f.watches).toHaveLength(1));
+            f.watches.shift()!(answer);
+            await vi.waitFor(() => expect(f.watches).toHaveLength(1));
+        };
+        let release = () => {};
+        try {
+            await f.controller.activate();
+            await receive({ status: 'ok', revision: 1, servers: [server], diagnostics: {
+                'a.ts': { ts: entry('a.ts', 'First') }, 'b.ts': { ts: entry('b.ts', 'Other') },
+            } });
+            const snapshot = f.controller.getSnapshot();
+            const projection = f.controller.getDiagnosticsProjection();
+            const changed = vi.fn();
+            const unsubscribe = f.controller.subscribe(changed);
+            const setDecorations = vi.fn();
+            release = bindCodeDiagnosticDecorations({ path: 'a.ts', getProjection: f.controller.getDiagnosticsProjection,
+                subscribe: f.controller.subscribe, handle: { setDecorations } });
+            for (let index = 0; index < 12; index++) await receive({ status: 'ok', revision: 1, servers: [{ ...server }], diagnostics: {} });
+            expect(f.controller.getSnapshot()).toBe(snapshot);
+            expect(f.controller.getDiagnosticsProjection()).toBe(projection);
+            expect(changed).not.toHaveBeenCalled();
+            expect(setDecorations).toHaveBeenCalledTimes(1);
+            await receive({ status: 'ok', revision: 2, servers: [{ ...server }], diagnostics: { 'b.ts': { ts: entry('b.ts', 'Changed') } } });
+            expect(f.controller.getDiagnosticsProjection().entries['a.ts']).toBe(projection.entries['a.ts']);
+            expect(setDecorations).toHaveBeenCalledTimes(1);
+            expect(f.controller.getSnapshot().diagnostics?.items.map(item => item.message)).toEqual(['First', 'Changed']);
+            await receive({ status: 'ok', revision: 3, servers: [server], diagnostics: { 'a.ts': { ts: entry('a.ts', 'New marker') } } });
+            expect(setDecorations.mock.lastCall?.[1]).toMatchObject([{ message: 'New marker' }]);
+            expect(f.controller.getSnapshot().diagnostics?.count).toBe(2);
+            unsubscribe();
+        } finally { release(); f.controller.dispose(); }
+    });
+
+    it('keeps Problems checking across a rewritten document until the new watch answer arrives', async () => {
+        const f = editingFixture();
+        const server = { serverId: 'ts', label: 'TS', state: 'ready' as const, loading: false, generation: 'g1' };
+        const item = { serverId: 'ts', path: 'a.ts', severity: 'error' as const, message: 'Unknown name',
+            range: { start: { line: 0, character: 0 }, end: { line: 0, character: 6 } } };
+        try {
+            const check = f.controller.checkProblems();
+            await vi.waitFor(() => expect(f.requests).toHaveLength(1));
+            f.requests[0].resolve({ status: 'ok', kind: 'diagnostics', diagnostics: [item], hasMore: false });
+            await check;
+            f.watches.shift()!({ status: 'ok', revision: 1, servers: [server], diagnostics: { 'a.ts': {
+                ts: { version: 1, generation: 'g1', state: 'ready', items: [item] },
+            } } });
+            await vi.waitFor(() => expect(f.controller.getSnapshot().diagnostics?.count).toBe(1));
+            f.edit('answer(  )');
+            expect(f.controller.getSnapshot().diagnostics).toMatchObject({ state: 'checking', count: null, items: [item] });
+            await f.controller.syncDocument();
+            expect(f.controller.getSnapshot().diagnostics?.state).toBe('checking');
+            await vi.waitFor(() => expect(f.watches).toHaveLength(1));
+            f.watches.shift()!({ status: 'ok', revision: 2, servers: [server], diagnostics: { 'a.ts': {
+                ts: { version: 2, generation: 'g1', state: 'ready', items: [item] },
+            } } });
+            await vi.waitFor(() => expect(f.controller.getSnapshot().diagnostics?.count).toBe(1));
+            expect(f.requests).toHaveLength(1);
+        } finally { f.controller.dispose(); }
+    });
+
+    it('retires completed and pending hover results as soon as their text changes, without requerying on edits', async () => {
+        const f = editingFixture();
+        try {
+            const hover = f.controller.hover({ line: 0, character: 2 });
+            await vi.waitFor(() => expect(f.requests).toHaveLength(1));
+            f.requests[0].resolve({ status: 'ok', kind: 'hover', sections: [{ serverId: 'ts', label: 'TS', markdown: 'function answer()' }] });
+            await hover;
+            expect(f.controller.getSnapshot().result).not.toBeNull();
+            f.edit('renamed()');
+            expect(f.controller.getSnapshot()).toMatchObject({ status: 'idle', result: null, querySelection: null });
+            await f.controller.syncDocument();
+            expect(f.requests).toHaveLength(1);
+            const next = f.controller.hover({ line: 0, character: 2 });
+            await vi.waitFor(() => expect(f.requests).toHaveLength(2));
+            f.edit('changedAgain()');
+            expect(f.requests[1].signal.aborted).toBe(true);
+            f.requests[1].resolve({ status: 'ok', kind: 'hover', sections: [{ serverId: 'ts', label: 'TS', markdown: 'function renamed()' }] });
+            await next;
+            expect(f.controller.getSnapshot().result).toBeNull();
+        } finally { f.controller.dispose(); }
+    });
+
+    it('retains capability projection identity across ordinary text synchronization', async () => {
+        const f = editingFixture('answer()', undefined, true);
+        try {
+            await f.controller.activate();
+            const capabilities = f.controller.getSnapshot().capabilities;
+            expect(capabilities?.completion).toBe(true);
+            f.edit('answer(1)'); await f.controller.syncDocument();
+            expect(f.controller.getSnapshot().capabilities).toBe(capabilities);
+            f.setCompletion(false);
+            f.edit('answer(2)'); await f.controller.syncDocument();
+            expect(f.controller.getSnapshot().capabilities).not.toBe(capabilities);
+            expect(f.controller.getSnapshot().capabilities?.completion).toBe(false);
+        } finally { f.controller.dispose(); }
+    });
+    it('queries the text committed by its editor flush instead of cancelling that same request', async () => {
+        const f = editingFixture('answer()', async () => { f.edit('answer(1)'); });
+        try {
+            const pending = f.controller.completion({ line: 0, character: 8 });
+            await vi.waitFor(() => expect(f.requests).toHaveLength(1));
+            expect(f.requests[0].signal.aborted).toBe(false);
+            f.requests[0].resolve({ status: 'ok', kind: 'completion', items: [], isIncomplete: false });
+            expect(await pending).toMatchObject({ status: 'ok', kind: 'completion' });
+        } finally { f.controller.dispose(); }
+    });
+    it('keeps project checks explicit and cancellable, retaining the last confirmed project diagnostics', async () => {
+        vi.useFakeTimers();
+        const f = editingFixture();
+        try {
+            await f.controller.activate();
+            expect(f.requests).toHaveLength(0);
+            expect(f.controller.getSnapshot().projectDiagnostics?.state ?? 'idle').toBe('idle');
+            const check = f.controller.projectDiagnostics();
+            await vi.waitFor(() => expect(f.requests).toHaveLength(1));
+            expect(f.controller.getSnapshot().projectDiagnostics?.state).toBe('checking');
+            f.requests[0].resolve({ status: 'ok', kind: 'diagnostics', hasMore: false, diagnostics: [{
+                serverId: 'ts', path: 'unopened.ts', severity: 'error', message: 'Missing name',
+                range: { start: { line: 2, character: 1 }, end: { line: 2, character: 5 } },
+            }] });
+            await check;
+            expect(f.controller.getSnapshot().projectDiagnostics).toMatchObject({ state: 'ready', count: 1 });
+            expect(f.controller.getSnapshot().projectDiagnostics?.items[0]?.path).toBe('unopened.ts');
+            const abort = new AbortController();
+            const again = f.controller.projectDiagnostics(abort.signal);
+            await vi.waitFor(() => expect(f.requests).toHaveLength(2));
+            abort.abort();
+            f.requests[1].resolve({ status: 'ok', kind: 'diagnostics', hasMore: false, diagnostics: [] });
+            await again;
+            expect(f.controller.getSnapshot().projectDiagnostics).toMatchObject({ state: 'ready', count: 1 });
+            const changed = f.controller.projectDiagnostics();
+            await vi.waitFor(() => expect(f.requests).toHaveLength(3));
+            f.edit('changed()');
+            expect(f.requests[2].signal.aborted).toBe(true);
+            expect(f.controller.getSnapshot().projectDiagnostics).toMatchObject({ state: 'ready', count: 1 });
+            f.requests[2].resolve({ status: 'ok', kind: 'diagnostics', hasMore: false, diagnostics: [] });
+            expect(await changed).toBeNull();
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect(f.requests).toHaveLength(3);
+        } finally { f.controller.dispose(); vi.useRealTimers(); }
+    });
+    it('starts once on explicit Edit activation and sends only compact changes for completion bursts on a 5k-line buffer', async () => {
+        const initial = Array.from({ length: 5000 }, (_, line) => `const value${line} = ${line};`).join('\n');
+        const f = editingFixture(initial);
+        try {
+            expect(f.syncs).toHaveLength(0);
+            await f.controller.activate();
+            await f.controller.activate();
+            for (let index = 1; index <= 3; index++) {
+                f.edit(initial + 'x'.repeat(index));
+                const pending = f.controller.completion({ line: 4999, character: 22 + index });
+                await vi.waitFor(() => expect(f.requests).toHaveLength(index));
+                f.requests[index - 1].resolve({ status: 'loading' });
+                await pending;
+            }
+            expect(f.syncs.filter(request => request.op.op === 'open')).toHaveLength(1);
+            const changes = f.syncs.filter(request => request.op.op === 'change');
+            expect(changes).toHaveLength(3);
+            expect(changes.every(request => request.op.op === 'change' && request.op.edit.text === 'x' && !('text' in request.op))).toBe(true);
+            expect(f.syncs.some(request => request.op.op === 'snapshot')).toBe(false);
+            expect(f.requests.every(request => request.input.text === 'held' && !('contents' in request.input))).toBe(true);
+        } finally { f.controller.dispose(); }
+    });
+
+    it('cancels only the superseded operation and drops its late response', async () => {
+        const f = editingFixture();
+        try {
+            const first = f.controller.completion({ line: 0, character: 2 });
+            await vi.waitFor(() => expect(f.requests).toHaveLength(1));
+            const hover = f.controller.hover({ line: 0, character: 2 });
+            await vi.waitFor(() => expect(f.requests).toHaveLength(2));
+            const latest = f.controller.completion({ line: 0, character: 3 });
+            await vi.waitFor(() => expect(f.requests).toHaveLength(3));
+            expect(f.requests[0].signal.aborted).toBe(true);
+            expect(f.requests[1].signal.aborted).toBe(false);
+            f.requests[0].resolve({ status: 'ok', kind: 'completion', items: [], isIncomplete: false });
+            expect(await first).toBeNull();
+            f.requests[2].resolve({ status: 'ok', kind: 'completion', items: [], isIncomplete: false });
+            expect(await latest).toMatchObject({ status: 'ok', kind: 'completion' });
+            f.requests[1].resolve({ status: 'ok', kind: 'hover', sections: [] });
+            await hover;
+            expect(f.controller.getSnapshot()).toMatchObject({ kind: 'hover', status: 'ready' });
+        } finally { f.controller.dispose(); }
+    });
+
+    it('cancels a request at caller abort and invalidates active editing results on text change', async () => {
+        const f = editingFixture();
+        try {
+            const caller = new AbortController();
+            const cancelled = f.controller.completion({ line: 0, character: 2 }, undefined, caller.signal);
+            await vi.waitFor(() => expect(f.requests).toHaveLength(1));
+            caller.abort();
+            expect(f.requests[0].signal.aborted).toBe(true);
+            f.requests[0].resolve({ status: 'loading' });
+            expect(await cancelled).toBeNull();
+            const stale = f.controller.signatureHelp({ line: 0, character: 7 });
+            await vi.waitFor(() => expect(f.requests).toHaveLength(2));
+            f.edit('answer(1)');
+            expect(f.requests[1].signal.aborted).toBe(true);
+            f.requests[1].resolve({ status: 'ok', kind: 'signatureHelp', help: null });
+            expect(await stale).toBeNull();
+        } finally { f.controller.dispose(); }
+    });
+
+    it('preserves visible ranges and opaque server references without sending a full-document semantic request', async () => {
+        const f = editingFixture();
+        const range = { start: { line: 200, character: 0 }, end: { line: 230, character: 0 } };
+        try {
+            const semantic = f.controller.semanticTokens({ range });
+            await vi.waitFor(() => expect(f.requests).toHaveLength(1));
+            expect(f.requests[0].input).toMatchObject({ kind: 'semanticTokens', range });
+            f.requests[0].resolve({ status: 'loading' }); await semantic;
+            const resolve = f.controller.completionResolve({ serverId: 'ts', itemId: 'opaque' });
+            await vi.waitFor(() => expect(f.requests).toHaveLength(2));
+            expect(f.requests[1].input).toMatchObject({ kind: 'completionResolve', serverId: 'ts', itemId: 'opaque' });
+            f.requests[1].resolve({ status: 'loading' }); await resolve;
+            const project = f.controller.projectDiagnostics();
+            await vi.waitFor(() => expect(f.requests).toHaveLength(3));
+            expect(f.requests[2].input).toMatchObject({ kind: 'diagnostics', scope: 'project' });
+            f.requests[2].resolve({ status: 'loading' }); await project;
+        } finally { f.controller.dispose(); }
+    });
+});
 
 describe('fallback code intelligence controller', () => {
     it('does not notify for an already dismissed view and still dismisses a real search', async () => {

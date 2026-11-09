@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import type { MachineLiveStreamStartRequestV1 } from '@happier-dev/protocol';
+import type { MachineLiveStreamStartRequestV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 import { MachineLiveStreamRelayAuthorizationV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 import { DaemonMachineLiveStreamRelayStartRequestV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/relayStartRpcV1';
-import { createPeerMachineRpcRequestHashV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/commandReceiptV1';
 
 import { openMachineLiveStreamRelayClient } from './relayClient';
 import { createBaseStartRequest, createLiveStreamStartRequest } from './startRequest';
@@ -89,16 +88,11 @@ describe('openMachineLiveStreamRelayClient', () => {
             sourceMachineId: 'machine_source', targetMachineId: 'machine_target',
             routeKind: 'server_relay', streamId: 'stream_1', streamFamily: 'screen', viewerSocketId: 'socket_tab_1', caps,
         });
-        const hash = (params: unknown) => createPeerMachineRpcRequestHashV1({
-            method: 'daemon.machines.liveStream.relay.start', params,
-            grantId: 'rpc-grant', endpointFingerprint: 'rpc-endpoint', replayKey: 'rpc-replay',
-        });
-        // The direct command receipt must sign exactly the JSON the daemon receives.
         const payload = DaemonMachineLiveStreamRelayStartRequestV1Schema.parse({
             protocolVersion: 1, machineId: 'machine_source',
             startRequest: createLiveStreamStartRequest({ baseRequest, authorization }),
         });
-        expect(hash(payload)).toBe(hash(JSON.parse(JSON.stringify(payload))));
+        expect(JSON.parse(JSON.stringify(payload))).toEqual(payload);
         expect(payload.startRequest.authorization?.payload).toEqual(authorization.payload);
     });
 

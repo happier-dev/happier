@@ -12,6 +12,7 @@ import type {
 } from '@happier-dev/protocol/actions/executor/types';
 import { ScmChangeDiscardResponseSchema } from '@happier-dev/protocol/scm';
 import { invokeUiScmAction } from './scmActionInvocation';
+import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 
 // Discard is irreversible with no confirmation of its own, so it keeps the executor's default.
 const ACTION: ActionId = 'scm.change.discard';
@@ -65,7 +66,7 @@ const invoke = (
     actionId: ACTION,
     input: INPUT,
     schema: ScmChangeDiscardResponseSchema,
-    executor,
+    executor: createFrontDoorActionExecute(executor),
     context,
   });
 

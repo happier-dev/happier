@@ -1,5 +1,5 @@
 import type { MetadataUpdatePort } from '@happier-dev/agents';
-import type { SessionMetadata } from '@happier-dev/protocol';
+import type { SessionMetadata } from '@happier-dev/protocol/sessions/control/contract';
 import type { Metadata } from '@happier-dev/session-core/state';
 
 function isForbiddenMetadataUpdateError(error: unknown): boolean {
@@ -24,16 +24,14 @@ export function createUiSessionStateMetadataUpdatePort(params: Readonly<{
     updateSessionMetadataWithRetry: (
         sessionId: string,
         updater: (metadata: Metadata, metadataRevision?: number) => Metadata,
-        opts?: Readonly<{ maxAttempts?: number }>,
     ) => Promise<unknown>;
 }>): MetadataUpdatePort {
     return {
-        update: async (sessionId, updater, opts) => {
+        update: async (sessionId, updater) => {
             try {
                 const result = await params.updateSessionMetadataWithRetry(
                     sessionId,
                     (metadata, metadataRevision) => updater(metadata as SessionMetadata, metadataRevision) as Metadata,
-                    typeof opts?.maxAttempts === 'number' ? { maxAttempts: opts.maxAttempts } : undefined,
                 );
                 const version = typeof (result as { version?: unknown } | null)?.version === 'number'
                     ? (result as { version: number }).version

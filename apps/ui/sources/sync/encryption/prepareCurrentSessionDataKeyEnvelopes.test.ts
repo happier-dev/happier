@@ -5,13 +5,15 @@ import type {
     SessionDataKeyEnvelopeItemV1,
     SessionDataKeyEnvelopePageV1,
     SessionDataKeyEnvelopeSummaryV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/encryption/sessionDataKeyEnvelopes';
 import {
     SESSION_DATA_KEY_ENVELOPE_PAGE_MAX_ENTRIES_V1,
-    encodeSessionDataKeyEnvelopeCursorV1,
-    openEncryptedDataKeyEnvelopeV1,
+    encodeSessionDataKeyEnvelopeCursorV1} from '@happier-dev/protocol/sessions/encryption/sessionDataKeyEnvelopes';
+import {
+    openEncryptedDataKeyEnvelopeV1} from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import {
     signAccountContentKeyBindingV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/crypto/accountContentKeyBindingV1';
 
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import { encodeHex } from '@/encryption/hex';

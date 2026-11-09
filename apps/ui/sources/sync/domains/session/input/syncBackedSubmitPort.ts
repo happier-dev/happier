@@ -13,6 +13,7 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 type SyncSubmitRuntime = Pick<
     typeof defaultSync,
     | 'abortSession'
+    | 'blockPendingDelivery'
     | 'updatePendingRequestedAction'
     | 'enqueuePendingMessage'
     | 'sendMessage'
@@ -32,6 +33,8 @@ export const isSessionSubmitMachineReachable: NonNullable<SessionSubmitPort['isM
 
 export function createSyncBackedSubmitPort(syncRuntime: SyncSubmitRuntime = defaultSync): SessionSubmitPort {
     return {
+        blockPendingDelivery: (sessionId, localId, reason, options) =>
+            syncRuntime.blockPendingDelivery(sessionId, localId, reason, options),
         enqueuePendingMessage: (sessionId, text, displayText, metaOverrides, options) =>
             syncRuntime.enqueuePendingMessage(sessionId, text, displayText, metaOverrides, options),
         sendMessage: (sessionId, text, displayText, metaOverrides, options) =>

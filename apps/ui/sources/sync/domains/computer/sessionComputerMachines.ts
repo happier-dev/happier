@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { selectActiveServerAccountScopeForServer } from '@/sync/domains/scope/activeServerAccountScope';
+import { serverAccountScopedResourceKey, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
 /**
  * Which machine a Session uses for computer use, as this device has learned it from the surfaces that
@@ -9,40 +11,67 @@ import * as React from 'react';
  */
 type Entry = Readonly<{ machineId: string; machineName: string | null }>;
 
-const entries = new Map<string, Entry>();
-const listeners = new Set<() => void>();
+type ScopedEntry = {
+    value: Entry;
+    accountLifetime: ServerAccountScopeLifetime;
+    retirement: Readonly<{ dispose(): void }> | null;
+};
+const entries = new Map<string, ScopedEntry>();
+const listeners = new Map<string, Set<() => void>>();
 
-// Keyed by Session id alone: surfaces differ in whether they know the Home id, and a hint asked of the
-// wrong Home only fails closed at that Home.
-function keyOf(sessionId: string): string {
-    return sessionId.trim();
+function keyOf(sessionId: string | null, accountLifetime: ServerAccountScopeLifetime | null | undefined, serverId?: string | null): string | null {
+    if (!sessionId?.trim() || !accountLifetime?.isCurrent()
+        || !selectActiveServerAccountScopeForServer(accountLifetime.scope, serverId ?? accountLifetime.scope.serverId)) return null;
+    return serverAccountScopedResourceKey(accountLifetime.scope, sessionId.trim());
+}
+
+function publish(key: string): void {
+    for (const listener of listeners.get(key) ?? []) listener();
 }
 
 export function noteSessionComputerMachine(input: Readonly<{
     sessionId: string;
+    serverId?: string | null;
+    accountLifetime: ServerAccountScopeLifetime | null | undefined;
     machineId: string;
     machineName?: string | null;
 }>): void {
     const machineId = input.machineId.trim();
-    if (!input.sessionId.trim() || !machineId) return;
-    const key = keyOf(input.sessionId);
+    const accountLifetime = input.accountLifetime;
+    const key = keyOf(input.sessionId, accountLifetime, input.serverId);
+    if (!key || !accountLifetime || !machineId) return;
     const previous = entries.get(key);
-    const machineName = input.machineName?.trim() || (previous?.machineId === machineId ? previous.machineName : null);
-    if (previous && previous.machineId === machineId && previous.machineName === machineName) return;
-    entries.set(key, { machineId, machineName });
-    for (const listener of listeners) listener();
+    const machineName = input.machineName?.trim() || (previous?.value.machineId === machineId ? previous.value.machineName : null);
+    if (previous?.accountLifetime === accountLifetime && previous.value.machineId === machineId && previous.value.machineName === machineName) return;
+    previous?.retirement?.dispose();
+    const entry: ScopedEntry = { value: { machineId, machineName }, accountLifetime, retirement: null };
+    entries.set(key, entry);
+    entry.retirement = accountLifetime.onRetire(() => {
+        if (entries.get(key) !== entry) return;
+        entries.delete(key);
+        publish(key);
+    });
+    publish(key);
 }
 
-function subscribe(listener: () => void): () => void {
-    listeners.add(listener);
-    return () => { listeners.delete(listener); };
-}
-
-export function useSessionComputerMachine(sessionId: string | null): Entry | null {
-    const key = sessionId ? keyOf(sessionId) : null;
+export function useSessionComputerMachine(sessionId: string | null, accountLifetime: ServerAccountScopeLifetime | null | undefined, serverId?: string | null): Entry | null {
+    const key = keyOf(sessionId, accountLifetime, serverId);
+    const subscribe = React.useCallback((listener: () => void) => {
+        if (!key) return () => {};
+        const scoped = listeners.get(key) ?? new Set<() => void>();
+        listeners.set(key, scoped);
+        scoped.add(listener);
+        return () => {
+            scoped.delete(listener);
+            if (scoped.size === 0) listeners.delete(key);
+        };
+    }, [key]);
     return React.useSyncExternalStore(
         subscribe,
-        () => (key ? entries.get(key) ?? null : null),
+        () => {
+            const entry = key && accountLifetime?.isCurrent() ? entries.get(key) : null;
+            return entry?.accountLifetime.isCurrent() ? entry.value : null;
+        },
         () => null,
     );
 }

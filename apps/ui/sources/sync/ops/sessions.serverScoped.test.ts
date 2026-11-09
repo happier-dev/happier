@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SessionModelSelectionV1Schema, SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
+import { SessionModelSelectionV1Schema} from '@happier-dev/protocol/providers/selection/v1';
+import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
@@ -630,7 +631,7 @@ describe('session resume and fork routing through the Home and Account boundary'
     });
 
     it('keeps the shared spawn operation budget through the resume RPC transport', async () => {
-        const { DEFAULT_SESSION_SPAWN_OPERATION_TIMEOUT_MS } = await import('@happier-dev/protocol');
+        const { DEFAULT_SESSION_SPAWN_OPERATION_TIMEOUT_MS} = await import('@happier-dev/protocol/sessions/creation/sessionSpawnBudget');
         const { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes');
         await expect(ops.resumeSession(resumeOptions())).resolves.toMatchObject({ type: 'success' });
         expect(resumeRequests()).toEqual([expect.objectContaining({ timeoutMs: DEFAULT_SESSION_SPAWN_OPERATION_TIMEOUT_MS + DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS })]);
@@ -638,7 +639,7 @@ describe('session resume and fork routing through the Home and Account boundary'
 
     it('routes fork options and the shared operation budget through the requested Home', async () => {
         const replaySummaryRunner = { v: 1, modelSelection: { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: null, modelId: 'default' }, permissionMode: 'no_tools' } as const;
-        const { DEFAULT_SESSION_SPAWN_OPERATION_TIMEOUT_MS } = await import('@happier-dev/protocol');
+        const { DEFAULT_SESSION_SPAWN_OPERATION_TIMEOUT_MS} = await import('@happier-dev/protocol/sessions/creation/sessionSpawnBudget');
         const { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes');
         await expect(ops.forkSession({ machineId: 'machine-1', parentSessionId: 'sess-parent', forkPoint: { type: 'seq', upToSeqInclusive: 12 },
             replaySummaryRunner, replayMaxSeedChars: 55_000, serverId: home.id })).resolves.toEqual({ ok: true, childSessionId: 'sess-child' });

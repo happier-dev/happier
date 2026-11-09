@@ -24,3 +24,4 @@ describe('frozen annotation view lifetime', () => {
         expect(disposeClosed).toHaveBeenCalledTimes(1);
     });
 });
+

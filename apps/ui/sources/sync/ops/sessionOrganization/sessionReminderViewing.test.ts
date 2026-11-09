@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SessionAttentionStanding, SessionOrganizationSnapshot } from '@happier-dev/protocol';
+import type { SessionAttentionStanding} from '@happier-dev/protocol/sessions/organization/standings';
+import type { SessionOrganizationSnapshot } from '@happier-dev/protocol/sessions/organization/snapshot';
 
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { setServerProfileIdentityForUrl, upsertServerProfile } from '@/sync/domains/server/serverProfiles';

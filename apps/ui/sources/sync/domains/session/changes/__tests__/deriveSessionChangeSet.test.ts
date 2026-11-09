@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { TurnChangeSet } from '@happier-dev/protocol';
+import type { TurnChangeSet } from '@happier-dev/protocol/sessions/changes/types';
 
 import { deriveSessionChangeSet } from '../derivation/deriveSessionChangeSet';
 

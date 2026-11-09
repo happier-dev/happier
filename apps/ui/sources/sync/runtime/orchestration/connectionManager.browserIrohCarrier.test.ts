@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createTokenStorageModuleMock } from '@/dev/testkit';
 import { IrohError } from '@happier-dev/iroh-native';
-import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol';
+import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol/auth/accountDirectory';
 
 const CANONICAL_URL = 'https://ingressless-home.example.test';
 const HOME_ENDPOINT_ID = 'a'.repeat(64);
@@ -84,6 +84,7 @@ function mockEnvironment(options: Readonly<{
                 homeConnectionDescriptor: HOME_DESCRIPTOR,
             }
             : options.profile),
+        getSavedHomeConnectionAddress: (input: Readonly<{ canonicalServerUrl: string }>) => input.canonicalServerUrl,
     }));
     vi.doMock('@/auth/storage/tokenStorage', async (importOriginal) => await createTokenStorageModuleMock({
         importOriginal,
@@ -95,7 +96,10 @@ function mockEnvironment(options: Readonly<{
     const syncSwitchServer = vi.fn(async () => {});
     const retryNow = vi.fn();
     vi.doMock('@/sync/sync', () => ({ syncSwitchServer, sync: { retryNow }, syncRestore: vi.fn() }));
-    vi.doMock('@/sync/http/client', () => ({ abortServerFetches: vi.fn() }));
+    vi.doMock('@/sync/http/client', async (importOriginal) => ({
+        ...(await importOriginal<typeof import('@/sync/http/client')>()),
+        abortServerFetches: vi.fn(),
+    }));
     vi.doMock('@/sync/runtime/nativeIrohTunnels/runtime', () => ({
         getIrohHomeTunnelRuntime: () => nativeRuntimeMock,
     }));
@@ -125,6 +129,20 @@ afterEach(() => {
     nativeRuntimeMock.ensureHomeTunnel.mockReset();
 });
 
+/** A declared origin at the fetch boundary, recording every credential it receives; null proves no Home. */
+async function serveDeclaredHome(serverIdentityId: string | null): Promise<Array<string | null>> {
+    const authorizations: Array<string | null> = [];
+    const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+    setRuntimeFetch(async (input, init) => {
+        authorizations.push(new Headers(init?.headers).get('Authorization'));
+        if (serverIdentityId === null) return new Response('{}', { status: 503 });
+        return new Response(JSON.stringify(String(input).endsWith('/v1/features')
+            ? { features: {}, capabilities: { serverIdentity: { serverIdentityId } } }
+            : { ok: true }), { status: 200, headers: { 'content-type': 'application/json' } });
+    });
+    return authorizations;
+}
+
 describe('focused-Home browser Iroh carrier selection', () => {
     it('releases the focused Iroh carrier and reselects HTTPS when this device switches to Standard only', async () => {
         const carrier = createBrowserCarrier('browser-lease-before-policy-change');
@@ -142,6 +160,7 @@ describe('focused-Home browser Iroh carrier selection', () => {
             },
         });
 
+        await serveDeclaredHome(null);
         const { switchConnectionToActiveServer, retryActiveServerConnection } = await import('./connectionManager');
         await switchConnectionToActiveServer();
         expect(publishSpy.mock.calls[0]?.[0].carrier).toBe('iroh');
@@ -150,6 +169,7 @@ describe('focused-Home browser Iroh carrier selection', () => {
         registerStorageStateReader(() => ({
             localSettings: { homeApplicationCarrierEligibility: 'standard_only' },
         } as never)); // This test supplies only the policy projection read by the carrier owner.
+        await serveDeclaredHome('srv_home_a');
         await retryActiveServerConnection();
 
         expect(carrier.release).toHaveBeenCalledTimes(1);
@@ -222,6 +242,7 @@ describe('focused-Home browser Iroh carrier selection', () => {
             },
         });
 
+        await serveDeclaredHome('srv_home_a');
         const { switchConnectionToActiveServer } = await import('./connectionManager');
         await switchConnectionToActiveServer();
 
@@ -265,6 +286,7 @@ describe('focused-Home browser Iroh carrier selection', () => {
             },
         });
 
+        await serveDeclaredHome(null);
         const { switchConnectionToActiveServer, retryActiveServerConnection } = await import('./connectionManager');
         await switchConnectionToActiveServer();
         await expect(retryActiveServerConnection())
@@ -295,6 +317,7 @@ describe('focused-Home browser Iroh carrier selection', () => {
             },
         });
 
+        await serveDeclaredHome('srv_home_a');
         const { switchConnectionToActiveServer, retryActiveServerConnection } = await import('./connectionManager');
         await switchConnectionToActiveServer();
         await expect(retryActiveServerConnection()).resolves.toBeUndefined();
@@ -347,6 +370,7 @@ describe('focused-Home browser Iroh carrier selection', () => {
             },
         });
 
+        await serveDeclaredHome(null);
         const { switchConnectionToActiveServer } = await import('./connectionManager');
         await expect(switchConnectionToActiveServer()).rejects.toThrow('proved another endpoint');
         expect(publishSpy).not.toHaveBeenCalled();

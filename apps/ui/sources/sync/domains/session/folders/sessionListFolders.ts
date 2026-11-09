@@ -3,23 +3,18 @@ import type { SessionListLayoutChoice } from '@/sync/domains/session/listing/ses
 
 import { buildSessionFolderAssignmentKey } from './assignmentKeys';
 import { buildSessionFolderCollapseKey } from './collapseKeys';
-import { resolveSessionFolderFocusScope, type SessionFolderFocusScope } from './focus';
 import { buildSessionFolderTree, type SessionFolderTreeNode } from './tree';
-import { selectAvailableSessionFolders } from './types';
 import type {
     SessionFolderList,
-    SessionFoldersV1,
     SessionFolderWorkspaceRefV1,
 } from './types';
 import {
     buildSessionFolderWorkspaceRefKey,
-    compareSessionFolderWorkspaceRefs,
     resolveDurableWorkspaceRefForSessionListHeader,
 } from './workspaceRefs';
 
 export type FolderAwareSessionListIndexResult = Readonly<{
     items: ReadonlyArray<SessionListIndexItem>;
-    folderFocus: SessionFolderFocusScope | null;
 }>;
 
 type ProjectGroup = Readonly<{
@@ -152,69 +147,12 @@ function splitProjectGroups(source: ReadonlyArray<SessionListIndexItem>): Projec
     return groups;
 }
 
-/**
- * Narrows a Session-list index to the focused folder subtree without building the
- * folder tree.
- *
- * Chronological layouts keep the reader's folder focus as a corpus filter while
- * suppressing folder/workspace presentation, so the narrowing has to happen before
- * the layout rebuilds its own groups. Headers are dropped because the consuming
- * layout owns grouping; a caller that wants the tree uses
- * `applySessionFolderTreeToSessionListIndex` instead.
- */
-function narrowSessionListIndexToFocusedFolder(params: Readonly<{
-    source: ReadonlyArray<SessionListIndexItem>;
-    folders: SessionFolderList;
-    assignmentsBySessionKey: Readonly<Record<string, string | null | undefined>>;
-    focusedFolder: Readonly<{
-        folderId: string;
-        workspace: SessionFolderWorkspaceRefV1;
-        serverId?: string | null;
-    }> | null;
-}>): FolderAwareSessionListIndexResult {
-    const focus = resolveSessionFolderFocusScope(
-        selectAvailableSessionFolders(params.folders),
-        params.focusedFolder,
-    );
-    if (!focus) {
-        return { items: params.source, folderFocus: null };
-    }
-
-    const items: Extract<SessionListIndexItem, { type: 'session' }>[] = [];
-    let headerServerId: string | null = null;
-    for (const item of params.source) {
-        if (item.type === 'header') {
-            headerServerId = item.serverId ?? headerServerId;
-            continue;
-        }
-        if (item.type !== 'session') continue;
-        const assignedFolderId = params.assignmentsBySessionKey[
-            buildSessionFolderAssignmentKey(item.serverId ?? headerServerId ?? null, item.sessionId, item.keyParts)
-        ] ?? null;
-        if (!assignedFolderId || !focus.folderIds.has(assignedFolderId)) continue;
-        items.push(item);
-    }
-
-    return { items, folderFocus: focus };
-}
-
 export function applySessionFolderTreeToSessionListIndex(params: Readonly<{
     source: ReadonlyArray<SessionListIndexItem>;
     folders: SessionFolderList;
     assignmentsBySessionKey: Readonly<Record<string, string | null | undefined>>;
     collapsedGroupKeys: Readonly<Record<string, boolean>>;
-    focusedFolder: Readonly<{
-        folderId: string;
-        workspace: SessionFolderWorkspaceRefV1;
-        serverId?: string | null;
-    }> | null;
 }>): FolderAwareSessionListIndexResult {
-    const availableFolders: SessionFoldersV1 =
-        selectAvailableSessionFolders(params.folders);
-    const focus = resolveSessionFolderFocusScope(
-        availableFolders,
-        params.focusedFolder,
-    );
     const out: SessionListIndexItem[] = [];
     const groups = splitProjectGroups(params.source);
     const renderedFolderIds = new Set<string>();
@@ -226,9 +164,6 @@ export function applySessionFolderTreeToSessionListIndex(params: Readonly<{
             continue;
         }
 
-        const scopedFocus = focus && compareSessionFolderWorkspaceRefs(focus.folder.workspace, group.workspace)
-            ? focus
-            : null;
         const assignedFolderIds = new Set<string>();
         for (const session of group.sessions) {
             const folderId = params.assignmentsBySessionKey[
@@ -278,24 +213,6 @@ export function applySessionFolderTreeToSessionListIndex(params: Readonly<{
         }
 
         out.push(group.header);
-
-        if (scopedFocus) {
-            for (const session of group.sessions) {
-                const assignedFolderId = params.assignmentsBySessionKey[
-                    buildSessionFolderAssignmentKey(session.serverId ?? group.header.serverId ?? null, session.sessionId)
-                ] ?? null;
-                if (assignedFolderId && scopedFocus.folderIds.has(assignedFolderId)) {
-                    out.push(cloneSessionWithFolder(
-                        session,
-                        assignedFolderId,
-                        1,
-                        buildSessionFolderGroupKey({ serverId: group.header.serverId, workspace: group.workspace, folderId: assignedFolderId }),
-                        group.workspace,
-                    ));
-                }
-            }
-            continue;
-        }
 
         const rootGroupKey = buildSessionFolderGroupKey({ serverId: group.header.serverId, workspace: group.workspace, folderId: null });
         for (const node of tree.rootNodes) {
@@ -371,17 +288,10 @@ export function applySessionFolderTreeToSessionListIndex(params: Readonly<{
         appendLockedFolder(folder, 0);
     }
 
-    return { items: out, folderFocus: focus };
+    return { items: out };
 }
 
-/**
- * Applies the reader's folder state to the list source for the selected layout.
- *
- * Folder state has two separable effects: the tree presentation, and the corpus
- * narrowing a focused folder performs. Recent activity keeps the narrowing and drops
- * the presentation, so a retained focus still filters the timeline while no
- * folder/workspace section reappears and no saved folder preference is mutated.
- */
+/** Applies organization and folder-tree presentation without narrowing membership. */
 export function resolveFolderAwareSessionListSourceForLayout(params: Readonly<{
     source: ReadonlyArray<SessionListIndexItem>;
     layoutChoice: SessionListLayoutChoice;
@@ -390,33 +300,20 @@ export function resolveFolderAwareSessionListSourceForLayout(params: Readonly<{
     folders: SessionFolderList;
     assignmentsBySessionKey: Readonly<Record<string, string | null | undefined>>;
     collapsedGroupKeys: Readonly<Record<string, boolean>>;
-    focusedFolder: Readonly<{
-        folderId: string;
-        workspace: SessionFolderWorkspaceRefV1;
-        serverId?: string | null;
-    }> | null;
 }>): FolderAwareSessionListIndexResult {
-    if (!params.foldersFeatureEnabled) return { items: params.source, folderFocus: null };
+    if (!params.foldersFeatureEnabled) return { items: params.source };
     const annotated = params.source.map(item => {
         if (item.type !== 'session') return item;
         const folderId = params.assignmentsBySessionKey[buildSessionFolderAssignmentKey(item.serverId, item.sessionId)] ?? null;
         return item.folderId === folderId ? item : { ...item, folderId };
     });
     const source = annotated.every((item, index) => item === params.source[index]) ? params.source : annotated;
-    if (params.folderViewModeV1 !== 'tree') return { items: source, folderFocus: null };
-    if (params.layoutChoice === 'recent_activity') {
-        return narrowSessionListIndexToFocusedFolder({
-            source,
-            folders: params.folders,
-            assignmentsBySessionKey: params.assignmentsBySessionKey,
-            focusedFolder: params.focusedFolder,
-        });
-    }
+    if (params.folderViewModeV1 !== 'tree') return { items: source };
+    if (params.layoutChoice === 'recent_activity') return { items: source };
     return applySessionFolderTreeToSessionListIndex({
         source,
         folders: params.folders,
         assignmentsBySessionKey: params.assignmentsBySessionKey,
         collapsedGroupKeys: params.collapsedGroupKeys,
-        focusedFolder: params.focusedFolder,
     });
 }

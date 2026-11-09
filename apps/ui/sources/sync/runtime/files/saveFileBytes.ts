@@ -1,6 +1,7 @@
 import { Platform } from 'react-native';
 
 import { t } from '@/text';
+import { dataUriBytes } from '@/utils/files/dataUriBytes';
 
 import { downloadWebFile } from './downloadWebFile';
 import { createNativeCacheFileSink, shareNativeCacheFile, type NativeCacheFileSink } from './nativeCacheFileSink';
@@ -60,8 +61,13 @@ export async function saveFileUri(input: FileHandoffInput & Readonly<{ uri: stri
         downloadWebFile(blob, input.fileName, async () => {});
         return 'saved';
     }
+    if (input.uri.startsWith('data:')) {
+        const bytes = dataUriBytes(input.uri);
+        if (!bytes) throw new Error('Invalid data URI');
+        return saveFileBytes({ ...input, bytes });
+    }
     if (!/^(file|content):/i.test(input.uri)) {
-        // Plugin-provided direct images may be data/remote URIs rather than preview cache files.
+        // Plugin-provided remote images may not have a preview cache file.
         const bytes = new Uint8Array(await (await fetch(input.uri)).arrayBuffer());
         return saveFileBytes({ ...input, bytes });
     }

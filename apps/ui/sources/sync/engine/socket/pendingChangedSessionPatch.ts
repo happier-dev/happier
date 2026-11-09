@@ -3,7 +3,7 @@ import { ParticipantExecutionRunRecipientRoutingIdentityV1Schema } from '@happie
 import type { PendingMessage, Session } from '@/sync/domains/state/storageTypes';
 
 export type PendingChangedSessionPatch = Pick<Session, 'pendingCount' | 'pendingVersion'>
-    & Pick<Partial<Session>, 'pendingBlockedCount' | 'meaningfulActivityAt' | 'pendingActivationAuthorization'>;
+    & Pick<Partial<Session>, 'pendingBlockedCount' | 'meaningfulActivityAt' | 'pendingActivationAuthorization' | 'pendingActivationFailureDetails'>;
 
 export function buildPendingChangedSessionPatch(body: Readonly<{
     pendingCount: number;
@@ -11,6 +11,7 @@ export function buildPendingChangedSessionPatch(body: Readonly<{
     pendingBlockedCount?: unknown;
     meaningfulActivityAt?: unknown;
     pendingActivationAuthorization?: Session['pendingActivationAuthorization'];
+    pendingActivationFailureDetails?: Session['pendingActivationFailureDetails'];
 }>): PendingChangedSessionPatch {
     const pendingBlockedCount = typeof body.pendingBlockedCount === 'number' && Number.isFinite(body.pendingBlockedCount)
         ? Math.max(0, Math.trunc(body.pendingBlockedCount))
@@ -25,6 +26,9 @@ export function buildPendingChangedSessionPatch(body: Readonly<{
         ...(meaningfulActivityAt === undefined ? {} : { meaningfulActivityAt }),
         ...(Object.prototype.hasOwnProperty.call(body, 'pendingActivationAuthorization')
             ? { pendingActivationAuthorization: body.pendingActivationAuthorization ?? null }
+            : {}),
+        ...(Object.prototype.hasOwnProperty.call(body, 'pendingActivationFailureDetails')
+            ? { pendingActivationFailureDetails: body.pendingActivationFailureDetails ?? null }
             : {}),
     };
 }

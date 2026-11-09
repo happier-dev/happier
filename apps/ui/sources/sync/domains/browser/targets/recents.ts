@@ -1,4 +1,4 @@
-import type { BrowserViewTargetV1 } from '@happier-dev/protocol';
+import type { BrowserViewTargetV1 } from '@happier-dev/protocol/browser/target/v1';
 
 export type BrowserRecentTarget = Readonly<{
     target: BrowserViewTargetV1;

@@ -1,4 +1,4 @@
-import type { WindowsRemoteSessionLaunchMode } from '@happier-dev/protocol';
+import type { WindowsRemoteSessionLaunchMode } from '@happier-dev/protocol/sessions/metadata/windowsRemoteSessionLaunchMode';
 import type { TranslationKeyNoParams } from '@/text';
 
 export const WINDOWS_REMOTE_SESSION_LAUNCH_MODE_OPTIONS: ReadonlyArray<{

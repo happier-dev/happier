@@ -91,7 +91,7 @@ describe('resolveMachineAdministrationTargetLabel', () => {
         expect(resolveMachineAdministrationTargetLabel({
             target: { serverIdentityId: 'srv_gone', machineId: 'machine-gone' },
             candidates: [candidate({ serverIdentityId: 'srv_one', machineId: 'machine-a' })],
-        })).toEqual({ machine: t('machine.unlistedMachine'), machineParts: { name: t('machine.unlistedMachine'), hint: null }, server: t('settingsAccount.thisHomeTitle') });
+        })).toEqual({ machine: t('machine.unlistedMachine'), machineParts: { name: t('machine.unlistedMachine'), hint: null }, server: t('common.homeProductName') });
         expect(resolveMachineAdministrationTargetLabel({
             target: null,
             candidates: [candidate({ serverIdentityId: 'srv_one', machineId: 'machine-a' })],
@@ -100,6 +100,30 @@ describe('resolveMachineAdministrationTargetLabel', () => {
 });
 
 describe('resolveMachineAdministrationTargetState', () => {
+    it('applies a consumer automatic eligibility and ranking policy only to live choices, preserving an exact named target', () => {
+        const disabled = candidate({ serverIdentityId: 'srv_one', machineId: 'a-disabled' });
+        const unknown = candidate({ serverIdentityId: 'srv_one', machineId: 'b-unknown' });
+        const capable = candidate({ serverIdentityId: 'srv_one', machineId: 'c-capable' });
+        const asleep = candidate({ serverIdentityId: 'srv_one', machineId: 'd-asleep', availability: 'offline' });
+        const automaticSelection = {
+            isEligible: (value: MachineAdministrationCandidateV1) => value !== disabled,
+            compare: (left: MachineAdministrationCandidateV1, right: MachineAdministrationCandidateV1) =>
+                Number(right === capable || right === asleep) - Number(left === capable || left === asleep),
+        };
+        const candidates = [disabled, unknown, capable, asleep];
+
+        expect(resolveMachineAdministrationTargetState({ storedTarget: null, candidates, automaticSelection }))
+            .toEqual({ kind: 'online', target: capable.target, machine: capable });
+        expect(resolveMachineAdministrationTargetState({ storedTarget: disabled.target, candidates, automaticSelection }))
+            .toEqual({ kind: 'online', target: disabled.target, machine: disabled });
+        expect(resolveMachineAdministrationTargetState({ storedTarget: asleep.target, candidates, automaticSelection }))
+            .toEqual({ kind: 'offline', target: asleep.target, snapshot: asleep });
+        expect(resolveMachineAdministrationTargetState({ storedTarget: null, candidates: [unknown], automaticSelection }))
+            .toEqual({ kind: 'online', target: unknown.target, machine: unknown });
+        expect(resolveMachineAdministrationTargetState({ storedTarget: null, candidates: [disabled, asleep], automaticSelection }))
+            .toMatchObject({ kind: 'unselected' });
+    });
+
     it('admits only a live online candidate for an explicit target change', () => {
         expect(isMachineAdministrationCandidateSelectable(candidate({
             serverIdentityId: 'srv_one',

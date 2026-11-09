@@ -1,10 +1,14 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { createStore } from 'zustand/vanilla';
+import { createStore, type StoreApi } from 'zustand/vanilla';
 import { act, renderHook } from '@/dev/testkit/hooks/renderHook';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import type { StorageState } from '@/sync/store/types';
 import { registerStorageStateReader, registerStorageStateSubscribe } from '@/sync/domains/state/storageStateReaderBridge';
-import { readProjectAccountWorkspaceRefs, useProjectAccountWorkspaceRef, useProjectAccountWorkspaceRefs, type ProjectAccountRowsSnapshot } from './projectAccountRows';
+import { readProjectAccountWorkspaceRefs, useProjectAccountWorkspaceRef, useProjectAccountWorkspaceRefs, useProjectWorkerCopyStatusRevisions, type ProjectAccountRowsSnapshot } from './projectAccountRows';
+import { createProjectAccountRowsDomain, type ProjectAccountRowsDomain } from '@/sync/store/domains/projectAccountRows';
+import { scopeStorageSubscriptions } from '@/sync/domains/state/scopedStorage';
+import { createProjectAccountRowsFixture } from '@/dev/testkit/fixtures/projectAccountRows';
+import { computeWorkspaceSyncPolicyDigest, type WorkspaceSyncRelationshipV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 
 const scope = { serverId: 'home-a', accountId: 'account-a' };
 afterEach(() => {
@@ -13,6 +17,44 @@ afterEach(() => {
 });
 
 describe('Project workspace-ref subscription', () => {
+    it('routes copy pushes by exact source and worker: 20 unrelated changes render zero times, one commit renders once', async () => {
+        const state = createStore<ProjectAccountRowsDomain & { profileScope: typeof scope }>()((set, get) => ({
+            ...createProjectAccountRowsDomain({ set, get }), profileScope: scope,
+        }));
+        // This real domain store supplies every field consumed by the storage path owner and query.
+        scopeStorageSubscriptions(state as unknown as StoreApi<StorageState>);
+        registerStorageStateReader(() => state.getState() as unknown as StorageState);
+        state.getState().activateProjectAccountRowsScope(scope);
+        const refs = ['source', 'worker', 'other'].map(id => ({ id, serverId: scope.serverId, machineId: id, rootPath: `/${id}`, createdAtMs: 1 }));
+        const policy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+        const copies: WorkspaceSyncRelationshipV1[] = ['worker', 'other'].map(id => ({ v: 1, relationshipId: id,
+            controllerMachineId: 'source', alphaWorkspaceRefId: 'source', betaWorkspaceRefId: id, mode: 'keep_synced', enabled: true,
+            contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) }, createdAtMs: 1, updatedAtMs: 1,
+            provenance: { kind: 'worker_clean_copy', sourceWorkspaceRefId: 'source', targetWorkspaceRefId: id } }));
+        const publish = (relationships: readonly WorkspaceSyncRelationshipV1[]) => state.getState().applyProjectAccountRowsForScope(scope,
+            createProjectAccountRowsFixture(scope, { workspaceRefs: refs, relationships }));
+        publish(copies);
+        let renders = 0;
+        const hook = await renderHook(() => {
+            renders++;
+            return useProjectWorkerCopyStatusRevisions(scope, 'source', '["worker"]');
+        });
+        try {
+            const initial = renders;
+            const initialRevision = hook.getCurrent().get('worker')!;
+            for (let index = 0; index < 20; index++) await act(async () => publish([
+                copies[0]!, { ...copies[1]!, updatedAtMs: index + 2 },
+            ]));
+            expect(renders - initial).toBe(0);
+            await act(async () => publish([{ ...copies[0]!, committedAtMs: 2 }, copies[1]!]));
+            expect(renders - initial).toBe(1);
+            expect(hook.getCurrent().get('worker')).toBe(initialRevision + 1);
+            await act(async () => publish([{ ...copies[0]!, committedAtMs: 2 }, copies[1]!]));
+            expect(renders - initial).toBe(1);
+            await act(async () => state.setState({ profileScope: { ...scope, accountId: 'retired' } }));
+            expect(hook.getCurrent().get('worker')).toBe(0);
+        } finally { await hook.unmount(); }
+    });
     it('keeps a complete admitted census during transient refresh but withdraws private authority', () => {
         const rows: ProjectAccountRowsSnapshot = { scope, status: 'ready', coverage: 'complete', workspaceRefs: [
             { id: 'accepted', serverId: scope.serverId, machineId: 'machine', rootPath: '/repo', createdAtMs: 1 },

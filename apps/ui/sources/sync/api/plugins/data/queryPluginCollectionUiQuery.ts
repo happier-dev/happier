@@ -235,10 +235,11 @@ async function executePrivatePluginCollectionUiQuery(
             throw new Error('Plugin Collection UI query returned an invalid error response.');
         }
         const transport = PluginCollectionUiQueryTransportResultV1Schema.parse(response.body);
-        const { storedReadSchema } = prepareCollectionContractSchema(contract);
+        // Compiled when the first row needs reading; an empty page needs no schema.
+        const storedReadSchema = transport.rows.length === 0 ? null : prepareCollectionContractSchema(contract).storedReadSchema;
         const rows: PluginCollectionUiQueryResultV1['rows'] = [];
         for (const row of transport.rows) {
-            if (!row.logicalRow) {
+            if (!row.logicalRow || !storedReadSchema) {
                 throw new Error('Plugin Collection UI query omitted its private logical row.');
             }
             const logical = mergeLogicalRow<PluginAccountCollectionValue<PluginAccountCollectionDefinition>>({

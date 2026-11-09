@@ -29,6 +29,7 @@ describe('managed dependency read through the originating Account', () => {
         const token = createAccountTokenForTests('requester', { currentAccount: true });
         vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token });
         const requests: string[] = [];
+        const previews: unknown[] = [];
         const page = { homeId: 'srv_reboot_references', machineId: 'machine-a', coverage: 'complete',
             references: [{ kind: 'deployment_environment', id: 'environment-a', name: 'Production', deploymentRoles: ['edge'] }], nextCursor: null };
         setRuntimeFetch(async (raw, init) => {
@@ -50,11 +51,14 @@ describe('managed dependency read through the originating Account', () => {
             // HTTP role reads and shared approval preparation remain real.
             machineServiceAction: async () => ({ kind: 'snapshot', services: [] }),
             machineReboot: async () => { throw new Error('reboot must not dispatch after cancellation'); },
-            presentUserActionConfirmation: async () => false,
+            presentUserActionConfirmation: async request => { previews.push(request.preview); return false; },
         }).execute('machines.reboot', { serverId: target.id, machineId: 'machine-a', expectedInstallationId: 'installation-a' }, {
             serverId: target.id, expectedAccountId: 'requester', surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
         });
         expect(result).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+        expect(previews).toEqual([expect.objectContaining({ machineRebootReview: expect.objectContaining({
+            deploymentReferences: page, services: { kind: 'snapshot', services: [] },
+        }) })]);
         expect(requests).toContain('/v1/deployments/machine-references');
         expect(requests.every(path => ['/v1/account/encryption', '/v1/account/encryption/currentness',
             '/v2/account/settings', '/v1/deployments/machine-references'].includes(path))).toBe(true);
@@ -87,6 +91,9 @@ describe('managed dependency read through the originating Account', () => {
             if (url.pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
             if (url.pathname === '/v1/machines/managed/actions/get') return Response.json(machine);
             if (availability === 'healthy') {
+                if (url.pathname === '/v1/deployments/machine-references') return Response.json({
+                    homeId: machine.homeId, machineId: machine.enrolledMachineId, coverage: 'complete', references: [], nextCursor: null,
+                });
                 if (url.pathname.startsWith('/v1/artifacts')) {
                     const response = artifacts.handle(url.href, init);
                     if (response) return response;

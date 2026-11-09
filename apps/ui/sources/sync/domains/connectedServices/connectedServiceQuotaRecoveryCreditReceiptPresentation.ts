@@ -1,4 +1,4 @@
-import type { ConnectedServiceQuotaRecoveryCreditConsumeReceiptStatusV1 } from '@happier-dev/protocol';
+import type { ConnectedServiceQuotaRecoveryCreditConsumeReceiptStatusV1 } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
 
 export function resolveConnectedServiceQuotaRecoveryCreditReceiptNoticeKey(
     status: ConnectedServiceQuotaRecoveryCreditConsumeReceiptStatusV1,

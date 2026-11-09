@@ -8,7 +8,7 @@ import {
 } from '@/sync/domains/server/serverProfiles';
 import { normalizeSessionListKeyParts } from './listing/sessionListKeyNormalization';
 import { normalizeSessionId } from './normalizeSessionId';
-import { rememberSessionVisit } from './navigation/recentSessions';
+import { rememberFocusedSessionVisit, rememberSessionVisit } from './navigation/recentSessions';
 
 export type SessionSurfaceVisibilitySnapshot = Readonly<{
     focusedSessionId: string | null;
@@ -373,6 +373,7 @@ export function setFocusedSessionId(sessionId: string | null, serverId?: string 
     // Every real activation converges here, including retained tabs and routed opens.
     // Visibility alone (for example an unfocused split pane) is not a recent visit.
     if (identity.sessionKey) rememberSessionVisit(identity.sessionKey);
+    if (identity.sessionKey && addressChanged) rememberFocusedSessionVisit(identity.sessionKey);
     refreshSnapshot(addressChanged);
 }
 

@@ -3,6 +3,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { createDeferred, createSessionFixture, renderHook, renderScreen } from '@/dev/testkit';
 import { MetadataSchema } from '@happier-dev/session-core/state';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { MemoryDocBodyV1Schema } from '@happier-dev/protocol/prompts/library/memoryDocV1';
 import { SessionCurrentProjectionRecordV1Schema } from '@happier-dev/protocol/sessions/listing/response';
@@ -19,6 +20,7 @@ installHomeGovernanceBoundaries(homes);
 installDisconnectedServerSocketBoundary();
 const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
 const { sessionInstructionsActions } = await import('@/components/sessions/work/sessionWorkSources');
+const { readMemoryActionOutcome } = await import('@/sync/ops/promptLibrary/memoryDocuments');
 const { useSessionInstructionsDetail } = await import('@/components/sessions/work/useSessionInstructionsSource');
 const { SessionContextSection } = await import('@/components/sessions/work/context/SessionContextSection');
 const { SessionMemorySection } = await import('@/components/sessions/work/memory/SessionMemorySection');
@@ -94,7 +96,7 @@ describe('reviewed Session context through the default UI Action host', () => {
     });
 
     it.each(['memory', 'context', 'instructions', 'voice'] as const)(
-        'rebases the %s Action over active-runtime metadata, and refuses a competing field edit', async (field) => {
+        'rejects stale %s admission, preserves unrelated retry changes and refuses competing field edits', async (field) => {
             const serverUrl = 'https://active-context-owner.test';
             const serverId = await homes.addHome({ name: 'Active Context Home', serverUrl, accountId: 'context-owner', currentAccount: true });
             const sessionId = 'c123456789012345678901234';
@@ -133,8 +135,11 @@ describe('reviewed Session context through the default UI Action host', () => {
                 }
                 expect(patch.sharedMetadata.expectedVersion).toBe(row.metadataVersion);
                 expect(patch.expectedOwnerMetadata).toEqual(row.ownerMetadata);
+                // Metadata-only owner writes preserve an unchanged AgentState
+                // version, just as the canonical server tuple producer does.
                 row = { ...row, metadata: patch.sharedMetadata.ciphertext, metadataVersion: row.metadataVersion + 1,
-                    ownerMetadata: patch.ownerMetadata, agentState: patch.agentState.ciphertext, agentStateVersion: row.agentStateVersion! + 1 };
+                    ownerMetadata: patch.ownerMetadata, agentState: patch.agentState.ciphertext,
+                    agentStateVersion: row.agentStateVersion! + (row.agentState === patch.agentState.ciphertext ? 0 : 1) };
                 commits += 1;
                 return { body: { success: true, metadataLayoutVersion: 1, sharedMetadata: { version: row.metadataVersion }, agentState: { version: row.agentStateVersion } } };
             } });
@@ -144,6 +149,14 @@ describe('reviewed Session context through the default UI Action host', () => {
                 : field === 'context' ? executor.execute('session.context.update', { ...target, intent: { kind: 'attach', entry: { id: 'own-memory', ref } } }, { surface: 'ui', authority: 'present_user' })
                 : field === 'instructions' ? executor.execute('session.instructions.set', { ...target, ref: null }, { surface: 'ui', authority: 'present_user' })
                 : executor.execute('session.voice.preference.set', { ...target, preference: null }, { surface: 'ui', authority: 'present_user' });
+            // The caller observed revision 4; revision 5 already exists before
+            // the effect owner reads anything. This is not a CAS retry race.
+            const stale = await execute();
+            expect(stale).toMatchObject({ ok: false, errorCode: 'conflict' });
+            if (field === 'memory' || field === 'context') expect(readMemoryActionOutcome(stale)).toBe('conflict');
+            expect(commits).toBe(0);
+            expect(row.ownerMetadata).toEqual(createPlainSessionOwnerMetadataEnvelopeV1({ v: 1, work: initialWork }));
+            target.expectedMetadataRevision = row.metadataVersion;
             const applied = await execute();
             expect(applied, JSON.stringify(applied)).toMatchObject({ ok: true });
             expect(commits).toBe(1);
@@ -162,6 +175,7 @@ describe('reviewed Session context through the default UI Action host', () => {
                     sharedMetadata: { v: 1 }, ownerMetadata: { v: 1, work: initialWork },
                 })) }) }, sessionLocalStateScope: { serverId, accountId: 'context-owner' } });
             race = 'same-field';
+            target.expectedMetadataRevision = row.metadataVersion;
             expect(await execute()).toMatchObject({ ok: false, errorCode: 'conflict' });
             expect(commits).toBe(1);
             // Conflict refresh is canonical even though our write was refused.
@@ -171,6 +185,25 @@ describe('reviewed Session context through the default UI Action host', () => {
             if (row.ownerMetadata?.t !== 'plain') throw new Error('Expected plain owner fixture');
             expect(projected?.ownerMetadataView?.work).toEqual(row.ownerMetadata.v.work);
             expect(homes.requests.some(request => request.path.includes('/machines/'))).toBe(false);
+
+            // Approval replay must retain the original caller basis, even though
+            // the human decides after another client has changed the Session.
+            const actionId = field === 'memory' ? 'session.memory.set' : field === 'context' ? 'session.context.update'
+                : field === 'instructions' ? 'session.instructions.set' : 'session.voice.preference.set';
+            await homes.requireUiApproval(serverId, actionId);
+            target.expectedMetadataRevision = row.metadataVersion;
+            const proposed = await execute();
+            expect(proposed).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+            if (!proposed.ok) throw new Error('Expected an approval request');
+            const approval = ActionApprovalRequestCreatedResultSchema.parse(proposed.result);
+            row = { ...row, metadataVersion: row.metadataVersion + 1,
+                ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1({ v: 1, work: initialWork }) };
+            const beforeReplay = row.ownerMetadata;
+            const decided = await executor.execute('approval.request.decide', { artifactId: approval.artifactId, decision: 'approve' },
+                { surface: 'ui', authority: 'present_user', serverId });
+            expect(decided).toMatchObject({ ok: true, result: { status: 'failed', execution: { ok: false, errorCode: 'conflict' } } });
+            expect(row.ownerMetadata).toEqual(beforeReplay);
+            expect(commits).toBe(1);
         },
     );
 
@@ -442,7 +475,7 @@ describe('reviewed Session context through the default UI Action host', () => {
         const createdId = authored.createdRef!.artifactId;
         expect(homes.artifacts(serverId).readPlainBody(createdId)).toContain('"markdown":""');
         competingContextOnPatch = true;
-        const conflicted = await sessionInstructionsActions.createAndAttach({ ...clearTarget, expectedMetadataRevision: 7 },
+        const conflicted = await sessionInstructionsActions.createAndAttach({ ...clearTarget, expectedMetadataRevision: 8 },
             { title: 'Retained draft', markdown: 'Keep this after conflict' });
         expect(conflicted).toMatchObject({ result: { ok: false, errorCode: 'conflict' },
             draft: { title: 'Retained draft', markdown: 'Keep this after conflict' }, createdRef: { kind: 'doc', serverId } });

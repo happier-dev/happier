@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
@@ -16,6 +18,54 @@ afterEach(async () => {
 });
 
 describe('serverFetch runtime fetch override', () => {
+    it.each([302, 307, 308])('scopes credentials and secret-body replay from a captured Home for %i', async (status) => {
+        let secondHopRequests = 0;
+        let secondHopCredentials = false;
+        let secondHopBody = false;
+        const server = createServer(async (request, response) => {
+            let body = '';
+            for await (const chunk of request) body += String(chunk);
+            const address = server.address();
+            if (!address || typeof address === 'string') throw new Error('Missing listener port');
+            if (request.url === '/redirect') {
+                response.writeHead(status, { Location: `http://localhost:${address.port}/second-hop?secret=not-for-diagnostics` });
+                response.end();
+                return;
+            }
+            if (request.url?.startsWith('/second-hop')) {
+                secondHopRequests += 1;
+                secondHopCredentials ||= Boolean(request.headers.authorization);
+                secondHopBody ||= body.length > 0;
+            }
+            response.writeHead(200);
+            response.end('ok');
+        });
+        server.listen(0);
+        await once(server, 'listening');
+        try {
+            const address = server.address();
+            if (!address || typeof address === 'string') throw new Error('Missing listener port');
+            setRuntimeFetch(globalThis.fetch);
+            const { createServerFetchAtEndpoint } = await import('./client');
+            const request = createServerFetchAtEndpoint({
+                endpointUrl: `http://127.0.0.1:${address.port}`,
+                credentials: { token: createAccountTokenForTests('redirect-account') },
+            });
+            const operation = request('/redirect', {
+                method: 'POST', body: 'synthetic-approval-body', redirect: 'follow',
+            }, { retry: 'none' });
+            if (status === 302) expect((await operation).status).toBe(200);
+            else await expect(operation).rejects.toMatchObject({ code: 'credential_request_redirect_refused', retryable: false, status });
+            expect(secondHopRequests).toBe(status === 302 ? 1 : 0);
+            expect(secondHopCredentials).toBe(false);
+            expect(secondHopBody).toBe(false);
+            expect(await (await request('/ordinary', undefined, { retry: 'none' })).text()).toBe('ok');
+        } finally {
+            server.closeAllConnections();
+            await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+        }
+    });
+
     it('reads credentials for the captured active Home instead of ambient credentials', async () => {
         await upsertAndActivateServer({ serverUrl: 'https://home-a.example.test', name: 'Captured Home' });
         const token = createAccountTokenForTests('captured-account');

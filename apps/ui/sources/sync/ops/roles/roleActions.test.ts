@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { RoleActionInputSchemasV1, RoleActionOutputSchemasV1 } from '@happier-dev/protocol';
+import { RoleActionInputSchemasV1, RoleActionOutputSchemasV1 } from '@happier-dev/protocol/prompts/roles/roleActionsV1';
 import { createRpcCallError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { createSessionFixture } from '@/dev/testkit';
 import { serveSessionActionHome } from '@/dev/testkit/harness/sessionActionHome';
@@ -13,12 +13,33 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc', a
 
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { roleActions } = await import('./roleActions');
+const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
 
 const previous = storage.getState();
 let home: Awaited<ReturnType<typeof serveSessionActionHome>> | undefined;
 afterEach(async () => { await home?.dispose(); home = undefined; storage.setState(previous); transport.mockReset(); });
 
 describe('session role Action Home routing', () => {
+    it('refuses the stopped coordinator Role on both attempts and admits it only once its runtime is serving again', async () => {
+        home = await serveSessionActionHome();
+        storage.setState({ sessions: { worker: createSessionFixture({ id: 'worker', serverId: home.serverId, active: false }) } });
+        // Only Session RPC is substituted: the public composite, target admission,
+        // role dispatch and partial-result projection all execute normally.
+        transport.mockRejectedValue(createRpcCallError({ error: 'RPC target unavailable', errorCode: 'target_unavailable' }));
+        const execute = createFrontDoorActionExecute(undefined, { presentUserActionConfirmation: async () => true });
+        const input = { sessionId: 'worker', roleId: 'orchestrator', keep: 'none', ruleSuggestions: [] };
+        const context = { surface: 'ui' as const, serverId: home.serverId };
+        for (let attempt = 0; attempt < 2; attempt++) {
+            expect(await execute('session.coordinator.enable', input, context)).toMatchObject({ ok: true, result: {
+                status: 'partial', effects: [{ operation: 'role', status: 'failed', errorCode: 'target_unavailable' }],
+            } });
+        }
+        transport.mockResolvedValue(RoleActionOutputSchemasV1['session.role.set'].parse({ updated: true }));
+        expect(await execute('session.coordinator.enable', input, context)).toMatchObject({ ok: true, result: {
+            status: 'configured', effects: [{ operation: 'role', status: 'accepted' }],
+        } });
+    });
+
     it('keeps notes and role writes at the explicitly selected Home despite a colliding live Session', async () => {
         home = await serveSessionActionHome({ homes: [
             { key: 'b', serverUrl: 'https://roles-b.test', accountId: 'account-b', currentAccount: true },

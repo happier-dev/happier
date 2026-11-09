@@ -1,6 +1,8 @@
 import type {
-    PluginPermissionCapabilityV1,
-    PluginPermissionGrantActionIdV1,
+    PluginPermissionCapabilityV1} from '@happier-dev/protocol/plugins/permissions/capabilityV1';
+import type {
+    PluginPermissionGrantActionIdV1} from '@happier-dev/protocol/plugins/permissions/actions';
+import type {
     PluginPermissionGrantAuthoritySourceV1,
     PluginPermissionGrantDismissRequestActionInputV1,
     PluginPermissionGrantGrantActionInputV1,
@@ -14,7 +16,7 @@ import type {
     PluginPermissionGrantV1,
     PluginPermissionSubjectV1,
     PluginPermissionGrantDismissRequestActionOutputV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/permissions/grants';
 
 export const PLUGIN_PERMISSION_GRANT_ACTION_IDS = Object.freeze({
     list: 'plugins.permissions.grants.list',

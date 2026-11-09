@@ -1,9 +1,9 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import type { SessionViewerProjectionV1 } from '@happier-dev/protocol';
+import type { SessionViewerProjectionV1 } from '@happier-dev/protocol/sessions/personal/viewer';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { SessionReadStateRouteForbiddenResponseV1Schema } from '@happier-dev/protocol';
+import { SessionReadStateRouteForbiddenResponseV1Schema } from '@happier-dev/protocol/sessions';
 
 describe('sessionSetManualReadStateWithServerScope (real Action and scoped transport)', () => {
     let boundary: Awaited<ReturnType<typeof import('@/dev/testkit/harness/sessionOpsNetworkBoundary').installSessionOpsNetworkBoundary>>;
@@ -111,12 +111,16 @@ describe('sessionSetManualReadStateWithServerScope (real Action and scoped trans
 
     it('preserves scope refusals thrown by the real organization writers through the Action executor', async () => {
         seedSession();
+        storage.getState().applySessionOrganizationSnapshot(home.id, {
+            schemaVersion: 1, version: 1, pins: [], folders: [], tags: [], tagAssignments: [], orderEntries: [], labels: [],
+            folderAssignments: [{ sessionId: 'sid-1', folderId: 'existing-section' }],
+        });
         reply = async () => Response.json({ error: 'credential_scope_denied' }, { status: 403 });
         const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
         const executor = createDefaultActionExecutor();
         for (const [actionId, input] of [
             ['session.organization.pin.set', { sessionId: 'sid-1', pinned: false }],
-            ['session.folder.set', { sessionId: 'sid-1', folderId: null }],
+            ['session.section.set', { sessionId: 'sid-1', sectionId: null }],
             ['session.attention.set', { sessionId: 'sid-1', standing: null }],
         ] as const) {
             await expect(executor.execute(actionId, input, { surface: 'ui', authority: 'present_user', serverId: home.id }))
@@ -138,6 +142,11 @@ describe('sessionSetManualReadStateWithServerScope (real Action and scoped trans
     });
 
     it('updates the private viewer frontier without rewriting owner metadata', async () => {
+        const requests: Array<{ method: string; path: string }> = [];
+        (await import('@/utils/system/runtimeFetch')).setRuntimeFetch(async (input, init) => {
+            requests.push({ method: init?.method ?? 'GET', path: new URL(String(input)).pathname });
+            return boundary.request(input, init);
+        });
         const metadata = { path: '', host: '', readStateV1: { v: 1 as const, sessionSeq: 7, pendingActivityAt: 0, updatedAt: 1 } };
         seedSession({ metadata, viewer: tracking() });
         const viewer = { ...tracking(), readState: { state: 'tracking' as const, lastViewedSessionSeq: 6, unreadSince: 123 } };
@@ -145,6 +154,7 @@ describe('sessionSetManualReadStateWithServerScope (real Action and scoped trans
         expect((await setReadState('sid-1', 'unread', { serverId: home.id })).success).toBe(true);
         expect(storage.getState().sessions['sid-1'].viewer).toEqual(viewer);
         expect(storage.getState().sessions['sid-1'].metadata).toEqual(metadata);
+        console.info('LIVING_BOTS_PERSONAL_READ_HTTP', JSON.stringify({ admission: 'restored', requests }));
     });
 
     it('applies canonical attention from the private viewer response', async () => {

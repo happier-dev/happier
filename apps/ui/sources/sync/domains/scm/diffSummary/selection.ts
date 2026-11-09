@@ -1,6 +1,8 @@
 import type { ScmComparison, ScmComparisonSource, ScmComparisonView, ScmDiffSummaryOutputKind, ScmDiffSummaryOutputs, ScmDiffSummaryResultReadInput } from '@happier-dev/protocol/scm';
 import type { ScmDiffSummaryState } from './state';
-import { scmComparisonSourceMatches } from '@happier-dev/protocol/scm/comparison';
+import { ScmComparisonSourceSchema, scmComparisonSourceMatches } from '@happier-dev/protocol/scm/comparison';
+import { ScmDiffSummaryResultReadInputSchema } from '@happier-dev/protocol/scm/diffSummaryResult';
+import { z } from 'zod/mini';
 
 type SourceSelector = (ScmComparisonSource | ScmReviewComparisonSelector) & Readonly<{ comparisonId?: string }>;
 
@@ -22,12 +24,23 @@ export type ScmReviewComparisonSelector = (
     | Readonly<{ kind: 'turnCheckpoint'; turnId?: string; checkpointReceiptId?: string; evidence?: 'agent_reported' | 'checkpoint' }>
     | Readonly<{ kind: 'branch'; head: string; base: string }>
     | Readonly<{ kind: 'commit'; commit: string; parent?: string }>
+    | Extract<ScmComparisonSource, { kind: 'revisionRange' }>
     | Pick<Extract<ScmComparisonSource, { kind: 'pullRequest' }>, 'kind' | 'locator'>
 ) & Readonly<{
     comparisonId?: string;
     /** Exact cold-open address; later publications still follow the comparison's normal selection. */
     savedResult?: ScmDiffSummaryResultReadInput;
 }>;
+
+/** Persisted UI selectors reuse the capture owner's source parser after its normal UI mapping. */
+export const ScmReviewComparisonSelectorSchema = z.custom<ScmReviewComparisonSelector>(value => {
+    if (!value || typeof value !== 'object' || Array.isArray(value) || !('kind' in value) || typeof value.kind !== 'string') return false;
+    if ('comparisonId' in value && value.comparisonId !== undefined && typeof value.comparisonId !== 'string') return false;
+    if ('savedResult' in value && value.savedResult !== undefined && !ScmDiffSummaryResultReadInputSchema.safeParse(value.savedResult).success) return false;
+    // The source parser below validates the mapped fields; the cast only lets the
+    // existing selector mapper carry unknown persisted operands to that boundary.
+    return ScmComparisonSourceSchema.safeParse(scmComparisonSourceOf(value as ScmReviewComparisonSelector, 'retained-selection')).success;
+});
 
 /** The captured-comparison source a comparison view asks the machine for (one mapping for every caller). */
 export function scmComparisonSourceOf(comparison: ScmReviewComparisonSelector, sessionId: string): ScmComparisonSource {
@@ -38,6 +51,7 @@ export function scmComparisonSourceOf(comparison: ScmReviewComparisonSelector, s
         case 'workingTree': return { kind: 'workingTree' };
         case 'branch': return { kind: 'branch', head: comparison.head, base: comparison.base };
         case 'commit': return { kind: 'commit', commit: comparison.commit, ...(comparison.parent ? { parent: comparison.parent } : {}) };
+        case 'revisionRange': return { kind: 'revisionRange', baseOid: comparison.baseOid, headOid: comparison.headOid };
         case 'pullRequest': return { kind: 'pullRequest', locator: comparison.locator };
     }
 }

@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createSessionMessagesFixture } from '@/dev/testkit/fixtures/transcriptFixtures';
 
 const persistedPermissionModes = vi.hoisted(() => new Map<string, string>());
 const persistedPermissionModeUpdatedAts = vi.hoisted(() => new Map<string, number>());
@@ -10,7 +12,6 @@ vi.mock('../../domains/state/sessionPersistence', () => ({
     loadSessionModelModes: () => ({}),
     loadSessionPermissionModeUpdatedAts: () => Object.fromEntries(persistedPermissionModeUpdatedAts.entries()),
     loadSessionPermissionModes: () => Object.fromEntries(persistedPermissionModes.entries()),
-    loadSessionActionDrafts: () => ({}),
     loadSessionReviewCommentsDrafts: () => ({}),
     loadWorkspaceReviewCommentsDrafts: () => ({}),
     saveSessionDrafts: () => {},
@@ -29,7 +30,6 @@ vi.mock('../../domains/state/sessionPersistence', () => ({
             if (typeof v === 'string') persistedPermissionModes.set(k, v);
         }
     },
-    saveSessionActionDrafts: () => {},
     saveSessionReviewCommentsDrafts: () => {},
     saveWorkspaceReviewCommentsDrafts: () => {},
 }));
@@ -50,10 +50,6 @@ vi.mock('../../domains/state/warmCacheAdapters', async (importOriginal) => {
         buildPersistedSessionListCacheEntriesFromRenderables: () => [],
     };
 });
-
-vi.mock('./messages', () => ({
-    applyAgentStateUpdateToSessionMessages: () => ({}),
-}));
 
 vi.mock('@/sync/domains/state/storageStore', () => ({
     storage: {
@@ -98,8 +94,6 @@ vi.mock('../../runtime/orchestration/projectManager', () => ({
         getSessionProjectScmSnapshotError: () => null,
         updateSessionProjectScmSnapshot: () => {},
         updateSessionProjectScmSnapshotError: () => {},
-        getWorkspaceScmTouchedPathsForSession: () => [],
-        clearWorkspaceScmTouchedPathsForSession: () => {},
         touchSessionProjectScmPaths: () => {},
         clearScmOperationLogEntriesForSessionId: () => {},
         getScmOperationLogEntriesForProjectId: () => [],
@@ -142,11 +136,11 @@ function createHarness() {
         workspaceRepositoryTreeExpandedPathsByWorkspaceCacheKey: {},
         reviewCommentsDraftsBySessionId: {},
         reviewCommentsDraftsByWorkspaceCacheKey: {},
-        sessionActionDraftsByAddressKey: {},
         isDataReady: false,
         machines: {},
         machineDisplayById: {},
         sessionMessages: {},
+        sessionMessageToolVersion: 0,
         settings: {},
     };
 
@@ -253,16 +247,21 @@ describe('sessions domain: permissionMode persistence + hydration merge', () => 
         persistedPermissionModes.set('s_unloaded', 'read-only');
         persistedPermissionModeUpdatedAts.set('s_loaded', 1000);
         persistedPermissionModeUpdatedAts.set('s_unloaded', 2000);
-        const { domain } = createHarness();
+        const { get, domain } = createHarness();
+        get().sessionMessages.s_loaded = createSessionMessagesFixture({ isLoaded: true });
 
         domain.applySessions([
-            {
+            createSessionFixture({
                 id: 's_loaded',
                 createdAt: 1,
                 active: false,
                 activeAt: 1,
                 metadata: null,
-            } as any,
+                agentState: { requests: { request: { tool: 'Bash', arguments: { command: 'pwd' }, createdAt: 1 } } },
+            }),
+        ]);
+        expect(Object.values(get().sessionMessages.s_loaded.messagesById)).toEqual([
+            expect.objectContaining({ kind: 'tool-call', tool: expect.objectContaining({ permission: expect.objectContaining({ id: 'request' }) }) }),
         ]);
 
         domain.updateSessionPermissionMode('s_loaded', 'yolo');

@@ -9,20 +9,26 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', a
     return createServerScopedMachineRpcBoundaryMock(relocationBoundary.rpc);
 });
 
-import { REDACTED_LOCAL_SERVICE_PUBLIC_PREVIEW_URL } from '@happier-dev/protocol';
+import { DaemonLocalServicePublicPreviewStatusRequestV1Schema, REDACTED_LOCAL_SERVICE_PUBLIC_PREVIEW_URL,
+    type DaemonLocalServicePublicPreviewStatusRequestV1 } from '@happier-dev/protocol/local/services/public/v1';
 import type {
     DaemonLocalServicePreviewOpenOrCreateResponseV1,
     DaemonLocalServicePreviewRevokeResponseV1,
-    DaemonLocalServicePublicPreviewCreateResponseV1,
-    LocalServiceActionResultV1,
-    LocalServiceInventorySnapshotV1,
-    LocalServiceLauncherSnapshotV1,
     LocalServicePreviewResourceV1,
-    LocalServicePreviewSnapshotV1,
+    LocalServicePreviewSnapshotV1} from '@happier-dev/protocol/local/services/preview/v1';
+import type {
+    DaemonLocalServicePublicPreviewCreateResponseV1,
     LocalServicePublicExposureV1,
-    LocalServicePublicPreviewSnapshotV1,
+    LocalServicePublicPreviewSnapshotV1} from '@happier-dev/protocol/local/services/public/v1';
+import type {
+    LocalServiceActionResultV1} from '@happier-dev/protocol/local/services/actions/v1';
+import type {
+    LocalServiceInventorySnapshotV1} from '@happier-dev/protocol/local/services/inventory/v1';
+import type {
+    LocalServiceLauncherSnapshotV1} from '@happier-dev/protocol/local/services/launcher/v1';
+import type {
     RuntimeActionExecuteArgs,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/actions/executor/types';
 import { createDefaultRuntimeActionExecutor } from '@/sync/ops/actions/defaultRuntimeActionExecutor';
 import { storage } from '@/sync/domains/state/storageStore';
 
@@ -227,7 +233,7 @@ describe('UI local-services runtime action executor', () => {
             ], organizations: [], relationships: [], revisionsByPhysicalKey: {} });
             const execute = createDefaultRuntimeActionExecutor();
             const args = runtimeArgs({ actionId: 'projects.service.relocate', input: {
-                workspace: { serverId: scope.serverId, refId: 'source-ref' }, serviceName: 'web', requestId: 'move-1',
+                workspace: { serverId: scope.serverId, refId: 'source-ref' }, sourceMachineId: 'source-controller', serviceName: 'web', requestId: 'move-1',
                 currentTarget: { kind: 'managed_service', managedServiceId: 'native-old', machineId: 'source-controller' },
                 destination: { kind: 'primary' },
                 selectedTarget: { machineId: 'source-controller' },
@@ -261,7 +267,7 @@ describe('UI local-services runtime action executor', () => {
         };
         const fallbackMachine = vi.fn(() => 'session-machine');
         const execute = createLocalServicesRuntimeActionExecutor({ readWorkspaceRefs, resolveMachineId: fallbackMachine });
-        const request = { workspace: { serverId: scope.serverId, refId: 'source-ref' }, serviceName: 'web', requestId: 'move-1',
+        const request = { workspace: { serverId: scope.serverId, refId: 'source-ref' }, sourceMachineId: 'source-controller', serviceName: 'web', requestId: 'move-1',
             currentTarget: { kind: 'managed_service' as const, managedServiceId: 'native-old', machineId: 'old-worker' },
             destination: { kind: 'workers' as const, destination: { kind: 'machine' as const, machineId: 'new-worker' } },
             selectedTarget: { machineId: 'new-worker' },
@@ -697,12 +703,13 @@ describe('UI local-services runtime action executor', () => {
 
         await expect(execute(runtimeArgs({
             actionId: 'localServices.publicPreview.status',
-            input: { previewId: 'preview_1' },
+            input: { machineId: 'machine_1', sessionId: 'session_1', previewId: 'preview_1' },
             context: { surface: 'ui', defaultSessionId: 'session_1', serverId: 'server_1' },
         }))).resolves.toEqual(publicPreviewSnapshot);
         await expect(execute(runtimeArgs({
             actionId: 'localServices.publicPreview.create',
             input: {
+                machineId: 'machine_1',
                 sessionId: 'session_1',
                 previewId: 'preview_1',
                 mode: 'secret_link',
@@ -714,6 +721,7 @@ describe('UI local-services runtime action executor', () => {
         await expect(execute(runtimeArgs({
             actionId: 'localServices.publicPreview.revoke',
             input: {
+                machineId: 'machine_1',
                 sessionId: 'session_1',
                 previewId: 'preview_1',
                 exposureId: 'public_preview_1',
@@ -731,6 +739,7 @@ describe('UI local-services runtime action executor', () => {
         await expect(execute(runtimeArgs({
             actionId: 'localServices.publicPreview.copyUrl',
             input: {
+                machineId: 'machine_1',
                 sessionId: 'session_1',
                 previewId: 'preview_1',
                 exposureId: 'public_preview_1',
@@ -808,6 +817,32 @@ describe('UI local-services runtime action executor', () => {
         });
     });
 
+    it('retains the exact current-service binding when reading public-preview status', async () => {
+        const { createLocalServicesRuntimeActionExecutor } = await import('./runtimeActionExecutor');
+        const serviceTarget = {
+            kind: 'managed_service' as const, managedServiceId: 'managed_1', machineId: 'machine_1', cwd: '/workspace/app',
+            declaration: { workspaceRefId: 'workspace_1', selection: { kind: 'manifest' as const, name: 'web' } },
+        };
+        const input = { machineId: 'machine_1', serviceTarget, previewId: 'preview_1' };
+        let received: DaemonLocalServicePublicPreviewStatusRequestV1 | undefined;
+        const snapshot = { ...publicPreviewSnapshot, exposures: [] };
+        const execute = createLocalServicesRuntimeActionExecutor({
+            resolveMachineId: () => 'machine_1',
+            fetchPublicPreviewStatus: async ({ request }) => {
+                received = DaemonLocalServicePublicPreviewStatusRequestV1Schema.parse(request);
+                return { ok: true, snapshot };
+            },
+        });
+        await expect(execute(runtimeArgs({ actionId: 'localServices.publicPreview.status', input,
+            context: { surface: 'ui', serverId: 'server_1', defaultSessionId: 'unrelated_session' } }))).resolves.toEqual(snapshot);
+        expect(received).toEqual(input);
+        await expect(execute(runtimeArgs({ actionId: 'localServices.publicPreview.status',
+            input: { ...input, serviceTarget: { ...serviceTarget, machineId: 'other_machine' } },
+            context: { surface: 'ui', serverId: 'server_1' } }))).resolves.toMatchObject({
+            ok: false, errorCode: 'invalid_parameters',
+        });
+    });
+
     it('fails public-preview actions closed when routing is missing or input is invalid', async () => {
         const mod = await import('./runtimeActionExecutor').catch(() => null);
 
@@ -820,7 +855,7 @@ describe('UI local-services runtime action executor', () => {
 
         await expect(execute(runtimeArgs({
             actionId: 'localServices.publicPreview.status',
-            input: { sessionId: 'session_1' },
+            input: { machineId: 'machine_1', sessionId: 'session_1' },
         }))).resolves.toEqual({
             ok: false,
             errorCode: 'runtime_action_disabled',
@@ -829,6 +864,7 @@ describe('UI local-services runtime action executor', () => {
         await expect(execute(runtimeArgs({
             actionId: 'localServices.publicPreview.create',
             input: {
+                machineId: 'machine_1',
                 sessionId: 'session_1',
                 previewId: 'preview_1',
                 mode: 'secret_link',
@@ -852,7 +888,7 @@ describe('UI local-services runtime action executor', () => {
         try {
             const execute = createLocalServicesRuntimeActionExecutor({ resolveMachineId: () => 'machine_1',
                 fetchPublicPreviewStatus: fetchLocalServicePublicPreviewStatusViaMachineRpc });
-            await expect(execute(runtimeArgs({ actionId: 'localServices.publicPreview.status', input: {},
+            await expect(execute(runtimeArgs({ actionId: 'localServices.publicPreview.status', input: { machineId: 'machine_1' },
                 context: { serverId: 'disabled_public_home' } }))).resolves.toMatchObject({ ok: false,
                 errorCode: 'runtime_action_disabled',
                 error: 'runtime_action_disabled:localServices:local_services_public_preview_feature_disabled',
@@ -876,7 +912,7 @@ describe('UI local-services runtime action executor', () => {
 
         const result = await execute(runtimeArgs({
             actionId: 'localServices.publicPreview.status',
-            input: { previewId: 'preview_1' },
+            input: { machineId: 'machine_1', previewId: 'preview_1' },
             context: { surface: 'agent', defaultSessionId: 'session_1', serverId: 'server_1' },
         })) as LocalServicePublicPreviewSnapshotV1;
 
@@ -916,14 +952,14 @@ describe('UI local-services runtime action executor', () => {
 
         const unattributed = await execute(runtimeArgs({
             actionId: 'localServices.publicPreview.status',
-            input: { previewId: 'preview_1' },
+            input: { machineId: 'machine_1', previewId: 'preview_1' },
             context: { defaultSessionId: 'session_1', serverId: 'server_1' },
         })) as LocalServicePublicPreviewSnapshotV1;
         expect(unattributed.exposures[0]?.publicUrl).toBe(REDACTED_LOCAL_SERVICE_PUBLIC_PREVIEW_URL);
 
         const unknownSurface = await execute(runtimeArgs({
             actionId: 'localServices.publicPreview.status',
-            input: { previewId: 'preview_1' },
+            input: { machineId: 'machine_1', previewId: 'preview_1' },
             context: { surface: 'not_a_surface' as never, defaultSessionId: 'session_1', serverId: 'server_1' },
         })) as LocalServicePublicPreviewSnapshotV1;
         expect(unknownSurface.exposures[0]?.publicUrl).toBe(REDACTED_LOCAL_SERVICE_PUBLIC_PREVIEW_URL);
@@ -931,6 +967,7 @@ describe('UI local-services runtime action executor', () => {
         const createResult = await execute(runtimeArgs({
             actionId: 'localServices.publicPreview.create',
             input: {
+                machineId: 'machine_1',
                 sessionId: 'session_1',
                 previewId: 'preview_1',
                 mode: 'secret_link',
@@ -944,7 +981,7 @@ describe('UI local-services runtime action executor', () => {
 
         const revokeResult = await execute(runtimeArgs({
             actionId: 'localServices.publicPreview.revoke',
-            input: { sessionId: 'session_1', previewId: 'preview_1', exposureId: 'public_preview_1' },
+            input: { machineId: 'machine_1', sessionId: 'session_1', previewId: 'preview_1', exposureId: 'public_preview_1' },
             context: { serverId: 'server_1' },
         })) as { snapshot: LocalServicePublicPreviewSnapshotV1 };
         expect(revokeResult.snapshot.exposures[0]?.publicUrl).toBe(REDACTED_LOCAL_SERVICE_PUBLIC_PREVIEW_URL);
@@ -953,7 +990,7 @@ describe('UI local-services runtime action executor', () => {
         // everything unconditionally.
         const uiResult = await execute(runtimeArgs({
             actionId: 'localServices.publicPreview.status',
-            input: { previewId: 'preview_1' },
+            input: { machineId: 'machine_1', previewId: 'preview_1' },
             context: { surface: 'ui', defaultSessionId: 'session_1', serverId: 'server_1' },
         })) as LocalServicePublicPreviewSnapshotV1;
         expect(uiResult.exposures[0]?.publicUrl).toBe(publicExposure.publicUrl);
@@ -992,6 +1029,7 @@ describe('UI local-services runtime action executor', () => {
         const createResult = await execute(runtimeArgs({
             actionId: 'localServices.publicPreview.create',
             input: {
+                machineId: 'machine_1',
                 sessionId: 'session_1',
                 previewId: 'preview_1',
                 mode: 'secret_link',
@@ -1004,6 +1042,7 @@ describe('UI local-services runtime action executor', () => {
         const revokeResult = await execute(runtimeArgs({
             actionId: 'localServices.publicPreview.revoke',
             input: {
+                machineId: 'machine_1',
                 sessionId: 'session_1',
                 previewId: 'preview_1',
                 exposureId: 'public_preview_1',

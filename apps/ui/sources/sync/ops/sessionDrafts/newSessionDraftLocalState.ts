@@ -2,7 +2,8 @@ import type {
     NewSessionComposerAttachmentSeedV1,
     NewSessionDraft,
 } from '@/sync/domains/state/persistence';
-import { PluginUiNewSessionSeedOriginV1Schema } from '@happier-dev/protocol/plugins/ui';
+import { PluginUiNewSessionActionDefaultV1Schema, PluginUiNewSessionSeedOriginV1Schema } from '@happier-dev/protocol/plugins/ui';
+import { SessionSpaceMembershipTargetV1Schema } from '@happier-dev/protocol/actions';
 import { readSessionInstructionsAuthoringDraft } from '@/sync/domains/state/sessionInstructionsDraft';
 import { nullable } from 'zod/mini';
 import { ManagedMachineAcquisitionDraftSchema, ManagedMachineSelectionDraftSchema } from '@/sync/domains/state/newSessionManagedMachineDraft';
@@ -26,6 +27,8 @@ export type NewSessionDraftLocalState = Readonly<Pick<NewSessionDraft,
     | 'teamCredentialBindings'
     | 'composerAttachmentSeeds'
     | 'authoringOrigin'
+    | 'actionDefault'
+    | 'spaceMembership'
     | 'managedMachineSelection'
     | 'managedMachineAcquisition'
     | 'targetServerId'
@@ -58,8 +61,14 @@ export function buildNewSessionDraftLocalState(draft: NewSessionDraft): NewSessi
         ...(draft.placementCandidates === undefined ? {} : { placementCandidates: draft.placementCandidates }),
         ...(draft.teamCredentialBindings === undefined ? {} : { teamCredentialBindings: draft.teamCredentialBindings }),
         ...(draft.composerAttachmentSeeds === undefined ? {} : { composerAttachmentSeeds: draft.composerAttachmentSeeds }),
+        ...(draft.actionDefault === undefined ? {} : {
+            actionDefault: PluginUiNewSessionActionDefaultV1Schema.parse(draft.actionDefault),
+        }),
         ...(draft.authoringOrigin === undefined ? {} : {
             authoringOrigin: PluginUiNewSessionSeedOriginV1Schema.parse(draft.authoringOrigin),
+        }),
+        ...(draft.spaceMembership === undefined ? {} : {
+            spaceMembership: nullable(SessionSpaceMembershipTargetV1Schema).parse(draft.spaceMembership),
         }),
     };
 }

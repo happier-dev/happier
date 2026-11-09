@@ -84,3 +84,4 @@ export function createBrowserAnnotationElementPicker(input: Readonly<{
         dispose() { disposed = true; active = false; pendingPoint = null; },
     };
 }
+

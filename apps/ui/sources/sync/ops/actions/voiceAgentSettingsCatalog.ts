@@ -2,6 +2,7 @@ import type { SettingsMutationServices } from '@/components/settings/catalog/set
 import { getEnabledAgentIds } from '@/agents/catalog/enabled';
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { loadDaemonMergedProjectionCacheEntry, readReusableDaemonMergedProjectionCacheEntry } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import { DAEMON_AGENT_CATALOG_SECTIONS } from '@/agents/backendCatalog/agentCatalogSections';
 import { areAccountSettingsJsonValuesEqual } from '@/sync/domains/settings/accountSettingsStructuralEquality';
 import { storage } from '@/sync/domains/state/storage';
 import { resolveVoiceExecutionMachineIdFromState } from '@/voice/settings/executionMachine';
@@ -28,7 +29,7 @@ export function createVoiceAgentSettingsCatalogReader(account: ActionAccount | n
         account.assertCurrent();
         const state = storage.getState();
         const machineId = resolveVoiceExecutionMachineIdFromState({ ...state, settings });
-        const params = { machineId, serverId: account.serverId, accountLifetime: account.accountLifetime };
+        const params = { machineId, serverId: account.serverId, accountLifetime: account.accountLifetime, sections: DAEMON_AGENT_CATALOG_SECTIONS };
         const projection = machineId ? await loadDaemonMergedProjectionCacheEntry({ ...params, machineId, reuseFreshReady: true }) : null;
         account.assertCurrent();
         const inputs = projection?.kind === 'ready' ? projection.inputs : null;

@@ -62,6 +62,17 @@ it('reads a machine through the Action, shows it from the device cache, and coun
     expect(hook.getCurrent().page.scans[1]!.result).toBeNull();
     // One item is already in the library, so the rail's count is the other one.
     expect(hook.getCurrent().count).toBe(1);
+    // Reconnecting/re-reading the same machine replaces its observation; another
+    // machine holding the same named skill is another place, not another skill.
+    await act(async () => { await hook.getCurrent().page.scan('m1'); });
+    expect(hook.getCurrent().count).toBe(1);
+    await act(async () => { await hook.getCurrent().page.scan('m2'); });
+    expect(hook.getCurrent().count).toBe(1);
+    transport.mockResolvedValueOnce({ ...found, items: [...found.items,
+      { ...found.items[1]!, name: 'other', path: '/skills/other' }],
+    });
+    await act(async () => { await hook.getCurrent().page.scan('m2'); });
+    expect(hook.getCurrent().count).toBe(2);
   } finally { await hook.unmount(); }
 });
 

@@ -8,11 +8,14 @@ import {
     type ActiveServerAccountScopeLifetime,
 } from '@/sync/domains/scope/activeServerAccountScope';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
-import { captureServerRequestAuthorityForServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
+import { captureServerRequestAuthorityForServerAccountScope, type ServerAccountRequestAuthority } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
+import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 
 export type CurrentAccountApiTokensOptionsV1 = Readonly<{
     /** The host Action can abandon its pending request without changing Account scope. */
     signal?: AbortSignal;
+    /** An Action retains its admitted Home even while another Home is focused. */
+    accountContext?: Pick<LazyActionAccountContext, 'accountLifetime' | 'request'>;
 }>;
 
 type CapturedActiveAccountApiTokens = Readonly<{
@@ -40,7 +43,10 @@ function invalidResponse(): ActionExecuteFailure {
     return { ok: false, errorCode: 'invalid_response', error: 'invalid_response' };
 }
 
-function isCurrent(captured: CapturedActiveAccountApiTokens): boolean {
+type CapturedAccountApiTokens = CapturedActiveAccountApiTokens | NonNullable<CurrentAccountApiTokensOptionsV1['accountContext']>;
+
+function isCurrent(captured: CapturedAccountApiTokens): boolean {
+    if ('accountLifetime' in captured) return captured.accountLifetime.isCurrent();
     const current = getActiveServerSnapshot();
     return captured.lifetime.isCurrent()
         && current.serverId === captured.serverSnapshot.serverId
@@ -69,15 +75,16 @@ async function requestCurrentAccountApiTokens<
     const request = inputSchema.parse(input);
     if (options?.signal?.aborted) return unavailable();
 
-    const captured = captureActiveAccountApiTokens();
-    if (!captured) return unavailable();
+    const captured = options?.accountContext ?? captureActiveAccountApiTokens();
+    if (!captured || !isCurrent(captured)) return unavailable();
+    const lifetime = 'accountLifetime' in captured ? captured.accountLifetime : captured.lifetime;
 
     const controller = new AbortController();
     const abort = () => controller.abort();
-    const retirement = captured.lifetime.onRetire(abort);
+    const retirement = lifetime.onRetire(abort);
     options?.signal?.addEventListener('abort', abort, { once: true });
     if (options?.signal?.aborted) abort();
-    let authority: Awaited<ReturnType<typeof captureServerRequestAuthorityForServerAccountScope>> | null = null;
+    let authority: (Pick<ServerAccountRequestAuthority, 'request'> & Partial<Pick<ServerAccountRequestAuthority, 'release'>>) | null = null;
     let issued = false;
 
     const transportFailure = (): ActionExecuteFailure =>
@@ -85,7 +92,7 @@ async function requestCurrentAccountApiTokens<
 
     try {
         if (controller.signal.aborted || !isCurrent(captured)) return unavailable();
-        authority = await captureServerRequestAuthorityForServerAccountScope({
+        authority = 'accountLifetime' in captured ? captured : await captureServerRequestAuthorityForServerAccountScope({
             scope: captured.lifetime.scope,
             activeRequest: (requestPath, init) => apiSocket.request(requestPath, init),
         });
@@ -145,8 +152,8 @@ async function requestCurrentAccountApiTokens<
 }
 
 /**
- * Action transport for the active Account only. The Account is captured from
- * the current scoped credential and is never accepted as an input or URL part.
+ * One Action transport for a host-captured Account or the active Account.
+ * The Account is never accepted as an input or URL part.
  */
 export async function createCurrentAccountApiToken(
     input: AccountApiTokensCreateActionInputV1,

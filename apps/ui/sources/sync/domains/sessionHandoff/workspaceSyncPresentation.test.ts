@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { RpcError } from '@happier-dev/protocol/rpcErrors';
 
 import {
     formatWorkspaceSyncRelationshipTitle,
+    presentWorkspaceSyncFailure,
+    readWorkspaceSyncErrorCode,
     resolveWorkspaceSyncErrorTranslationKey,
     resolveWorkspaceSyncModeTranslationKey,
     resolveWorkspaceSyncRelationshipStateLabel,
@@ -9,6 +12,12 @@ import {
 } from './workspaceSyncPresentation';
 
 describe('workspaceSyncPresentation', () => {
+    it('shows the original RPC failure code even when it has no translated explanation', () => {
+        const error = new RpcError('Untranslated diagnostic', 'project_requester_authority_unavailable');
+        expect(readWorkspaceSyncErrorCode(error)).toBe('project_requester_authority_unavailable');
+        expect(presentWorkspaceSyncFailure(error)).toContain('project_requester_authority_unavailable');
+        expect(presentWorkspaceSyncFailure({ code: 'relationship_not_ready' })).toContain('relationship_not_ready');
+    });
     it('uses directional relationship titles for immutable one-way and two-way modes', () => {
         expect(formatWorkspaceSyncRelationshipTitle({
             alphaLabel: 'Source',
@@ -68,39 +77,46 @@ describe('workspaceSyncPresentation', () => {
             enabled: false,
             statusState: undefined,
             errorCode: undefined,
-            statusPhaseHasError: false,
+            statusPhase: 'idle',
         })).toBe('workspaceSync.state.paused');
         expect(resolveWorkspaceSyncRelationshipStateLabel({
             enabled: false,
             statusState: null,
             errorCode: null,
-            statusPhaseHasError: false,
+            statusPhase: 'idle',
         })).toBe('workspaceSync.state.paused');
         // Live daemon projection owns the row state whenever it carries one.
         expect(resolveWorkspaceSyncRelationshipStateLabel({
             enabled: false,
             statusState: 'watching',
             errorCode: undefined,
-            statusPhaseHasError: false,
+            statusPhase: 'idle',
         })).toBe('workspaceSync.state.watching');
         expect(resolveWorkspaceSyncRelationshipStateLabel({
             enabled: false,
             statusState: 'stopped',
             errorCode: undefined,
-            statusPhaseHasError: false,
+            statusPhase: 'idle',
         })).toBe('workspaceSync.state.stopped');
         expect(resolveWorkspaceSyncRelationshipStateLabel({
             enabled: false,
             statusState: 'paused',
             errorCode: undefined,
-            statusPhaseHasError: false,
+            statusPhase: 'idle',
         })).toBe('workspaceSync.state.paused');
         // An enabled relationship with no readable state is still loading, not paused.
         expect(resolveWorkspaceSyncRelationshipStateLabel({
             enabled: true,
             statusState: undefined,
             errorCode: undefined,
-            statusPhaseHasError: false,
+            statusPhase: 'idle',
         })).toBe('workspaceSync.state.loading');
+    });
+
+    it('settles a completed observation with no engine session as unavailable', () => {
+        expect(resolveWorkspaceSyncRelationshipStateLabel({
+            enabled: true, statusState: null, errorCode: null,
+            statusPhase: 'ready',
+        })).toBe('workspaceSync.state.controllerUnavailable');
     });
 });

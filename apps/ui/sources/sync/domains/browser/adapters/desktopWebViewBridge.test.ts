@@ -619,6 +619,7 @@ describe('desktop WebView native bridge', () => {
                 mimeType: 'image/png',
                 width: 800,
                 height: 600,
+                scaleFactor: 2,
                 sizeBytes: 4,
                 bytesBase64: 'AQIDBA==',
             },
@@ -636,6 +637,7 @@ describe('desktop WebView native bridge', () => {
                 mimeType: 'image/png',
                 width: 800,
                 height: 600,
+                scaleFactor: 2,
                 bytesBase64: 'AQIDBA==',
             },
         });
@@ -682,6 +684,7 @@ describe('desktop WebView native bridge', () => {
                 mimeType: 'image/png',
                 width: 800,
                 height: 600,
+                scaleFactor: 2,
                 sizeBytes: 4,
                 bytesBase64: 'AQIDBA==',
             },

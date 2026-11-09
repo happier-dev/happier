@@ -1,5 +1,5 @@
-import { getScmRpcSideEffectClass } from '@happier-dev/protocol/actions/scmGitActionSpecs';
 import { getActionSpec, requiresExplicitScmMachineTarget, isScmDiffSummaryRunAction } from '@happier-dev/protocol/actions/actionSpecs';
+import { getScmRpcSideEffectClass } from '@happier-dev/protocol/actions/scmGitActionSpecs';
 import { ScmDiffSummaryResultClearInputSchema, ScmDiffSummaryResultResponseSchema } from '@happier-dev/protocol/scm/diffSummaryResult';
 import { executeScmDiffSummaryClear } from '@happier-dev/protocol/scm';
 import { ScmComparisonCaptureOutputSchema, ScmReviewedMarkInputSchema, ScmReviewedUnmarkInputSchema, buildScmReviewedMarksKey, createScmReviewedMarksRecordPort, buildScmComparisonSourceKey, buildScmReviewScopeId, buildReviewUnits, ScmStatusSnapshotResponseSchema, ScmDiffFileResponseSchema, type ScmReviewedMarksSource } from '@happier-dev/protocol/scm';
@@ -47,7 +47,10 @@ export function createUiScmAction(
         if (!method) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
 
         // The canonical Action owner has already parsed this family's request schema.
-        const request = input as Readonly<{ cwd?: string; backendPreference?: unknown; destinationParentPath?: string }>;
+        const request = input as Readonly<{ cwd?: string; backendPreference?: unknown; destinationParentPath?: string; resultId?: string }>;
+        // Saved records retain their captured repository. Session transport proves the record's
+        // Session scope; its current workspace is not the address of an earlier publication.
+        const addressesSavedResult = actionId.startsWith('scm.diffSummary.') && typeof request.resultId === 'string';
         const serverId = account?.serverId ?? context.serverId;
         const accountId = account?.accountId ?? context.runtimeAccountId;
         const target = context.externalActionTarget;
@@ -73,7 +76,7 @@ export function createUiScmAction(
             }
             const read = <T extends Readonly<{ cwd: string }>>(readMethod: string, payload: T) => target?.kind === 'machine'
                 ? runMachineScmRpcWithFallback(target.machineId, readMethod, payload, { serverId, accountId, signal: context.signal })
-                : runSessionScmRpc(sessionId!, readMethod, { ...payload, cwd: undefined }, serverId, context.signal, accountId);
+                : runSessionScmRpc(sessionId!, readMethod, addressesSavedResult ? payload : { ...payload, cwd: undefined }, serverId, context.signal, accountId);
             const evidence = await (async () => {
                 if ('v' in selection && !selection.comparisonId) {
                     if (selection.source.kind !== 'workingTree') return null;
@@ -134,7 +137,7 @@ export function createUiScmAction(
             } else {
                 const sessionId = target?.kind === 'session' ? target.sessionId : context.defaultSessionId;
                 if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
-                const resolved = resolveSessionScmRequestTarget(sessionId, method, { ...request, cwd: undefined }, serverId, accountId);
+                const resolved = resolveSessionScmRequestTarget(sessionId, method, addressesSavedResult ? request : { ...request, cwd: undefined }, serverId, accountId);
                 if (!resolved.ok) return { ok: false, errorCode: resolved.failure.errorCode, error: resolved.failure.error };
                 requesterContext = { ...context, defaultSessionId: sessionId, externalActionTarget: {
                     kind: 'machine', machineId: resolved.machineId, project: { machineId: resolved.machineId, directory: resolved.cwd },
@@ -173,9 +176,9 @@ export function createUiScmAction(
         }
         const sessionId = target?.kind === 'session' ? target.sessionId : context.defaultSessionId;
         if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
-        // Like the CLI Action adapter, Session Actions cannot substitute another
-        // repository. The general SCM facade still owns caller-relative paths.
-        const sessionRequest = actionId === 'scm.repository.clone' ? request : { ...request, cwd: undefined };
+        // Live repository operations stay bound to the Session workspace. Saved result
+        // operations address their record through the same Session-authorized transport.
+        const sessionRequest = actionId === 'scm.repository.clone' || addressesSavedResult ? request : { ...request, cwd: undefined };
         options?.onDispatched?.();
         const result = await runSessionScmRpc(sessionId, method, sessionRequest, serverId, context.signal, accountId,
             actionId === 'scm.pullRequest.prepareWorktree' ? (resolved) => ({ ...resolved, sourcePath: resolved.cwd }) : undefined);

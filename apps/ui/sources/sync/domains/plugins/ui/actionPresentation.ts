@@ -2,7 +2,7 @@ import { normalizeInputHintsText as normalizeActionInputHintsText, type InputHin
 import type { PluginLocalizedStringV2 } from '@happier-dev/protocol/plugins/contributions/public-types';
 import type { PluginProjectedActionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
-import { resolvePluginUiText } from './i18n';
+import { resolvePluginLocalizedText, type PluginLocalizedTextResolver } from './i18n';
 import type { PluginUiProjectionModel } from './projection';
 
 /**
@@ -26,14 +26,16 @@ function resolveActionText(params: Readonly<{
     pluginId: string;
     projection: PluginUiProjectionModel | null | undefined;
     locale?: string | null;
+    localize?: PluginLocalizedTextResolver;
 }>): string {
     const { value } = params;
-    return resolvePluginUiText({
+    if (params.localize) return params.localize(params.pluginId, value);
+    if (typeof value === 'string') return value.trim();
+    return resolvePluginLocalizedText({
         projection: params.projection,
         pluginId: params.pluginId,
-        key: typeof value === 'string' ? null : value.key,
         locale: params.locale,
-        fallback: typeof value === 'string' ? value : value.fallback,
+        value,
     });
 }
 
@@ -48,12 +50,14 @@ export function resolvePluginProjectedActionPresentation(params: Readonly<{
     presentation: PluginProjectedActionPresentation;
     projection: PluginUiProjectionModel | null | undefined;
     locale?: string | null;
+    localize?: PluginLocalizedTextResolver;
 }>): ResolvedPluginProjectedActionPresentation {
     const resolveText = (value: PluginLocalizedStringV2): string => resolveActionText({
         value,
         pluginId: params.pluginId,
         projection: params.projection,
         locale: params.locale,
+        localize: params.localize,
     });
     const description = params.presentation.description;
     const inputHints = params.presentation.inputHints;

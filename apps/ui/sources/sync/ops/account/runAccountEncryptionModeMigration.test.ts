@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type {
   AccountEncryptionMigrateRequest,
   AccountEncryptionMigrateSuccessResponse,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/account/encryptionMigrate';
 
 import { runAccountEncryptionModeMigration } from './runAccountEncryptionModeMigration';
 import { ProjectOpenDraftDocumentV2Schema } from '@happier-dev/protocol/projects/openProjectDraftV1';

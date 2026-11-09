@@ -27,7 +27,7 @@ describe('default Action Computer Account publication', () => {
     beforeEach(() => { network.resetRequests(); });
     afterAll(async () => { await network.dispose(); });
 
-    it('names the exact Home in the real picker when two Homes have the same Session id', async () => {
+    it.each(['owner', 'guest'] as const)('names the exact Home in the real picker for a %s when two Homes have the same Session id', async role => {
         const { storage } = await import('@/sync/domains/state/storageStore');
         const { captureLazyActionAccountContext } = await import('./actionAccountContext');
         const { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot, publishAppliedActiveServerRuntimeAvailability } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
@@ -44,6 +44,10 @@ describe('default Action Computer Account publication', () => {
             const sessionId = 'duplicate-picker-session';
             const machineId = 'picker-machine-b';
             const pickerRead = createDeferred<void>();
+            let observedMethod: string | null = null;
+            const selected = { consentGranted: true, selectedTarget: { kind: 'display', displayId: ':77' },
+                sourceId: `computer:picker-${role}-source`,
+                approvalDisplay: { machineDisplayName: 'Home B machine', requiresTargetSelection: false } };
             const sessionB = createSessionFixture({ id: sessionId, serverId: homeB.id, updatedAt: 1 });
             const sessionA = createSessionFixture({ id: sessionId, serverId: homeA.id, updatedAt: 2 });
             network.setHttpResponder(async input => {
@@ -60,19 +64,21 @@ describe('default Action Computer Account publication', () => {
                 const payload = DaemonComputerActionExecuteRequestV1Schema.parse(request.payload);
                 expect(payload.sessionId).toBe(sessionId);
                 if (payload.actionId === 'computer.targets.list') {
+                    observedMethod = request.method;
                     pickerRead.resolve();
                     return { protocolVersion: 1, result: {
                         targets: [], grants: { capture: 'granted', input: 'granted' },
                     } };
                 }
-                if (payload.actionId === 'computer.target.get') return { protocolVersion: 1, result: {
-                    consentGranted: false, approvalDisplay: { machineDisplayName: 'Home B machine', requiresTargetSelection: true },
-                } };
+                if (payload.actionId === 'computer.target.get') return { protocolVersion: 1, result: selected };
                 throw new Error(`Unexpected picker action: ${payload.actionId}`);
             });
             storage.getState().activateProfileScope({ serverId: homeA.id, accountId: homeA.accountId });
             storage.getState().applyProfile({ ...storage.getState().profile, id: homeA.accountId });
-            storage.getState().applyMachines([createMachineFixture({ id: machineId, storageMode: 'plain' })], false, { sourceServerId: homeB.id });
+            storage.getState().applyMachines([createMachineFixture({ id: machineId, storageMode: 'plain',
+                ...(role === 'guest' ? { isShared: true, access: { custodian: { accountId: 'machine-owner', displayName: 'Owner' },
+                    role: 'use', resourceMode: 'plain', accessState: 'ready' } } : {}),
+            })], false, { sourceServerId: homeB.id });
             storage.getState().applySessions([{ ...sessionB, metadata: { ...sessionB.metadata, host: 'tester.local', name: 'Home B Session', path: '/workspace/project-b', machineId } }]);
             storage.getState().applySessions([{ ...sessionA, metadata: { ...sessionA.metadata, host: 'tester.local', name: 'Home A Session', path: '/workspace/project-a' } }]);
             expect(storage.getState().sessions[sessionId]?.serverId).toBe(homeA.id);
@@ -91,6 +97,7 @@ describe('default Action Computer Account publication', () => {
                 machineId, machineName: 'Home B machine', onSelected: () => {},
             }); });
             await act(async () => { await pickerRead.promise; });
+            expect(observedMethod).toBe(role === 'guest' ? RPC_METHODS.DAEMON_COMPUTER_PERSONAL_ACTION_EXECUTE : RPC_METHODS.DAEMON_COMPUTER_ACTION_EXECUTE);
             await flushHookEffects();
             const { ComputerTargetPicker } = await import('@/components/computer/ComputerTargetPicker');
             await vi.waitFor(() => {
@@ -101,6 +108,11 @@ describe('default Action Computer Account publication', () => {
             expect(visible).toContain('project-b');
             expect(visible).not.toContain('Home A Session');
             expect(visible).not.toContain('project-a');
+            const { createComputerControlClient } = await import('@/sync/domains/computer/computerControlClient');
+            const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+            const client = createComputerControlClient({ sessionId, machineId, serverId: homeB.id },
+                createDefaultActionExecutor().execute, accountLifetime);
+            expect(await client.getTarget()).toEqual({ ok: true, value: selected });
         } finally {
             await screen?.unmount();
             account?.dispose();
@@ -331,7 +343,7 @@ describe('default Action Computer Account publication', () => {
     });
     it('never sends a retained Account Computer request under replacement credentials for the same Home and Machine', async () => {
         const { createComputerRuntimeActionExecutor } = await import('@/sync/domains/computer/actions/runtimeActionExecutor');
-        const { createUnavailableRuntimeActionExecutor } = await import('@happier-dev/protocol');
+        const { createUnavailableRuntimeActionExecutor} = await import('@happier-dev/protocol/actions/executor/dispatch');
         const { captureLazyActionAccountContext } = await import('./actionAccountContext');
         const { storage } = await import('@/sync/domains/state/storageStore');
         const { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot, publishAppliedActiveServerRuntimeAvailability } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');

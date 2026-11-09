@@ -135,6 +135,20 @@ describe('sync.create initial awaits', () => {
         expect(network.httpRequests[petsIndex]?.token).toBe(`Bearer ${home.token}`);
     });
 
+    it('renders the shell without starting Sync when this device holds active keys for a Home-reported plain Account', async () => {
+        // The locked device must still reach Settings, where "Keep keys and continue" lives.
+        const { syncCreate } = await import('./sync');
+        const { storage } = await import('./domains/state/storage');
+        const { encodeBase64 } = await import('@/encryption/base64');
+        storage.setState({ isDataReady: false });
+        const credentials: AuthCredentials = { token: home.token, secret: encodeBase64(new Uint8Array(32).fill(11), 'base64url') };
+        await expect(syncCreate(credentials)).rejects.toMatchObject({ code: 'account_mode_downgrade_unverified' });
+        expect(storage.getState().isDataReady).toBe(true);
+        const paths = network.httpRequests.map(({ url }) => new URL(url).pathname);
+        expect(paths).not.toContain('/v2/account/settings');
+        expect(paths).not.toContain('/v2/changes');
+    });
+
     it('does not hang forever waiting for initial sync queues', async () => {
         stallCore = true;
         const { syncCreate, sync } = await import('./sync');

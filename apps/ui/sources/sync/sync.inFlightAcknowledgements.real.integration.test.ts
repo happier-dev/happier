@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto';
 import { createServer } from 'node:http';
 import { Server } from 'socket.io';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { RoleActionInputSchemasV1, RoleActionOutputSchemasV1 } from '@happier-dev/protocol';
+import { RoleActionInputSchemasV1, RoleActionOutputSchemasV1 } from '@happier-dev/protocol/prompts/roles/roleActionsV1';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { socketRpcCodec } from '@happier-dev/sync-client';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';

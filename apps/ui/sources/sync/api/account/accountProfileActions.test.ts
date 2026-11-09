@@ -153,6 +153,29 @@ describe('self-profile UI Action admission and acknowledgements', () => {
         expect(storage.getState().profile).toMatchObject({ name: 'Before', username: 'before' });
     });
 
+    it('keeps an issued name acknowledgement after its view unmounts without changing the captured Account', async () => {
+        let issued = false;
+        let acknowledge!: () => void;
+        const acknowledgement = new Promise<void>(resolve => { acknowledge = resolve; });
+        const response = { name: 'Acknowledged', firstName: 'Acknowledged', lastName: null, timestamp: 2 };
+        homes.answer(serverId, 'POST /v1/account/profile', { select: async () => {
+            issued = true;
+            await acknowledgement;
+            return { body: response };
+        } });
+        const mounted = await renderHook(() => useMountedActionExecution(serverId));
+        await waitForHomeGovernance(() => expect(mounted.getCurrent().ready).toBe(true));
+        const save = setAccountName(credentials, 'Requested', { execute: mounted.getCurrent().execute });
+        void save.catch(() => {});
+        try {
+            await waitForHomeGovernance(() => expect(issued).toBe(true));
+            await mounted.unmount();
+        } finally { acknowledge(); }
+        await expect(save).resolves.toEqual(response);
+        expect(homes.requestsFor('/v1/account/profile')).toHaveLength(1);
+        expect(storage.getState().profile).toMatchObject({ id: 'self', name: 'Acknowledged', username: 'before' });
+    });
+
     it('merges the acknowledged username into the current profile without losing a concurrently acknowledged name', async () => {
         homes.answer(serverId, 'POST /v1/account/username', { select: () => {
             storage.getState().applyProfile({ ...storage.getState().profile, name: 'Concurrent Name' });

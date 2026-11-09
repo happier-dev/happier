@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import type { FeaturesResponse, MachineLiveStreamRelayCaps } from '@happier-dev/protocol';
+import type { FeaturesResponse} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import type { MachineLiveStreamRelayCaps } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 
 import { resolveMachineLiveStreamAvailability } from './availability';
 

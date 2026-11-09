@@ -91,15 +91,15 @@ describe('settings registry completeness', () => {
         expect(LOCAL_SETTING_ARTIFACTS.defaults).not.toHaveProperty('mobileWorkspaceExperienceV1');
     });
 
-    it('owns animated session-list working text as an account-synced display setting', async () => {
-        const { ACCOUNT_SETTING_ARTIFACTS } = await import('./settings');
-        const { LOCAL_SETTING_ARTIFACTS } = await import('./registry/local/localSettingDefinitions');
-
-        expect(ACCOUNT_SETTING_ARTIFACTS.definitions).toHaveProperty('sessionListWorkingStatusAnimatedTextEnabled');
-        expect(ACCOUNT_SETTING_ARTIFACTS.definitions.sessionListWorkingStatusAnimatedTextEnabled.storageScope).toBe('account');
-        expect(ACCOUNT_SETTING_ARTIFACTS.defaults).toHaveProperty('sessionListWorkingStatusAnimatedTextEnabled', true);
-        expect(LOCAL_SETTING_ARTIFACTS.definitions).not.toHaveProperty('sessionListWorkingStatusAnimatedTextEnabled');
-        expect(LOCAL_SETTING_ARTIFACTS.defaults).not.toHaveProperty('sessionListWorkingStatusAnimatedTextEnabled');
+    it('restores the 0.2 working-indicator and animated-text preferences as Account settings (owner amendment 2026-11-01)', async () => {
+        const { ACCOUNT_SETTING_ARTIFACTS, settingsParse } = await import('./settings');
+        expect(ACCOUNT_SETTING_ARTIFACTS.defaults).toMatchObject({
+            sessionListNarrowWorkingIndicatorStyle: 'spinner', sessionListWorkingStatusAnimatedTextEnabled: true });
+        const settings = settingsParse({ sessionListWorkingStatusAnimatedTextEnabled: false,
+            sessionListNarrowWorkingIndicatorStyle: 'pulse', sessionListStatusWords: true });
+        expect(settings.sessionListNarrowWorkingIndicatorStyle).toBe('pulse');
+        expect(settings.sessionListWorkingStatusAnimatedTextEnabled).toBe(false);
+        expect(settings.sessionListStatusWords).toBe(true);
     });
 
     it('owns provider usage gauge preferences as account-synced settings', async () => {

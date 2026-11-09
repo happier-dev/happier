@@ -11,20 +11,21 @@ export type IrohHomeTunnelProbeFailureReason =
     | 'features-unavailable';
 
 /**
- * Full verification chain for a native Iroh Home lease, in order:
- * 1. real endpoint readiness against the lease's exact loopback origin:
- *    `/v1/auth/ping` with the scoped token for an enrolled caller, or `/health`
- *    for pre-token enrollment (authenticated readiness subsumes health);
- * 2. `/v1/features` through the same origin whose `serverIdentityId` equals the
- *    expected Home identity.
+ * Shared Home endpoint verification for a native lease or declared HTTPS, in order:
+ * 1. public `/v1/features` through the exact transport origin, whose
+ *    `serverIdentityId` must equal the expected Home identity; a different Home
+ *    is refused before any credential leaves;
+ * 2. real endpoint readiness against that same origin: `/v1/auth/ping` with the
+ *    scoped token for an enrolled caller, or `/health` for pre-token enrollment
+ *    (authenticated readiness subsumes health).
  *
  * Both existing probe owners are composed (never duplicated): the combined
  * mode-aware readiness probe and the explicit-endpoint feature probe with the
- * canonical URL kept as the cache/profile key and the lease origin as transport.
+ * canonical URL kept as the cache/profile key and the selected origin as transport.
  */
 export async function probeIrohHomeTunnelOrigin(
     url: string,
-    request: IrohHomeTunnelRequest,
+    request: Pick<IrohHomeTunnelRequest, 'homeServerIdentityId' | 'canonicalServerUrl' | 'remoteHostId' | 'verification'>,
 ): Promise<LoopbackTunnelProbeResult<IrohHomeTunnelProbeFailureReason>> {
     const homeServerIdentityId = request.homeServerIdentityId.trim();
     const token = request.verification.kind === 'authenticated'
@@ -34,14 +35,6 @@ export async function probeIrohHomeTunnelOrigin(
         // Authenticated acquisition requires its scoped token; both modes
         // require the expected Home identity before any request is made.
         return { ok: false, reason: 'auth-failed' };
-    }
-
-    const readiness = await createEndpointReadinessProbe({ endpoint: url, token })();
-    if (readiness.status === 'auth_failed') {
-        return { ok: false, reason: 'auth-failed' };
-    }
-    if (readiness.status !== 'ready') {
-        return { ok: false, reason: 'health-unavailable' };
     }
 
     const features = await probeServerFeaturesAtUrl(request.canonicalServerUrl, {
@@ -54,6 +47,14 @@ export async function probeIrohHomeTunnelOrigin(
     }
     if ((features.serverIdentityId ?? null) !== homeServerIdentityId) {
         return { ok: false, reason: 'identity-mismatch' };
+    }
+
+    const readiness = await createEndpointReadinessProbe({ endpoint: url, token })();
+    if (readiness.status === 'auth_failed') {
+        return { ok: false, reason: 'auth-failed' };
+    }
+    if (readiness.status !== 'ready') {
+        return { ok: false, reason: 'health-unavailable' };
     }
     return { ok: true };
 }

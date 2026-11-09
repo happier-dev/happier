@@ -1,4 +1,4 @@
-import type { MachineLiveStreamFrameV1 } from '@happier-dev/protocol';
+import type { MachineLiveStreamFrameV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 
 export type MachineLiveStreamRenderPhase = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'error' | 'stopped';
 

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
-import { buildRealmQualifiedMobileSurfaceStorageKey, resolveProjectMobileSurfaceStorageKey } from './mobileSurfacePersistence';
+import { buildRealmQualifiedMobileSurfaceStorageKey, resolveProjectMobileSurfaceStorageKey, resolveProjectMobileSurfaceStorageKeys } from './mobileSurfacePersistence';
 import {
     buildRealmQualifiedSessionLocalPreferenceKey,
     resolveSessionLocalPreferenceRealm,
@@ -11,6 +11,19 @@ import {
 const scope: ServerAccountScope = { serverId: 'https://home.one', accountId: 'account-1' };
 
 describe('sessionLocalPreferenceKey', () => {
+    it('bulk Project keys preserve exact Home selection and refuse duplicate checkout identities', () => {
+        const first = { id: ' project ', serverId: scope.serverId, machineId: 'machine', rootPath: '/repo', createdAtMs: 1 };
+        const other = { ...first, id: 'project', serverId: 'https://home.two' };
+        const input = { workspaceRefs: [first, other], activeScope: scope, activeServerId: scope.serverId };
+        expect(resolveProjectMobileSurfaceStorageKeys(input)).toEqual([
+            buildRealmQualifiedMobileSurfaceStorageKey('project', scope, first.id), null,
+        ]);
+        expect(resolveProjectMobileSurfaceStorageKeys({ ...input, workspaceRefs: [first, { ...first, id: 'project' }, other] }))
+            .toEqual([null, null, null]);
+        expect(resolveProjectMobileSurfaceStorageKeys({ ...input, activeScope: null })).toEqual([null, null]);
+        expect(resolveProjectMobileSurfaceStorageKeys({ ...input, activeScope: { ...scope, accountId: 'account-2' } }))
+            .toEqual([buildRealmQualifiedMobileSurfaceStorageKey('project', { ...scope, accountId: 'account-2' }, first.id), null]);
+    });
     it('binds Project page preference lookup to the selected registered Home and the applied Account realm', () => {
         const first = { id: 'project', serverId: scope.serverId, machineId: 'machine', rootPath: '/repo', createdAtMs: 1 };
         const other = { ...first, serverId: 'https://home.two' };

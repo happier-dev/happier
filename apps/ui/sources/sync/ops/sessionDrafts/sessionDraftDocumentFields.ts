@@ -1,4 +1,6 @@
-import type { SessionDraftDocumentV2, StrictJsonValue, SyncedSessionAuthoringValueV2 } from '@happier-dev/protocol';
+import type { SessionDraftDocumentV2} from '@happier-dev/protocol/drafts/sessionDraftsV2';
+import type { JsonValue as StrictJsonValue} from '@happier-dev/protocol/json/strictJsonValue';
+import type { SyncedSessionAuthoringValueV2 } from '@happier-dev/protocol/sessions/authoring/index';
 
 export type DraftFieldPathV1 =
     | Readonly<{ kind: 'composer'; field: 'text' | 'mentions' | 'attachments' }>

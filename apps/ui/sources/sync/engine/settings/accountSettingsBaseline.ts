@@ -2,7 +2,9 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { Encryption } from '@/sync/encryption/encryption';
 import { HappyError } from '@/utils/errors/errors';
 import { openAccountSettingsStoredContent } from '@/sync/domains/settings/accountSettingsNormalization';
-import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import { AccountSettingsV2GetResponseSchema, ACCOUNT_SETTINGS_REMOTE_ALERT_POLICY_HTTP_HEADER,
+    ACCOUNT_SETTINGS_REMOTE_ALERT_POLICY_HTTP_VALUE, ACCOUNT_SETTINGS_REMOTE_ALERT_POLICY_STATUS_HTTP_HEADER } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import { PushTokensRemoteAlertProjectionV2Schema, type PushTokensRemoteAlertProjectionV2 } from '@happier-dev/protocol/push/pushTokenRegistration';
 import type { AccountScopedCiphertextFormat } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import type { AccountSettingsStoredContentEnvelope } from '@happier-dev/protocol/account/settings/accountSettingsStoredContentEnvelope';
 
@@ -25,18 +27,28 @@ export const SETTINGS_V2_NOT_SUPPORTED = 'settings_v2_not_supported';
 
 export type AccountSettingsBaselineRequest = (path: string, init?: RequestInit) => Promise<Response>;
 
+export function readRemoteAlertPolicyStatusHeader(headers: Headers): PushTokensRemoteAlertProjectionV2['accountRemoteAlerts']['status'] | undefined {
+    const parsed = PushTokensRemoteAlertProjectionV2Schema.shape.accountRemoteAlerts.shape.status.safeParse(
+        headers.get(ACCOUNT_SETTINGS_REMOTE_ALERT_POLICY_STATUS_HTTP_HEADER),
+    );
+    return parsed.success ? parsed.data : undefined;
+}
+
 export type AccountSettingsBaselineContent = Readonly<{
     api: 'v2' | 'v1';
     content: AccountSettingsStoredContentEnvelope | null;
     version: number;
     raw: Record<string, unknown> | null;
     format: AccountScopedCiphertextFormat | 'plain' | 'empty';
+    /** Positive acceptance of the policy field on this exact baseline endpoint. */
+    remoteAlertPolicyWriteSupported?: true;
+    remoteAlertPolicyStatus?: PushTokensRemoteAlertProjectionV2['accountRemoteAlerts']['status'];
 }>;
 
 async function fetchSettingsV2Content(params: Readonly<{
     request: AccountSettingsBaselineRequest;
     credentials: AuthCredentials;
-}>): Promise<{ content: AccountSettingsStoredContentEnvelope | null; version: number }> {
+}>): Promise<Pick<AccountSettingsBaselineContent, 'content' | 'version' | 'remoteAlertPolicyWriteSupported' | 'remoteAlertPolicyStatus'>> {
     const response = await params.request('/v2/account/settings', {
         headers: {
             'Authorization': `Bearer ${params.credentials.token}`,
@@ -60,7 +72,11 @@ async function fetchSettingsV2Content(params: Readonly<{
     if (!parsed.success) {
         throw new Error('Failed to parse account settings v2 response');
     }
-    return { content: parsed.data.content, version: parsed.data.version };
+    return { content: parsed.data.content, version: parsed.data.version,
+        remoteAlertPolicyStatus: readRemoteAlertPolicyStatusHeader(response.headers),
+        ...(response.headers.get(ACCOUNT_SETTINGS_REMOTE_ALERT_POLICY_HTTP_HEADER) === ACCOUNT_SETTINGS_REMOTE_ALERT_POLICY_HTTP_VALUE
+            ? { remoteAlertPolicyWriteSupported: true as const } : {}),
+    };
 }
 
 async function fetchSettingsV1Content(params: Readonly<{
@@ -100,6 +116,8 @@ export async function readAccountSettingsBaseline(params: Readonly<{
         });
         return {
             api: 'v2',
+            ...(fetched.remoteAlertPolicyWriteSupported ? { remoteAlertPolicyWriteSupported: true } : {}),
+            remoteAlertPolicyStatus: fetched.remoteAlertPolicyStatus,
             content: fetched.content,
             version: fetched.version,
             raw: opened.raw,

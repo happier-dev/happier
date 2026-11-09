@@ -98,7 +98,8 @@ async function mount(composerRef: ComposerRefV1 = ref) {
         capabilities: { text: true, references: true, attachments: true, submit: true },
         state: { editable, submittable: true, submitting: false, focused: true, running: false } };
     const hook = await renderHook(() => {
-        const manager = useAttachmentDraftManager({ enabled: true, maxFileBytes: original.bytes.byteLength, initialDrafts });
+        const manager = useAttachmentDraftManager({ enabled: true, maxFileBytes: original.bytes.byteLength, initialDrafts,
+            pictureEditAddress: () => ({ scope, ref: composerRef }) });
         const target = useStableComposerPresentationTarget(composerRef, { readRevision: () => 1, replace: () => 1, readScope: () => scope,
             readSnapshot: () => ({ ...snapshot, state: { ...snapshot.state, editable } }), readPickedAttachments: () => manager });
         React.useEffect(() => composerRef.kind === 'session'
@@ -108,7 +109,7 @@ async function mount(composerRef: ComposerRefV1 = ref) {
     });
     const manager = hook.getCurrent();
     return { draft: () => manager.getDraftsSnapshot()[0]!, replacements: manager.getDraftRevisionSnapshot,
-        setEditable: (value: boolean) => { editable = value; } };
+        stageEdit: () => hook.getCurrent().agentInputAttachments[0]?.stageEdit, setEditable: (value: boolean) => { editable = value; } };
 }
 const input = () => ({ scope, target: { kind: 'composerAttachment' as const, ref, attachmentId: 'picture-a' } });
 const context = () => ({ surface: 'agent' as const, serverId: scope.serverId, runtimeAccountId: scope.accountId });
@@ -215,6 +216,71 @@ describe('annotation Actions through the real composer occurrence', () => {
         } finally { unregister(); }
     });
 
+    it('uses the same large-image scale and document in the stage and agent apply', async () => {
+        const size = vi.spyOn(Image, 'getSize').mockImplementation((_uri, success) => { success!(6144, 10); });
+        const { useMediaStageAnnotation } = await import('@/components/ui/media/stage/useMediaStageAnnotation');
+        const mounted = await mount();
+        const edit = mounted.stageEdit()!;
+        const stage = await renderHook(() => useMediaStageAnnotation({ kind: 'image', title: 'source.png', edit,
+            source: { enabled: true, source: { kind: 'uri', uri: 'blob:picture' } } }));
+        try {
+            await act(async () => { await stage.getCurrent().enter({ uri: 'blob:picture', width: 6144, height: 10 }); });
+            const initial = stage.getCurrent().session!.initial;
+            expect(initial.image.scale).toBeCloseTo(4.2666666667);
+            const annotator = createImageAnnotator({ source: stage.getCurrent().session!.source, initial });
+            const operations: ImageMarksOperationV1[] = [operation,
+                { kind: 'mark.add', mark: { id: 'rectangle', kind: 'rectangle', rect: { x: 1, y: 1, width: 8, height: 4 }, color: 'red', size: 'm' } },
+                { kind: 'mark.add', mark: { id: 'privacy', kind: 'blur', rect: { x: 2, y: 1, width: 4, height: 3 }, size: 'm' } },
+            ];
+            annotator.apply(operations);
+            await act(async () => { expect(await stage.getCurrent().done(annotator.store.getState().document)).toBe(true); });
+            if (process.env.HAPPIER_UI_TEST_NATIVE_PLATFORM) expect(nativeSkia.boundary?.encodes).toBe(1);
+            expect(stage.getCurrent().pending).toBe(false);
+            expect(stage.getCurrent().session).toBeNull();
+            const uiDocument = mounted.draft().edit!.document;
+            await act(async () => { await createDefaultActionExecutor().execute('media.annotation.apply', { ...input(), reset: true }, context()); });
+            await act(async () => { await createDefaultActionExecutor().execute('media.annotation.apply', { ...input(), operations }, context()); });
+            expect(mounted.draft().edit!.document).toEqual(uiDocument);
+        } finally { await stage.unmount(); size.mockRestore(); }
+    });
+    it('reads through the default factory and applies the same document and PNG as UI Done with one flatten, one replacement and zero server calls', async () => {
+        const mounted = await mount();
+        const executor = createDefaultActionExecutor();
+        expect(await executor.execute('media.annotation.read', input(), { surface: 'ui', authority: 'present_user', serverId: scope.serverId, expectedAccountId: scope.accountId }))
+            .toMatchObject({ ok: true, result: { image: { width: 40, height: 30, scale: 1 }, hasBlur: false } });
+        const requests = home.requests.length;
+        await act(async () => {
+            expect(await executor.execute('media.annotation.apply', { ...input(), operations: [operation] }, context())).toEqual({ ok: true, result: { status: 'replaced' } });
+        });
+        expect(home.requests.slice(requests).map(request => `${request.method} ${new URL(request.path, 'https://annotation-actions.test').pathname}`)).toEqual([]);
+        expect(canvas.encodeCount()).toBe(1);
+        expect(mounted.replacements()).toBe(1);
+        expect(mounted.draft()).toMatchObject({ id: 'picture-a', status: 'pending', edit: { original, document: { marks: [operation.mark] } } });
+        expect(mounted.draft().uploadedPath).toBeUndefined();
+        const source = { uri: 'data:image/png;base64,AQID', width: 40, height: 30, scale: 1 };
+        const annotator = createImageAnnotator({ source });
+        annotator.apply([operation]);
+        const agentDraft = mounted.draft();
+        expect(await executor.execute('media.annotation.read', input(), context())).toMatchObject({ ok: true, result: { document: annotator.store.getState().document, hasBlur: false } });
+        const beforeReset = canvas.encodeCount();
+        await act(async () => {
+            expect(await executor.execute('media.annotation.apply', { ...input(), reset: true }, context())).toEqual({ ok: true, result: { status: 'reverted' } });
+        });
+        expect(canvas.encodeCount()).toBe(beforeReset);
+        expect(mounted.draft().source).toBe(original);
+        expect(mounted.draft().edit).toBeUndefined();
+        const stageEdit = mounted.stageEdit();
+        expect(stageEdit).toBeDefined();
+        await act(async () => {
+            expect(await stageEdit!.commit({ document: annotator.store.getState().document, source })).toMatchObject({ ok: true, status: 'replaced' });
+        });
+        expect(mounted.draft()).toEqual(agentDraft);
+        expect(canvas.encodeCount()).toBe(beforeReset + 1);
+        await act(async () => { expect(await stageEdit!.revert()).toMatchObject({ ok: true, status: 'reverted' }); });
+        expect(mounted.draft().source).toBe(original);
+        expect(canvas.encodeCount()).toBe(beforeReset + 1);
+    });
+
     it('refuses removed attachments, foreign Accounts and read-only mutation without flattening or replacement', async () => {
         const mounted = await mount();
         const executor = createDefaultActionExecutor();
@@ -255,5 +321,17 @@ describe('annotation Actions through the real composer occurrence', () => {
         expect(mounted.replacements()).toBe(1);
     });
 
-
+    it('keeps UI Done subject to the canonical Action policy', async () => {
+        const mounted = await mount();
+        await home.setActionPolicy(scope.serverId, 'media.annotation.apply', 'ui', 'off');
+        const stageEdit = mounted.stageEdit();
+        expect(stageEdit).toBeDefined();
+        await act(async () => {
+            expect(await stageEdit!.commit({ source: { uri: 'data:image/png;base64,AQID', width: 40, height: 30, scale: 1 },
+                document: { v: 1, image: { width: 40, height: 30, scale: 1 }, marks: [operation.mark] } }))
+                .toMatchObject({ ok: false, reason: 'action_disabled' });
+        });
+        expect(canvas.encodeCount()).toBe(0);
+        expect(mounted.replacements()).toBe(0);
+    });
 });

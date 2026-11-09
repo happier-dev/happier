@@ -1,5 +1,5 @@
 import { SessionDraftPrivatePayloadV2StoredSchema, SessionDraftStoredContentEnvelopeV2Schema, SessionDraftStoredContentEnvelopeV2StoredSchema, createSessionDraftPrivatePayloadV2, canonicalSessionDraftAddressV2, isAccountOwnedDraftAddressV2, type SessionDraftAddressV2, type SessionDraftDocumentV2, type SessionDraftStoredContentEnvelopeV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
-import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext, type AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { createAccountScopedBlobOpener, sealAccountScopedBlobCiphertext, type AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
 
 import type { SessionDraftRepositoryCipher } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { SessionDraftContextUnavailableError } from '@/sync/ops/sessionDrafts/sessionDraftCipherError';
@@ -35,7 +35,15 @@ function parseBoundPayload(address: SessionDraftAddressV2, value: unknown, encry
     return payload.document;
 }
 
-export function createSessionDraftCipher(options: SessionDraftCipherOptions): SessionDraftRepositoryCipher {
+export function createSessionDraftCipher(
+    options: SessionDraftCipherOptions,
+    // One opener per material for this cipher and its context-scoped copies: a hydration page
+    // opens many Account drafts, and the derived key is a pure function of the material.
+    openAccountDraft = options.accountCryptoMaterial ? createAccountScopedBlobOpener({
+        kind: 'account_session_draft_private_payload',
+        material: options.accountCryptoMaterial,
+    }) : null,
+): SessionDraftRepositoryCipher {
     return {
         ...(options.withSessionContexts ? {
             withSessionContexts: <T>(sessionIds: readonly string[], operation: (cipher: SessionDraftRepositoryCipher) => Promise<T>) =>
@@ -43,7 +51,7 @@ export function createSessionDraftCipher(options: SessionDraftCipherOptions): Se
                     ...options,
                     withSessionContexts: undefined,
                     getSessionContext: sessionId => contexts.get(sessionId) ?? null,
-                }))),
+                }, openAccountDraft))),
         } : {}),
         seal: async (address, document): Promise<SessionDraftStoredContentEnvelopeV2> => {
             const payload = createSessionDraftPrivatePayloadV2(address, document);
@@ -79,12 +87,8 @@ export function createSessionDraftCipher(options: SessionDraftCipherOptions): Se
                     return content.t === 'plain' ? parseBoundPayload(address, content.v) : null;
                 }
                 if (content.t !== 'encrypted') return null;
-                if (!options.accountCryptoMaterial) return null;
-                const opened = openAccountScopedBlobCiphertext({
-                    kind: 'account_session_draft_private_payload',
-                    material: options.accountCryptoMaterial,
-                    ciphertext: content.c,
-                });
+                if (!openAccountDraft) return null;
+                const opened = openAccountDraft(content.c);
                 return opened ? parseBoundPayload(address, opened.value, content.v ?? 1) : null;
             }
             const context = await options.getSessionContext(address.sessionId);

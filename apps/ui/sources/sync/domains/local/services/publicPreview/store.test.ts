@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type {
     LocalServicePublicExposureV1,
     LocalServicePublicPreviewSnapshotV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/local/services/public/v1';
 
 const exposure = {
     exposureId: 'public_preview_1',

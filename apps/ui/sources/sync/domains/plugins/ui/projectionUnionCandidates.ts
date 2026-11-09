@@ -14,6 +14,9 @@ export type PluginUiExecutionOriginCandidateFacts = Readonly<{
     renderedVersion?: string;
 }>;
 
+/** A candidate is a function of its immutable supply; an unchanged Machine's supply keeps its candidate. */
+const sourceCandidatesBySupply = new WeakMap<PluginUiContributionSupplyV1, PluginMachineSourceExecutionOriginCandidateV1>();
+
 /** Accumulators belong to one derivation; only the resulting immutable facts survive. */
 export function derivePluginUiExecutionOriginCandidateFacts(
     params: Readonly<{ projection: PluginUiProjectionModel | null; pluginId: string; previous?: PluginUiExecutionOriginCandidateFacts }>,
@@ -48,19 +51,30 @@ export function derivePluginUiExecutionOriginCandidateFacts(
             if (!origin || getPluginMachineExecutionOriginRef(origin).pluginId !== params.pluginId) continue;
             if (supply.executionTargetDefault && !conflict
                 && appendFirstOrigin(defaultOrigins, origin)) declaredDefaultOrigins.push(origin);
-            if (!('sourceRef' in origin) || !supply.occurrenceId || !supply.pluginVersion
+            // Local installations retain their real materialization origin even
+            // when their custodian's census is absent from the Use viewer's
+            // Account. Explicit local custody supplies this fact; a missing
+            // portable release never does.
+            const localInstallation = supply.sourceCustody?.kind === 'development'
+                || supply.sourceCustody?.kind === 'managed' && supply.sourceCustody.installSource === 'localPath';
+            if ((!('sourceRef' in origin) && !localInstallation) || !supply.occurrenceId || !supply.pluginVersion
                 || !supply.serverId
                 || !appendFirstOrigin(sourceOrigins, origin)) continue;
-            sourceCandidates.push(Object.freeze({
-                source: Object.freeze({ origin, version: supply.pluginVersion, occurrenceId: supply.occurrenceId,
-                    serverId: supply.serverId }),
-                // A machine-local source is selected by exact custody, not by
-                // correspondence with another Machine's portable release.
-                releaseContent: 'matched',
-                validation: reason ? { kind: 'rejected' as const, reason }
-                    : supply.phase === 'current' && supply.interactionEnabled ? { kind: 'admitted' as const }
-                        : { kind: 'rejected' as const, reason: 'stale' as const },
-            }));
+            let candidate = sourceCandidatesBySupply.get(supply);
+            if (!candidate) {
+                candidate = Object.freeze({
+                    source: Object.freeze({ origin, version: supply.pluginVersion, occurrenceId: supply.occurrenceId,
+                        serverId: supply.serverId }),
+                    // A machine-local source is selected by exact custody, not by
+                    // correspondence with another Machine's portable release.
+                    releaseContent: 'matched',
+                    validation: reason ? { kind: 'rejected' as const, reason }
+                        : supply.phase === 'current' && supply.interactionEnabled ? { kind: 'admitted' as const }
+                            : { kind: 'rejected' as const, reason: 'stale' as const },
+                });
+                sourceCandidatesBySupply.set(supply, candidate);
+            }
+            sourceCandidates.push(candidate);
         }
     }
     const installed = params.projection?.installedPackagesById[params.pluginId];
@@ -103,7 +117,7 @@ function sameSourceCandidates(left: readonly PluginMachineSourceExecutionOriginC
     right: readonly PluginMachineSourceExecutionOriginCandidateV1[]): boolean {
     return left.length === right.length && right.every((candidate, index) => {
         const other = left[index]!;
-        return candidate.source.serverId === other.source.serverId
+        return candidate === other || candidate.source.serverId === other.source.serverId
             && candidate.source.version === other.source.version
             && candidate.source.occurrenceId === other.source.occurrenceId
             && arePluginMachineExecutionOriginsEqual(candidate.source.origin, other.source.origin)

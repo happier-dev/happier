@@ -1,4 +1,4 @@
-import type { ProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol';
+import type { ProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { resolveProviderAccountUsageSnapshotState } from './providerAccountUsageSelectors';
 

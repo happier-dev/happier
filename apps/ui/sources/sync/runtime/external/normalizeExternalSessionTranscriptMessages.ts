@@ -9,6 +9,7 @@ export function normalizeExternalSessionTranscriptMessages(
     sourceIdentity?: Readonly<{ agentId: string; remoteSessionId: string }>,
 ): NormalizedMessage[] {
     const displayUserTextById = new Map<string, string>();
+    const mediaById = new Map<string, readonly unknown[]>();
     return normalizeRawMessages(items.map((item): RawMessageNormalizationInput => {
         const id = sourceIdentity
             ? makeExternalSessionHistoricalImportLocalId({
@@ -17,6 +18,8 @@ export function normalizeExternalSessionTranscriptMessages(
             })
             : item.id;
         if (typeof item.displayUserText === 'string') displayUserTextById.set(id, item.displayUserText);
+        const media = item.raw.media;
+        if (Array.isArray(media) && media.length > 0) mediaById.set(id, media);
         return {
             id,
             localId: typeof item.localId === 'string' ? item.localId : null,
@@ -28,6 +31,11 @@ export function normalizeExternalSessionTranscriptMessages(
             raw: item.raw,
         };
     })).map(message => {
+        const media = mediaById.get(message.id);
+        // Source-only bytes stay in this transient projection, never in the
+        // durable session_media.v1 envelope or a second media store. The
+        // ordinary reducer carries metadata to preview/linked transcript rows.
+        if (media) message = { ...message, meta: { ...message.meta, externalSessionMedia: media } };
         if (message.role !== 'user') return message;
         const text = displayUserTextById.get(message.id) ?? readSessionInputPromptUserTextV1(message.content.text);
         // Native records and import/send paths retain the original bytes. Only

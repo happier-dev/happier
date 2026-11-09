@@ -1,4 +1,4 @@
-import { type SessionMessageV1 } from '@happier-dev/protocol';
+import { type SessionMessageV1 } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Encryption } from '@/sync/encryption/encryption';
 import { storage } from '@/sync/domains/state/storage';

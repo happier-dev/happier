@@ -3,10 +3,13 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 vi.mock('socket.io-client', async (importOriginal) =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
-import { AccountSettingsV2GetResponseSchema, CurrentCursorResponseSchema, FeaturesResponseSchema } from '@happier-dev/protocol';
+import { AccountSettingsV2GetResponseSchema} from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import { CurrentCursorResponseSchema} from '@happier-dev/protocol/changes';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { SetSessionPinRequestSchema } from '@happier-dev/protocol/sessions/organization/mutations';
 
-import { createPlainAccountEncryptionCurrentnessFixture, createSessionListRenderableSessionFixture, renderHook, standardCleanup } from '@/dev/testkit';
+import { createDeferred, createPlainAccountEncryptionCurrentnessFixture, createSessionListRenderableSessionFixture, renderHook, standardCleanup } from '@/dev/testkit';
+import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
@@ -93,6 +96,24 @@ describe('default UI session.organization.pin.set transport', () => {
         expect(storage.getState().sessionOrganizationPinsBySessionKey[buildSessionOrganizationSessionKey(organizationServerId, 'bot')]).toEqual(pin);
     });
 
+    it('settles same-page tag assignment through the real UI Action and scoped store', async () => {
+        const serverId = connection!.home.id;
+        answerWrite = async (path, init) => {
+            expect(path).toBe('/v2/session-organization/tag-assignments/bot');
+            const { SetSessionTagAssignmentsRequestSchema, SetSessionTagAssignmentsResponseSchema } = await import('@happier-dev/protocol/sessions/organization/mutations');
+            const body = SetSessionTagAssignmentsRequestSchema.parse(JSON.parse(String(init.body)));
+            writes.push(body);
+            return Response.json(SetSessionTagAssignmentsResponseSchema.parse({ sessionId: 'bot', tagIds: body.tagIds }));
+        };
+        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+        expect(await createDefaultActionExecutor().execute('session.tags.set', { sessionId: 'bot', tagIds: ['tag'] }, {
+            surface: 'ui', serverId,
+        })).toEqual({ ok: true, result: { sessionId: 'bot', tagIds: ['tag'] } });
+        const key = buildSessionOrganizationSessionKey(resolveServerProfileScopeIdForIdentifier(serverId), 'bot');
+        expect(storage.getState().sessionOrganizationTagAssignmentsBySessionKey[key]).toEqual({ sessionId: 'bot', tagIds: ['tag'] });
+        expect(writes).toEqual([{ tagIds: ['tag'] }]);
+    });
+
     it('sets and resets personal Session and Project-group colors through the saved display owners', async () => {
         const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
         const { buildSessionOrganizationLabelKey } = await import('@/sync/domains/session/organization/keys');
@@ -137,6 +158,68 @@ describe('default UI session.organization.pin.set transport', () => {
         const denied = await executor.execute('projects.organization.color.set', { workspaceKey: 'project-group', color, serverId: 'foreign-home' }, context);
         expect(denied).toMatchObject({ ok: false, errorCode: 'server_target_mismatch' });
         expect(writes).toHaveLength(4);
+    });
+
+    it.each([
+        { actionId: 'session.organization.pin.set', input: { sessionId: 'bot', surface: 'rail', pinned: true },
+            path: '/v2/session-organization/pins/bot', reply: { pin: { ...initialPin, railPinned: true } },
+            result: { pin: { ...initialPin, railPinned: true } }, field: 'sessionOrganizationPinsBySessionKey',
+            stored: { ...initialPin, railPinned: true }, disposition: 'committed' },
+        { actionId: 'session.organization.pin.set', input: { sessionId: 'bot', surface: 'rail', pinned: true },
+            path: '/v2/session-organization/pins/bot', reply: { error: 'session-pin-limit-exceeded' },
+            result: null, field: 'sessionOrganizationPinsBySessionKey', stored: initialPin, disposition: 'refused' },
+        { actionId: 'session.attention.set', input: { sessionId: 'bot', standing: true },
+            path: '/v2/session-organization/attention-standings/bot',
+            reply: { standing: { sessionId: 'bot', standing: true, updatedAt: 2 } },
+            result: { standing: { sessionId: 'bot', standing: true, updatedAt: 2 } },
+            field: 'sessionOrganizationAttentionStandingsBySessionKey', stored: { sessionId: 'bot', standing: true, updatedAt: 2 }, disposition: 'committed' },
+        { actionId: 'session.section.set', input: { sessionId: 'bot', sectionId: 'section' },
+            path: '/v2/session-organization/folder-assignments/bot', reply: { sessionId: 'bot', folderId: 'section' },
+            result: { sessionId: 'bot', sectionId: 'section', previousSectionId: 'previous-section' },
+            field: 'sessionOrganizationFolderAssignmentsBySessionKey', stored: { sessionId: 'bot', folderId: 'section' }, disposition: 'committed' },
+        { actionId: 'session.tags.set', input: { sessionId: 'bot', tagIds: [] },
+            path: '/v2/session-organization/tag-assignments/bot', reply: { sessionId: 'bot', tagIds: [] },
+            result: { sessionId: 'bot', tagIds: [] }, field: 'sessionOrganizationTagAssignmentsBySessionKey',
+            stored: { sessionId: 'bot', tagIds: [] }, disposition: 'committed' },
+    ] as const)('settles mounted $actionId truthfully after navigating away ($disposition)', async testCase => {
+        const issued = createDeferred<AbortSignal | null | undefined>();
+        const response = createDeferred<Response>();
+        answerWrite = async (path, init) => {
+            expect(path).toBe(testCase.path);
+            writes.push(JSON.parse(String(init.body)));
+            issued.resolve(init.signal);
+            const reply = await response.promise;
+            // Fetch can reject after the server committed if its caller aborts before receiving the reply.
+            init.signal?.throwIfAborted();
+            return reply;
+        };
+        const serverId = connection!.home.id;
+        const organizationServerId = resolveServerProfileScopeIdForIdentifier(serverId);
+        storage.getState().applySessionFolderAssignments(organizationServerId, [{ sessionId: 'bot', folderId: 'previous-section' }]);
+        const mounted = await renderHook(() => useMountedActionExecution(serverId));
+        await vi.waitFor(() => expect(mounted.getCurrent().ready).toBe(true));
+        const author = mounted.getCurrent();
+        const pending = author.execute(testCase.actionId, testCase.input);
+        try {
+            const signal = await Promise.race([issued.promise, pending.then(result => {
+                throw new Error(`Action settled before its write: ${JSON.stringify(result)}`);
+            })]);
+            await mounted.unmount();
+            const abortedOnNavigation = signal?.aborted;
+            response.resolve(Response.json(testCase.reply, { status: testCase.disposition === 'refused' ? 409 : 200 }));
+            const result = await pending;
+            expect({ abortedOnNavigation, result }).toMatchObject({ abortedOnNavigation: false,
+                result: testCase.disposition === 'committed' ? { ok: true, result: testCase.result }
+                    : { ok: false, errorCode: 'action_failed' } });
+            const key = buildSessionOrganizationSessionKey(organizationServerId, 'bot');
+            expect(storage.getState()[testCase.field][key]).toEqual(testCase.stored);
+            expect(await author.execute('session.organization.pin.set', { sessionId: 'bot', surface: 'rail', pinned: false }))
+                .toMatchObject({ ok: false, errorCode: 'action_account_scope_changed' });
+            expect(writes).toHaveLength(1);
+        } finally {
+            response.resolve(Response.json({ pin: initialPin }));
+            await pending;
+        }
     });
 
     it('executes rail SessionActions through the same Account front door and can clear a demoted retained choice', async () => {

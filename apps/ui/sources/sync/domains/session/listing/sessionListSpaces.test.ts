@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { renderHook, standardCleanup } from '@/dev/testkit';
-import { useCollectionSpaceSelection, writeCollectionSpaceSelectionV1 } from './sessionListSpaces';
+import { useCollectionSpaceSelection, selectCollectionSpace } from './sessionListSpaces';
 import { clearPersistenceStorage, getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
 import { accountSettingsScopeKeySuffix } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { getStorage } from '@/sync/domains/state/storageStore';
@@ -15,14 +15,11 @@ describe('device collection selection', () => {
         const hook = await renderHook(() => { renders++; return useCollectionSpaceSelection(scopeKey, 'sessionWork'); });
         const before = renders;
         await act(async () => {
-            await writeCollectionSpaceSelectionV1({ scope: { ...scope, accountId: 'bob' }, entityKind: 'sessionWork', spaceId: 'my-work',
-                isCurrent: () => true, readSettings: () => ({ collectionSpacesV1: { v: 1, spaces: [] } }) });
-            await writeCollectionSpaceSelectionV1({ scope, entityKind: 'workflow', spaceId: 'all-workflows',
-                isCurrent: () => true, readSettings: () => ({ collectionSpacesV1: { v: 1, spaces: [] } }) });
+            await selectCollectionSpace({ ...scope, accountId: 'bob' }, 'sessionWork', 'my-work');
+            await selectCollectionSpace(scope, 'workflow', 'all-workflows');
         });
         expect(renders).toBe(before);
-        const select = () => writeCollectionSpaceSelectionV1({ scope, entityKind: 'sessionWork', spaceId: 'my-work',
-            isCurrent: () => true, readSettings: () => ({ collectionSpacesV1: { v: 1, spaces: [] } }) });
+        const select = () => selectCollectionSpace(scope, 'sessionWork', 'my-work');
         await act(async () => { await select(); });
         expect(hook.getCurrent().byAccountScope[scopeKey]?.sessionWork?.spaceId).toBe('my-work');
         const changed = renders;
@@ -36,8 +33,7 @@ describe('device collection selection', () => {
         const write = vi.spyOn(getPersistenceStorage(), 'set');
         try {
             for (let index = 0; index < 4; index++) {
-                expect(await writeCollectionSpaceSelectionV1({ scope, entityKind: 'sessionWork', spaceId: 'my-work',
-                    isCurrent: () => true, readSettings: () => ({ collectionSpacesV1: { v: 1, spaces: [] } }) })).toEqual({ ok: true });
+                expect(await selectCollectionSpace(scope, 'sessionWork', 'my-work')).toBeUndefined();
             }
             expect(store.getState().localSettings).toBe(original);
             expect(write.mock.calls.filter(([key]) => key === 'local-settings')).toHaveLength(0);

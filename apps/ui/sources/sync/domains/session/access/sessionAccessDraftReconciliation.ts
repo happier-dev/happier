@@ -1,4 +1,4 @@
-import type { SessionInitialAccessDraftV1 } from '@happier-dev/protocol';
+import type { SessionInitialAccessDraftV1 } from '@happier-dev/protocol/sessions/access/sessionInitialAccessDraftV1';
 
 export type SessionAccessDraftReconciliation = Readonly<{
     access: SessionInitialAccessDraftV1 | null;

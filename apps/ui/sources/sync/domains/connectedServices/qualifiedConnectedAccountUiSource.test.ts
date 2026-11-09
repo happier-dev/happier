@@ -15,6 +15,7 @@ import type { ConnectedServiceConfigurationActionIdV1 } from '@happier-dev/proto
 
 import {
     createQualifiedConnectedAccountGroupsClient,
+    fromQualifiedGroup,
     MEMBER_PRIORITY_STEP,
     nextMemberPriority,
 } from './qualifiedConnectedAccountUiSource';
@@ -69,8 +70,6 @@ const policy = {
     cooldownMs: 30_000,
     honorProviderResetsAt: true,
     autoRestorePrimaryWhenReset: false,
-    maxSwitchesPerTurn: 1,
-    maxSwitchesPerSessionHour: 3,
     softSwitchRemainingPercent: 15,
     probeIfSnapshotOlderThanMs: 300_000,
     preTurnProbeMode: 'when_stale' as const,
@@ -117,39 +116,24 @@ describe('createQualifiedConnectedAccountGroupsClient', () => {
     });
     afterEach(resetRuntimeFetch);
 
-    it('exposes active-since only when it belongs to the listed active account', async () => {
-        network.responses.push({ groups: [{
-            ...qualifiedGroup,
-            state: { activeSince: { accountId: 'account-a', atMs: 123 } },
-        }] });
-        network.responses.push({ groups: [{
-            ...qualifiedGroup,
-            state: { activeSince: { accountId: 'old-account', atMs: 12 } },
-        }] });
-        network.responses.push({ groups: [qualifiedGroup] });
-        const client = createQualifiedConnectedAccountGroupsClient({
-            credentials,
-            service,
-            source: { protocol: 'v4' },
-        });
-        const matching = (await client.list())[0];
+    it('exposes active-since only when it belongs to the projected active account', () => {
+        const matching = fromQualifiedGroup({ ...qualifiedGroup,
+            state: { activeSince: { accountId: 'account-a', atMs: 123 } } }, service);
         expect(matching?.activeSince).toEqual({ accountId: 'account-a', atMs: 123 });
-        const stale = (await client.list())[0];
+        const stale = fromQualifiedGroup({ ...qualifiedGroup,
+            state: { activeSince: { accountId: 'old-account', atMs: 12 } } }, service);
         expect(stale?.activeSince).toBeNull();
         expect(stale?.state.activeSince).toBeNull();
-        expect((await client.list())[0]?.activeSince).toBeNull();
+        expect(fromQualifiedGroup(qualifiedGroup, service).activeSince).toBeNull();
     });
 
-    it('keeps a list-only client readable and refuses edits without Action custody', async () => {
-        network.responses.push({ groups: [qualifiedGroup] });
-        const client = createQualifiedConnectedAccountGroupsClient({ credentials, service, source: { protocol: 'v4' } });
-        expect(await client.list()).toHaveLength(1);
+    it('refuses edits without Action custody', async () => {
+        const client = createQualifiedConnectedAccountGroupsClient({ service });
         await expect(client.create({ groupId: 'new', displayName: 'New' })).rejects.toMatchObject({ code: 'action_authorization_unavailable' });
         expect(network.requests.every(request => request.method === 'GET')).toBe(true);
     });
 
     it('retains exact qualified refs and threads only V4 revision semantics', async () => {
-        network.responses.push({ groups: [qualifiedGroup] });
         network.responses.push({
             group: {
                 ...qualifiedGroup,
@@ -167,13 +151,11 @@ describe('createQualifiedConnectedAccountGroupsClient', () => {
         };
         network.responses.push(switched, switched);
         const client = createQualifiedConnectedAccountGroupsClient({
-            credentials,
             service,
-            source: { protocol: 'v4' },
             mutation,
         });
 
-        const [group] = await client.list();
+        const group = fromQualifiedGroup(qualifiedGroup, service);
         expect(group).toEqual(expect.objectContaining({
             ref: { service, groupId: 'team' },
             revision: {
@@ -196,7 +178,7 @@ describe('createQualifiedConnectedAccountGroupsClient', () => {
             overrideRuntimeCooldown: true,
         });
 
-        expect(network.requests[1]).toEqual(buildQualifiedConnectedAccountGroupMutationRequestV4('patch', {
+        expect(network.requests[0]).toEqual(buildQualifiedConnectedAccountGroupMutationRequestV4('patch', {
             service,
             groupId: 'team',
             policy: { ...policy, autoSwitch: true },
@@ -204,7 +186,7 @@ describe('createQualifiedConnectedAccountGroupsClient', () => {
             expectedIncarnation: 'qualified-group-row-team',
             expectedRuntimeStateRevision: 7,
         }));
-        expect(network.requests[2]).toEqual({ method: 'POST', path: '/v4/connect/qualified/group/active-account', body: {
+        expect(network.requests[1]).toEqual({ method: 'POST', path: '/v4/connect/qualified/group/active-account', body: {
             group: { service, groupId: 'team' },
             connectedAccountId: 'account-a',
             expectedGeneration: 4,
@@ -217,9 +199,7 @@ describe('createQualifiedConnectedAccountGroupsClient', () => {
     it('keeps admitted V4 create/member CRUD on exact qualified refs and runtime revisions', async () => {
         network.responses.push(...Array.from({ length: 4 }, () => ({ group: qualifiedGroup })));
         const client = createQualifiedConnectedAccountGroupsClient({
-            credentials,
             service,
-            source: { protocol: 'v4' },
             mutation,
         });
         const group = {
@@ -295,9 +275,7 @@ describe('createQualifiedConnectedAccountGroupsClient', () => {
             },
         });
         const client = createQualifiedConnectedAccountGroupsClient({
-            credentials,
             service,
-            source: { protocol: 'v4' },
             mutation,
         });
         const group = {
@@ -329,9 +307,7 @@ describe('createQualifiedConnectedAccountGroupsClient', () => {
             },
         });
         const client = createQualifiedConnectedAccountGroupsClient({
-            credentials,
             service,
-            source: { protocol: 'v4' },
             mutation,
         });
 

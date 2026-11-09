@@ -10,6 +10,7 @@ import {
 import { mapCryptoBatchWithYield } from './cryptoBatchYield';
 import { isSessionKeyBoundToServedMetadata } from './readTransferableSessionDataKey';
 import type { EncryptionGenerationScopeAuthority, EncryptionScopeInput } from './encryption';
+import { isDataKeyOpeningCancelled } from './dataKeyOpenings';
 import type { ScopedRpcSessionEncryptionContext } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
 import {
     runSessionDataKeyPreparationPass,
@@ -190,10 +191,17 @@ export async function prepareMembershipHistorySessionDataKeyEnvelopes(
 
             // One batched open for the whole page: the client never depends on a warm Session cache
             // and never issues a Session-detail request per item.
-            const openedKeys = await encryption.decryptEncryptionKeys(
-                items.map((item) => item.callerDataKeyEnvelope),
-                encryptionScope,
-            );
+            let openedKeys: Array<Uint8Array | null>;
+            try {
+                openedKeys = await encryption.decryptEncryptionKeys(
+                    items.map((item) => item.callerDataKeyEnvelope),
+                    encryptionScope,
+                );
+            } catch (error) {
+                // A cancelled opening needs no repair: the pass reads the scope change next.
+                if (isDataKeyOpeningCancelled(error) && !isScopeCurrent()) return { entries: [], failedItemKeys: [] };
+                throw error;
+            }
 
             const sealable: Array<Readonly<{ sessionId: string; dataKey: Uint8Array }>> = [];
             const failedItemKeys: string[] = [];

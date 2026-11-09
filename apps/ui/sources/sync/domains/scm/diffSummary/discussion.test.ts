@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { ExecutionRunPublicState, ScmDiffSummaryResult } from '@happier-dev/protocol';
+import type { ExecutionRunPublicState} from '@happier-dev/protocol/execution/runs/responseSchemas';
+import type { ScmDiffSummaryResult } from '@happier-dev/protocol/scm/diffSummaryResult';
 import { resolveScmDiffSummaryDiscussionTarget, selectScmDiffSummaryDiscussionSavedResult, selectScmDiffSummaryStopDiscussionContext } from './discussion';
 import { createInitialScmDiffSummaryState, type ScmDiffSummaryEntry } from './state';
 

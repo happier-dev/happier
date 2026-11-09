@@ -1,7 +1,8 @@
 import type {
-  PluginConnectedAccountAuthenticationModeV2,
+  PluginConnectedAccountAuthenticationModeV2} from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
+import type {
   QualifiedConnectedAccountProfileV4,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 
 export type ConnectedAccountServiceConfigurationStatusByModeId = Readonly<
   Record<string, 'ready' | 'configurationRequired' | undefined>

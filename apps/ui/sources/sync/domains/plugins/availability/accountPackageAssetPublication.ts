@@ -1,4 +1,4 @@
-import type { PluginProjectionV2 } from '@happier-dev/protocol';
+import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { createPackageAssetArchiveV1 } from '@happier-dev/protocol/plugins/availability';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 

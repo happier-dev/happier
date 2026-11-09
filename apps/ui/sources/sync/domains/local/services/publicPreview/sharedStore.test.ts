@@ -1,7 +1,7 @@
 import type {
     LocalServicePublicExposureV1,
     LocalServicePublicPreviewSnapshotV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/local/services/public/v1';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { expectNoWallClockPolling } from '../noPollingTestHelpers';
@@ -75,6 +75,47 @@ async function flushMicrotasks(): Promise<void> {
 }
 
 describe('shared local-service public-preview store', () => {
+    it('publishes nothing for equal receipts and retains unchanged collections when policy or expiry changes', async () => {
+        const initial = snapshot();
+        rpc.machine.mockResolvedValue({ protocolVersion: 1, snapshot: initial });
+        const key = { machineId: 'machine_1' };
+        const listener = vi.fn();
+        const release = subscribeLocalServicePublicPreviewStore(key, listener);
+        try {
+            await flushMicrotasks();
+            const ready = getLocalServicePublicPreviewState(key);
+            listener.mockClear();
+            for (let receipt = 0; receipt < 10; receipt++) {
+                publishLocalServicePublicPreviewSnapshot(key, structuredClone(initial));
+            }
+            expect(listener).toHaveBeenCalledTimes(0);
+            expect(getLocalServicePublicPreviewState(key)).toBe(ready);
+
+            publishLocalServicePublicPreviewSnapshot(key, { ...initial, generatedAt: 3_000 });
+            const newer = getLocalServicePublicPreviewState(key);
+            expect(listener).toHaveBeenCalledTimes(1);
+            expect(newer.generatedAt).toBe(3_000);
+            expect(newer.exposureIds).toBe(ready.exposureIds);
+            expect(newer.exposuresById).toBe(ready.exposuresById);
+            expect(newer.policy).toBe(ready.policy);
+            expect(newer.diagnostics).toBe(ready.diagnostics);
+
+            publishLocalServicePublicPreviewSnapshot(key, { ...initial, generatedAt: 3_000,
+                exposures: [{ ...exposure, expiresAt: 900_000 }] });
+            const changed = getLocalServicePublicPreviewState(key);
+            expect(listener).toHaveBeenCalledTimes(2);
+            expect(changed.exposureIds).toBe(ready.exposureIds);
+            expect(changed.exposuresById.get(exposure.exposureId)?.expiresAt).toBe(900_000);
+            expect(changed.policy).toBe(ready.policy);
+
+            publishLocalServicePublicPreviewSnapshot(key, { ...initial, generatedAt: 4_000,
+                refreshState: 'error', policy: { ...initial.policy!, enabled: false },
+                diagnostics: [{ v: 1, code: 'public_preview_expired', severity: 'warning', scope: 'publicPreview', details: {} }] });
+            expect(listener).toHaveBeenCalledTimes(3);
+            expect(getLocalServicePublicPreviewState(key)).toMatchObject({ refreshState: 'error',
+                policy: { enabled: false }, diagnostics: [expect.objectContaining({ code: 'public_preview_expired' })] });
+        } finally { release(); }
+    });
     it.each(['snapshot', 'failure', 'rejection'] as const)('preserves a newer publication when an older read settles with %s', async (outcome) => {
         const pending = createDeferred<unknown>();
         rpc.machine.mockImplementation(async () => {

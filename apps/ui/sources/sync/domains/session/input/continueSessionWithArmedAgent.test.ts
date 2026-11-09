@@ -1,4 +1,4 @@
-import type { SessionAgentTransitionResultV1 } from '@happier-dev/protocol';
+import type { SessionAgentTransitionResultV1 } from '@happier-dev/protocol/sessions/agentTransition';
 import { MetadataSchema } from '@happier-dev/session-core/state';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 

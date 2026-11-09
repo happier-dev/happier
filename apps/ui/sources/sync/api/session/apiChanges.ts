@@ -1,6 +1,10 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { serverFetch, type ServerFetch } from '@/sync/http/client';
+import { getCachedServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import {
+    buildChangesReadRequest,
+    CHANGES_AFTER_CURSOR_HTTP_HEADER,
     ChangesResponseSchema,
     CurrentCursorResponseSchema,
     CursorGoneErrorSchema,
@@ -12,6 +16,8 @@ export async function fetchChanges(params: {
     afterCursor: string | null;
     limit: number;
     request?: ServerFetch;
+    /** Required for an injected transport to consume that Home's negotiated support. */
+    serverId?: string;
     sessionId?: string;
 }): Promise<
     | { status: 'ok'; changes: ChangeEntry[]; nextCursor: string }
@@ -26,19 +32,31 @@ export async function fetchChanges(params: {
     })();
 
     const limit = Number.isFinite(params.limit) ? Math.min(Math.max(Math.floor(params.limit), 1), 500) : 200;
+    // An opaque request may target another Home. Never borrow the focused Home's support for it.
+    const serverId = params.serverId ?? (params.request ? undefined : getActiveServerSnapshot().serverId);
+    const features = serverId ? getCachedServerFeaturesSnapshot({ serverId }) : null;
+    const cursorHeader = features?.status === 'ready' && features.features.capabilities.changes?.cursorHeaderVersion === 1;
+    const read = buildChangesReadRequest({ after, limit, sessionId: params.sessionId, cursorHeader });
     let response: Response;
     try {
         response = await (params.request ?? serverFetch)(
-            `/v2/changes?after=${after}&limit=${limit}${params.sessionId ? `&sessionId=${encodeURIComponent(params.sessionId)}` : ''}`,
+            read.path,
             {
                 headers: {
                     Authorization: `Bearer ${params.credentials.token}`,
-                    'Content-Type': 'application/json',
+                    ...read.headers,
                 },
             },
+            // /v2/changes enforces limit <= 500; this is a bounded native recovery page.
             { includeAuth: false, recoveryRead: 'paged' },
         );
     } catch {
+        return { status: 'error' };
+    }
+
+    // A stale capability observation must not turn an ignored header into a successful read from zero.
+    if (cursorHeader && (response.ok || response.status === 410)
+        && response.headers.get(CHANGES_AFTER_CURSOR_HTTP_HEADER) !== String(after)) {
         return { status: 'error' };
     }
 
@@ -82,9 +100,9 @@ export async function fetchCurrentChangesCursor(params: {
             {
                 headers: {
                     Authorization: `Bearer ${params.credentials.token}`,
-                    'Content-Type': 'application/json',
                 },
             },
+            // The cursor route returns only the cursor and prune floor.
             { includeAuth: false, recoveryRead: 'paged' },
         );
     } catch {

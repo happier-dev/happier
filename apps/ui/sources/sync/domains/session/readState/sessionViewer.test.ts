@@ -23,7 +23,8 @@ import {
 } from './sessionViewer';
 
 import type { NormalizedSessionAccessProjection } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
-import type { SessionPersonalAttentionReasonV1, SessionViewerProjectionV1 } from '@happier-dev/protocol';
+import type { SessionPersonalAttentionReasonV1} from '@happier-dev/protocol/sessions/personal/attention';
+import type { SessionViewerProjectionV1 } from '@happier-dev/protocol/sessions/personal/viewer';
 
 function accessFor(role: 'owner' | 'recipient'): NormalizedSessionAccessProjection {
     return {

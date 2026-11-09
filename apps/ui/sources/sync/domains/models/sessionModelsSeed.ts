@@ -18,13 +18,13 @@ type SessionModelsSeed = Readonly<{
  *
  * The catalog publishes readonly option data it keeps owning, while metadata is a mutable
  * document handed to every later writer, so the nested arrays are copied rather than aliased.
- * `groups` is dropped because the metadata carrier for a model option (`StoredModelOptionSchema`)
- * does not declare it: persisting it here would only produce a field the next read strips.
+ * Display groups and their flattened selection index remain part of that same projection.
  */
 function toStoredModelOptions(options: readonly AcpConfigOption[]): StoredModelOption[] {
-    return options.map(({ options: choices, groups: _groups, overridesWhenOn, ...option }) => ({
+    return options.map(({ options: choices, groups, overridesWhenOn, ...option }) => ({
         ...option,
         ...(choices ? { options: choices.map((choice) => ({ ...choice })) } : {}),
+        ...(groups ? { groups: groups.map((group) => ({ ...group, options: group.options.map((choice) => ({ ...choice })) })) } : {}),
         ...(overridesWhenOn
             ? { overridesWhenOn: { ...overridesWhenOn, optionIds: [...overridesWhenOn.optionIds] } }
             : {}),
@@ -33,8 +33,7 @@ function toStoredModelOptions(options: readonly AcpConfigOption[]): StoredModelO
 
 function readNonBlank(value: unknown): string | null {
     if (typeof value !== 'string') return null;
-    const normalized = value.trim();
-    return normalized.length > 0 ? normalized : null;
+    return value.trim().length > 0 ? value : null;
 }
 
 export function buildSessionModelsSeedRequest(params: Readonly<{

@@ -1,5 +1,6 @@
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest';
+import { selectActiveTestHomeForTests } from '@/dev/testkit/fixtures/persistedHomeProfiles';
 
 import { createMachineFixture, renderHook, standardCleanup } from '@/dev/testkit';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
@@ -32,6 +33,104 @@ function setMachines(machines: Machine[]) {
 }
 
 describe('always-on Machine resource attention', () => {
+    it('does no attention collection, parsing or naming for unchanged facts across 148 Machines', async () => {
+        const fixture = Array.from({ length: 148 }, (_, index) => resourceMachine(`quiet-${index}`, index === 0 ? 'needs_you' : 'calm'));
+        const serverId = setMachines(fixture);
+        storage.getState().applyMachines(fixture, true, { sourceServerId: serverId });
+        const collectors = await import('@/components/machines/attention/collectMachineAttention');
+        const sentences = await import('@/components/machines/summary/machineResourceSentences');
+        const machineNames = await import('@/utils/sessions/machineDisplayNames');
+        const collect = vi.spyOn(collectors, 'collectMachineAttention');
+        const parse = vi.spyOn(sentences, 'readMachinePublishedResources');
+        const names = vi.spyOn(machineNames, 'resolveMachineDisplayNames');
+        const hook = await renderHook(() => useMachineResourceFleetAttention());
+        let rootPublications = 0;
+        const stop = storage.subscribe(() => { rootPublications += 1; });
+        try {
+            expect(hook.getCurrent().needsYou).toEqual([{ serverId, machineId: fixture[0]!.id }]);
+            const snapshot = hook.getCurrent();
+            collect.mockClear(); parse.mockClear(); names.mockClear();
+            for (let index = 1; index <= 20; index += 1) await act(async () => {
+                const machine = storage.getState().machineListByServerId[serverId]!.find(row => row.id === fixture[0]!.id)!;
+                storage.getState().applyMachineActivityUpdates([{ id: machine.id, active: true, activeAt: Date.now() + index }], { sourceServerId: serverId });
+                storage.getState().applyMachines([{ ...machine, metadataVersion: machine.metadataVersion + 1,
+                    metadata: { ...machine.metadata!, happyCliVersion: `unrelated-${index}` },
+                }], false, { sourceServerId: serverId });
+            });
+            expect(rootPublications).toBeGreaterThanOrEqual(20);
+            console.info('PERF_MACT_ATTENTION_COUNTS', JSON.stringify({ machines: fixture.length, arrivals: 20,
+                rootPublications, collections: collect.mock.calls.length, parses: parse.mock.calls.length, names: names.mock.calls.length }));
+            expect(collect).not.toHaveBeenCalled();
+            expect(parse).not.toHaveBeenCalled();
+            expect(names).not.toHaveBeenCalled();
+            expect(hook.getCurrent()).toBe(snapshot);
+
+            await act(async () => storage.getState().applyMachines([resourceMachine(fixture[0]!.id, 'calm')], false, { sourceServerId: serverId }));
+            expect(collect).toHaveBeenCalledTimes(1);
+            expect(hook.getCurrent().needsYou).toEqual([]);
+            expect(names).not.toHaveBeenCalled();
+            collect.mockClear();
+            const { recordMachineRequestFailed } = await import('@/sync/domains/machines/reachability/machineReachability');
+            await act(async () => recordMachineRequestFailed({ serverId, accountId: 'resource-account', machineId: fixture[1]!.id }));
+            expect(collect).toHaveBeenCalledTimes(1);
+            expect(hook.getCurrent().reportingMachineKeys).not.toContain(JSON.stringify([serverId, fixture[1]!.id]));
+        } finally { stop(); await hook.unmount(); collect.mockRestore(); parse.mockRestore(); names.mockRestore(); }
+    });
+
+    it('keeps named attention quiet while preserving renamed Machines and action details', async () => {
+        const fixtures = [resourceMachine('named-attention', 'needs_you'), resourceMachine('named-sibling', 'calm')];
+        const serverId = setMachines(fixtures);
+        storage.getState().applyMachines(fixtures, true, { sourceServerId: serverId });
+        const { useMachineAttention } = await import('./useMachineAttention');
+        const collectors = await import('@/components/machines/attention/collectMachineAttention');
+        const namesModule = await import('@/utils/sessions/machineDisplayNames');
+        const collect = vi.spyOn(collectors, 'collectMachineAttention');
+        const names = vi.spyOn(namesModule, 'resolveMachineDisplayNames');
+        const hook = await renderHook(() => useMachineAttention([{ serverId, accountScope: { serverId, accountId: 'resource-account' },
+            serverName: '', status: 'idle', machines: storage.getState().machineListByServerId[serverId] ?? [],
+        }]));
+        try {
+            expect(hook.getCurrent().entries).toHaveLength(2);
+            const snapshot = hook.getCurrent();
+            collect.mockClear(); names.mockClear();
+            await act(async () => {
+                const machine = storage.getState().machineListByServerId[serverId]![0]!;
+                storage.getState().applyMachineActivityUpdates([{ id: machine.id, active: true, activeAt: Date.now() + 1 }], { sourceServerId: serverId });
+                storage.getState().applyMachines([{ ...machine, metadataVersion: machine.metadataVersion + 1,
+                    metadata: { ...machine.metadata!, happyCliVersion: 'unrelated-version' },
+                }], false, { sourceServerId: serverId });
+            });
+            await hook.rerender();
+            expect(hook.getCurrent()).toBe(snapshot);
+            expect(collect).not.toHaveBeenCalled();
+            expect(names).not.toHaveBeenCalled();
+            await act(async () => {
+                const machine = storage.getState().machineListByServerId[serverId]![0]!;
+                storage.getState().applyMachines([{ ...machine, metadataVersion: machine.metadataVersion + 1,
+                    metadata: { ...machine.metadata!, displayName: 'Renamed attention Machine' },
+                    daemonState: { ...machine.daemonState, resources: { ...machine.daemonState.resources,
+                        lastAutomaticAction: { at: 42, kind: 'stopped_service', entryId: 'acted', undoable: true,
+                            facts: { rule: 'left_behind', count: 3 } },
+                    } },
+                }], false, { sourceServerId: serverId });
+            });
+            expect(collect).toHaveBeenCalledTimes(1);
+            expect(names).toHaveBeenCalledTimes(1);
+            expect(hook.getCurrent().entries.find(entry => entry.machineId === fixtures[0]!.id))
+                .toMatchObject({ name: 'Renamed attention Machine', lastAutomaticAction: { at: 42, kind: 'stopped_service', facts: { count: 3 } } });
+        } finally { await hook.unmount(); collect.mockRestore(); names.mockRestore(); }
+    });
+
+    it('withdraws attention when the active Account scope retires', async () => {
+        const serverId = setMachines([resourceMachine('retired-attention', 'needs_you')]);
+        const hook = await renderHook(() => useMachineResourceFleetAttention());
+        try {
+            expect(hook.getCurrent().needsYou).toEqual([{ serverId, machineId: 'retired-attention' }]);
+            await act(async () => storage.setState({ profileScope: null }));
+            expect(hook.getCurrent()).toMatchObject({ accountScope: null, needsYou: [], look: [], reportingMachineKeys: [] });
+        } finally { await hook.unmount(); }
+    });
+
     it('does not read active fleet resources for foreign Home arrivals', async () => {
         let resourceReads = 0;
         const fixture = Array.from({ length: 128 }, (_, index) => new Proxy(
@@ -54,6 +153,8 @@ describe('always-on Machine resource attention', () => {
                 storage.getState().applyMachines([resourceMachine(`foreign-${index}`, 'calm')], false,
                     { sourceServerId: 'foreign-home' });
             });
+            console.info('PERF_D4_FLEET_COUNTS', JSON.stringify({ activeMachines: fixture.length, foreignArrivals: 8,
+                resourceReads, renders: renders - beforeRenders }));
             expect(hook.getCurrent()).toBe(summary);
             expect(renders).toBe(beforeRenders);
             expect(resourceReads).toBe(0);
@@ -77,9 +178,8 @@ describe('always-on Machine resource attention', () => {
         } finally { stop(); await hook.unmount(); }
     });
 
-    it('holds the snapshot across repeated React reads until the presence clock publishes expiry', async () => {
+    it('holds the snapshot across repeated React reads until the server publishes offline presence', async () => {
         vi.useFakeTimers();
-        vi.stubEnv('EXPO_PUBLIC_HAPPIER_MACHINE_ONLINE_GRACE_MS', '60000');
         const now = Date.now();
         vi.setSystemTime(now);
         const serverId = setMachines([resourceMachine('expires', 'needs_you', { activeAt: now - 59_500 })]);
@@ -98,20 +198,23 @@ describe('always-on Machine resource attention', () => {
         });
         expect(renders).toBe(settledRenders);
         await act(async () => { await vi.advanceTimersByTimeAsync(501); });
+        expect(hook.getCurrent()).toBe(snapshot);
+        await act(async () => storage.getState().applyMachineActivityUpdates([{ id: 'expires', active: false, activeAt: now }], { sourceServerId: serverId }));
         expect(hook.getCurrent().needsYou).toEqual([]);
         expect(hook.getCurrent()).not.toBe(snapshot);
         expect(renders).toBe(settledRenders + 1);
         await hook.unmount();
     });
-    it('expires held attention at the shared presence grace boundary without another heartbeat or RPC', async () => {
+    it('withdraws held attention on the exact offline push without another RPC', async () => {
         vi.useFakeTimers();
-        vi.stubEnv('EXPO_PUBLIC_HAPPIER_MACHINE_ONLINE_GRACE_MS', '60000');
         const now = Date.now();
         vi.setSystemTime(now);
         const serverId = setMachines([resourceMachine('expires', 'needs_you', { activeAt: now - 59_500 })]);
         const hook = await renderHook(() => useMachineResourceFleetAttention());
         await vi.waitFor(() => expect(hook.getCurrent().needsYou).toEqual([{ serverId, machineId: 'expires' }]));
         await act(async () => { await vi.advanceTimersByTimeAsync(501); });
+        expect(hook.getCurrent().needsYou).toEqual([{ serverId, machineId: 'expires' }]);
+        await act(async () => storage.getState().applyMachineActivityUpdates([{ id: 'expires', active: false, activeAt: now }], { sourceServerId: serverId }));
         expect(hook.getCurrent().needsYou).toEqual([]);
         expect(hook.getCurrent().headline).toBeNull();
         expect(transport.rpc).not.toHaveBeenCalled();
@@ -172,3 +275,6 @@ describe('always-on Machine resource attention', () => {
         await hook.unmount();
     });
 });
+
+// P03-TESTKIT-SERVER: the unconfigured test build seeds no Home; select one through the real owner.
+beforeEach(async () => { await selectActiveTestHomeForTests(); });

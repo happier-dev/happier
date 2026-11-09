@@ -5,8 +5,12 @@ import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } 
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { tryWriteServerEnabledBitInPlace, openSavedSecretResourceStoredContentV1, sealSavedSecretResourceStoredContentV1,
-    StoredApprovalRequestSchema, buildApprovalRequestArtifactHeaderV1, type ApprovalRequestV2 } from '@happier-dev/protocol';
+import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { tryWriteServerEnabledBitInPlace} from '@happier-dev/protocol/features/serverEnabledBit';
+import { openSavedSecretResourceStoredContentV1, sealSavedSecretResourceStoredContentV1} from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
+import {
+    StoredApprovalRequestSchema, type ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { buildApprovalRequestArtifactHeaderV1} from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { listAccountSettingsSavedSecretReferences } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import { formatSavedSecretCatalogReferenceV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
@@ -183,12 +187,18 @@ describe('Saved Secret native responsibility review through its real delete owne
         const resourceDataKey = new Uint8Array(32).fill(19);
         const writes: { path: string; body: unknown }[] = [];
         const artifacts: ArtifactCreateRequest[] = [];
+        const artifactStore = createArtifactStoreBoundary({ ownerAccountId: () => accountId, encryptionMode: 'e2ee' });
         setRuntimeFetch(async (rawUrl, init) => {
             const url = new URL(String(rawUrl));
             if (url.pathname === '/health' || url.pathname === '/v1/auth/ping') return Response.json({});
             if (url.pathname === '/v1/features' || url.pathname === '/v1/features/authenticated') return Response.json(features);
             expect(url.origin).toBe(targetUrl);
             expect(new Headers(init?.headers).get('Authorization')).toBe(`Bearer ${targetCredentials.token}`);
+            const artifactResponse = artifactStore.handle(`${url.pathname}${url.search}`, init);
+            if (artifactResponse) {
+                if (url.pathname === '/v1/artifacts' && init?.method === 'POST') artifacts.push(JSON.parse(String(init.body)));
+                return artifactResponse;
+            }
             if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'e2ee', updatedAt: 1 });
             if (url.pathname === '/v1/account/encryption/currentness') return Response.json({ mode: 'e2ee', version: 1,
                 settingsVersion: approved ? 5 : 4, signingKeyFingerprint: null, contentKeyFingerprint, updatedAt: 1, recipientEnvelopeReadiness: { status: 'available' } });
@@ -214,12 +224,6 @@ describe('Saved Secret native responsibility review through its real delete owne
                 nextCursor: null, recipients: [{ account: { kind: 'account', accountId: 'ready-recipient', firstName: null, lastName: null, username: null, avatarUrl: null }, envelopeStatus: 'missing',
                     readiness: { status: 'available', contentPublicKey: encodeBase64(targetEncryption.contentDataKey, 'base64'),
                         contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(targetEncryption.contentDataKey) } }] });
-            if (url.pathname === '/v1/artifacts' && init?.method === 'POST') {
-                const artifact = JSON.parse(String(init.body)) as ArtifactCreateRequest;
-                artifacts.push(artifact);
-                return Response.json({ ...artifact, ownerAccountId: accountId, access: 'owner', encryptionMode: 'e2ee',
-                    headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
-            }
             if (init?.method === 'POST') {
                 const body: unknown = JSON.parse(String(init.body));
                 writes.push({ path: url.pathname, body });

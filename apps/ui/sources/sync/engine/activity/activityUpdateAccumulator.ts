@@ -1,5 +1,11 @@
 import type { ApiEphemeralActivityUpdate } from '@/sync/api/types/apiTypes';
 import { activityInstanceKey } from '@/sync/domains/session/sessionAddress';
+import { createSessionRuntimeObservationSource, didSessionRuntimeObservationRecover, type SessionRuntimeObservationSource } from '@/sync/domains/session/sessionRuntimeObservation';
+
+export type ActivityUpdateFlushOptions = Readonly<{
+    sourceServerId?: string | null;
+    recoveryCandidateSessionIds?: ReadonlySet<string>;
+}>;
 
 type ActivityUpdateAccumulatorOptions = Readonly<{
     shouldContinue?: () => boolean;
@@ -10,6 +16,7 @@ type PendingActivityUpdate = Readonly<{
     update: ApiEphemeralActivityUpdate;
     shouldContinue: () => boolean;
     sourceServerId: string | null;
+    recoveryCandidate: boolean;
 }>;
 
 function normalizeSourceServerId(sourceServerId: string | null | undefined): string | null {
@@ -23,27 +30,43 @@ function buildScopedActivityUpdateKey(sessionId: string, sourceServerId: string 
 
 export class ActivityUpdateAccumulator {
     private pendingUpdates = new Map<string, PendingActivityUpdate>();
-    private lastEmittedStates = new Map<string, { active: boolean; thinking: boolean; activeAt: number }>();
     private timeoutId: ReturnType<typeof setTimeout> | null = null;
 
     constructor(
         private flushHandler: (
             updates: Map<string, ApiEphemeralActivityUpdate>,
-            options?: { sourceServerId?: string | null },
+            options?: ActivityUpdateFlushOptions,
         ) => void,
-        private debounceDelay: number = 500
+        private debounceDelay: number = 500,
+        private observations: SessionRuntimeObservationSource = createSessionRuntimeObservationSource(),
     ) {}
 
     addUpdate(update: ApiEphemeralActivityUpdate, options?: ActivityUpdateAccumulatorOptions): void {
         const sessionId = update.id;
         const sourceServerId = normalizeSourceServerId(options?.sourceServerId);
         const updateKey = buildScopedActivityUpdateKey(sessionId, sourceServerId);
-        const lastState = this.lastEmittedStates.get(updateKey);
+        const shouldContinue = options?.shouldContinue ?? (() => true);
+        if (!shouldContinue()) return;
+        const lastState = this.observations.read({ serverId: sourceServerId, sessionId });
         const thinking = update.thinking ?? false;
+        if (!this.observations.observe({ serverId: sourceServerId, sessionId }, {
+            active: update.active, thinking, activeAt: update.activeAt,
+            presence: update.active ? 'online' : update.activeAt,
+        })) return;
+        // Only a genuine scoped ephemeral can establish online presence after
+        // a durable attachment observation. Publication still requires the row
+        // to cross its canonical freshness boundary; this is only a candidate.
+        const recoveryCandidate = sourceServerId !== null && (
+            !lastState
+            || (update.active && lastState.presence !== 'online')
+            || didSessionRuntimeObservationRecover(lastState,
+                this.observations.read({ serverId: sourceServerId, sessionId }), Date.now())
+        );
         const pendingUpdate: PendingActivityUpdate = {
             update,
-            shouldContinue: options?.shouldContinue ?? (() => true),
+            shouldContinue,
             sourceServerId,
+            recoveryCandidate,
         };
 
         // Check if this is a critical timestamp update (more than half of disconnect timeout old)
@@ -54,7 +77,7 @@ export class ActivityUpdateAccumulator {
         const isSignificantChange = !lastState || 
             lastState.active !== update.active || 
             lastState.thinking !== thinking ||
-            isCriticalTimestamp;
+            isCriticalTimestamp || recoveryCandidate;
 
         if (isSignificantChange) {
             // Cancel any pending timeout
@@ -85,34 +108,37 @@ export class ActivityUpdateAccumulator {
 
     private flushPendingUpdates(): void {
         if (this.pendingUpdates.size > 0) {
-            const updatesToFlushBySourceServerId = new Map<string, Map<string, ApiEphemeralActivityUpdate>>();
+            const updatesToFlushBySourceServerId = new Map<string, {
+                updates: Map<string, ApiEphemeralActivityUpdate>;
+                recoveryCandidateSessionIds?: Set<string>;
+            }>();
             for (const [, pending] of this.pendingUpdates) {
                 if (pending.shouldContinue()) {
                     const sourceKey = pending.sourceServerId ?? '';
-                    const updatesForSource = updatesToFlushBySourceServerId.get(sourceKey) ?? new Map<string, ApiEphemeralActivityUpdate>();
-                    updatesForSource.set(pending.update.id, pending.update);
+                    const updatesForSource: {
+                        updates: Map<string, ApiEphemeralActivityUpdate>;
+                        recoveryCandidateSessionIds?: Set<string>;
+                    } = updatesToFlushBySourceServerId.get(sourceKey) ?? { updates: new Map<string, ApiEphemeralActivityUpdate>() };
+                    updatesForSource.updates.set(pending.update.id, pending.update);
+                    if (pending.recoveryCandidate) (updatesForSource.recoveryCandidateSessionIds ??= new Set()).add(pending.update.id);
                     updatesToFlushBySourceServerId.set(sourceKey, updatesForSource);
                 }
             }
 
-            for (const [sourceKey, updatesToFlush] of updatesToFlushBySourceServerId) {
+            for (const [sourceKey, group] of updatesToFlushBySourceServerId) {
+                const updatesToFlush = group.updates;
                 if (updatesToFlush.size > 0) {
                     const sourceServerId = sourceKey || null;
-                    if (sourceServerId) {
-                        this.flushHandler(updatesToFlush, { sourceServerId });
+                    if (sourceServerId || group.recoveryCandidateSessionIds?.size) {
+                        this.flushHandler(updatesToFlush, {
+                            ...(sourceServerId ? { sourceServerId } : {}),
+                            ...(group.recoveryCandidateSessionIds?.size ? { recoveryCandidateSessionIds: group.recoveryCandidateSessionIds } : {}),
+                        });
                     } else {
                         this.flushHandler(updatesToFlush);
                     }
                 }
 
-                // Update last emitted states for all flushed updates
-                for (const [sessionId, update] of updatesToFlush) {
-                    this.lastEmittedStates.set(buildScopedActivityUpdateKey(sessionId, sourceKey || null), {
-                        active: update.active,
-                        thinking: update.thinking ?? false,
-                        activeAt: update.activeAt
-                    });
-                }
             }
 
             // Clear pending updates
@@ -130,7 +156,7 @@ export class ActivityUpdateAccumulator {
 
     reset(): void {
         this.cancel();
-        this.lastEmittedStates.clear();
+        this.observations.clear();
     }
 
     flush(): void {

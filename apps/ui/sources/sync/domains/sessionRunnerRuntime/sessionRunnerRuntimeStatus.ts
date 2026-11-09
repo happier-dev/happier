@@ -1,4 +1,4 @@
-import { createStoredReadSchema } from '@happier-dev/protocol';
+import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import {
     SESSION_RUNNER_RUNTIME_METADATA_KEY,
     SessionRunnerRuntimeStateV1Schema,

@@ -5,7 +5,7 @@ vi.mock('@/text', async () => {
     return createTextModuleMock({ translate: (key) => key });
 });
 
-import type { LocalServicePublicPolicyV1, LocalServicePublicPreviewSnapshotV1 } from '@happier-dev/protocol';
+import type { LocalServicePublicPolicyV1, LocalServicePublicPreviewSnapshotV1 } from '@happier-dev/protocol/local/services/public/v1';
 
 import {
     applyLocalServicePublicPreviewSnapshot,

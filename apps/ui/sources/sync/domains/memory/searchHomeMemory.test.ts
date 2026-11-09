@@ -129,12 +129,12 @@ describe('searchHomeMemory', () => {
                 tier1DbPath: null, deepDbPath: null, tier1DbBytes: null, deepDbBytes: null }
                 : { v: 1, ok: true, hits: [{ ...createHomeSearchHit('same', 'Daemon match', 0.1), createdAtToMs: 30 }] });
         const result = await searchConversations({ serverId: home, accountId: 'account', machines: [{ id: 'one', online: true }],
-            concurrencyLimit: 2, homeSessions: true, mode: 'indexed',
+            homeSessions: true, mode: 'indexed',
             query: { v: 1, query: 'quartz', scope: { type: 'global' }, mode: 'auto' } });
         expect(result.hits).toHaveLength(1);
         expect(result.hits[0]).toMatchObject({ machineId: null, hit: { sessionId: 'same', summary: 'Home match' } });
         const daemon = await searchConversations({ serverId: home, accountId: 'account', machines: [{ id: 'one', online: true }],
-            concurrencyLimit: 2, homeSessions: false, mode: 'indexed',
+            homeSessions: false, mode: 'indexed',
             query: { v: 1, query: 'quartz', scope: { type: 'global' }, mode: 'auto', corpora: ['sessions'] } });
         const merged = mergeConversationSearchHits([...result.hits, ...daemon.hits]);
         expect(merged).toHaveLength(1);

@@ -6,6 +6,7 @@ import { IDBFactory, IDBObjectStore } from 'fake-indexeddb';
 import { Platform } from 'react-native';
 import { pendingDeliveryStatusV1ToPersistedFields, type PendingDeliveryStatusV1 } from '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1';
 import { PendingRequestedActionV1Schema } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
+import { buildSessionCreationCorrespondence } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import { AccountDisplayProfileV1Schema } from '@happier-dev/protocol/account/accountDisplayProfileV1';
 import { buildLocalOutboundAccountActor } from '@/sync/domains/messages/outgoingUserMessage';
 
@@ -192,6 +193,12 @@ describe('pendingQueueV2 requested-action replay', () => {
     const sessionId = 's_action_outbox';
     storage.getState().applySessions([buildSession({ sessionId, overrides: { metadata: {
       machineId: 'selected-machine-not-first-key', path: '/workspace', host: 'host', version: 'test',
+      sessionCreationCorrespondenceV1: buildSessionCreationCorrespondence({
+        identity: { callerCreationNamespace: 'approval-delivery', creationKey: sessionId },
+        recipe: { execution: { machineId: 'birth-machine', directory: { kind: 'path', path: '/workspace' } },
+          organization: { folderId: null, tagIds: [] },
+          agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } },
+      }),
     } } })]);
     const encryption = await createPendingQueueEncryption({ sessionId, seedByte: 3 });
     let firstBody = '';

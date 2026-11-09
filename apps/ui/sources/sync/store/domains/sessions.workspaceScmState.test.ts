@@ -37,11 +37,11 @@ function createHarness() {
         sessionRepositoryTreeExpandedPathsBySessionId: {},
         workspaceRepositoryTreeExpandedPathsByWorkspaceCacheKey: {},
         reviewCommentsDraftsBySessionId: {},
-        sessionActionDraftsByAddressKey: {},
         isDataReady: false,
         machines: {},
         machineDisplayById: {},
         sessionMessages: {},
+        sessionMessageToolVersion: 0,
         profile: { id: 'p1' },
         settings: {},
     };
@@ -102,14 +102,6 @@ function seedWorkspaceSessions(state: any, sessionIds: string[]) {
 describe('sessions domain: workspace-scoped SCM state', () => {
     beforeEach(() => {
         projectManager.clear();
-    });
-
-    it('exposes workspace-scoped touched paths without a sessionId', () => {
-        const { domain } = createHarness();
-
-        const scope = { serverId: 's', machineId: 'm1', rootPath: '/repo' };
-        domain.markWorkspaceScmTouchedPaths(scope, ['a.ts'], 10);
-        expect(domain.getWorkspaceScmTouchedPaths(scope)).toEqual(['a.ts']);
     });
 
     it('stores repository tree expansion by workspace cache key', () => {

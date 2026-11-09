@@ -13,9 +13,12 @@ import { IDBFactory } from 'fake-indexeddb';
 import type { ManagedEndpointSupervisor } from '@happier-dev/connection-supervisor';
 import { createSocketIoAckTimeoutError } from '@happier-dev/sync-client';
 import { PendingResetStartSetResultV1Schema } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
-import { SessionDisplayProjectionV1Schema, SessionMetadataTuplePatchV1Schema, openSessionOwnerDisplayEnvelopeV1, openSessionSharedDisplayEnvelopeV1, projectLegacySessionAccessCapabilitiesV1 } from '@happier-dev/protocol';
+import { SessionDisplayProjectionV1Schema, openSessionOwnerDisplayEnvelopeV1, openSessionSharedDisplayEnvelopeV1} from '@happier-dev/protocol/sessions';
+import { SessionMetadataTuplePatchV1Schema} from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { projectLegacySessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { SessionCurrentProjectionRecordV1Schema } from '@happier-dev/protocol/sessions/listing/response';
 import { SESSION_HUMAN_PRESENCE_VISIBLE_REPLACE_EVENT, SessionHumanPresenceVisibleReplaceV1Schema, SessionHumanPresenceVisibleReplaceResultV1Schema } from '@happier-dev/protocol/sessions';
+import { SESSION_CONSUMPTION_REPLACE_EVENT, SessionConsumptionReplaceV1Schema, SessionConsumptionReplaceAckV1Schema } from '@happier-dev/protocol/sessions';
 import { createSessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import type { ResumeSessionOptions } from '@/sync/ops/sessions';
@@ -461,6 +464,8 @@ describe('sync.sendMessage optimistic thinking', () => {
         storage.setState(initialStorageState, true);
         projectManager.clear();
         kvStore.clear();
+        const profile = await upsertServerProfile({ serverUrl: 'https://pending-refresh.example.test', name: 'Pending refresh' });
+        await setActiveServerId(profile.id);
         const activeScope = {
             serverId: getActiveServerSnapshot().serverId,
             accountId: 'sync-test-account',
@@ -957,6 +962,89 @@ describe('sync.sendMessage optimistic thinking', () => {
 
         sessionRpcSpy.mockRestore();
         requestSpy.mockRestore();
+    });
+
+    it.each(['plain', 'e2ee'] as const)('coalesces concurrent pending refreshes through the public Sync owner (%s)', async (encryptionMode) => {
+        const { sync } = await import('./sync');
+        const sessionId = `s_pending_refresh_concurrent_${encryptionMode}`;
+        storage.getState().applySessions([{
+            ...createSession({ sessionId }),
+            encryptionMode,
+            pendingVersion: 1,
+        }]);
+        let release!: () => void;
+        const responseGate = new Promise<void>((resolve) => { release = resolve; });
+        // HTTP boundary: keep the real owner resolution, snapshot reconciliation, and store.
+        const requestSpy = vi.spyOn(apiSocket, 'request').mockImplementation(async () => {
+            await responseGate;
+            return Response.json({ pending: [] });
+        });
+        sync.encryption = await Encryption.create(new Uint8Array(32).fill(9));
+        await sync.encryption.initializeSessions(new Map([[sessionId, null]]));
+        const refreshes = Array.from({ length: 10 }, () => sync.fetchPendingMessages(sessionId));
+        try {
+            await vi.waitFor(() => expect(requestSpy).toHaveBeenCalled());
+            await flushPendingOutboxRetryMicrotasks();
+            expect(requestSpy).toHaveBeenCalledTimes(1);
+
+            refreshes.push(sync.fetchPendingMessages(sessionId, undefined, { kind: 'execution_run', runId: 'run-a' }));
+            await vi.waitFor(() => expect(requestSpy).toHaveBeenCalledTimes(2));
+
+            storage.getState().applySessions([{
+                ...storage.getState().sessions[sessionId], pendingVersion: 2,
+            }]);
+            refreshes.push(sync.fetchPendingMessages(sessionId));
+            await vi.waitFor(() => expect(requestSpy).toHaveBeenCalledTimes(3));
+        } finally {
+            release();
+            await Promise.all(refreshes);
+        }
+        expect(storage.getState().sessionPending[sessionId]?.isLoaded).toBe(true);
+        await sync.fetchPendingMessages(sessionId);
+        expect(requestSpy).toHaveBeenCalledTimes(4);
+    });
+
+    it('shares scoped refreshes and withdraws their projection when the session changes server', async () => {
+        const sessionId = 's_pending_refresh_scoped';
+        const applied = await upsertServerProfile({ serverUrl: 'https://pending-applied.example.test', name: 'Applied' });
+        const scoped = await upsertServerProfile({ serverUrl: 'https://pending-scoped.example.test', name: 'Scoped' });
+        await setActiveServerId(applied.id);
+        const snapshot = getActiveServerSnapshot();
+        publishAppliedActiveServerSnapshot(snapshot);
+        storage.getState().activateProfileScope({ serverId: applied.id, accountId: 'sync-test-account' });
+        const { sync } = await import('./sync');
+        Reflect.set(sync, 'appliedServerTarget', snapshot);
+        Reflect.set(sync, 'serverID', 'sync-test-account');
+        storage.getState().applySessions([{
+            ...createSession({ sessionId }), serverId: scoped.id, encryptionMode: 'plain', pendingVersion: 1,
+        }]);
+        // Token-only plain Account: use the real scoped authority and transport resolution.
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: tokenForSub('scoped-refresh-account') });
+        let release!: () => void;
+        const gate = new Promise<void>(resolve => { release = resolve; });
+        runtimeFetchWithServerReachabilityMock.mockImplementation(async ({ url }: { url: string }) => {
+            if (url.endsWith('/v1/features')) return currentPendingInputFeaturesResponse();
+            await gate;
+            return Response.json({ pending: [] });
+        });
+        const pendingRequests = () => runtimeFetchWithServerReachabilityMock.mock.calls
+            .filter(([request]) => request.url.includes('/pending?'));
+        const refreshes = Array.from({ length: 10 }, () => sync.fetchPendingMessages(sessionId));
+        try {
+            await vi.waitFor(() => expect(pendingRequests().length).toBeGreaterThan(0));
+            await flushPendingOutboxRetryMicrotasks();
+            expect(pendingRequests()).toHaveLength(1);
+            storage.getState().applySessions([{
+                ...storage.getState().sessions[sessionId], serverId: applied.id,
+            }]);
+        } finally {
+            release();
+            await Promise.all(refreshes);
+        }
+        expect(storage.getState().sessionPending[sessionId]?.isLoaded).not.toBe(true);
+        vi.spyOn(apiSocket, 'request').mockResolvedValue(Response.json({ pending: [] }));
+        await sync.fetchPendingMessages(sessionId);
+        expect(storage.getState().sessionPending[sessionId]?.isLoaded).toBe(true);
     });
 
     it('reconciles a server-delivering row when its committed twin arrives without pending-changed', async () => {
@@ -2245,6 +2333,7 @@ describe('sync.sendMessage optimistic thinking', () => {
             expect.objectContaining({
                 sid: sessionId,
                 localId: expect.any(String),
+                usageTimingV1: { v: 1, minMs: null, maxMs: null },
             }),
             expect.anything(),
         );
@@ -2826,6 +2915,7 @@ describe('sync.sendMessage optimistic thinking', () => {
                 localId: 'p-retry',
                 sentFrom: 'retry',
                 messageRole: 'user',
+                usageTimingV1: { v: 1, minMs: null, maxMs: null },
             }),
             expect.anything(),
         );
@@ -3536,6 +3626,11 @@ installDisconnectedServerSocketBoundary((socket) => {
             const visible = SessionHumanPresenceVisibleReplaceV1Schema.parse(payload);
             return SessionHumanPresenceVisibleReplaceResultV1Schema.parse({ v: 1, ok: true,
                 admittedSessionIds: visible.sessionIds, ...('locations' in visible ? { admittedLocations: visible.locations } : {}) });
+        }
+        if (event === SESSION_CONSUMPTION_REPLACE_EVENT) {
+            const declaration = SessionConsumptionReplaceV1Schema.parse(payload);
+            return SessionConsumptionReplaceAckV1Schema.parse({ v: 1, ok: true,
+                liveSessionIds: declaration.liveSessionIds, durableSessionIds: declaration.durableSessionIds });
         }
         return accountTransport.ack(event, payload);
     });

@@ -19,7 +19,7 @@ const cache = getInstalledPluginReactNativeBundleCache();
 const { createBrowserPluginUiPersistentArtifactStore } = await import('@/sync/domains/plugins/ui/artifactByteCache.browser');
 const physicalStore = createBrowserPluginUiPersistentArtifactStore(persistence.caches);
 
-import { PluginProjectionV2Schema } from '@happier-dev/protocol';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { PluginAccountAvailabilityIntentReadResponseV1Schema } from '@happier-dev/protocol/plugins/availability';
 
 import { prepareWarmCacheEncryptionKey } from '@/sync/domains/state/warmCacheEncryptionKey';
@@ -143,6 +143,71 @@ describe('Account artifact-byte lifecycle', () => {
         } finally {
             replacePluginAccountAvailabilityProjection({ scope, snapshot: emptySnapshot });
             await pending;
+        }
+    });
+
+    it('shares one evaluation between concurrent mounts loading the same active content key', async () => {
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const { createPluginUiReactNativeInstalledArtifactLoad } = await import('@/sync/domains/plugins/ui/artifactAdoption');
+        const { createPluginUiCommonJsLoaderBackend } = await import('@/components/plugins/reactNative/commonJsLoaderBackend');
+        const { getInstalledPluginReactNativeModuleRegistry } = await import('@/components/plugins/reactNative/moduleRegistry');
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) throw new Error('Restored Account lifetime missing');
+        const pluginId = 'fixture.shared';
+        const bytes = new TextEncoder().encode('exports.renderSurface = () => null;');
+        const entry = 'react-native/panel/entry.cjs.bundle';
+        const artifactDigest = computePluginUiArtifactFileSetSha256DigestV1([{ relativePath: entry, bytes }]);
+        const artifactGraph = PluginUiArtifactsManifestEntryV2Schema.parse({
+            artifactId: 'panel', tier: 'reactNative', entry,
+            files: [{ relativePath: entry, digest: computePluginUiArtifactSha256DigestV1(bytes), byteSize: bytes.byteLength }],
+            digest: artifactDigest, builtWith: { bundler: 'esbuild', version: '0.27.2' },
+            executable: { exports: ['renderSurface'] }, hostUiApiRange: '^1.0.0',
+        });
+        await cache.writePersistentArtifact({
+            persistentIdentity: { accountScope: scope, artifactDigest }, bytes, entryRelativePath: entry,
+            files: [{ relativePath: entry, digest: computePluginUiArtifactSha256DigestV1(bytes), byteSize: bytes.byteLength, bytes }],
+        });
+        const response = PluginAccountAvailabilityIntentReadResponseV1Schema.parse({
+            availabilityCursor: 2, packageAssets: [], uiArtifacts: [],
+            hostingCapability: { enabled: false },
+            intent: { pluginId, desiredVersion: '1.2.3', enabled: true, offlineUiHosting: 'disabled', writableCollections: [], revision: 'intent-1' },
+            release: {
+                ref: { pluginId, version: '1.2.3' }, archiveDigestSha256: `sha256:${'a'.repeat(64)}`,
+                normalizedManifest: { schemaVersion: 2, id: pluginId, version: '1.2.3', displayName: 'Shared fixture',
+                    engines: { happier: '^1.0.0' }, runtime: { apiVersion: 1 }, contributes: {} },
+                collectionContracts: [],
+                uiSlots: [{ contributionId: 'panel', artifactId: 'panel', tier: 'reactNative', platform: 'web', artifactDigest, hostUiApiRange: '^1.0.0' }],
+                packageAssetArchive: { archiveDigestSha256: `sha256:${'d'.repeat(64)}`, resources: [] },
+            },
+        });
+        replacePluginAccountAvailabilityProjection({ scope, snapshot: {
+            availabilityCursor: 2, intentReads: [{ pluginId, response }], materializations: [], snapshots: [],
+        } });
+        // The projection reconciler owns this digest for the current scope.
+        const registry = getInstalledPluginReactNativeModuleRegistry();
+        registry.reconcileActiveCacheKeys([artifactDigest]);
+        const commonJs = createPluginUiCommonJsLoaderBackend();
+        let evaluations = 0;
+        const backend = { ...commonJs, loadInstalledBundle: async (input: Parameters<NonNullable<typeof commonJs.loadInstalledBundle>>[0]) => {
+            evaluations += 1;
+            return commonJs.loadInstalledBundle!(input);
+        } };
+        const mount = () => createPluginUiReactNativeInstalledArtifactLoad({
+            reader: readPluginAccountAvailability(scope), accountLifetime: lifetime, artifactGraph, backend,
+            identity: { pluginId, contributionId: 'panel', artifactId: 'panel', platform: 'web', artifactDigest },
+            moduleReference: undefined, hostPlatform: 'web', isCurrent: () => true,
+        })(new AbortController().signal);
+        try {
+            const [first, second] = await Promise.all([mount(), mount()]);
+            expect({ evaluations, sameModule: first === second }).toEqual({ evaluations: 1, sameModule: true });
+            // Neither mount committed a render (the first render crashed): the
+            // module is not retained, so Retry evaluates a fresh namespace.
+            const retried = await mount();
+            expect({ evaluations, retainedUncommitted: registry.read(artifactDigest) !== null, fresh: retried !== first })
+                .toEqual({ evaluations: 2, retainedUncommitted: false, fresh: true });
+        } finally {
+            registry.reconcileActiveCacheKeys([]);
+            replacePluginAccountAvailabilityProjection({ scope, snapshot: emptySnapshot });
         }
     });
 

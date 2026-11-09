@@ -1,5 +1,6 @@
 import {
     ActionOperationSnapshotV1Schema,
+    canAdvanceActionOperationSnapshotV1,
     projectActionOperationSnapshotForV1Reader,
     type ActionOperationGetV1Response,
     type ActionOperationRevisionEphemeralV1,
@@ -15,6 +16,9 @@ import {
     actionOperationAddressKey,
     type QualifiedActionOperation,
 } from './qualifiedActionOperation';
+
+type PendingPushRefresh = Readonly<{ shouldContinue: () => boolean; promise: Promise<void> }>;
+const pushRefreshes = new WeakMap<ActionOperationStore, Map<string, PendingPushRefresh>>();
 
 export async function consumeActionOperationSnapshotPush(params: Readonly<{
     update: ActionOperationRevisionEphemeralV1;
@@ -47,6 +51,9 @@ export async function consumeActionOperationSnapshotPush(params: Readonly<{
     ) return;
 
     const store = params.store ?? actionOperationStore;
+    const address = actionOperationAddressKey({ serverId: sourceServerId, operationId: snapshot.operationId });
+    const retained = store.getSnapshot().operationsByKey.get(address)?.snapshot;
+    if (retained && !canAdvanceActionOperationSnapshotV1(retained, snapshot)) return;
     // Reboot and successful Software Apply publish full Account-scoped facts
     // before the target daemon can disappear. Other notifications still need
     // the ordinary fresh read to supply their current domain facts.
@@ -59,7 +66,21 @@ export async function consumeActionOperationSnapshotPush(params: Readonly<{
         store.mergeSnapshots({ serverId: sourceServerId, snapshots: [snapshot] });
     }
 
-    await refreshActionOperationSnapshot({ ...params, operation: { serverId: sourceServerId, snapshot } });
+    let reads = pushRefreshes.get(store);
+    if (!reads) { reads = new Map(); pushRefreshes.set(store, reads); }
+    const key = JSON.stringify([address, snapshot.scope.accountId, snapshot.scope.machineId,
+        snapshot.scope.sessionId, snapshot.actionId, snapshot.revision]);
+    const pending = reads.get(key);
+    if (pending?.shouldContinue()) { await pending.promise; return; }
+    // Join copies of this notification only. A new revision retains its fresh
+    // Machine admission; a retired Account observer cannot own a new read.
+    const promise = refreshActionOperationSnapshot({ ...params, store,
+        operation: { serverId: sourceServerId, snapshot } }).finally(() => {
+        if (reads.get(key)?.promise === promise) reads.delete(key);
+        if (reads.size === 0 && pushRefreshes.get(store) === reads) pushRefreshes.delete(store);
+    });
+    reads.set(key, { shouldContinue, promise });
+    await promise;
 }
 
 /** Both notifications and terminal exit re-read the daemon through this admission path. */

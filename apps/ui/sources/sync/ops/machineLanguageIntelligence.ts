@@ -21,6 +21,7 @@ import { randomUUID } from '@/platform/randomUUID';
 import { isActionAccountScopeChangedError } from '@/sync/domains/scope/actionAccountScopeError';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { FilesystemEffectFailureDetailsV1Schema } from '@happier-dev/protocol/actions/filesystemActionFamily';
 
 export type MachineLanguageIntelligenceOptions = Readonly<{ serverId?: string | null; accountId?: string | null; signal?: AbortSignal;
     /** Releases only this mounted caller's interest, never its durable approval. */
@@ -62,9 +63,12 @@ export function machineLanguageIntelligenceRestart(machineId: string, input: Lan
 /** File-page commands and tree rename re-enter the same present-user Action owner. */
 export async function machineLanguageIntelligenceApplyAction(machineId: string, input: DaemonLspApplyRequest, options?: MachineLanguageIntelligenceOptions): Promise<DaemonLspApplyResponse | ActionExecuteFailure> {
     const payload = DaemonLspApplyRequestSchema.parse(input);
-    const actionId = payload.operation.kind === 'rename' ? 'code.rename.apply' : payload.operation.kind === 'fileRename' ? 'code.file.rename.apply' : 'code.codeAction.apply';
+    const actionId = payload.operation.kind === 'rename' ? 'code.rename.apply' : payload.operation.kind === 'fileRename' ? 'code.file.rename.apply'
+        : payload.operation.kind === 'format' ? 'code.format.apply' : payload.operation.kind === 'organizeImports' ? 'code.imports.organize' : 'code.codeAction.apply';
+    const target = { machineId, rootPath: payload.rootPath, path: payload.path, ...(payload.languageId ? { languageId: payload.languageId } : {}) };
     const actionInput = payload.operation.kind === 'codeAction' ? { machineId, ...payload }
-        : { machineId, rootPath: payload.rootPath, path: payload.path, ...(payload.languageId ? { languageId: payload.languageId } : {}), files: payload.operation.files };
+        : payload.operation.kind === 'format' || payload.operation.kind === 'organizeImports'
+            ? { ...target, operation: { kind: 'apply', files: payload.operation.files } } : { ...target, files: payload.operation.files };
     const serverId = options?.serverId ?? captureActiveServerAccountScopeLifetime()?.scope.serverId;
     if (!serverId) return { ok: false, errorCode: 'action_home_not_found', error: 'action_home_not_found' };
     // Like replace: the Home admits the original Account's write to this exact Machine.
@@ -98,8 +102,17 @@ export async function machineLanguageIntelligenceApplyAction(machineId: string, 
         return { ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown' };
     } finally { account.dispose(); }
 }
-/** File-page rename and quick-fix previews read through the same safe Actions agents use (disk text, hash-guarded). */
-export type CodeIntelligencePreviewActionId = 'code.rename.preview' | 'code.file.rename.preview' | 'code.codeActions.list';
+/** File-page semantic previews read through the same Actions agents use (disk text, hash-guarded). */
+export type CodeIntelligencePreviewActionId = 'code.rename.preview' | 'code.file.rename.preview' | 'code.codeActions.list'
+    | 'code.format.apply' | 'code.imports.organize';
+
+function projectFilesystemCustodyFailure(failure: ActionExecuteFailure) {
+    if (failure.errorCode !== 'filesystem_identity_custody_unavailable') return null;
+    const details = FilesystemEffectFailureDetailsV1Schema.safeParse(failure.details);
+    return { status: 'error' as const, errorCode: 'filesystem_identity_custody_unavailable' as const,
+        ...(details.success ? { details: details.data } : {}) };
+}
+
 export async function machineLanguageIntelligencePreviewAction(machineId: string, actionId: CodeIntelligencePreviewActionId,
     input: Readonly<Record<string, unknown>>, options?: MachineLanguageIntelligenceOptions,
 ): Promise<LanguageIntelligenceQueryResult | Readonly<{ status: 'refused'; errorCode: string }>> {
@@ -108,7 +121,8 @@ export async function machineLanguageIntelligencePreviewAction(machineId: string
         surface: 'ui', authority: 'present_user', ...(options?.serverId ? { serverId: options.serverId } : {}),
         ...(options?.accountId ? { expectedAccountId: options.accountId } : {}), ...(options?.signal ? { signal: options.signal } : {}),
     });
-    if (!response.ok) return { status: 'refused', errorCode: response.errorCode ?? 'failed' };
+    if (!response.ok) return projectFilesystemCustodyFailure(response)
+        ?? { status: 'refused', errorCode: response.errorCode ?? 'failed' };
     const parsed = DaemonLspQueryResponseSchema.safeParse(response.result);
     return parsed.success ? parsed.data : { status: 'unavailable', reason: 'invalid_response' };
 }
@@ -119,7 +133,8 @@ export async function machineLanguageIntelligenceRestartAction(machineId: string
         surface: 'ui', authority: 'present_user', ...(options?.serverId ? { serverId: options.serverId } : {}),
         ...(options?.accountId ? { expectedAccountId: options.accountId } : {}), ...(options?.signal ? { signal: options.signal } : {}),
     });
-    if (!response.ok) return { status: 'unavailable', reason: response.errorCode === 'update_required' ? 'update_required' : 'session_unavailable' };
+    if (!response.ok) return projectFilesystemCustodyFailure(response)
+        ?? { status: 'unavailable', reason: response.errorCode === 'update_required' ? 'update_required' : 'session_unavailable' };
     const parsed = DaemonLspRestartResponseSchema.safeParse(response.result);
     return parsed.success ? parsed.data : { status: 'unavailable', reason: 'invalid_response' };
 }

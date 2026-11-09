@@ -76,14 +76,16 @@ export function createWidgetInputActionDepsV1(account: LazyActionAccountContext 
     const executor = createActionExecutor({ ...deps, widgetConnectedAccountOptions });
     type Request = Parameters<WidgetActionInputResolverV1['resolve']>[0];
     const descriptors = new WeakMap<Request, WidgetCandidate>();
-    // The resolver creates a new Request for each resolution. Group context and
-    // descriptor admission consume that same placement, never another invocation's
-    // authority or a read captured before the person's approval.
+    // Group context and descriptor resolution consume the executor's admitted
+    // placement. Direct resolver calls admit once here; no read survives another
+    // invocation or the person's approval.
     const surfaceAdmissions = new WeakMap<Request, ReturnType<typeof readWidgetActionSurfaceAdmissionV1>>();
     const readSurfaceAdmission = (request: Request) => {
         let pending = surfaceAdmissions.get(request);
         if (!pending) {
-            pending = readWidgetActionSurfaceAdmissionV1(deps, request.ref.surface, { ...request.context, signal: request.signal });
+            pending = request.admittedSurfaceRead
+                ? Promise.resolve({ ok: true as const, read: request.admittedSurfaceRead })
+                : readWidgetActionSurfaceAdmissionV1(deps, request.ref.surface, { ...request.context, signal: request.signal });
             surfaceAdmissions.set(request, pending);
         }
         return pending;
@@ -180,6 +182,12 @@ export function createWidgetInputActionDepsV1(account: LazyActionAccountContext 
                 const descriptor = describeAuthoredWidgetDefinitionV1(authored, reference);
                 const targetDeclaration = readWidgetInputTargetV1(descriptor);
                 if (targetDeclaration.kind === 'invalid') return null;
+                // Self-contained bodies carry their own input metadata. Only
+                // Resource consumers need declarations from a Machine registry.
+                if (!descriptor.resources?.length) {
+                    descriptors.set(request, descriptor);
+                    return descriptor;
+                }
                 const targetInput = resolveConfiguredWidgetTargetInputV1({ instance: request.instance, descriptor,
                     providedContext: await readProvidedContext(request), viewerValues: {} });
                 const selected = targetDeclaration.kind === 'session' && targetInput.status === 'ready'

@@ -1,4 +1,4 @@
-import type { WindowsRemoteSessionLaunchMode } from '@happier-dev/protocol';
+import type { WindowsRemoteSessionLaunchMode } from '@happier-dev/protocol/sessions/metadata/windowsRemoteSessionLaunchMode';
 
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { MachineMetadata } from '@/sync/domains/state/storageTypes';

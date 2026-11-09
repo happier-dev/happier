@@ -9,7 +9,7 @@ export type RepositoryDirectoryEntry = {
 };
 
 export type ListRepositoryDirectoryEntriesResult =
-    | { ok: true; entries: RepositoryDirectoryEntry[]; gitIgnoreAvailable?: boolean }
+    | { ok: true; entries: RepositoryDirectoryEntry[]; gitIgnoreAvailable?: boolean; truncated?: boolean }
     | { ok: false; error: string };
 
 export function sortRepositoryDirectoryEntries(entries: RepositoryDirectoryEntry[]): RepositoryDirectoryEntry[] {

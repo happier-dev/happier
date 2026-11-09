@@ -41,6 +41,53 @@ describe('fetchAndApplySessionOrganizationSnapshot', () => {
         getStorage().getState().clearSessionOrganizationForServer('server-a');
     });
 
+    it('does not treat a missing-route compatibility snapshot as complete assignment evidence', async () => {
+        const { getStorage } = await import('@/sync/domains/state/storageStore');
+        const { fetchAndApplySessionOrganizationSnapshot } = await import('./fetchSessionOrganizationSnapshot');
+        const { buildSessionOrganizationSessionKey } = await import('@/sync/domains/session/organization/keys');
+        getStorage().getState().applySessionFolderAssignments('server-a', [{ sessionId: 'retained', folderId: 'prior' }]);
+        mocks.serverFetch.mockResolvedValueOnce(new Response(JSON.stringify({ error: 'Not found' }), {
+            status: 404, headers: { 'Content-Type': 'application/json' },
+        }));
+        await fetchAndApplySessionOrganizationSnapshot({ credentials: { token: 'token-a', secret: 'secret-a' },
+            serverId: 'server-a', request: { includeAllFolderAssignments: true, assignmentSessionIds: ['retained', 'unknown'] } });
+        expect(getStorage().getState().sessionOrganizationFolderAssignmentsCompleteByServerId['server-a']).not.toBe(true);
+        expect(getStorage().getState().sessionOrganizationFolderAssignmentsBySessionKey[
+            buildSessionOrganizationSessionKey('server-a', 'retained')]).toEqual({ sessionId: 'retained', folderId: 'prior' });
+        expect(getStorage().getState().sessionOrganizationFolderAssignmentsBySessionKey[
+            buildSessionOrganizationSessionKey('server-a', 'unknown')]).toBeUndefined();
+        mocks.serverFetch.mockResolvedValueOnce(jsonResponse({ snapshot: {
+            schemaVersion: 1, version: 1, pins: [], folders: [], folderAssignments: [], tags: [],
+            tagAssignments: [], orderEntries: [], labels: [],
+        } }));
+        await fetchAndApplySessionOrganizationSnapshot({ credentials: { token: 'token-a', secret: 'secret-a' },
+            serverId: 'server-a', request: { includeAllFolderAssignments: true } });
+        expect(getStorage().getState().sessionOrganizationFolderAssignmentsCompleteByServerId['server-a']).toBe(true);
+    });
+
+    it('publishes the store only for snapshot content, not around each fetch', async () => {
+        const { getStorage } = await import('@/sync/domains/state/storageStore');
+        const { countStoreNotifications } = await import('@/dev/testkit/performance/counts');
+        const { fetchAndApplySessionOrganizationSnapshot } = await import('./fetchSessionOrganizationSnapshot');
+        const snapshot = { schemaVersion: 1, version: 7, pins: [], folders: [], folderAssignments: [], tags: [],
+            tagAssignments: [], orderEntries: [], labels: [] };
+        const credentials = { token: 'token-a', secret: 'secret-a' };
+        mocks.serverFetch.mockResolvedValueOnce(jsonResponse({ snapshot }));
+        await fetchAndApplySessionOrganizationSnapshot({ credentials, serverId: 'server-a' });
+        const notifications = countStoreNotifications(getStorage());
+        try {
+            mocks.serverFetch.mockResolvedValueOnce(jsonResponse({ snapshot }));
+            await fetchAndApplySessionOrganizationSnapshot({ credentials, serverId: 'server-a' });
+            mocks.serverFetch.mockResolvedValueOnce(new Response(JSON.stringify({ error: 'boom' }), {
+                status: 500, headers: { 'Content-Type': 'application/json' },
+            }));
+            await expect(fetchAndApplySessionOrganizationSnapshot({ credentials, serverId: 'server-a' })).rejects.toThrow();
+            expect(notifications.read()).toEqual([]);
+        } finally {
+            notifications.stop();
+        }
+    });
+
     it('opens encrypted display envelopes before applying snapshots', async () => {
         const { getStorage } = await import('@/sync/domains/state/storageStore');
         const { prepareSessionOrganizationDisplayEnvelope } = await import('./sessionOrganizationDisplayEnvelope');

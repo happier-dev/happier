@@ -3,7 +3,7 @@ import { getPermissionFooterCopy } from '@/agents/catalog/permissionUiCopy';
 import { parseParenIdentifier } from "@happier-dev/session-core/tools";
 import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import type { SessionPermissionRespondRpcParamsV1 } from '@happier-dev/protocol';
+import type { SessionPermissionRespondRpcParamsV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 import { NATIVE_TOOL_APPROVAL_ONCE_REQUEST_SOURCE } from '@happier-dev/protocol/sessions/permissions/v1';
 
 /**
@@ -12,9 +12,9 @@ import { NATIVE_TOOL_APPROVAL_ONCE_REQUEST_SOURCE } from '@happier-dev/protocol/
  * (`respondToSessionPermission`) both go through this one owner, so an answer
  * means the same provider decision wherever the user gave it.
  *
- * Richer footer-only grants (all edits, shell sub-command rules, exec-policy
- * amendments, stop) stay with the footer; they are not part of this shared
- * vocabulary.
+ * Richer request choices (all edits, shell sub-command rules, exec-policy
+ * amendments, stop) are projected by sessionPermissionChoices for the
+ * transcript and notch; they are not part of this three-answer API vocabulary.
  */
 export type SessionPermissionAnswer = 'allowOnce' | 'allowForSession' | 'deny';
 

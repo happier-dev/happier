@@ -96,6 +96,14 @@ describe('UI retained command output Actions', () => {
         expect(await createDefaultActionExecutor().execute('projects.execution.output.copy', input, context))
             .toEqual({ ok: true, result: { kind: 'copied', output: gapOutput } });
         expect(boundary.clipboard).toHaveBeenLastCalledWith('\r\n[Output truncated]\r\n�� 😀');
+        const selectedRequest = { ...input, byteOffset: 5, selection: { kind: 'bytes', endByteOffset: 9 } };
+        boundary.machine.mockResolvedValueOnce({ kind: 'found', operation }).mockResolvedValueOnce(gapOutput);
+        boundary.clipboard.mockResolvedValueOnce(true);
+        expect(await createDefaultActionExecutor().execute('projects.execution.output.copy', selectedRequest, context))
+            .toMatchObject({ ok: true, result: { kind: 'copied', selection: {
+                request: selectedRequest, text: '😀', coverage: { complete: true, gaps: [] },
+            } } });
+        expect(boundary.clipboard).toHaveBeenLastCalledWith('😀');
         boundary.machine.mockResolvedValueOnce({ kind: 'found', operation }).mockResolvedValueOnce(gapOutput);
         boundary.clipboard.mockRejectedValueOnce(new Error('Native clipboard unavailable'));
         expect(await createDefaultActionExecutor().execute('projects.execution.output.copy', input, context))

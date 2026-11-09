@@ -93,7 +93,7 @@ async function setup(mode: 'plain' | 'e2ee', connected = true, synchronized = tr
         getSessionContext: () => null, randomBytes: length => new Uint8Array(length).fill(3) });
     // A different app produced the persisted draft; the approving app has no replica or configured Sync runtime.
     const values = new Map<string, string>();
-    const author = createSessionDraftRepository({ storage: { getString: key => values.get(key), set: (key, value) => { values.set(key, value); },
+    const author = createSessionDraftRepository({ storage: { getString: key => values.get(key), getAllKeys: () => [...values.keys()], set: (key, value) => { values.set(key, value); },
         delete: key => { values.delete(key); } }, scope: owner.scope, cipher, syncEnabled: false });
     author.writeNewSessionDraft({ scope: owner.scope, draftId, materializationIntent: 'userEdit', patch: { text: 'FIX73 owned draft' } });
     record = { address, revision: 1, createdAt: 1, updatedAt: 1,

@@ -1,4 +1,4 @@
-import type { MachineLiveStreamCodecIdV1 } from '@happier-dev/protocol';
+import type { MachineLiveStreamCodecIdV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/codecsV1';
 
 export type LiveStreamPlayerPlatform = 'web' | 'native' | 'desktop';
 

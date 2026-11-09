@@ -1,6 +1,6 @@
 import type { AcpConfigOption } from '@/sync/domains/sessionControl/configOptionsControl';
 import type { PreflightModelList } from '@/sync/domains/models/modelOptions';
-import { ProviderModelDescriptorV1Schema } from '@happier-dev/protocol/models/descriptor';
+import { AgentProbeModelSchema } from '@happier-dev/protocol/capabilities';
 
 export function parsePreflightModelListFromProbeModelsResult(raw: unknown): PreflightModelList | null {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
@@ -14,14 +14,14 @@ export function parsePreflightModelListFromProbeModelsResult(raw: unknown): Pref
         availableModels: modelsRaw
             .filter((m): m is Record<string, unknown> => Boolean(m) && typeof m === 'object' && typeof m.id === 'string' && typeof m.name === 'string')
             .flatMap((m) => {
-                const descriptor = ProviderModelDescriptorV1Schema.safeParse({ id: m.id, name: m.name, capabilities: m.capabilities, costTier: m.costTier });
+                const descriptor = AgentProbeModelSchema.safeParse({ id: m.id, name: m.name, capabilities: m.capabilities, costTier: m.costTier });
                 if (!descriptor.success) return [];
                 return [{
                 id: String(m.id),
                 name: String(m.name),
                 ...(typeof m.description === 'string' ? { description: m.description } : {}),
                 ...(typeof m.extendedContextModelId === 'string' && m.extendedContextModelId.trim().length > 0
-                    ? { extendedContextModelId: m.extendedContextModelId.trim() }
+                    ? { extendedContextModelId: m.extendedContextModelId }
                     : {}),
                 ...(Array.isArray(m.modelOptions) && m.modelOptions.length > 0
                     ? { modelOptions: m.modelOptions as readonly AcpConfigOption[] }

@@ -1,7 +1,8 @@
 import type {
-    SessionRunnerProcessIdentityV2,
+    SessionRunnerProcessIdentityV2} from '@happier-dev/protocol/sessions/control/sessionRunnerRuntimeV2';
+import type {
     SessionRunnerRuntimeStateV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/control/sessionRunnerRuntimeV1';
 
 export type SessionRunnerRuntimeStatusIdentity = Readonly<{
     serverId: string;

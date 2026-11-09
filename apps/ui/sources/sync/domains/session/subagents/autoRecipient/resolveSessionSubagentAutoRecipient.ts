@@ -1,4 +1,4 @@
-import type { ParticipantRecipientV1 } from '@happier-dev/protocol';
+import type { ParticipantRecipientV1 } from '@happier-dev/protocol/messages/structured/participantMessageV1';
 
 import type { Message, ToolCall } from "@happier-dev/session-core/messages";
 import type { Session } from '@/sync/domains/state/storageTypes';

@@ -1,7 +1,7 @@
 import type { Metadata } from '@happier-dev/session-core/state';
 import { publishUiSessionStateFieldToMetadata } from './publishField';
 
-export type AcpConfigOptionOverrideValueId = string;
+export type AcpConfigOptionOverrideValueId = string | null;
 
 export async function publishAcpConfigOptionOverrideToMetadata(params: {
     sessionId: string;

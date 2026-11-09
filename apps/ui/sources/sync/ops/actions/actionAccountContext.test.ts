@@ -9,10 +9,13 @@ import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { captureActionAccountContext, captureLazyActionAccountContext } from './actionAccountContext';
 import { Encryption } from '@/sync/encryption/encryption';
 import { ArtifactEncryption } from '@/sync/encryption/artifactEncryption';
+import { openArtifactPrivateRevisionMetadata, sealArtifactPrivateRevisionMetadata } from '@/sync/domains/artifacts/accountArtifactEnvelope';
 import { createDeferred } from '@/dev/testkit';
 import { encodeBase64, decodeBase64 } from '@/encryption/base64';
 import { ed25519, x25519 } from '@noble/curves/ed25519';
-import { computeContentPublicKeyFingerprint, openEncryptedDataKeyEnvelopeV1, signAccountContentKeyBindingV1 } from '@happier-dev/protocol';
+import { computeContentPublicKeyFingerprint} from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
+import { openEncryptedDataKeyEnvelopeV1} from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { signAccountContentKeyBindingV1 } from '@happier-dev/protocol/crypto/accountContentKeyBindingV1';
 import { ArtifactAccessActionOutputSchemasV1, ArtifactRecipientKeyEnvelopeCommitInputV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
@@ -22,6 +25,7 @@ import NativeAbortController from 'abort-controller';
 import { createArtifact as createArtifactApi, fetchArtifact as fetchArtifactApi } from '@/sync/api/artifacts/apiArtifacts';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 
 // Collect the real Action graph outside the finite operation's deadline.
 const { withDefaultActionExecuteContext } = await import('./defaultActionExecutor');
@@ -144,6 +148,18 @@ it('retains original Account-only cleanup custody after user cancellation, but n
     } finally { account.dispose(); }
 });
 
+it('is a released reader only while no invocation holds its credential watch', async () => {
+    const account = await captureLazyActionAccountContext(homes.homes.a!.id);
+    try {
+        expect(account.accountLifetime.isReleased?.()).toBe(false);
+        account.dispose();
+        expect(account.accountLifetime.isReleased?.()).toBe(true);
+        expect(account.accountLifetime.isCurrent()).toBe(true);
+        await account.runPrepared(async () => { expect(account.accountLifetime.isReleased?.()).toBe(false); });
+        expect(account.accountLifetime.isReleased?.()).toBe(true);
+    } finally { account.dispose(); }
+});
+
 it.each(['a', 'e'] as const)('retains captured Account authority through a same-Account bearer refresh (%s)', async homeKey => {
     const home = homes.homes[homeKey]!;
     const account = await captureLazyActionAccountContext(home.id);
@@ -151,6 +167,7 @@ it.each(['a', 'e'] as const)('retains captured Account authority through a same-
     account.accountLifetime.onRetire(retired);
     const refreshed = { ...account.credentials, token: `e30.${Buffer.from(JSON.stringify({ sub: account.accountId,
         jti: 'newer-account-bearer' })).toString('base64url')}.signature` };
+    const logged = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
         expect(await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.id }, account.credentials)).toBe(true);
         expect(await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.id }, refreshed)).toBe(true);
@@ -159,8 +176,39 @@ it.each(['a', 'e'] as const)('retains captured Account authority through a same-
         // Prepared approvals release listeners while idle. Their re-admission must
         // use the same credential-continuity rule as the live lifetime watcher.
         account.dispose();
+        expect(logged).toHaveBeenCalledWith('[accountEncryptionCurrentness] observation ' + JSON.stringify({ event: 'action_capture_disposed' }));
+        expect(account.accountLifetime.isCurrent()).toBe(true);
         await expect(account.runPrepared(async () => (await account.request('/v1/account/encryption')).status)).resolves.toBe(200);
         expect(account.credentials).not.toEqual(refreshed);
+    } finally { account.dispose(); logged.mockRestore(); }
+});
+
+it.each(['removed', 'switched', 'switched-and-back'] as const)('a released reader stops reporting current after its Account leaves the Home: %s', async change => {
+    const home = homes.homes.a!;
+    const account = await captureLazyActionAccountContext(home.id);
+    const other = { token: createAccountTokenForTests('account-b') };
+    try {
+        const original = account.credentials;
+        account.dispose();
+        expect(account.accountLifetime.isCurrent()).toBe(true);
+        if (change === 'removed') await TokenStorage.removeCredentialsForServerUrl(home.serverUrl, { serverId: home.id });
+        else expect(await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.id }, other)).toBe(true);
+        if (change === 'switched-and-back') expect(await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.id }, original)).toBe(true);
+        expect(account.accountLifetime.isCurrent()).toBe(false);
+        expect(account.accountOnlyLifetime.isCurrent()).toBe(false);
+        await expect(account.runPrepared(async () => 'forbidden')).rejects.toMatchObject({ code: 'action_account_scope_changed' });
+    } finally { account.dispose(); }
+});
+
+it('a released reader stays current through a same-Account token refresh', async () => {
+    const home = homes.homes.a!;
+    const account = await captureLazyActionAccountContext(home.id);
+    try {
+        account.dispose();
+        const refreshed = { ...account.credentials, token: account.credentials.token.replace(/\.[^.]*$/, '.refreshed-signature') };
+        expect(await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.id }, refreshed)).toBe(true);
+        expect(account.accountLifetime.isCurrent()).toBe(true);
+        expect(account.accountLifetime.isReleased?.()).toBe(true);
     } finally { account.dispose(); }
 });
 
@@ -182,6 +230,30 @@ it.each(['account', 'keys', 'authority', 'removed'] as const)('retires captured 
             retired: retired.mock.calls.length }).toEqual({ current: false, cleanup: false, retired: 1 });
         await expect(account.runPrepared(async () => 'forbidden')).rejects.toMatchObject({ code: 'action_account_scope_changed' });
     } finally { account.dispose(); }
+});
+
+it.each([
+    'workspace.sync.conflict.resolve', 'workspace.sync.relationship.create',
+    'workspace.sync.relationship.terminate', 'workspace.sync.relationship.disable',
+    'workspace.sync.relationship.enable', 'workspace.sync.relationship.flush',
+] as const)('keeps the declared %s effect receipt after credential retirement while refusing new reads', async actionId => {
+    const home = homes.homes.a!;
+    const account = await captureLazyActionAccountContext(home.id);
+    const committed = createDeferred<void>();
+    const response = createDeferred<void>();
+    const receipt = { v: 1, committed: true };
+    const pending = account.runPrepared(async () => {
+        committed.resolve();
+        await response.promise;
+        return receipt;
+    }, getActionSpec(actionId).sideEffectClass);
+    try {
+        await committed.promise;
+        await TokenStorage.removeCredentialsForServerUrl(home.serverUrl, { serverId: home.id });
+        response.resolve();
+        await expect(pending).resolves.toBe(receipt);
+        await expect(account.runPrepared(async () => 'new read')).rejects.toMatchObject({ code: 'action_account_scope_changed' });
+    } finally { response.resolve(); account.dispose(); }
 });
 
 it('withholds a retained read after intent abort while its Account-only cleanup still commits', async () => {
@@ -392,15 +464,23 @@ describe('captureLazyActionAccountContext encryption on demand', () => {
         }
     });
 
-    it.each([false, true])('preserves the committed grant and fresh-read recovery when recipient preparation fails: %s', async preparationFails => {
+    it.each([false, true])('prepares Team recipient keys for current and retained content without losing committed grants on preparation failure: %s', async preparationFails => {
         const encryption = await Encryption.create(new Uint8Array(32).fill(7));
         const dataKey = new Uint8Array(32).fill(52);
         const codec = new ArtifactEncryption(dataKey);
         const dataEncryptionKey = encodeBase64(await encryption.encryptEncryptionKey(dataKey));
         const artifactId = '11111111-1111-4111-8111-111111111111';
+        const provenanceDataKey = new Uint8Array(32).fill(55);
+        const provenanceDataEncryptionKey = encodeBase64(await encryption.encryptEncryptionKey(provenanceDataKey));
+        const provenance = { savedBy: { kind: 'person' as const, accountId: 'account-a' } };
+        const retainedBody = await codec.encryptBody({ body: 'Retained content' });
+        const retainedProvenance = await sealArtifactPrivateRevisionMetadata({ mode: 'e2ee', artifactId, bodyVersion: 1,
+            provenance, dataKey: provenanceDataKey });
         const artifact = { id: artifactId, ownerAccountId: 'account-a', access: 'owner', encryptionMode: 'e2ee',
             dataEncryptionKey, publicAudience: 'none', header: await codec.encryptHeader({ title: 'Shared document' }),
-            body: await codec.encryptBody({ body: 'Current content' }), headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+            body: await codec.encryptBody({ body: 'Current content' }), headerVersion: 1, bodyVersion: 2, seq: 1, createdAt: 1, updatedAt: 1,
+            provenanceDataEncryptionKey, provenance: await sealArtifactPrivateRevisionMetadata({ mode: 'e2ee', artifactId,
+                bodyVersion: 2, provenance, dataKey: provenanceDataKey }) };
         const signingSecret = new Uint8Array(32).fill(53);
         const signingPublic = ed25519.getPublicKey(signingSecret);
         const recipientSecret = new Uint8Array(32).fill(54);
@@ -411,7 +491,7 @@ describe('captureLazyActionAccountContext encryption on demand', () => {
         const recipient = { recipientAccountId: 'recipient', contentKey: { status: 'available',
             accountSigningPublicKey: Buffer.from(signingPublic).toString('hex'), contentPublicKey: encodeBase64(recipientPublic),
             contentPublicKeySignature: encodeBase64(signature) }, contentPublicKeyFingerprint: fingerprint,
-            encryptedDataKey: null, recipientContentPublicKeyFingerprint: null };
+            encryptedDataKey: null, encryptedProvenanceDataKey: null, recipientContentPublicKeyFingerprint: null };
         const oldReadStarted = createDeferred<void>();
         const releaseOldRead = createDeferred<void>();
         let granted = false;
@@ -425,16 +505,19 @@ describe('captureLazyActionAccountContext encryption on demand', () => {
                 currentProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION, declarationTransport: 'http-header-and-socket-auth-v1',
             } } });
             if (path === `/v1/artifacts/${artifactId}/access/grants` && init?.method === 'PUT') {
+                expect(JSON.parse(String(init.body))).toMatchObject({ principal: { kind: 'team', teamId: 'move-team' }, accessLevel: 'admin' });
                 granted = true;
                 return Response.json({ artifactId, ownerAccountId: 'account-a', access: 'owner', changed: true, grants: [{
-                    principal: { kind: 'account', accountId: 'recipient' }, accessLevel: 'view', createdByAccountId: 'account-a',
+                    principal: { kind: 'team', teamId: 'move-team' }, accessLevel: 'admin', createdByAccountId: 'account-a',
                     createdAt: 1, display: { name: null },
                 }] });
             }
             if (path === '/v1/artifacts/read') {
                 reads++;
                 const census = { artifactId, ownerAccountId: 'account-a', access: 'owner', encryptionMode: 'e2ee',
-                    dataEncryptionKey, callerDataEncryptionKey: dataEncryptionKey, recipients: granted ? [recipient] : [] };
+                    dataEncryptionKey, callerDataEncryptionKey: dataEncryptionKey,
+                    provenanceDataEncryptionKey, callerProvenanceDataEncryptionKey: provenanceDataEncryptionKey,
+                    recipients: granted ? [recipient] : [] };
                 if (reads === 1) { oldReadStarted.resolve(); await releaseOldRead.promise; }
                 return Response.json({ items: [{ artifactId, ok: true, artifact, recipientCensus: census }] });
             }
@@ -442,8 +525,16 @@ describe('captureLazyActionAccountContext encryption on demand', () => {
                 if (failPreparation) return Response.json({ error: 'artifact_access_unavailable' }, { status: 503 });
                 const commit = ArtifactRecipientKeyEnvelopeCommitInputV1Schema.parse(JSON.parse(String(init?.body)));
                 expect(commit.recipientKeyEnvelopes.map(item => item.recipientAccountId)).toEqual(['recipient']);
-                expect(openEncryptedDataKeyEnvelopeV1({ envelope: decodeBase64(commit.recipientKeyEnvelopes[0]!.encryptedDataKey),
-                    recipientSecretKeyOrSeed: recipientSecret })).toEqual(dataKey);
+                const recipientKey = openEncryptedDataKeyEnvelopeV1({ envelope: decodeBase64(commit.recipientKeyEnvelopes[0]!.encryptedDataKey),
+                    recipientSecretKeyOrSeed: recipientSecret });
+                expect(recipientKey).toEqual(dataKey);
+                const recipientProvenanceKey = openEncryptedDataKeyEnvelopeV1({
+                    envelope: decodeBase64(commit.recipientKeyEnvelopes[0]!.encryptedProvenanceDataKey!),
+                    recipientSecretKeyOrSeed: recipientSecret });
+                expect(recipientProvenanceKey).toEqual(provenanceDataKey);
+                expect(await new ArtifactEncryption(recipientKey!).decryptBody(retainedBody)).toEqual({ body: 'Retained content' });
+                expect(await openArtifactPrivateRevisionMetadata({ mode: 'e2ee', artifactId, bodyVersion: 1,
+                    provenance: retainedProvenance, dataKey: recipientProvenanceKey })).toEqual(provenance);
                 prepared++;
                 return Response.json({ appliedRecipientAccountIds: ['recipient'], skippedRecipientAccountIds: [] });
             }
@@ -457,7 +548,7 @@ describe('captureLazyActionAccountContext encryption on demand', () => {
             await Promise.all([reader.resolveAccountEncryption(), writer.resolveAccountEncryption()]);
             oldRead = reader.readArtifact(artifactId);
             await oldReadStarted.promise;
-            grant = writer.artifactAccessGrants.set({ artifactId, principal: { kind: 'account', accountId: 'recipient' }, accessLevel: 'view' });
+            grant = writer.artifactAccessGrants.set({ artifactId, principal: { kind: 'team', teamId: 'move-team' }, accessLevel: 'admin' });
             await expect(grant).resolves.toMatchObject({ changed: true,
                 ...(preparationFails ? { preparation: { status: 'pending' } } : {}) });
             expect(reads).toBe(2);
@@ -506,6 +597,27 @@ describe('captureLazyActionAccountContext encryption on demand', () => {
             expect(encryptionReads()).toHaveLength(1);
         } finally { context.dispose(); }
     });
+    it('waits for the Home to be reachable again instead of re-requesting the mode during an outage', async () => {
+        const { readAccountEncryptionModeReadiness } = await import('@/sync/api/account/apiAccountEncryptionMode');
+        let offline = true;
+        network.mockImplementation(async (url, init) => {
+            if (offline && url.origin === 'https://home-a.example.test') throw new TypeError('Failed to fetch');
+            return url.pathname === '/v1/account/encryption' ? Response.json({ mode: accountMode, updatedAt: 1 }) : homes.fetch(url, init);
+        });
+        const modeReads = () => network.mock.calls.filter(([url]) =>
+            url.origin === 'https://home-a.example.test' && url.pathname === '/v1/account/encryption').length;
+        const context = await captureLazyActionAccountContext(homes.homes.a!.id);
+        try {
+            // The mounted readiness owner retries forever; while the Home is down
+            // it must not turn into a request loop against the unreachable Home.
+            const ready = readAccountEncryptionModeReadiness(() => context.resolveAccountMode(), () => true);
+            await new Promise((resolve) => setTimeout(resolve, 2_000));
+            expect(modeReads()).toBeLessThanOrEqual(1);
+            offline = false;
+            await expect(ready).resolves.toBe('plain');
+            expect(modeReads()).toBeLessThanOrEqual(2);
+        } finally { context.dispose(); }
+    }, 60_000);
     it('fails a mode-dependent operation closed when the Account encryption mode cannot be read', async () => {
         network.mockImplementation(async (url, init) => {
             if (url.pathname === '/v1/account/encryption') throw new Error('encryption_mode_unavailable');

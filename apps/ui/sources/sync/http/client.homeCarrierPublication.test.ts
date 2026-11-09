@@ -95,7 +95,6 @@ describe('focused Home transport publication admission', () => {
         // the canonical authentication audience, resumes these same consumers.
         const httpsDescriptor = { ...descriptor, endpoints: [descriptor.endpoints[1]!] };
         const admitted = await acquireEligibleHomeCarrier({
-            mode: 'initial_selection',
             applicationCarrierEligibility: 'automatic',
             descriptor: httpsDescriptor, verification: { kind: 'authenticated', token: 'test-token' },
         });

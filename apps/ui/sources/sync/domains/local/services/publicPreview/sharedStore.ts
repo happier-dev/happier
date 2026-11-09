@@ -1,4 +1,4 @@
-import type { LocalServicePublicPreviewSnapshotV1 } from '@happier-dev/protocol';
+import type { LocalServicePublicPreviewSnapshotV1 } from '@happier-dev/protocol/local/services/public/v1';
 
 import { createSharedSubscriptionStore } from '@/sync/runtime/subscriptions/sharedSubscriptionStore';
 import type {

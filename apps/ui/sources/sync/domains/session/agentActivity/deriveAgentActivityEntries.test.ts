@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { SessionAgentActivityHeadlineV1 } from '@happier-dev/protocol';
+import type { SessionAgentActivityHeadlineV1 } from '@happier-dev/protocol/sessions/work/agentActivity/agentActivityHeadlineV1';
 
 import { deriveAgentActivityEntries } from './deriveAgentActivityEntries';
 import { NO_SESSION_AGENT_ACTIVITY_ATTENTION, type AgentActivityLocalEntry } from './types';

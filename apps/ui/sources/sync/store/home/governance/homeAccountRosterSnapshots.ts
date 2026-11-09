@@ -2,7 +2,7 @@ import type { HomeAccountListResultV1, HomeAccountRowV1 } from '@happier-dev/pro
 
 import { serverAccountScopeKeySuffix, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { isAuthoritativeScopedSnapshotRefusalKind } from '@/sync/domains/scope/scopedSnapshotFacts';
-import { preserveUnchangedSnapshotRows } from '@/sync/domains/scope/preserveUnchangedSnapshotRows';
+import { retainKeyedRows } from '@/sync/domains/state/structuralSharing';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import type { HomeActionFailure } from '@/sync/ops/home/homeActionOutcome';
 
@@ -67,7 +67,7 @@ export function applyHomeAccountRosterPage(scope: ServerAccountScope, page: Home
     const incoming = more ? [...previous?.rows ?? [], ...page.items] : page.items;
     write(scope, {
         scope,
-        rows: preserveUnchangedSnapshotRows(previous?.rows ?? null, incoming, row => row.accountId),
+        rows: retainKeyedRows(previous?.rows ?? null, incoming, row => row.accountId),
         total: page.total ?? null,
         status: 'ready',
         error: null,

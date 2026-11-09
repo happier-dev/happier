@@ -1,4 +1,4 @@
-import { browserViewKey } from '@happier-dev/protocol';
+import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
 import { BrowserInjectedRuntimeResultMessageV1Schema } from '@happier-dev/protocol/browser/automation/v1';
 import { describe, expect, it } from 'vitest';
 import { createInjectedPageAutomationOwner } from '@/components/browser/adapters/automation/injectedPageRuntime';
@@ -67,12 +67,13 @@ function createPendingResult(): Readonly<{
 }
 
 describe('browser automation control service', () => {
-    it('rejects dialog responses before evaluating the page and still permits a subsequent ordinary action', async () => {
+    it('forwards an explicit dialog response to the injected owner and still permits a subsequent ordinary action', async () => {
         const { createBrowserAutomationControlService } = await import('./controlService');
         const service = createBrowserAutomationControlService({ nowMs: () => 1000 });
         const listeners = new Set<(raw: string) => void>();
         let pageEvaluations = 0;
         const ordinaryRequest = createRequest({ actionKind: 'click' });
+        const dialogResponse = { kind: 'prompt', message: 'Enter a value', accept: true, promptText: 'Approved value' } as const;
         service.registerOwner(createInjectedPageAutomationOwner({
             ownerId: 'injected-owner',
             browserSessionId: ordinaryRequest.browserSessionId,
@@ -91,6 +92,7 @@ describe('browser automation control service', () => {
                 },
                 sendCommand(command) {
                     pageEvaluations++;
+                    expect(command.payload.dialogResponse).toEqual(pageEvaluations === 1 ? dialogResponse : undefined);
                     const { commandName: _commandName, payload: _payload, ...identity } = command;
                     const result = BrowserInjectedRuntimeResultMessageV1Schema.parse({
                         ...identity,
@@ -109,17 +111,17 @@ describe('browser automation control service', () => {
 
         const result = await service.executeAction({
             ...ordinaryRequest,
-            dialogResponse: { kind: 'prompt', message: 'Enter a value', accept: true, promptText: 'Approved value' },
+            dialogResponse,
         });
-        expect(result).toMatchObject({ status: 'unsupported', errorCode: 'unsupported_action' });
-        expect(pageEvaluations).toBe(0);
+        expect(result).toMatchObject({ status: 'succeeded', resultSummary: { clicked: true } });
+        expect(pageEvaluations).toBe(1);
         expect(service.getActionTimeline(ordinaryRequest)).toMatchObject([
-            { status: 'unsupported', reasonCode: 'unsupported_action' },
+            { status: 'succeeded' },
         ]);
 
         expect(await service.executeAction({ ...ordinaryRequest, automationRequestId: 'ordinary-after-dialog' }))
             .toMatchObject({ status: 'succeeded', resultSummary: { clicked: true } });
-        expect(pageEvaluations).toBe(1);
+        expect(pageEvaluations).toBe(2);
     });
     it('retains equal admitted active targets while publishing actual motion and rejecting malformed targets', async () => {
         const { createBrowserAutomationControlService } = await import('./controlService');
@@ -455,7 +457,7 @@ describe('browser automation control service', () => {
         }
     });
 
-    it('keeps the action timeline bounded and redacted', async () => {
+    it('keeps admitted timeline entries without a second retention cutoff and preserves redaction', async () => {
         const mod = await loadControlServiceModule();
 
         expect(mod?.createBrowserAutomationControlService).toBeTypeOf('function');
@@ -463,7 +465,6 @@ describe('browser automation control service', () => {
 
         const service = mod.createBrowserAutomationControlService({
             nowMs: () => 4_000,
-            maxTimelineEntries: 2,
         });
         service.registerOwner(createOwner());
 
@@ -484,6 +485,9 @@ describe('browser automation control service', () => {
             automationRequestId: 'automation_request_wait_1',
             actionKind: 'waitFor',
         }));
+        for (let index = 0; index < 498; index++) {
+            await service.executeAction(createRequest({ automationRequestId: `retained_${index}` }));
+        }
 
         const timeline = service.getActionTimeline({
             browserSessionId: 'browser_session_1',
@@ -491,7 +495,8 @@ describe('browser automation control service', () => {
         });
         const serialized = JSON.stringify(timeline);
 
-        expect(timeline).toHaveLength(2);
+        expect(timeline).toHaveLength(501);
+        expect(timeline[0]?.automationRequestId).toBe('automation_request_snapshot_1');
         expect(serialized).not.toContain('hunter2');
         expect(serialized).not.toContain('secret');
         expect(serialized).not.toContain('password');

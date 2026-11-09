@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildReviewCommentsOutboundMessage as buildCanonicalReviewCommentsOutboundMessage, withParticipantRecipientV1 } from '@happier-dev/protocol';
+import { buildReviewCommentsOutboundMessage as buildCanonicalReviewCommentsOutboundMessage} from '@happier-dev/protocol/messages/structured/reviewCommentsInput';
+import { withParticipantRecipientV1 } from '@happier-dev/protocol/messages/structured/participantMessageV1';
 
 import { buildReviewCommentsOutboundMessage } from './buildReviewCommentsOutboundMessage';
 import { buildAskSelectionDrafts } from '@/components/ui/code/selection/askSelectionModel';

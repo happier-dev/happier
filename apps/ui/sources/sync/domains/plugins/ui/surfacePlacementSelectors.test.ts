@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { PluginProjectionV2 } from '@happier-dev/protocol';
+import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import {
     normalizePluginUiDestinationBindingV1,
     normalizePluginUiInlineSurfaceBindingV1,
@@ -82,8 +82,6 @@ describe('plugin surface placement selectors', () => {
             installedPackagesById: {},
             agentsById: {},
             actionsById: {},
-
-
             resourcesById: {},
             settingsById: {},
             familiesById: {
@@ -124,8 +122,6 @@ describe('plugin surface placement selectors', () => {
             installedPackagesById: {},
             agentsById: {},
             actionsById: {},
-
-
             resourcesById: {},
             settingsById: {},
             familiesById: {

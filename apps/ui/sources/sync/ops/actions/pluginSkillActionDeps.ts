@@ -50,10 +50,11 @@ function owns(source: Source, item: Pick<SkillListItemV1, 'skillId' | 'provenanc
 /** The Account Action owns fleet selection; UI receives one metadata page without eagerly reading bytes. */
 export async function readUiPluginSkillItemsV1(account: LazyActionAccountContext, context: ActionExecutorContext,
     input: SkillLibraryActionInputByIdV1['skills.list'] = {}, skillIds?: readonly string[]): Promise<readonly SkillListItemV1[]> {
-    const expected = sources(account).filter(source => !skillIds || skillIds.includes(source.skillId));
+    const selectedIds = skillIds ?? input.skillIds;
+    const expected = sources(account).filter(source => !selectedIds || selectedIds.includes(source.skillId));
     if (!expected.length) return [];
     const received = await readAvailablePluginSkillItemsV1(async () => SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.list'].parse(await execute(account, context,
-        'skills.list', input)).items, context.signal);
+        'skills.list', selectedIds ? { ...input, skillIds: [...selectedIds] } : input)).items, context.signal);
     account.assertCurrent(); context.signal?.throwIfAborted();
     const current = new Map(sources(account).map(source => [source.skillId, source]));
     const expectedIds = new Set(expected.map(source => source.skillId));

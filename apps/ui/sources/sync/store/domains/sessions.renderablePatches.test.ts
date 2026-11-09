@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Session } from '../../domains/state/storageTypes';
 import type { SessionListRenderableSession } from '../../domains/session/listing/sessionListRenderable';
+import { createSessionListRenderableSessionFixture } from '@/dev/testkit';
+import { createSessionsDomain as createRealSessionsDomain } from './sessions';
+import { createBotsSummaryReader } from '@/components/sessions/bots/botsSummary';
 
 beforeEach(() => {
     vi.resetModules();
@@ -24,7 +27,6 @@ function mockSessionsDomainBoundaries() {
         loadSessionModelModes: () => ({}),
         loadSessionPermissionModeUpdatedAts: () => ({}),
         loadSessionPermissionModes: () => ({}),
-        loadSessionActionDrafts: () => ({}),
         loadSessionReviewCommentsDrafts: () => ({}),
         loadWorkspaceReviewCommentsDrafts: () => ({}),
         saveSessionDrafts: vi.fn(),
@@ -33,7 +35,6 @@ function mockSessionsDomainBoundaries() {
         saveSessionModelModes: vi.fn(),
         saveSessionPermissionModeUpdatedAts: vi.fn(),
         saveSessionPermissionModes: vi.fn(),
-        saveSessionActionDrafts: vi.fn(),
         saveSessionReviewCommentsDrafts: vi.fn(),
         saveWorkspaceReviewCommentsDrafts: vi.fn(),
         saveSettings: vi.fn(),
@@ -91,11 +92,11 @@ function createHarness(createSessionsDomain: any) {
         workspaceRepositoryTreeExpandedPathsByWorkspaceCacheKey: {},
         reviewCommentsDraftsBySessionId: {},
         reviewCommentsDraftsByWorkspaceCacheKey: {},
-        sessionActionDraftsByAddressKey: {},
         isDataReady: false,
         machines: {},
         machineDisplayById: {},
         sessionMessages: {},
+        sessionMessageToolVersion: 0,
         profile: { id: 'account_a' },
         settings: {},
     };
@@ -123,6 +124,44 @@ function patchSessionListRows(domain: any, patches: unknown[]): void {
 }
 
 describe('sessions domain: renderable patches', () => {
+    it('publishes stable Bot selection for ordinary arrivals inside a thousand-row Home and forwards real Bot changes', async () => {
+        const { get, domain } = createHarness(createRealSessionsDomain);
+        const bot = createSessionListRenderableSessionFixture({ id: 'bot', activeAt: 1,
+            metadata: { machineId: 'machine', path: '/project', bot: { kind: 'bot' } } });
+        replaceSessionListRows(domain, [bot, ...Array.from({ length: 1_000 }, (_, i) =>
+            createSessionListRenderableSessionFixture({ id: `ordinary-${i}`, metadata: { path: '/project' } }))]);
+        const storedBot = get().sessionListRowsByServerId.server_1.bot;
+        const metadata = storedBot.metadata;
+        let summaryReads = 0;
+        Object.defineProperty(storedBot, 'metadata', { configurable: true, get: () => { summaryReads++; return metadata; } });
+        const read = createBotsSummaryReader(['server_1']);
+        const observedAt = Date.now();
+        const selection = () => get().sessionListBotRowsByServerId;
+        const first = read(selection(), observedAt);
+        const firstSelection = selection();
+        expect(first.faces).toHaveLength(1);
+        for (let i = 0; i < 12; i++) {
+            patchSessionListRows(domain, [{ sessionId: `ordinary-${i}`, patch: { activeAt: i + 100 } }]);
+            mergeSessionListRows(domain, [createSessionListRenderableSessionFixture({ id: `arrival-${i}` })]);
+            const before = summaryReads;
+            expect(selection()).toBe(firstSelection);
+            expect(read(selection(), observedAt)).toBe(first);
+            expect(summaryReads - before).toBe(0);
+        }
+        mergeSessionListRows(domain, [{ ...bot, metadataVersion: 2,
+            metadata: { machineId: 'machine', path: '/changed-project', bot: { kind: 'bot' }, botFace: { body: 'crab' } } }]);
+        expect(read(selection(), observedAt)).not.toBe(first);
+        expect(read(selection(), observedAt).faces[0]?.face).toEqual({ seed: 'bot', face: { body: 'crab' } });
+        expect(read(selection(), observedAt).faces).toHaveLength(1);
+        mergeSessionListRows(domain, [{ ...bot, metadataVersion: 3,
+            metadata: { machineId: 'machine', path: '/changed-project' } }]);
+        expect(read(selection(), observedAt).faces).toEqual([]);
+        mergeSessionListRows(domain, [{ ...bot, metadataVersion: 4 }]);
+        expect(read(selection(), observedAt).faces).toHaveLength(1);
+        domain.clearSessionListRowsForServerScope('server_1');
+        expect(read(selection(), observedAt).faces).toEqual([]);
+    });
+
     it.each(['replacement', 'patch'] as const)('retains newer completion and pending facts through an older scoped %s', async (mode) => {
         mockSessionsDomainBoundaries();
         const { createSessionsDomain } = await import('./sessions');

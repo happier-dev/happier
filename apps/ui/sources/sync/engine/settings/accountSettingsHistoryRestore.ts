@@ -26,6 +26,7 @@ import {
     type OpenedAccountSettingsStoredContent,
 } from '@/sync/domains/settings/accountSettingsNormalization';
 
+import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
 import { syncSettings } from './syncSettings';
 
 /**
@@ -151,24 +152,63 @@ const pendingHistoryNormalizations = new Set<Readonly<{
     result: Promise<AccountSettingsHistoryCleanupResult>;
 }>>();
 
-// One checkpoint per Account, scoped to the same credentials, cipher and receipts
-// as live sharing. Protocol re-reads head/transfer/destinations before using it.
+// One checkpoint per Account, scoped to the same credentials and cipher. Protocol
+// re-reads head/transfer/destinations and compares proofs before using it.
 const completedHistoryNormalizations = new Map<string, Readonly<{
     params: Parameters<typeof normalizeAccountSettingsHistoryAfterTransfer>[0];
     isCurrent: () => boolean;
     checkpoint: AccountSettingsHistoryNormalizationCheckpointV1;
 }>>();
 
-function sameHistoryNormalizationContext(a: Parameters<typeof normalizeAccountSettingsHistoryAfterTransfer>[0],
+function sameHistoryNormalizationAccount(a: Parameters<typeof normalizeAccountSettingsHistoryAfterTransfer>[0],
     b: Parameters<typeof normalizeAccountSettingsHistoryAfterTransfer>[0]): boolean {
     return areAccountSettingsScopesEqual(a.settingsScope, b.settingsScope)
         && areCredentialsEqual(a.credentials, b.credentials)
         && (a.encryption === b.encryption || (a.encryption !== null && b.encryption !== null
-            && tweetnacl.verify(a.encryption.getContentPrivateKey(), b.encryption.getContentPrivateKey())))
+            && tweetnacl.verify(a.encryption.getContentPrivateKey(), b.encryption.getContentPrivateKey())));
+}
+
+function sameHistoryNormalizationContext(a: Parameters<typeof normalizeAccountSettingsHistoryAfterTransfer>[0],
+    b: Parameters<typeof normalizeAccountSettingsHistoryAfterTransfer>[0]): boolean {
+    return sameHistoryNormalizationAccount(a, b)
         && a.expectedProfileTransferRevision === b.expectedProfileTransferRevision
         && areAccountSettingsHistoryRecoveryInputsEqualV1(a.savedSecretRecovery, b.savedSecretRecovery)
         && sameStrictJsonValue(a.destinationAuthority.savedSecretTransfers, b.destinationAuthority.savedSecretTransfers)
         && sameStrictJsonValue(a.destinationAuthority.legacyRoleArtifactTransfers, b.destinationAuthority.legacyRoleArtifactTransfers);
+}
+
+function pendingAccountPass(params: Parameters<typeof normalizeAccountSettingsHistoryAfterTransfer>[0]) {
+    return [...pendingHistoryNormalizations].find(entry => entry.isCurrent() && sameHistoryNormalizationAccount(entry.params, params));
+}
+
+// A history row is immutable except for normalize/purge, which only remove transferred content,
+// so "read and found clean under these verdict inputs" stays true for that version on later app
+// starts. Device-local reuse of that verdict spares re-reading every retained row per launch; new
+// rows and changed verdict inputs (key fingerprints, transferred roots) are still read.
+const VERIFIED_HISTORY_ROWS_STORAGE_PREFIX = 'account-settings-history-verified-v1:';
+const VerifiedHistoryRowsSchema = z.record(z.string(), z.array(z.number().check(z.int(), z.nonnegative())));
+
+function readVerifiedHistoryRows(scopeKey: string): Map<string, Set<number>> {
+    try {
+        const raw = getPersistenceStorage().getString(VERIFIED_HISTORY_ROWS_STORAGE_PREFIX + scopeKey);
+        const parsed = raw === undefined ? null : VerifiedHistoryRowsSchema.safeParse(JSON.parse(raw));
+        return new Map(parsed?.success ? Object.entries(parsed.data).map(([verdict, rows]) => [verdict, new Set(rows)]) : []);
+    } catch (error) {
+        console.warn('[settings-history] Verified history rows could not be read; rows will be re-verified.', error);
+        return new Map();
+    }
+}
+
+function writeVerifiedHistoryRows(scopeKey: string, verified: Map<string, Set<number>> | undefined): void {
+    const entries = [...(verified ?? [])].filter(([, rows]) => rows.size > 0);
+    try {
+        const storage = getPersistenceStorage();
+        if (entries.length === 0) storage.delete(VERIFIED_HISTORY_ROWS_STORAGE_PREFIX + scopeKey);
+        else storage.set(VERIFIED_HISTORY_ROWS_STORAGE_PREFIX + scopeKey,
+            JSON.stringify(Object.fromEntries(entries.map(([verdict, rows]) => [verdict, [...rows]]))));
+    } catch (error) {
+        console.warn('[settings-history] Verified history rows could not be saved; the next launch re-verifies them.', error);
+    }
 }
 
 /** Private transport for the incumbent approved, exact-version purge intent. */
@@ -232,10 +272,17 @@ export async function normalizeAccountSettingsHistoryAfterTransfer(params: Reado
             if (!captured.isCurrent()) throwStaleRestoreScope();
             return result;
         }
+        // Catalog triggers differ only in proofs Protocol recaptures, so one Account
+        // runs one pass at a time and the next trigger starts from its checkpoint.
+        for (let running = pendingAccountPass(params); running; running = pendingAccountPass(params)) {
+            await running.result.catch(() => undefined);
+            if (!captured.isCurrent()) throwStaleRestoreScope();
+        }
         const key = accountSettingsScopeKeySuffix(params.settingsScope);
         const previous = completedHistoryNormalizations.get(key);
         const checkpoint: AccountSettingsHistoryNormalizationCheckpointV1 = previous
-            && sameHistoryNormalizationContext(previous.params, params) ? { ...previous.checkpoint } : {};
+            && sameHistoryNormalizationAccount(previous.params, params) ? { ...previous.checkpoint }
+            : { verifiedUnchanged: readVerifiedHistoryRows(key) };
         const result = normalizeAccountSettingsHistoryClientV1({ destinationAuthority: params.destinationAuthority, checkpoint,
             ...(params.savedSecretRecovery ? { savedSecretRecovery: params.savedSecretRecovery } : {}),
             ...(params.expectedProfileTransferRevision === undefined ? {} : { expectedProfileTransferRevision: params.expectedProfileTransferRevision }), ports: {
@@ -251,7 +298,11 @@ export async function normalizeAccountSettingsHistoryAfterTransfer(params: Reado
         try {
             const completed = await result;
             if (!captured.isCurrent()) throwStaleRestoreScope();
-            if (completed.status === 'complete') completedHistoryNormalizations.set(key, { params, isCurrent: captured.isCurrent, checkpoint });
+            // Verified-unchanged rows are evidence too: a later head move re-reads only new rows.
+            if (checkpoint.completed || checkpoint.settledPending || checkpoint.verifiedUnchanged?.size) {
+                completedHistoryNormalizations.set(key, { params, isCurrent: captured.isCurrent, checkpoint });
+            }
+            writeVerifiedHistoryRows(key, checkpoint.verifiedUnchanged);
             return completed;
         } finally { pendingHistoryNormalizations.delete(entry); }
     } finally { captured.dispose?.(); }

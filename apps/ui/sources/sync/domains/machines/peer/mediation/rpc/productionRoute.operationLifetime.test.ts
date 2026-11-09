@@ -1,8 +1,10 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { PEER_MEDIATION_RECEIPTS, type PeerMachineRpcDirectRequestV2 } from '@happier-dev/protocol';
+import { PEER_MEDIATION_RECEIPTS} from '@happier-dev/protocol/machines/peer/mediation/receipts';
+import { type PeerMachineRpcDirectRequestV2 } from '@happier-dev/protocol/machines/peer/mediation/rpc/directV2';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { readRpcRequestDisposition } from '@happier-dev/sync-client';
 import { postProductionMachineRpcDirect } from './productionRoute';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
 // The real direct HTTP adapter receives a typed wire request; only fetch and
 // the clock are replaced. Grant admission remains the daemon's boundary.
@@ -27,14 +29,14 @@ const request: PeerMachineRpcDirectRequestV2 = {
 const response = { v: 2, ok: true, requestId: request.requestId, method: request.method,
     receipt: PEER_MEDIATION_RECEIPTS.rpcDirectCallSucceeded, routeKind: 'loopback_direct', result: { ready: true } } as const;
 
-afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+afterEach(() => { resetRuntimeFetch(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 it('keeps direct plugin work alive beyond its former HTTP cutoff and preserves caller cancellation', async () => {
     vi.useFakeTimers();
     let answer!: (response: Response) => void;
     let issuedSignal: AbortSignal | undefined;
-    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: RequestInit) => {
-        issuedSignal = init.signal ?? undefined;
+    setRuntimeFetch(vi.fn(async (_url, init) => {
+        issuedSignal = init?.signal ?? undefined;
         return await new Promise<Response>((resolve, reject) => {
             answer = resolve;
             issuedSignal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });

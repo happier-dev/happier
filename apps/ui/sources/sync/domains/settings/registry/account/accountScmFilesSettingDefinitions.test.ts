@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ACCOUNT_SETTING_DEFINITIONS } from '@happier-dev/protocol';
+import { ACCOUNT_SETTING_DEFINITIONS } from '@happier-dev/protocol/account/settings/accountSettings';
 
 describe('Protocol SCM Account settings', () => {
     it('keeps the released backend preference strict and stores qualified selections separately', () => {

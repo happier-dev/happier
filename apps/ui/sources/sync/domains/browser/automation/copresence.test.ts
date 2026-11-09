@@ -1,4 +1,4 @@
-import { browserViewKey } from '@happier-dev/protocol';
+import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
 import { describe, expect, it } from 'vitest';
 
 import { createBrowserAutomationControlService, type BrowserAutomationResult } from './controlService';
@@ -6,8 +6,8 @@ import { readBrowserAgentPoint, selectBrowserAgentPoint, selectBrowserCopresence
 
 const view = { browserSessionId: 'browser_session_1', viewId: 'browser_view_1' } as const;
 
-function setup(maxTimelineEntries?: number) {
-    const service = createBrowserAutomationControlService({ nowMs: () => 1_000, maxTimelineEntries });
+function setup() {
+    const service = createBrowserAutomationControlService({ nowMs: () => 1_000 });
     let resolve: (result: BrowserAutomationResult) => void = () => undefined;
     service.registerOwner({
         ownerId: 'owner_1',
@@ -41,7 +41,7 @@ function setup(maxTimelineEntries?: number) {
 
 describe('selectBrowserCopresence', () => {
     it('keeps unknown completion after a failed fresh look and clears it only after the owner observes successfully', async () => {
-        const { service, click, presence, finish } = setup(1);
+        const { service, click, presence, finish } = setup();
         const pending = click('uncertain-click');
         await Promise.resolve();
         service.recordHumanInput({ ...view, inputKind: 'takeover', occurredAtMs: 1000 });

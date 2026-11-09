@@ -12,7 +12,6 @@ type DisplayTitleWriteValue = SessionStateFieldWriteValue<'display.title'>;
 type UpdateSessionMetadataWithRetry = (
     sessionId: string,
     updater: (metadata: Metadata) => Metadata,
-    opts?: Readonly<{ maxAttempts?: number }>,
 ) => Promise<unknown>;
 
 function applyResolvedDisplayTitleMetadata(params: Readonly<{

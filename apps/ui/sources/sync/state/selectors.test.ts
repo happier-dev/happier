@@ -2,8 +2,22 @@ import { describe, expect, it } from 'vitest';
 
 import { readSessionDisplayTitleField } from './selectors';
 import type { Message } from '@happier-dev/session-core/messages';
+import { t } from '@/text';
 
 describe('session state selectors', () => {
+    it('presents retained Voice system titles as a conversation while preserving authored titles', () => {
+        for (const metadata of [
+            { summary: { text: 'Voice conversation (system)', updatedAt: 2 } },
+            { summaryText: 'Voice conversation (system)' },
+            { name: 'Voice conversation (system)' },
+        ]) {
+            expect(readSessionDisplayTitleField({ metadata }).value).toBe(t('voicePresence.title'));
+        }
+        expect(readSessionDisplayTitleField({ metadata: { summary: { text: 'Release planning', updatedAt: 3 } } }))
+            .toEqual({ value: 'Release planning', updatedAt: 3 });
+        expect(readSessionDisplayTitleField({ metadata: { name: 'My conversation' } }).value).toBeNull();
+        expect(readSessionDisplayTitleField({ metadata: null }).value).toBeNull();
+    });
     it('reads display.title from canonical summary metadata', () => {
         expect(readSessionDisplayTitleField({
             metadata: {
@@ -59,4 +73,5 @@ describe('session state selectors', () => {
             id: 'first-prompt', kind: 'user-text', localId: null, createdAt: 1, text,
         }];
         expect(readSessionDisplayTitleField({ metadata: { path: '/tmp' } }, { messages }).value).toBe(title);
-    });});
+    });
+});

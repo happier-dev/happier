@@ -1,6 +1,30 @@
 import { describe, expect, it } from 'vitest';
 
 describe('resolveMachineDaemonTransferDirectPeerRoute', () => {
+    it('retains the typed operator refusal while ignoring malformed optional diagnostics', async () => {
+        const { readMachineDaemonTransferState } = await import('./machineDaemonTransferState');
+        const { MachinePublishedTransferRuntimeV1Schema } = await import('@happier-dev/protocol/machines/machinePublishedContentV1');
+        const diagnostic = { code: 'tailscale_operator_authorization_refused', retryable: false };
+        const transfer = MachinePublishedTransferRuntimeV1Schema.parse({
+            supported: { import: true, export: true },
+            listenerClasses: {
+                loopback_http: { enabled: true, configured: true, active: true },
+                tailscale_serve_https: { enabled: true, configured: false, active: false, available: false, diagnostic },
+            },
+            lifecycle: { mode: 'lazy_idle_shutdown', version: 1 },
+        });
+        const input = { daemonState: { transfer } };
+        expect(readMachineDaemonTransferState(input)?.listenerClasses.tailscale_serve_https)
+            .toEqual({ enabled: true, configured: false, active: false, available: false, diagnostic });
+        const malformedInput = { daemonState: { transfer: { ...transfer, listenerClasses: {
+            ...transfer.listenerClasses, tailscale_serve_https: {
+                ...transfer.listenerClasses.tailscale_serve_https, diagnostic: { ...diagnostic, retryable: true },
+            },
+        } } } };
+        expect(readMachineDaemonTransferState(malformedInput)?.listenerClasses.tailscale_serve_https)
+            .toEqual({ enabled: true, configured: false, active: false, available: false });
+    });
+
     it('maps only safe active listener mechanisms to final direct route kinds', async () => {
         const { resolveMachineDaemonTransferDirectPeerDiagnostics } = await import('./machineDaemonTransferState');
 

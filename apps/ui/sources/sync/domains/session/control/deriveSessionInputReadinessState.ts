@@ -1,4 +1,4 @@
-import type { PrimaryTurnStatusV1 } from '@happier-dev/protocol';
+import type { PrimaryTurnStatusV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { readSessionRuntimeObservation } from '../sessionRuntimeObservation';
 
 import {

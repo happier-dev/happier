@@ -12,7 +12,7 @@ import {
     subscribeLocalServicePublicPreviewStore,
 } from './sharedStore';
 import { type LocalServicePublicPreviewState } from './store';
-import type { LocalServicePublicPreviewSnapshotV1 } from '@happier-dev/protocol';
+import type { LocalServicePublicPreviewSnapshotV1 } from '@happier-dev/protocol/local/services/public/v1';
 
 export type LocalServicePublicPreviewStatusClient = (
     input: LocalServicePublicPreviewStatusClientInput,

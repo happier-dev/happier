@@ -23,9 +23,11 @@ export function openBrowserRecordDatabase(store: BrowserRecordStore = 'records')
             return;
         }
         // Do not upgrade the records database: 0.2's same-origin opener explicitly requests version 1.
-        const request = indexedDB.open(store === 'records' ? 'happier-local-records' : 'happier-atmosphere-pictures');
+        const request = indexedDB.open(store === 'records' ? 'happier-local-records' : 'happier-atmosphere-pictures', store === 'pictures' ? 2 : undefined);
         request.onupgradeneeded = () => {
-            request.result.createObjectStore(store);
+            const records = request.result.objectStoreNames.contains(store)
+                ? request.transaction!.objectStore(store) : request.result.createObjectStore(store);
+            if (store === 'pictures') records.createIndex('kind', 'kind');
         };
         request.onerror = () => reject(request.error);
         request.onblocked = () => reject(new Error('Browser storage upgrade is blocked by another tab.'));
@@ -76,34 +78,67 @@ export async function updateBrowserRecord<T>(
     key: string,
     update: (current: string | undefined) => { value: string | undefined; result: T },
 ): Promise<T> {
+    return updateBrowserRecords([key], (current) => {
+        const next = update(current.get(key));
+        return { values: new Map([[key, next.value]]), result: next.result };
+    });
+}
+
+/**
+ * Reads `keys` and writes the returned records (undefined deletes) in one transaction, so a
+ * multi-record change commits or aborts as a whole, including against concurrent tabs.
+ */
+export async function updateBrowserRecords<T>(
+    keys: readonly string[],
+    update: (current: ReadonlyMap<string, string | undefined>) => {
+        values: ReadonlyMap<string, string | undefined>;
+        result: T;
+    },
+): Promise<T> {
+    const uniqueKeys = [...new Set(keys)];
     if (isEmbedWindowContext()) {
         // The synchronous update preserves the transaction owner's read/modify/write semantics
         // in the frame's one JavaScript realm, without cross-tab storage or coordination.
-        const next = update(memoryRecords.get(key));
-        if (next.value === undefined) memoryRecords.delete(key);
-        else memoryRecords.set(key, next.value);
+        const next = update(new Map(uniqueKeys.map((key) => [key, memoryRecords.get(key)])));
+        for (const [key, value] of next.values) {
+            if (value === undefined) memoryRecords.delete(key);
+            else memoryRecords.set(key, value);
+        }
         return next.result;
     }
     const database = await openBrowserRecordDatabase();
     return new Promise<T>((resolve, reject) => {
         const transaction = database.transaction(STORE, 'readwrite', { durability: 'strict' });
         const store = transaction.objectStore(STORE);
-        const request = store.get(key);
+        const current = new Map<string, string | undefined>();
+        let pending = uniqueKeys.length;
         let result: T;
-        request.onsuccess = () => {
+        const apply = () => {
             try {
-                if (request.result !== undefined && typeof request.result !== 'string') {
-                    throw new Error('Invalid browser record; stored data was preserved.');
-                }
-                const next = update(request.result);
+                const next = update(current);
                 result = next.result;
-                if (next.value === undefined) store.delete(key);
-                else store.put(next.value, key);
+                for (const [key, value] of next.values) {
+                    if (value === undefined) store.delete(key);
+                    else store.put(value, key);
+                }
             } catch (error) {
                 transaction.abort();
                 reject(error);
             }
         };
+        for (const key of uniqueKeys) {
+            const request = store.get(key);
+            request.onsuccess = () => {
+                if (request.result !== undefined && typeof request.result !== 'string') {
+                    transaction.abort();
+                    reject(new Error('Invalid browser record; stored data was preserved.'));
+                    return;
+                }
+                current.set(key, request.result);
+                if (--pending === 0) apply();
+            };
+        }
+        if (pending === 0) apply();
         transaction.oncomplete = () => resolve(result);
         transaction.onabort = () => reject(transaction.error ?? new Error('Browser record write aborted.'));
         transaction.onerror = () => reject(transaction.error);

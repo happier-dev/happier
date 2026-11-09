@@ -1,4 +1,4 @@
-import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { describe, expect, it } from 'vitest';
 
 import { parseReleasedServerV021Features } from '@/dev/testkit';

@@ -9,11 +9,15 @@ const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
  * so this owner can safely bound a stalled attempt. Generic writes cannot make
  * that guarantee and intentionally remain unbounded unless their caller opts in.
  */
+const ownedRequests = new WeakMap<PendingQueueRequest, { writeTimeoutMs: number; request: PendingQueueRequest }>();
+
 export function createPendingQueueRequest(params: Readonly<{
     request: PendingQueueRequest;
     writeTimeoutMs: number;
 }>): PendingQueueRequest {
-    return async (path, init) => {
+    const existing = ownedRequests.get(params.request);
+    if (existing?.writeTimeoutMs === params.writeTimeoutMs) return existing.request;
+    const request: PendingQueueRequest = async (path, init) => {
         const method = String(init?.method ?? 'GET').toUpperCase();
         const timeoutMs = Math.max(0, Math.trunc(params.writeTimeoutMs));
         if (!MUTATING_METHODS.has(method) || timeoutMs === 0) {
@@ -44,4 +48,6 @@ export function createPendingQueueRequest(params: Readonly<{
             upstreamSignal?.removeEventListener('abort', abortFromUpstream);
         }
     };
+    ownedRequests.set(params.request, { writeTimeoutMs: params.writeTimeoutMs, request });
+    return request;
 }

@@ -1,4 +1,4 @@
-import type { SessionAwarenessEncryptionV1 } from '@happier-dev/protocol';
+import type { SessionAwarenessEncryptionV1 } from '@happier-dev/protocol/sessions/awareness/projectionV1';
 import { t } from '@/text';
 
 /**

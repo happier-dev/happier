@@ -1,4 +1,5 @@
 import { RPC_ERROR_CODES, RPC_METHODS, type WorkspaceStatFileRequestV1 } from '@happier-dev/protocol/rpc';
+import type { FilesystemEffectFailureDetailsV1 } from '@happier-dev/protocol/actions/filesystemActionFamily';
 
 import { resolveMachineAbsolutePath } from '@/sync/domains/fileSystem/resolveMachineAbsolutePath';
 
@@ -11,7 +12,7 @@ import { captureFilesystemTransferAccountScope } from '../plumbing/filesystemTra
 import { createBufferedTransferDestination } from '../carriers/createBufferedTransferDestination';
 import { createWorkspaceFileTransferRpcCaller } from './workspaceFileTransferRpcCaller';
 
-type WorkspaceRpcFailure = Readonly<{ success: false; error: string; errorCode?: string }>;
+type WorkspaceRpcFailure = Readonly<{ success: false; error: string; errorCode?: string; details?: FilesystemEffectFailureDetailsV1 }>;
 type TransferFailureResponse = Readonly<{ success: false; error: string; errorCode?: string }>;
 type TransferFileReader = Readonly<{
     sizeBytes: number;

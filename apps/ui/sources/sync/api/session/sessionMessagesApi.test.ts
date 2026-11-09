@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildSessionMessagesPath } from '@happier-dev/protocol';
+import { buildSessionMessagesPath } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 import { parseSessionMessagesPage } from '@happier-dev/sync-client';
 
 function readSearchParams(path: string): URLSearchParams {

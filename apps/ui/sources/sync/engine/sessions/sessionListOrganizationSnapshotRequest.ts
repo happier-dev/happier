@@ -1,4 +1,4 @@
-import type { SessionOrganizationSnapshotRequest } from '@happier-dev/protocol';
+import type { SessionOrganizationSnapshotRequest } from '@happier-dev/protocol/sessions/organization/snapshot';
 
 export function createSessionListOrganizationSnapshotRequest(): Partial<SessionOrganizationSnapshotRequest> {
     return {
@@ -8,6 +8,7 @@ export function createSessionListOrganizationSnapshotRequest(): Partial<SessionO
         includeAllFolderAssignments: true,
         includeAllTagAssignments: true,
         includeAttentionStandings: true,
+        includeSessionAppearances: true,
         includeAttentionReminderTimes: true,
     };
 }

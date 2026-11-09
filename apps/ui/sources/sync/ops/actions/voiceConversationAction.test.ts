@@ -42,6 +42,7 @@ import { createActionExecutor} from '@happier-dev/protocol/actions/actionExecuto
 import { createPlainSessionOwnerMetadataEnvelopeV1, createSessionOwnerMetadataV1,
     projectSessionSharedMetadataV1} from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { FeaturesResponseSchema} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { PENDING_INPUT_PROTOCOL_VERSION_V4 } from '@happier-dev/protocol/clientCompatibility/primitives';
 import { VoiceConversationActionOutputSchemas } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
 // Source-only fixture producer: this internal Protocol leaf is not a published package entry point.
 import { projectSessionDisplayV1, sealSessionSharedDisplayEnvelopeV1Sync, sealSessionOwnerDisplayEnvelopeV1 } from '../../../../../../packages/protocol/src/sessions/metadata/sessionDisplayEnvelopesV1';
@@ -129,7 +130,8 @@ async function createHarness(start = true, featureEnabled = true, deferActivatio
         currentDeclaration: entry.declaration, mutation: { contribution, credentialSlotId: recipientContract.credentialSlot.id,
             expectedSettingsVersion: 1, selection: { kind: 'savedSecret' } } });
     purposes.replace(selected.connectedPurposes);
-    const features = FeaturesResponseSchema.parse({ features: { voice: { enabled: featureEnabled } }, capabilities: {} });
+    const features = FeaturesResponseSchema.parse({ features: { voice: { enabled: featureEnabled } },
+        capabilities: options.requesterPublication ? { session: { pendingInput: { protocolVersion: PENDING_INPUT_PROTOCOL_VERSION_V4 } } } : {} });
     let heldFeatureResponse: Readonly<{ entered: ReturnType<typeof createDeferred<void>>; released: ReturnType<typeof createDeferred<void>> }> | null = null;
     const sessionIdsByHome = { voice: ['session-original', 'bot-talk-session', 'other-session', 'voice-action-history'],
         explicit: ['explicit-session'], focused: ['default-session'], competing: ['competing-session'] };
@@ -771,33 +773,25 @@ describe('generated OpenAI conversation Actions through the lifecycle owner', ()
             defaultSessionMachineId: 'unreachable-origin-machine', actionRequestId: 'voice-unmute-request',
             actionCaller: { kind: 'session' as const, sessionId: 'session-original', starterDepth: 0, turnDepth: 0 } };
         const account = await captureActionAccountContext(serverId);
-        const { createExternalActionAccountHttpBoundary } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
-        const { getActionSpec } = await import('@happier-dev/protocol/actions/actionSpecs');
-        const { actionSpecToActionDefinitionV1 } = await import('@happier-dev/protocol/actions/actionCatalog');
-        const { SessionInputAdmissionResultV1Schema } = await import('@happier-dev/protocol/sessions/messages/sessionInputAdmission');
         const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
-        const serverIdentityId = account.serverIdentityId;
-        if (!serverIdentityId) throw new Error('Requester result delivery requires an identified Home');
         const machineId = 'voice-unmute-requester-machine';
         const sourceSession = storage.getState().sessions['session-original']!;
         storage.setState(state => ({ sessions: { ...state.sessions, 'session-original': { ...sourceSession,
             metadata: { ...sourceSession.metadata, machineId } } } }));
         sessionsByHome.get('voice')!.replaceSession('session-original');
         const publications: unknown[] = [];
-        const discovery = await createExternalActionAccountHttpBoundary({ serverUrl: account.endpointUrl,
-            serverIdentityId, accountId: account.accountId, machineId, tokenEpoch: 0,
-            actionId: 'action.spec.get', requesterInvocation: 'required', execute: () => ({
-                actionSpec: actionSpecToActionDefinitionV1(getActionSpec('session.message.send'), { surface: 'mcp', includeOutputSchema: true }),
-            }) });
-        const publication = await createExternalActionAccountHttpBoundary({ serverUrl: account.endpointUrl,
-            serverIdentityId, accountId: account.accountId, machineId, tokenEpoch: 0,
-            actionId: 'session.message.send', requesterInvocation: 'required', execute: (input, context) => {
-                publications.push({ input, target: context.target, authority: context.invocation.authority });
-                const localId = typeof input === 'object' && input !== null && 'localId' in input ? input.localId : null;
-                return SessionInputAdmissionResultV1Schema.parse({ status: 'accepted', localId });
-            } });
-        setRuntimeFetch(async (url, init) => await publication.handle(new URL(String(url)), init)
-            ?? await discovery.handle(new URL(String(url)), init) ?? home.fetch(url, init));
+        setRuntimeFetch(async (url, init) => {
+            const request = new URL(String(url));
+            if (request.origin === new URL(account.endpointUrl).origin
+                && request.pathname === '/v2/sessions/session-original/pending' && init?.method === 'POST') {
+                const input: unknown = JSON.parse(String(init.body));
+                if (typeof input !== 'object' || input === null || !('localId' in input) || !('requestedAction' in input))
+                    throw new Error('Expected queued approval result');
+                publications.push(input);
+                return Response.json({ requestedAction: input.requestedAction, pending: { localId: input.localId } });
+            }
+            return home.fetch(url, init);
+        });
         let unmountDecision = async () => {};
         try {
             expect(await executor.execute('ui.voice_global.set_muted', { expectedAttempt, muted: true }, agent))
@@ -819,9 +813,8 @@ describe('generated OpenAI conversation Actions through the lifecycle owner', ()
             unmountDecision = hook.unmount;
             expect(await hook.getCurrent()('approve')).toBe(true);
             expect(micTrack().enabled).toBe(true);
-            expect(publications).toEqual([{ input: expect.objectContaining({ sessionId: 'session-original',
-                localId: `approval-result:${artifactId}`, idempotencyKey: `approval-result:${artifactId}`, reply: 'none',
-                requestedAction: { v: 1, kind: 'enqueue' } }), target: { kind: 'machine', machineId }, authority: 'account_automation' }]);
+            expect(publications).toEqual([expect.objectContaining({ localId: `approval-result:${artifactId}`,
+                targetMachineId: machineId, requestedAction: { v: 1, kind: 'enqueue' } })]);
             const settled = JSON.parse(artifacts.readPlainBody(artifactId)!);
             expect(approvalArtifactBodyMatchesHeaderV1((await account.fetchArtifact(artifactId))!.header ?? {}, JSON.stringify(settled)))
                 .toMatchObject({ family: 'built_in', request: { status: 'executed', execution: { ok: true } } });
@@ -829,6 +822,10 @@ describe('generated OpenAI conversation Actions through the lifecycle owner', ()
             await executor.execute('ui.voice_global.set_muted', { expectedAttempt, muted: true }, agent);
             expect(await hook.getCurrent()('approve')).toBe(true);
             expect(micTrack().enabled).toBe(false);
+            expect(publications).toEqual(Array.from({ length: 2 }, () => expect.objectContaining({
+                localId: `approval-result:${artifactId}`, requestedAction: { v: 1, kind: 'enqueue' },
+                targetMachineId: machineId,
+            })));
             const next = await executor.execute('ui.voice_global.set_muted', { expectedAttempt, muted: false },
                 { ...agent, actionRequestId: 'voice-unmute-after-end' });
             const { artifactId: nextId } = ActionApprovalRequestCreatedResultSchema.parse(next.ok ? next.result : null);

@@ -3,6 +3,7 @@ import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSch
 import { z } from 'zod/mini';
 import { AsyncTtlCache } from '@happier-dev/protocol/common/asyncTtlCache';
 import { armDeadlineTimer } from '@happier-dev/protocol/common/deadlineTimer';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 
@@ -30,6 +31,7 @@ import { recordAccountStoredContentServerRequirements } from '@/sync/http/accoun
 import type { HomeCarrier } from '@/sync/runtime/homeCarrier';
 import type { ResolvedServerScopedTransport } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerScopedTransport';
 import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
+import { resolveHomeConnectionAddress } from '@/sync/domains/server/homeAddressSelection';
 
 export { isServerFeaturesProbeRetryable } from './serverFeaturesProbeRetryability';
 
@@ -68,6 +70,7 @@ const endpointCache = new AsyncTtlCache<ServerFeaturesSnapshot>({
     errorTtlMs: TTL_ERROR_NETWORK_MS,
 });
 const snapshotListeners = new Set<() => void>();
+const retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const transientRetryAtByProjectionKey = new Map<string, number>();
 const PUBLIC_SNAPSHOT_STORAGE_PREFIX = 'server-features-snapshot-v1:';
 const StoredPublicSnapshotSchema = z.object({
@@ -123,6 +126,28 @@ function notifyServerFeaturesSnapshotChanged(): void {
     }
 }
 
+function clearSnapshotRetry(cacheKey: string): void {
+    const timer = retryTimers.get(cacheKey);
+    if (timer !== undefined) clearTimeout(timer);
+    retryTimers.delete(cacheKey);
+}
+
+/** Recovery uses the snapshot's existing retry deadline, once per Home while observed. */
+function armSnapshotRetry(cacheKey: string): void {
+    clearSnapshotRetry(cacheKey);
+    if (snapshotListeners.size === 0) return;
+    const entry = cache.get(cacheKey);
+    if (entry?.kind !== 'success') return;
+    const delay = getServerFeaturesSnapshotRetryDelayMs({ serverId: cacheKey, snapshot: entry.value });
+    if (delay === null) return;
+    const timer = setTimeout(() => {
+        if (retryTimers.get(cacheKey) !== timer || snapshotListeners.size === 0) return;
+        retryTimers.delete(cacheKey);
+        fireAndForget(getServerFeaturesSnapshot({ serverId: cacheKey }), { tag: 'serverFeaturesClient.retrySnapshot' });
+    }, delay);
+    retryTimers.set(cacheKey, timer);
+}
+
 function reconcileServerRequirements(serverUrl: string | null, snapshot: ServerFeaturesSnapshot): void {
     // A pending or retryable observation does not retract accepted protocol
     // support. Conclusive replacement still withdraws incompatible/absent
@@ -148,6 +173,7 @@ function writeServerFeaturesSnapshot(
     transientRetryAtByProjectionKey.delete(`public\u0000${cacheKey}`);
     reconcileServerRequirements(serverUrl, retained);
     cache.setSuccess(cacheKey, retained, { ttlMs });
+    armSnapshotRetry(cacheKey);
     if (previous?.kind !== 'success' || retained !== previous.value) notifyServerFeaturesSnapshotChanged();
     return retained;
 }
@@ -179,7 +205,10 @@ function writeActiveProjectionSnapshot(
         if (previous?.kind === 'success' && previous.value.status === 'ready') {
             projectionCache.setSuccess(cacheKey, previous.value, { ttlMs });
             transientRetryAtByProjectionKey.set(retryKey, Date.now() + ttlMs);
-            if (projection === 'public') notifyServerFeaturesSnapshotChanged();
+            if (projection === 'public') {
+                armSnapshotRetry(cacheKey);
+                notifyServerFeaturesSnapshotChanged();
+            }
             return previous.value;
         }
     }
@@ -209,9 +238,12 @@ function writeEndpointServerFeaturesSnapshot(
 export function subscribeServerFeaturesSnapshot(
     listener: () => void,
 ): () => void {
+    const first = snapshotListeners.size === 0;
     snapshotListeners.add(listener);
+    if (first) for (const key of cache.keys()) armSnapshotRetry(key);
     return () => {
         snapshotListeners.delete(listener);
+        if (snapshotListeners.size === 0) for (const key of retryTimers.keys()) clearSnapshotRetry(key);
     };
 }
 
@@ -386,6 +418,7 @@ async function getServerFeaturesSnapshotWithRetry(
     const explicitServerUrl = isExplicitServerRequest
         ? normalizeBaseUrl(explicitServerProfile?.serverUrl ?? '')
         : null;
+    const explicitRuntimeOrigin = explicitServerProfile ? resolveHomeConnectionAddress(explicitServerProfile) : null;
     if (projection === 'public') restorePublicSnapshot(cacheKey);
 
     // A previous explicit probe can finish its feature response before its
@@ -479,12 +512,13 @@ async function getServerFeaturesSnapshotWithRetry(
                         } else {
                             response = await runtimeFetchWithServerReachability({
                                 serverUrl: explicitServerUrl!,
+                                runtimeOrigin: explicitRuntimeOrigin!,
                                 ...(explicitServerProfile?.serverIdentityId
                                     ? { homeIdentityId: explicitServerProfile.serverIdentityId }
                                     : {}),
                                 token: null,
                                 url: joinBaseAndPath(
-                                    explicitServerUrl!,
+                                    explicitRuntimeOrigin!,
                                     projection === 'authenticated' ? '/v1/features/authenticated' : '/v1/features',
                                 ),
                                 init: {
@@ -499,11 +533,12 @@ async function getServerFeaturesSnapshotWithRetry(
                                 if (isEndpointMissing(response.status)) {
                                     response = await runtimeFetchWithServerReachability({
                                         serverUrl: explicitServerUrl!,
+                                        runtimeOrigin: explicitRuntimeOrigin!,
                                         ...(explicitServerProfile?.serverIdentityId
                                             ? { homeIdentityId: explicitServerProfile.serverIdentityId }
                                             : {}),
                                         token: null,
-                                        url: joinBaseAndPath(explicitServerUrl!, '/v1/features'),
+                                        url: joinBaseAndPath(explicitRuntimeOrigin!, '/v1/features'),
                                         init: {
                                             method: 'GET',
                                             signal,
@@ -751,11 +786,27 @@ export async function observeAuthenticatedServerFeaturesFresh(params: Readonly<{
     request: ServerFetch;
     timeoutMs?: number;
 }>): Promise<ServerFeaturesSnapshot> {
+    return await observeServerFeaturesFresh({ ...params, projection: 'authenticated' });
+}
+
+/** Fresh public capability discovery through the caller's scoped transport. */
+export async function observePublicServerFeaturesFresh(params: Readonly<{
+    request: ServerFetch;
+    timeoutMs?: number;
+}>): Promise<ServerFeaturesSnapshot> {
+    return await observeServerFeaturesFresh({ ...params, projection: 'public' });
+}
+
+async function observeServerFeaturesFresh(params: Readonly<{
+    request: ServerFetch;
+    timeoutMs?: number;
+    projection: 'public' | 'authenticated';
+}>): Promise<ServerFeaturesSnapshot> {
     try {
         const response = await params.request(
-            '/v1/features/authenticated',
+            params.projection === 'authenticated' ? '/v1/features/authenticated' : '/v1/features',
             { method: 'GET' },
-            { includeAuth: true, retry: 'none', ...(params.timeoutMs === undefined ? {} : { timeoutMs: params.timeoutMs }) },
+            { includeAuth: params.projection === 'authenticated', retry: 'none', ...(params.timeoutMs === undefined ? {} : { timeoutMs: params.timeoutMs }) },
         );
         if (!response.ok) {
             return isEndpointMissing(response.status)
@@ -823,7 +874,7 @@ export function getServerFeaturesSnapshotRetryDelayMs(params: {
     if (transientRetryAt !== undefined) {
         return Math.max(0, transientRetryAt - Date.now());
     }
-    const shouldRetry = params.snapshot.status === 'error'
+    const shouldRetry = isServerFeaturesProbeRetryable(params.snapshot)
         || (
             params.snapshot.status === 'ready'
             && params.snapshot.features.capabilities.homeSearch?.reason === 'indexing'
@@ -850,6 +901,7 @@ export function primeServerFeaturesSnapshot(params: {
 
 export function deleteServerFeaturesSnapshot(params?: { serverId?: string }): void {
     const cacheKey = getCacheKey(params?.serverId);
+    clearSnapshotRetry(cacheKey);
     cache.delete(cacheKey);
     persistPublicSnapshot(cacheKey);
     transientRetryAtByProjectionKey.delete(`public\u0000${cacheKey}`);
@@ -1005,6 +1057,7 @@ export async function probeServerFeaturesAtUrl(
 }
 
 export function resetServerFeaturesClientForTests(): void {
+    for (const key of retryTimers.keys()) clearSnapshotRetry(key);
     cache.clear();
     authenticatedCache.clear();
     endpointCache.clear();

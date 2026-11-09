@@ -33,14 +33,13 @@ function useInventorySummarySelection<T>(input: LocalServiceInventoryRunningCoun
         let received = receivedSummary();
         if (received !== undefined) publishLocalServiceInventoryMachineSummary(key, received);
         const releaseSummary = observeLocalServiceInventorySummary(key, listener);
-        const releaseMachine = storage.subscribe((state, previous) => {
-            if (!binding.isCurrent() || (state.machines === previous.machines && state.machineListByServerId === previous.machineListByServerId
-                && state.machineListStatusByServerId === previous.machineListStatusByServerId)) return;
+        const releaseMachine = storage.subscribe(() => {
+            if (!binding.isCurrent()) return;
             const next = receivedSummary();
             if (next === received) return;
             received = next;
             publishLocalServiceInventoryMachineSummary(key, received);
-        });
+        }, { machines: true, machineListByServerId: true, machineListStatusByServerId: true });
         const retirement = binding.onRetire(() => { releaseSummary(); releaseMachine(); listener(); });
         return () => { retirement.dispose(); releaseSummary(); releaseMachine(); };
     }, [binding, key]);

@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import type {
-    MachineLiveStreamControlLeaseV1,
-    MachineLiveStreamFrameV1,
+    MachineLiveStreamControlLeaseV1} from '@happier-dev/protocol/machines/peer/mediation/stream/controlV1';
+import type {
+    MachineLiveStreamFrameV1} from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
+import type {
     SimulatorDeviceResourceV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/devices/simulator/v1';
 
 const availableResource: SimulatorDeviceResourceV1 = {
     v: 1,

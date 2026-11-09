@@ -76,12 +76,17 @@ export async function resolveBrowserAddressTarget(input: Readonly<{
         } }) : [];
     }
     const row = selectLaunchpadServiceRowForAddress(rows ?? [], input.target.url);
-    if (row?.target?.kind !== 'localServicePreview') return direct;
-    const service: LocalServiceLaunchTargetV1 = row.serviceRow?.target ?? {
-        id: row.target.targetId, source: 'registered_preview', machineId: row.target.machineId,
-        ...(row.target.sessionId ? { sessionId: row.target.sessionId } : {}), title: row.title,
-        confidence: 'high', state: 'available', actions: ['open_preview'], browserTarget: row.target,
-    };
+    if (!row) return direct;
+    let service: LocalServiceLaunchTargetV1;
+    if (row.serviceRow?.primaryAction?.kind === 'open') {
+        service = row.serviceRow.primaryAction.openTarget;
+    } else if (row.target?.kind === 'localServicePreview') {
+        service = {
+            id: row.target.targetId, source: 'registered_preview', machineId: row.target.machineId,
+            ...(row.target.sessionId ? { sessionId: row.target.sessionId } : {}), title: row.title,
+            confidence: 'high', state: 'available', actions: ['open_preview'], browserTarget: row.target,
+        };
+    } else return direct;
     const resolved = await resolveLocalServiceBrowserTarget(service, {
         accountLifetime: input.accountLifetime ?? undefined,
         sessionId: facts?.localServiceAddressScope?.sessionId ?? input.context.defaultSessionId,

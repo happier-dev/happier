@@ -2,6 +2,7 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 import type { Message } from '@happier-dev/session-core/messages';
 import { prepareTranscriptMessageBody, readableMessageText } from '@/components/sessions/transcript/messageDisplayText';
 import { projectMarkdownFindText } from '@/components/markdown/rendering/markdownFindProjection';
+import { t } from '@/text';
 
 type SessionMetadataCarrier = Readonly<{
     metadata?: unknown;
@@ -47,10 +48,17 @@ export function readSessionDisplayTitleField(
             : typeof session?.lockedDisplayTitle === 'string'
                 ? session.lockedDisplayTitle.trim()
                 : '';
+    // Historical executable Voice conversations used an implementation label as
+    // their title. Present it through the same title owner as every Session;
+    // authored names and summaries keep their existing precedence and spelling.
+    const legacyVoiceTitle = 'Voice conversation (system)';
+    const presentedValue = rawRenderableValue === legacyVoiceTitle
+        || (!rawRenderableValue && normalizeTransientTitleText(metadata?.name) === legacyVoiceTitle)
+        ? t('voicePresence.title') : rawRenderableValue;
     return {
         // A transient prompt title never replaces an explicit name or revives unreadable metadata.
         // A fallback title is an already projected readable title: keep it as written.
-        value: (rawRenderableValue ? readableMessageText(rawRenderableValue) : null) || (metadata && !normalizeTransientTitleText(metadata.name)
+        value: (presentedValue ? readableMessageText(presentedValue) : null) || (metadata && !normalizeTransientTitleText(metadata.name)
             ? readFirstUserMessageTitle(transient?.messages) ?? (transient?.fallbackTitle?.trim() || null)
             : null),
         updatedAt: typeof summary?.updatedAt === 'number' && Number.isFinite(summary.updatedAt)

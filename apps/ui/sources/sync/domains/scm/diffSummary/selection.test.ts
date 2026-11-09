@@ -28,6 +28,8 @@ describe('captured comparison result selection', () => {
         const scopeKey = serverAccountScopeKeySuffix(scope);
         expect(selectSessionScmWalkthroughKey(state, 's', { kind: 'workingTree' }, 'commitPlan', scopeKey)).toBe(newest);
         expect(selectSessionScmWalkthroughKey(state, 's', { kind: 'workingTree' }, 'walkthrough', scopeKey)).toBe(older);
+        expect(selectSessionScmWalkthroughKey(state, 's', { kind: 'workingTree', comparisonId: 'captured',
+            savedResult: { cwd: '/repo', resultId: 'older-reading' } }, 'commitPlan', scopeKey)).toBe(newest);
     });
     it('selects admission and failure for the exact requested comparison before a capture receipt returns', () => {
         const input = { cwd: '/repo', source: { kind: 'workingTree' as const }, comparisonId: 'captured', outputs: ['commitPlan' as const] };

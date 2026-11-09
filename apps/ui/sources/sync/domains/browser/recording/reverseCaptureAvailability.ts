@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { BrowserRecordingCaptureKindV1 } from '@happier-dev/protocol';
+import type { BrowserRecordingCaptureKindV1 } from '@happier-dev/protocol/browser/recording/v1';
 
 import type { BrowserControlViewState } from '@/sync/domains/browser/control';
 

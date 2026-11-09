@@ -65,19 +65,34 @@ export function resolveExternalUrlIframeSandbox(): string {
 }
 
 /**
- * Why a relay preview's own proxy will not serve its document: the route to the Machine is down, or
- * the preview no longer exists for this viewer (revoked, expired or never admitted).
+ * Why a relay preview's own proxy will not serve its document: the route to the Machine is down, the
+ * Home has no private preview route (no isolated preview origin), or the preview no longer exists for
+ * this viewer (revoked, expired or never admitted).
  */
-export type BrowserPreviewRefusalReasonCode = 'preview_transport_unavailable' | 'preview_ended';
+export type BrowserPreviewRefusalReasonCode = 'preview_transport_unavailable' | 'preview_private_route_unavailable'
+    | 'preview_ended' | 'destination_port_not_allowed';
+export type BrowserPreviewRefusal =
+    | Readonly<{ reasonCode: 'preview_transport_unavailable' | 'preview_private_route_unavailable' | 'preview_ended'; port?: never }>
+    | Readonly<{ reasonCode: 'destination_port_not_allowed'; port: number }>;
 
 export function isBrowserPreviewRefusalReasonCode(value: string): value is BrowserPreviewRefusalReasonCode {
-    return value === 'preview_transport_unavailable' || value === 'preview_ended';
+    return value === 'preview_transport_unavailable' || value === 'preview_private_route_unavailable'
+        || value === 'preview_ended' || value === 'destination_port_not_allowed';
 }
 
 /** Typed refusals from preview admission and the preview proxy, not application error bodies. */
-export function resolveBrowserPreviewRefusal(status: number, result: unknown): BrowserPreviewRefusalReasonCode | null {
+export function resolveBrowserPreviewRefusal(status: number, result: unknown): BrowserPreviewRefusal | null {
     const error = result && typeof result === 'object' && 'error' in result ? result.error : undefined;
-    if (status === 503 && error === 'preview_transport_unavailable') return 'preview_transport_unavailable';
-    if ((status === 404 && error === 'preview_not_found') || ((status === 401 || status === 403) && error === 'preview_access_denied')) return 'preview_ended';
+    if (status === 403 && error === 'preview_access_denied' && result && typeof result === 'object'
+        && 'reasonCode' in result && result.reasonCode === 'destination_port_not_allowed') {
+        const port = 'port' in result ? result.port : undefined;
+        return typeof port === 'number' && Number.isInteger(port) && port >= 1 && port <= 65535
+            ? { reasonCode: 'destination_port_not_allowed', port } : null;
+    }
+    if (status === 503 && error === 'preview_transport_unavailable') {
+        const reasonCode = result && typeof result === 'object' && 'reasonCode' in result ? result.reasonCode : undefined;
+        return { reasonCode: reasonCode === 'preview_private_route_unavailable' ? reasonCode : 'preview_transport_unavailable' };
+    }
+    if ((status === 404 && error === 'preview_not_found') || ((status === 401 || status === 403) && error === 'preview_access_denied')) return { reasonCode: 'preview_ended' };
     return null;
 }

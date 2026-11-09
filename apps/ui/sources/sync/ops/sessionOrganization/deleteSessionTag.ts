@@ -1,7 +1,8 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { deleteSessionOrganizationTag as deleteSessionOrganizationTagApi } from '@/sync/api/session/sessionOrganizationApi';
 import { getStorage } from '@/sync/domains/state/storageStore';
-import type { DeleteSessionOrganizationTagRequest, DeleteSessionOrganizationTagResponse } from '@happier-dev/protocol';
+import { sessionOrganizationStoreFor } from './sessionOrganizationAccountStore';
+import type { DeleteSessionOrganizationTagRequest, DeleteSessionOrganizationTagResponse } from '@happier-dev/protocol/sessions/organization/mutations';
 
 export async function deleteSessionTag(params: Readonly<{
     credentials: AuthCredentials;
@@ -12,7 +13,7 @@ export async function deleteSessionTag(params: Readonly<{
     request: DeleteSessionOrganizationTagRequest;
 }>): Promise<DeleteSessionOrganizationTagResponse> {
     params.assertCurrent?.();
-    const recordId = getStorage().getState().deleteSessionOrganizationTagOptimistic(params.serverId, params.request.tagId);
+    const recordId = sessionOrganizationStoreFor(params).deleteSessionOrganizationTagOptimistic(params.serverId, params.request.tagId);
     try {
         const response = await deleteSessionOrganizationTagApi({
             credentials: params.credentials,
@@ -21,9 +22,9 @@ export async function deleteSessionTag(params: Readonly<{
             request: params.request,
         });
         params.assertCurrent?.();
-        getStorage().getState().commitSessionOrganizationOptimistic(recordId);
+        sessionOrganizationStoreFor(params).commitSessionOrganizationOptimistic(recordId);
         if (response.removedAssignmentCount > 0) {
-            getStorage().getState().reconcileSessionOrganizationTagDelete(params.serverId, response.tagId);
+            sessionOrganizationStoreFor(params).reconcileSessionOrganizationTagDelete(params.serverId, response.tagId);
         }
         return response;
     } catch (error) {

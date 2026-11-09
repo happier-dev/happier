@@ -55,6 +55,6 @@ export function beginSessionReminderViewing(
         if (next.sessionOrganizationSnapshotVersionByServerId[serverId] === undefined) return;
         unsubscribe();
         acknowledge();
-    });
+    }, { sessionOrganizationSnapshotVersionByServerId: [serverId] });
     return unsubscribe;
 }

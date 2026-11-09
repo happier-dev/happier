@@ -1,4 +1,5 @@
-import type { MachineLiveStreamCapsV1, MachineLiveStreamCodecIdV1, MachineLiveStreamStartRequestV1 } from '@happier-dev/protocol';
+import type { MachineLiveStreamCapsV1, MachineLiveStreamStartRequestV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
+import type { MachineLiveStreamCodecIdV1} from '@happier-dev/protocol/machines/peer/mediation/stream/codecsV1';
 
 import type { ProductionMachineLiveStreamStartResult } from './productionRoute';
 import type { MachineLiveStreamRelayStartRpcResult } from './relayStartRpc';

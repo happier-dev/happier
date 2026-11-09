@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterAll, afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { PluginProjectionV2Schema, RPC_METHODS } from '@happier-dev/protocol';
+import { PluginProjectionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { SkillListItemV1Schema } from '@happier-dev/protocol/prompts/library/skills/skillLibraryItemV1';
 import { AcpCatalogRecordV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { MachineAgentInventoryItemSchema } from '@happier-dev/protocol/capabilities';
@@ -43,6 +44,7 @@ const { describeReach } = await import('@/components/capabilities/where/whereIts
 const { summarizeMachines } = await import('@/components/settings/skills/detail/skillMachineSummary');
 const { withdrawMachinePresenceForScope, captureMachinePresenceObservation, clearMachineRequestReachabilityForTest } = await import('@/sync/domains/machines/reachability/machineReachability');
 const { useMcpAddPlaces } = await import('@/components/settings/mcpServers/add/useMcpAddPlaces');
+const machineDisplayNames = await import('@/utils/sessions/machineDisplayNames');
 const { useMcpSignInViewOf } = await import('@/components/settings/mcpServers/signIn/useMcpSignInViewOf');
 const { useMcpServerSignIn } = await import('@/components/settings/mcpServers/signIn/useMcpServerSignIn');
 const { McpServersSettingsV1Schema } = await import('@happier-dev/protocol/mcp/servers/settingsV1');
@@ -73,6 +75,7 @@ it('ignores unrelated raw Machine activity while keeping real capability facts c
             agentInventory: { checkedAt: 2, installedAgentIds: ['codex'] } } }));
     storage.getState().applyMachines(machines, true, { sourceServerId: scope.serverId, sourceAccountId: scope.accountId });
     let renders = 0;
+    const nameProjections = vi.spyOn(machineDisplayNames, 'resolveMachineDisplayNames');
     const hook = await renderHook(() => { renders++; return useReachMachines(); });
     try {
         await vi.waitFor(() => expect(hook.getCurrent().machines).toHaveLength(101));
@@ -81,6 +84,7 @@ it('ignores unrelated raw Machine activity while keeping real capability facts c
         await act(async () => storage.setState({ settingsScope: scope }));
         const settled = renders;
         const previous = hook.getCurrent().machines;
+        nameProjections.mockClear();
         for (let i = 0; i < 5; i++) await act(async () => {
             const machine = storage.getState().machines['reach-cost-0']!;
             storage.getState().applyMachines([{ ...machine, daemonStateVersion: machine.daemonStateVersion + 1,
@@ -88,6 +92,7 @@ it('ignores unrelated raw Machine activity while keeping real capability facts c
             { sourceServerId: scope.serverId, sourceAccountId: scope.accountId });
         });
         expect(renders - settled).toBe(0);
+        expect(nameProjections).not.toHaveBeenCalled();
         expect(hook.getCurrent().machines).toBe(previous);
         await act(async () => {
             const machine = storage.getState().machines['reach-cost-0']!;
@@ -105,7 +110,7 @@ it('ignores unrelated raw Machine activity while keeping real capability facts c
         });
         expect(storage.getState().profileScope).toEqual(scope);
         expect(hook.getCurrent().machines).toEqual([]);
-    } finally { await hook.unmount(); }
+    } finally { nameProjections.mockRestore(); await hook.unmount(); }
 });
 
 it('keeps withdrawn capability places unknown until their exact Account observes each machine again', async () => {
@@ -351,6 +356,41 @@ it('names same-name Account machines apart, as every machine list does', async (
     } finally { await facts.unmount(); }
 });
 
+it('names admitted warm displays without requiring presence and withdraws locked or retired names', async () => {
+    const serverUrl = 'https://reach-warm-names.test';
+    await network.addHome(serverUrl, 'reach-warm-names-account');
+    const home = await adoptHomeProfile({ source: 'manual', descriptor: { v: 1,
+        homeServerIdentityId: 'srv_reach_warm_names', canonicalServerUrl: serverUrl, revision: 1,
+        endpoints: [{ kind: 'https', url: serverUrl }] } });
+    await setActiveServerId(home.id);
+    if (!home.serverIdentityId) throw new Error('Expected qualified Home');
+    const scope = { serverId: home.serverIdentityId, accountId: 'reach-warm-names-account' };
+    const options = { sourceServerId: scope.serverId, sourceAccountId: scope.accountId };
+    storage.setState({ settingsScope: scope, profileScope: scope, machines: {}, machineListByServerId: {}, machineListStatusByServerId: {} });
+    const machine = createMachineFixture({ id: 'warm-name', metadata: {
+        ...createMachineFixture().metadata!, displayName: 'Warm builder', host: 'warm-host',
+        agentInventory: { checkedAt: 2, installedAgentIds: ['codex'] },
+    } });
+    storage.getState().replaceMachineDisplays([machine], options);
+    const hook = await renderHook(() => useReachMachines());
+    try {
+        expect(hook.getCurrent().machines[0]).toMatchObject({ name: 'Warm builder', online: null, lastSeenAt: null });
+        expect(hook.getCurrent().placeMachines).toEqual([{ machineId: machine.id, name: 'Warm builder' }]);
+        await act(async () => storage.getState().replaceMachineDisplays([{ ...machine, metadata: null,
+            availability: { kind: 'locked', reason: 'decryption_failed' }, metadataVersion: machine.metadataVersion + 1 }], options));
+        expect(hook.getCurrent().machines[0]?.name).toBeTruthy();
+        expect(hook.getCurrent().machines[0]?.name).not.toContain('Warm builder');
+        expect(hook.getCurrent().placeMachines[0]?.name).toBe(hook.getCurrent().machines[0]?.name);
+        const retainedDisplays = storage.getState().machineDisplayById;
+        await act(async () => {
+            await TokenStorage.removeCredentialsForServerUrl(serverUrl);
+            storage.setState({ settingsScope: scope, profileScope: scope, machineDisplayById: retainedDisplays });
+        });
+        expect(hook.getCurrent().machines).toEqual([]);
+        expect(hook.getCurrent().placeMachines).toEqual([]);
+    } finally { await hook.unmount(); }
+});
+
 it('composes installed Machine publication and real catalog demand into passive skill-plan reach', async () => {
     const serverUrl = 'https://skill-plans-reach.test';
     await network.addHome(serverUrl, 'skill-plans-account');
@@ -379,13 +419,13 @@ it('composes installed Machine publication and real catalog demand into passive 
         if (pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
         return null;
     });
-    const facts = await renderHook(() => ({ reach: useReachMachines(), skillPlaces: useSkillPlaces(),
+    const facts = await renderHook(() => ({ reach: useReachMachines(), skillPlaces: useSkillPlaces(), mcpPlaces: useMcpAddPlaces(),
         credentials: useServerCredentialAccountScopeBinding(scope.serverId) }));
     try {
         await vi.waitFor(() => expect(facts.getCurrent().credentials.binding).not.toBeNull());
         expect(network.requests).toEqual([]);
         await act(async () => {
-            const entry = await loadDaemonMergedProjectionCacheEntry({ machineId: 'online', serverId: scope.serverId,
+            const entry = await loadDaemonMergedProjectionCacheEntry({ sections: 'complete', machineId: 'online', serverId: scope.serverId,
                 accountLifetime: facts.getCurrent().credentials.binding! });
             expect(entry, JSON.stringify({ entry, methods: network.requests.map(request => request.method) })).toMatchObject({ kind: 'ready' });
         });
@@ -393,6 +433,7 @@ it('composes installed Machine publication and real catalog demand into passive 
         expect(machines[0]?.agentDeclarationsById).toEqual(projection.agentsById);
         expect(skillPlanOnMachine(machines[0]!, 'codex')).toBe('session_dir');
         expect(facts.getCurrent().skillPlaces.agentTakes('codex')).toBe('full');
+        expect(facts.getCurrent().mcpPlaces.agentTakes('gemini')).toBe('none');
         const item = SkillListItemV1Schema.parse({ skillId: 'reaching', name: 'reaching', description: null,
             revision: '1:1', rules: [{ id: 'on', skillId: 'reaching', target: { t: 'allMachines' },
                 enabled: true, createdAt: 1, updatedAt: 1 }], trust: 'text_only', cost: { descriptionTokens: 1, bodyTokens: 2 },
@@ -427,11 +468,14 @@ it('composes concrete ACP inventory and the Account catalog into distinct config
     applyAcpCatalogSnapshot(scope, { status: 'ready', revision: 1, record }, true);
     const agentIds = ['custom-acp'];
     const places = [{ machineId: machine.id, name: 'Build machine' }];
+    const projects = [] as const;
     const hook = await renderHook(() => ({
         reach: useReachMachines(),
         identities: useAgentCatalogIdentities({ agentIds, machineId: machine.id, serverId: scope.serverId }),
-        names: useWhereItsOnNames({ agentIds, machines: places, projects: [], serverId: scope.serverId }),
+        names: useWhereItsOnNames({ agentIds, machines: places, projects, serverId: scope.serverId }),
         skillPlaces: useSkillPlaces(),
+        mcpPlaces: useMcpAddPlaces(),
+        credentials: useServerCredentialAccountScopeBinding(scope.serverId),
     }));
     try {
         expect(hook.getCurrent().reach.machines[0]?.agentIds).toEqual(['codex']);
@@ -444,18 +488,33 @@ it('composes concrete ACP inventory and the Account catalog into distinct config
         expect(describeReach(knownProjection, places.placeMachines, places.names, places.agentTakes).availabilityUnknown).toBe(false);
         const emptyProjection = projectReachOnMachines([{ ...rule, enabled: false }], hook.getCurrent().reach.machines);
         expect(describeReach(emptyProjection, places.placeMachines, places.names, places.agentTakes).availabilityUnknown).toBe(true);
+        const inventoryItems = record.definitions.map(definition => MachineAgentInventoryItemSchema.parse({
+            agentId: 'custom-acp', definitionId: definition.id, title: 'Outdated inventory name', installed: definition.id !== 'absent',
+            version: '1', latestVersion: null, update: { supported: false, command: null },
+            signIn: { status: 'unknown', loginSupport: 'unsupported', required: false }, platform: { supported: true },
+            install: { available: false, mode: 'none', sizeBytes: null, guideUrl: null }, dependencies: [],
+        }));
         await act(async () => {
             machineAgentInventoryStore.publish(serverAccountScopedResourceKey(scope, 'machine-agents', machine.id), {
-                status: 'ready', lastCheckedAt: 3, items: record.definitions.map(definition => MachineAgentInventoryItemSchema.parse({
-                    agentId: 'custom-acp', definitionId: definition.id, title: 'Outdated inventory name', installed: definition.id !== 'absent',
-                    version: '1', latestVersion: null, update: { supported: false, command: null },
-                    signIn: { status: 'unknown', loginSupport: 'unsupported', required: false }, platform: { supported: true },
-                    install: { available: false, mode: 'none', sizeBytes: null, guideUrl: null }, dependencies: [],
-                })),
+                status: 'ready', lastCheckedAt: 3, items: inventoryItems,
             });
         });
         expect(hook.getCurrent().reach.machines[0]?.agentIds).toEqual(['codex', 'custom-acp']);
         expect(hook.getCurrent().reach.machines[0]?.agentInventoryComplete).toBe(true);
+        // The generic ACP contribution has bundled runtime facts even without a UI core or warm daemon declaration.
+        expect(hook.getCurrent().mcpPlaces.agentTakes('custom-acp')).toBe('full');
+        const projection = PluginProjectionV2Schema.parse({ ...PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE, agentsById: {
+            'custom-acp': { id: 'custom-acp', identity: { pluginId: 'happier.agent.custom-acp', localId: 'custom-acp' },
+                capabilities: { tools: { delivery: 'native_mcp' } } },
+        } });
+        network.respond(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE, { protocolVersion: 1, projection });
+        await act(async () => {
+            const entry = await loadDaemonMergedProjectionCacheEntry({ sections: 'complete', machineId: machine.id, serverId: scope.serverId,
+                accountLifetime: hook.getCurrent().credentials.binding! });
+            expect(entry).toMatchObject({ kind: 'ready' });
+        });
+        expect(hook.getCurrent().mcpPlaces.agentTakes('custom-acp')).toBe('full');
+        const requestsAfterProjection = network.requests.length;
         expect(hook.getCurrent().identities.map(identity => [identity.entry.title, identity.entry.backendTargetKey, identity.entry.iconName]))
             .toEqual([
                 ['review configured agent', 'agent:happier.agent.custom-acp/custom-acp:definition:review', 'hard-drives'],
@@ -473,7 +532,12 @@ it('composes concrete ACP inventory and the Account catalog into distinct config
             .toBe('review configured agent');
         expect(hook.getCurrent().names.identityById.get('agent:happier.agent.custom-acp/custom-acp:definition:build')?.entry.title)
             .toBe('build configured agent');
-        expect(network.requests).toEqual([]);
+        const previousNames = hook.getCurrent().skillPlaces.names;
+        await act(async () => machineAgentInventoryStore.publish(serverAccountScopedResourceKey(scope, 'machine-agents', machine.id), {
+            status: 'ready', lastCheckedAt: 4, items: [],
+        }));
+        expect(hook.getCurrent().skillPlaces.names).toBe(previousNames);
+        expect(network.requests).toHaveLength(requestsAfterProjection);
         function ConfiguredWhere() {
             const skillPlaces = useSkillPlaces();
             return React.createElement(WhereItsOnControl, {
@@ -492,11 +556,49 @@ it('composes concrete ACP inventory and the Account catalog into distinct config
         expect(renderedText()).toContain('build configured agent');
         expect(renderedText()).not.toContain('absent configured agent');
         expect(screen.findAll(node => node.props.name === 'hard-drives')).not.toHaveLength(0);
+        await act(async () => machineAgentInventoryStore.publish(serverAccountScopedResourceKey(scope, 'machine-agents', machine.id), {
+            status: 'ready', lastCheckedAt: 5, items: inventoryItems.map(item => ({ ...item, installed: item.definitionId === 'build' })),
+        }));
+        expect(hook.getCurrent().skillPlaces.names.agentNames(['custom-acp'])).toEqual(['build configured agent']);
+        expect(renderedText()).not.toContain('review configured agent');
         await act(async () => applyAcpCatalogSnapshot(scope, { status: 'ready', revision: 2, record: { v: 1, definitions: [] } }, true));
         expect(hook.getCurrent().identities).toEqual([]);
         expect(hook.getCurrent().reach.machines[0]?.agentIds).toEqual(['codex']);
         expect(hook.getCurrent().reach.machines[0]?.agentInventoryComplete).toBe(true);
         expect(renderedText()).not.toContain('review configured agent');
         expect(renderedText()).not.toContain('build configured agent');
+    } finally { await hook.unmount(); }
+});
+
+it('keeps the published machines when an inventory refresh re-reads the same Agents', async () => {
+    const serverUrl = 'https://reach-equal-refresh.test';
+    await network.addHome(serverUrl, 'reach-equal-account');
+    const home = await adoptHomeProfile({ source: 'manual', descriptor: { v: 1,
+        homeServerIdentityId: 'srv_reach_equal', canonicalServerUrl: serverUrl, revision: 1,
+        endpoints: [{ kind: 'https', url: serverUrl }] } });
+    await setActiveServerId(home.id);
+    if (!home.serverIdentityId) throw new Error('Expected qualified Home');
+    const scope = { serverId: home.serverIdentityId, accountId: 'reach-equal-account' };
+    const machine = createMachineFixture({ id: 'equal-machine', activeAt: Date.now(), metadata: {
+        ...createMachineFixture().metadata!, agentInventory: { checkedAt: 2, installedAgentIds: ['codex'] },
+    } });
+    storage.setState({ settingsScope: scope, profileScope: scope, machines: { [machine.id]: machine },
+        machineListByServerId: { [scope.serverId]: [machine] }, machineListStatusByServerId: { [scope.serverId]: 'idle' } });
+    storage.getState().applyMachines([machine], true, { sourceServerId: scope.serverId, sourceAccountId: scope.accountId });
+    const items = [MachineAgentInventoryItemSchema.parse({
+        agentId: 'codex', title: 'Codex', installed: true, version: '1', latestVersion: null, update: { supported: false, command: null },
+        signIn: { status: 'unknown', loginSupport: 'unsupported', required: false }, platform: { supported: true },
+        install: { available: false, mode: 'none', sizeBytes: null, guideUrl: null }, dependencies: [],
+    })];
+    const key = serverAccountScopedResourceKey(scope, 'machine-agents', machine.id);
+    const hook = await renderHook(() => useReachMachines());
+    try {
+        await act(async () => machineAgentInventoryStore.publish(key, { status: 'ready', lastCheckedAt: 3, items }));
+        await vi.waitFor(() => expect(hook.getCurrent().machines[0]?.agentInventoryComplete).toBe(true));
+        const settled = hook.getCurrent();
+        // The next check finds the very same Agents; only its check time moved.
+        await act(async () => machineAgentInventoryStore.publish(key, { status: 'ready', lastCheckedAt: 4, items: items.map(item => ({ ...item })) }));
+        expect(hook.getCurrent().machines).toBe(settled.machines);
+        expect(hook.getCurrent().agentIds).toBe(settled.agentIds);
     } finally { await hook.unmount(); }
 });

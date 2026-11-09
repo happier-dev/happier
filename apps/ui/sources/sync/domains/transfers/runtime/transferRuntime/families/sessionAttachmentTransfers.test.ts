@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { deriveBoxPublicKeyFromSeed } from '@happier-dev/protocol';
+import { deriveBoxPublicKeyFromSeed } from '@happier-dev/protocol/crypto/boxBundle';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createSessionAttachmentTransferRouting, downloadDaemonSessionAttachmentToDestination, uploadDaemonSessionAttachmentFromReader } from './sessionAttachmentTransfers';
 import { createEncryptedTransferChunkEnvelope } from '../plumbing/transferChunkEncryption';

@@ -1,8 +1,10 @@
 import type {
-    BrowserViewTargetV1,
-    LocalServicePreviewDiagnosticV1,
+    BrowserViewTargetV1} from '@happier-dev/protocol/browser/target/v1';
+import type {
+    LocalServicePreviewDiagnosticV1} from '@happier-dev/protocol/local/services/preview/diagnostics/v1';
+import type {
     LocalServicePreviewResourceV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/local/services/preview/v1';
 import type { LocalServicePreviewNativeDirectDescriptorV1 } from '@happier-dev/protocol/local/services/preview/v1';
 
 import { readLocalServicePreviewDiagnostics } from './diagnostics';
@@ -108,12 +110,20 @@ export function applyLocalServicePreviewSnapshot(
             areRowsEquivalent(previous, normalizedPreview) ? previous as LocalServicePreviewRow : normalizedPreview,
         );
     }
+    const sameIds = state.previewIds.length === previewIds.length
+        && previewIds.every((id, index) => id === state.previewIds[index]);
+    const sameRows = sameIds && previewIds.every(id => previewsById.get(id) === state.previewsById.get(id));
+    const normalizedDiagnostics = readLocalServicePreviewDiagnostics(snapshot.diagnostics);
+    const diagnostics = JSON.stringify(state.diagnostics) === JSON.stringify(normalizedDiagnostics)
+        ? state.diagnostics : normalizedDiagnostics;
+    if (state.generatedAt === snapshot.generatedAt && state.refreshState === snapshot.refreshState
+        && sameRows && diagnostics === state.diagnostics) return state;
     return {
         generatedAt: snapshot.generatedAt,
         refreshState: snapshot.refreshState,
-        previewIds,
-        previewsById,
-        diagnostics: readLocalServicePreviewDiagnostics(snapshot.diagnostics),
+        previewIds: sameIds ? state.previewIds : previewIds,
+        previewsById: sameRows ? state.previewsById : previewsById,
+        diagnostics,
     };
 }
 

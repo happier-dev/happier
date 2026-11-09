@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ACCOUNT_SETTING_ARTIFACTS } from '@happier-dev/protocol';
+import { ACCOUNT_SETTING_ARTIFACTS } from '@happier-dev/protocol/account/settings/accountSettings';
 
 import { settingsDefaults, settingsParse } from '../../settings';
 import { ACCOUNT_SETTING_ANALYTICS_ARTIFACTS } from './accountSettingAnalytics';

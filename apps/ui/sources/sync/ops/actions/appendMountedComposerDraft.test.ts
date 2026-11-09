@@ -28,6 +28,12 @@ const { registerSessionComposerPresentationTarget } = await import('@/components
 const { restoreConnectionToActiveServer, disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
 const { TokenStorage } = await import('@/auth/storage/tokenStorage');
 const { appendMountedComposerDraft } = await import('./appendMountedComposerDraft');
+const { addMountedTranscriptAnnotation } = await import('./addMountedTranscriptAnnotation');
+const { normalizePluginUiProjection } = await import('@/sync/domains/plugins/ui/projection');
+const [{ PluginProjectionV2Schema}, { PluginManifestV2Schema}] = await Promise.all([import('@happier-dev/protocol/daemon/contributionRegistryProjection'), import('@happier-dev/protocol/plugins/manifest/v2')]);
+const { PLUGIN_MANIFEST } = await import('@happier-dev/plugins-app-context/manifest');
+const { randomUUID } = await import('@/platform/randomUUID');
+const { quoteTranscriptPassage } = await import('@/components/sessions/transcript/messageSelection/transcriptPassageActions');
 const { renderScreen } = await import('@/dev/testkit/render/renderScreen');
 const { SessionAuthoringComposer } = await import('@/components/sessions/authoring/SessionAuthoringComposer');
 const { createComposerTextStore, useComposerTextValue } = await import('@/components/sessions/agentInput/composerTextStore');
@@ -59,26 +65,82 @@ beforeEach(async () => {
 });
 afterEach(async () => { unmount?.(); unmount = undefined; await disconnectActiveServerConnection(); vi.unstubAllGlobals(); });
 
-function mountComposer(text: string, editable = true) {
+function mountComposer(text: string, editable = true, presented: () => boolean = () => true) {
     const ref = { kind: 'session' as const, sessionId: 'source-session' };
     writeExistingSessionDraft({ scope, sessionId: ref.sessionId, patch: { text } });
     const owner = createRepositoryComposerDocumentOwner({ scope, ref });
     const focus = vi.fn(() => true);
+    const definition = PluginManifestV2Schema.parse(PLUGIN_MANIFEST).contributes.composerAttachments
+        ?.find(attachment => attachment.id === 'transcript-annotation');
+    if (!definition) throw new Error('App context must declare the annotation contribution');
+    const entry = {
+        id: 'happier.app-context/transcript-annotation', pluginId: 'happier.app-context',
+        identity: { pluginId: 'happier.app-context', localId: 'transcript-annotation' }, occurrenceId: 'app-context-generation',
+        definition,
+    };
+    const catalog = normalizePluginUiProjection(PluginProjectionV2Schema.parse({
+        v: 2, generation: 1, installedPackagesById: {}, agentsById: {}, actionsById: {}, 
+        resourcesById: {}, settingsById: {}, diagnostics: [],
+        familiesById: { composerAttachments: { family: 'composerAttachments', entriesById: { [entry.id]: entry } } },
+    })).composerAttachmentsById;
     unmount = registerSessionComposerPresentationTarget({ serverId: scope.serverId, sessionId: ref.sessionId }, {
         readScope: () => scope,
+        isPresented: presented,
+        readAttachmentComposition: () => ({ composerAttachmentsById: catalog }),
         readRevision: () => owner.read().revision,
         replace: (nextText) => owner.replaceDocument({ ...owner.read().document, text: nextText }),
-        readSnapshot: () => projectComposerDocumentSnapshot({ owner, attachmentCatalog: { entriesById: null }, presentation: {
+        readSnapshot: () => projectComposerDocumentSnapshot({ owner, attachmentCatalog: { entriesById: catalog }, presentation: {
             layout: 'wrap', focused: false, editable, submittable: editable, submitting: false, running: false,
         } }),
         commitDocument: ({ expectedRevision, mutation }) => owner.apply(expectedRevision, mutation),
         commitDocumentEmitsChange: true,
+        createAttachmentInstanceId: randomUUID,
         focusComposer: focus,
     });
     return { ref, owner, focus };
 }
 
 describe('appendMountedComposerDraft', () => {
+    it('adds several annotation attachments through real ingress and draft ownership, retaining text and references without sending', async () => {
+        const { ref, owner, focus } = mountComposer('Keep @Session');
+        const reference = { kind: 'happier.session', ref: 'session:other-session', label: 'Session',
+            tokenText: '@Session', start: 5, end: 13 };
+        owner.replaceDocument({ ...owner.read().document, structuredInputMentions: [reference] });
+        const before = owner.read().document;
+        expect(before.structuredInputMentions).toHaveLength(1);
+        const source = { kind: 'session', session: { serverId: scope.serverId, sessionId: ref.sessionId }, messageId: 'committed-1' } as const;
+        const first = { quote: '  exact ``` quote\n> text  ', note: 'First note', source };
+        const second = { quote: 'Different passage', note: 'Second note', source };
+        expect(await addMountedTranscriptAnnotation({ scope, ref, annotation: first })).toBe(true);
+        expect(await addMountedTranscriptAnnotation({ scope, ref, annotation: second })).toBe(true);
+        expect(owner.read().document).toMatchObject({ text: before.text, structuredInputMentions: before.structuredInputMentions, composerAttachments: [
+            { value: first, presentation: { source, description: 'First note' } },
+            { value: second, presentation: { source, description: 'Second note' } },
+        ] });
+        expect(new Set(owner.read().document.composerAttachments.map(item => item.key)).size).toBe(2);
+        expect(await quoteTranscriptPassage({ quote: 'Quote from an ancestor ```\n> passage',
+            source: { ...source, session: { ...source.session, sessionId: 'parent-session' } }, destination: ref,
+            lifetime: { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) },
+        })).toBe(true);
+        expect(owner.read().document.text).toBe(`${before.text}\n${buildAskSelectionQuote({ text: 'Quote from an ancestor ```\n> passage' })}`);
+        expect(owner.read().document.composerAttachments).toHaveLength(2);
+        expect(focus).toHaveBeenCalled();
+        expect(home.requests.some(request => request.path.includes('/sessions') && request.input != null)).toBe(false);
+    });
+
+    it('refuses Quote and Annotate when the ordinary Session draft is no longer presented, retaining the draft', async () => {
+        let presented = true;
+        const { ref, owner, focus } = mountComposer('Original draft', true, () => presented);
+        const annotation = { quote: 'Selected text', note: 'Keep this note', source: {
+            kind: 'session' as const, session: { serverId: scope.serverId, sessionId: ref.sessionId }, messageId: 'committed-1',
+        } };
+        presented = false;
+        expect(await appendMountedComposerDraft({ scope, ref, text: buildAskSelectionQuote({ text: annotation.quote }) })).toBe(false);
+        expect(await addMountedTranscriptAnnotation({ scope, ref, annotation })).toBe(false);
+        expect(owner.read().document).toMatchObject({ text: 'Original draft', composerAttachments: [] });
+        expect(focus).not.toHaveBeenCalled();
+    });
+
     it('puts file selections in the real workspace draft store, retaining context until the composer mounts', async () => {
         const workspaceScope = { serverId: scope.serverId, machineId: 'machine-a', rootPath: '/work' };
         const reveal = vi.fn();
@@ -315,10 +377,17 @@ describe('appendMountedComposerDraft', () => {
     it.each(['revision', 'home', 'readOnly'] as const)('preserves current text and focus when the %s changes before ingress applies', async (condition) => {
         const { ref, owner, focus } = mountComposer('Keep me', condition !== 'readOnly');
         const pending = appendMountedComposerDraft({ scope, ref, text: 'Must not overwrite' });
+        const pendingAnnotation = addMountedTranscriptAnnotation({ scope, ref, annotation: {
+            quote: 'Selected passage', note: 'Keep this note', source: {
+                kind: 'session', session: { serverId: scope.serverId, sessionId: ref.sessionId }, messageId: 'committed-1',
+            },
+        } });
         if (condition === 'revision') owner.replaceDocument({ ...owner.read().document, text: 'Keep me\nTyped meanwhile' });
         if (condition === 'home') getStorage().setState({ profileScope: { ...scope, accountId: 'other-account' } });
         expect(await pending).toBe(false);
+        expect(await pendingAnnotation).toBe(false);
         expect(owner.read().document.text).toBe(condition === 'revision' ? 'Keep me\nTyped meanwhile' : 'Keep me');
+        expect(owner.read().document.composerAttachments).toEqual([]);
         expect(focus).not.toHaveBeenCalled();
         expect(listNewSessionDraftProjections(scope)).toHaveLength(0);
         expect(home.requests.some((request) => request.path.includes('/sessions') && request.input != null)).toBe(false);

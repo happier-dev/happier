@@ -3,6 +3,10 @@ import { Platform } from 'react-native';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createDeferred, createMachineFixture, flushHookEffects } from '@/dev/testkit';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createLegacyAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { waitForNetworkResponseForTests } from '@/dev/testkit/mocks/runtimeFetch';
+import { captureLazyActionAccountContext, withActionAccountRequestSignal } from '@/sync/ops/actions/actionAccountContext';
+import { readMachineRows } from './machineRowsApi';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -27,12 +31,51 @@ afterEach(async () => {
 });
 
 describe('Machine rows through captured Home readers', () => {
-    it.each(['ios', 'web'] as const)('batches exact Machine RPC preparation after real E2EE credential acquisition (%s)', async platform => {
+    it('cancels a held 185-Machine read when its Account changes without delivering the retired rows', async () => {
+        const ids = Array.from({ length: 185 }, (_, index) => `retired-machine-${index}`);
+        const entered = createDeferred<void>();
+        const release = createDeferred<void>();
+        let physical: AbortSignal | null | undefined;
+        const home = await serveAccountHomes({ homes: [{ key: 'resource', serverUrl: 'https://retiring-machine-read.test',
+            accountId: 'original-account' }], route: async request => {
+            if (request.path === '/v1/machines') return Response.json([]);
+            if (request.path !== '/v1/machines/read-batch') return undefined;
+            if (request.accountId === 'original-account') {
+                physical = request.signal;
+                entered.resolve();
+                await waitForNetworkResponseForTests(release.promise, request.signal);
+            }
+            return createMachineReadBatchResponseFixture(request.body, id => request.accountId === 'original-account'
+                ? createPlainMachineRowFixture({ id, accountId: 'original-account' }) : null);
+        } });
+        const account = await captureLazyActionAccountContext(home.homes.resource!.id);
+        try {
+            if (!account.readTransport) throw new Error('Captured Machine transport unavailable');
+            const pending = withActionAccountRequestSignal(account, undefined, signal => readMachineRows({
+                readTransport: account.readTransport!, machineIds: ids, signal,
+            }));
+            const cancelled = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+            await entered.promise;
+            expect(home.requests.filter(request => request.path === '/v1/machines/read-batch')).toHaveLength(1);
+            await home.switchAccount('resource', 'replacement-account');
+            await cancelled;
+            expect(physical?.aborted).toBe(true);
+            const replacement = await captureLazyActionAccountContext(home.homes.resource!.id);
+            try {
+                if (!replacement.readTransport) throw new Error('Replacement Machine transport unavailable');
+                const rows = await readMachineRows({ readTransport: replacement.readTransport, machineIds: ids });
+                expect([...rows.values()]).toEqual(ids.map(() => null));
+                expect(home.requests.filter(request => request.path === '/v1/machines/read-batch')).toHaveLength(2);
+            } finally { replacement.dispose(); }
+        } finally { release.resolve(); account.dispose(); await home.dispose(); }
+    });
+
+    it.each(['ios', 'web'] as const)('batches 185 exact Machine RPC preparations after real E2EE credential acquisition (%s)', async platform => {
         const previousPlatform = Object.getOwnPropertyDescriptor(Platform, 'OS')!;
         const webStorage = platform === 'web' ? installLocalStorageMock() : null;
         Object.defineProperty(Platform, 'OS', { ...previousPlatform, value: platform });
         try {
-            const ids = Array.from({ length: 32 }, (_, index) => `machine-preparation-${index}`);
+            const ids = Array.from({ length: 185 }, (_, index) => `machine-preparation-${index}`);
             const secret = new Uint8Array(32).fill(47);
             const { Encryption } = await import('@/sync/encryption/encryption');
             const { socketRpcCodec } = await import('@happier-dev/sync-client');
@@ -59,33 +102,46 @@ describe('Machine rows through captured Home readers', () => {
                 });
             });
             const batches: string[][] = [];
+            const entered = createDeferred<void>();
+            const release = createDeferred<void>();
             const home = await serveAccountHomes({ homes: [{ key: 'resource', serverUrl: 'https://machine-preparation.test',
-                accountId: 'machine-reader', accountMode: 'e2ee', credentials: {
+                accountId: 'machine-reader', accountMode: 'e2ee',
+                encryptionCurrentness: () => createLegacyAccountEncryptionCurrentnessFixture({ secret }), credentials: {
                     token: createAccountTokenForTests('machine-reader', { currentAccount: true }),
                     secret: Buffer.from(secret).toString('base64url'),
-                } }], route: request => {
+                } }], route: async request => {
                 if (request.path === '/v1/machines') return Response.json([]);
                 if (request.path !== '/v1/machines/read-batch') return undefined;
                 const response = createMachineReadBatchResponseFixture(request.body, id => ids.includes(id)
                     ? { id, metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0, dataEncryptionKey: null }
                     : null);
                 batches.push((request.body as { machineIds: string[] }).machineIds);
+                entered.resolve();
+                await release.promise;
                 return response;
             } });
             try {
                 // Initial cursor capture publishes a Home wake that separates read
                 // revisions. Exercise one demand after that real startup phase.
                 expect(await sync.awaitBootstrapForegroundAcquisition()).toBe(true);
-                const results = await Promise.all(ids.map(machineId => machineRpcWithServerScope({
+                const pending = Promise.all(ids.map(machineId => machineRpcWithServerScope({
                     serverId: home.homes.resource!.id, machineId, method: RPC_METHODS.CAPABILITIES_DETECT,
                     payload: {}, preferScoped: true,
                 })));
+                try {
+                    await entered.promise;
+                    await flushHookEffects();
+                    // All demanded rows issue before any response is released: one
+                    // physical request and one dependency wave for the measured fleet.
+                    expect(batches.map(batch => batch.length)).toEqual([ids.length]);
+                } finally { release.resolve(); }
+                const results = await pending;
                 expect(results).toEqual(ids.map(machineId => ({ machineId })));
                 expect(rpcTargets.sort()).toEqual([...ids].sort());
                 expect({ requests: batches.length, batchSizes: batches.map(batch => batch.length) })
                     .toEqual({ requests: 1, batchSizes: [ids.length] });
                 expect([...batches[0]!].sort()).toEqual([...ids].sort());
-            } finally { await home.dispose(); }
+            } finally { release.resolve(); await home.dispose(); }
         } finally {
             Object.defineProperty(Platform, 'OS', previousPlatform);
             webStorage?.restore();

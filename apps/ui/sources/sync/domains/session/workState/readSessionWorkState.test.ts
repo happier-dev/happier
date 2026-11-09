@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readSessionWorkStatePrimaryItemV1 } from '@happier-dev/protocol';
+import { readSessionWorkStatePrimaryItemV1 } from '@happier-dev/protocol/sessions/work/state/sessionWorkStatePrimary';
 
 import {
     readSessionWorkStateFromMetadata,

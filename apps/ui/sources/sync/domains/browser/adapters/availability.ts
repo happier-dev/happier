@@ -1,7 +1,8 @@
 import type {
-    BrowserSemanticAdapterKindV1,
+    BrowserSemanticAdapterKindV1} from '@happier-dev/protocol/browser/adapters/kinds';
+import type {
     BrowserViewTargetKindV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/browser/target/v1';
 
 export type BrowserAdapterUnavailableReasonCode =
     | 'desktop_engine_unavailable'

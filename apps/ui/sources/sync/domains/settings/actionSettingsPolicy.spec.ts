@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { ACTION_ID_FAMILIES_V1, type ActionId } from '@happier-dev/protocol';
+import { ACTION_ID_FAMILIES_V1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
 
 import { isInventoryPrivacyAction } from './actionSettingsPolicy';
 

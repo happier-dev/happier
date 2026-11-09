@@ -3,10 +3,11 @@ import {
     openSessionSharedDisplayEnvelopeV1,
     sealSessionOwnerDisplayEnvelopeV1,
     sealSessionSharedDisplayEnvelopeV1,
-    type AccountScopedCryptoMaterial,
     type SessionOwnerDisplayV1,
     type SessionSharedDisplayV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions';
+import {
+    type AccountScopedCryptoMaterial} from '@happier-dev/protocol/crypto/accountScopedCipher';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { resolveAccountScopedCryptoMaterialFromCredentials, resolveCurrentAccountScopedCryptoMaterialSnapshot } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';

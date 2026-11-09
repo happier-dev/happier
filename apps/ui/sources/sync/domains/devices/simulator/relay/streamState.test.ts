@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { PEER_MEDIATION_RECEIPTS, type MachineLiveStreamFrameV1, type MachineLiveStreamRelayEnvelopeV1 } from '@happier-dev/protocol';
+import { PEER_MEDIATION_RECEIPTS} from '@happier-dev/protocol/machines/peer/mediation/receipts';
+import { type MachineLiveStreamFrameV1, type MachineLiveStreamRelayEnvelopeV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 
 import { resolveLiveStreamViewerCapabilities } from '@/sync/domains/machines/peer/mediation/stream/capabilities';
 

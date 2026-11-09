@@ -5,7 +5,7 @@ import { featureRequiresServerSnapshot, type FeatureId } from '@happier-dev/prot
 import { supportsSessionListMembershipSelectionV1, supportsSessionListProjectSelectionV1, type SessionListQueryV1 } from '@happier-dev/protocol/sessions/listing/query';
 
 import {
-    useMachineListByServerId,
+    useMachineDisplaysByServerId,
     useMachineListStatusByServerId,
     useOrdinarySessionListMembershipByServerId,
     useSessionListQueryMembershipByKey,
@@ -16,7 +16,8 @@ import {
     storage,
 } from '@/sync/domains/state/storage';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
-import { buildMachineDisplaysByIdFromMachineList, buildSessionListIndexWithServerScope } from '@/sync/store/sessionListIndex/buildSessionListIndexWithServerScope';
+import { buildSessionListIndexWithServerScope } from '@/sync/store/sessionListIndex/buildSessionListIndexWithServerScope';
+import type { buildMachineDisplaysByIdFromMachineList } from '@/sync/store/sessionListIndex/buildMachineDisplaysByIdFromMachineList';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import type { SessionListRenderableSession } from './sessionListRenderable';
 import type { SessionAddress } from '../sessionAddress';
@@ -34,8 +35,10 @@ import {
 } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 
 import {
+    canSessionListOrdinaryPageAnswerQuery,
     createSessionListQueryHomeController,
     type SessionListOrdinaryPageAdapter,
+    type SessionListPageSelection,
     type SessionListQueryHomeController,
     type SessionListQueryHomeState,
     type SessionListQueryMembership,
@@ -54,6 +57,9 @@ import { resolveSessionListHomeKey, type SessionListRowStateByServerId } from '.
 import { subscribeSessionListQueryHomeInvalidation } from './sessionListQueryInvalidation';
 import { isSessionListQueryHomeCoverageComplete } from './sessionListHomeObservation';
 import { createSessionListRowSelection, type SessionListRowPredicate } from './sessionListRowSelection';
+import { getDemoModeServerId } from '@/demoMode/runtime/enterExitDemoMode';
+import { buildDemoSessionListQueryState } from '@/demoMode/runtime/demoSessionListReadProjection';
+import { retainShallow } from '@/sync/domains/state/structuralSharing';
 
 export type SessionListQueryHomeInput = Readonly<{
     serverId: string;
@@ -66,6 +72,7 @@ export type SessionListQueryHomeInput = Readonly<{
     query: SessionListQueryV1;
     /** Apply only exhausted relations for consumers that need the whole corpus. */
     readMode?: 'complete';
+    selectSession?: SessionListPageSelection;
     /**
      * Mounted Sessions corpora use `query`. Independent secondary consumers
      * use `rowOnly` to hydrate the shared exact-Home rows without publishing a
@@ -196,6 +203,7 @@ type NormalizedQueryHome = Readonly<{
     queryKey: string;
     query: SessionListQueryV1;
     readMode?: 'complete';
+    selectSession?: SessionListPageSelection;
     queryMembership: 'query' | 'rowOnly';
     ordinaryAdapter: SessionListOrdinaryPageAdapter | null;
 }>;
@@ -262,6 +270,7 @@ function normalizeHomes(homes: readonly SessionListQueryHomeInput[]): readonly N
             query: home.query,
             queryKey: buildSessionListQueryKey(serverId, home.query),
             readMode: home.readMode,
+            selectSession: home.selectSession,
             queryMembership: home.queryMembership ?? 'query',
             ordinaryAdapter: home.ordinaryAdapter ?? null,
         });
@@ -329,8 +338,8 @@ export function buildSessionListQueryHomeIndex(input: Readonly<{
  * authoritative empty one.
  */
 type SessionListQueryInput = Readonly<{
-    agentTargetDemand?: boolean;
     enabled: boolean;
+    agentTargetDemand?: boolean;
     homes: readonly SessionListQueryHomeInput[];
     emptySelectionComplete?: boolean;
 }>;
@@ -369,8 +378,8 @@ function readRetainedAddresses(membership: SessionListQueryMembership): readonly
 
 /**
  * The query corpora's lifecycle: controllers, per-Home state, coverage, paging and refresh. It reads
- * no rows, machines or list settings, so a consumer that needs only membership (which Sessions are in
- * a corpus) is not re-rendered by session content changes.
+ * no remote rows, machines or list settings. The seeded demo derives the same membership projection
+ * locally; content-only changes retain it, so membership consumers are not re-rendered.
  */
 export function useSessionListQueryHomeStates(input: SessionListQueryInput): SessionListQueryHomeStatesState {
     const layer = useSessionListQueryHomeStatesLayer(input);
@@ -388,6 +397,24 @@ export function useSessionListQueryHomeStates(input: SessionListQueryInput): Ses
 function useSessionListQueryHomeStatesLayer(input: SessionListQueryInput): SessionListQueryHomeStatesLayer {
     const homes = React.useMemo(() => normalizeHomes(input.homes), [input.homes]);
     const homeServerIds = React.useMemo(() => homes.map((home) => home.serverId), [homes]);
+    const demoServerId = getDemoModeServerId();
+    const demoHomes = React.useMemo(() => homes.filter(home => home.serverId === demoServerId
+        && !canSessionListOrdinaryPageAnswerQuery(home.query)), [demoServerId, homes]);
+    const demoHomeIds = React.useMemo(() => demoHomes.map(home => home.serverId), [demoHomes]);
+    const selectDemoStates = React.useMemo(() => {
+        let previous: Readonly<Record<string, SessionListQueryHomeState>> = {};
+        return (rows: SessionListRowStateByServerId) => {
+            const next: Record<string, SessionListQueryHomeState> = {};
+            for (const home of demoHomes) {
+                next[home.serverId] = buildDemoSessionListQueryState({ serverId: home.serverId, queryKey: home.queryKey,
+                    query: home.query, rows: rows[home.serverId] ?? {}, enabled: input.enabled, previous: previous[home.serverId] });
+            }
+            previous = retainShallow(previous, next);
+            return previous;
+        };
+    }, [demoHomes, input.enabled]);
+    const demoStates = useSessionListRowsByServerId(demoHomeIds, selectDemoStates);
+    const remoteHomeIds = React.useMemo(() => homeServerIds.filter(serverId => serverId !== demoServerId), [demoServerId, homeServerIds]);
     const queriesByServerId = React.useMemo(() => new Map(homes.map(home => [home.serverId, home.query])), [homes]);
     const supportByServerId = useSessionListQueryHomeSupportByServerId(homeServerIds, input.enabled, queriesByServerId);
     const followingHomeServerIds = React.useMemo(
@@ -404,18 +431,18 @@ function useSessionListQueryHomeStatesLayer(input: SessionListQueryInput): Sessi
     const queryMembershipByKey = useSessionListQueryMembershipByKey();
     const machineStatusesByServerId = useMachineListStatusByServerId();
     const socketStatus = useSocketStatus();
-    const accountScopesByServerId = useServerCredentialAccountScopes(homeServerIds);
-    // Homes whose ordinary corpus an incumbent runtime already owns — Sync for the
-    // applied Home, the concurrent cache for every other managed Home. Their
+    const accountScopesByServerId = useServerCredentialAccountScopes(remoteHomeIds);
+    // Homes whose corpus an incumbent runtime already owns — the local demo,
+    // Sync for the applied Home, the concurrent cache for every other managed Home. Their
     // bootstrap/reconnect replace, append continuation and cursors are the only
     // ones for `/v2/sessions` on that Home, so the filter reads that frontier here
     // instead of mounting a controller that would paginate and replace the same
     // membership — two owners that could orphan each other's pages.
     const managedOrdinaryHomeKey = homes
         .filter((home) => (
-            home.ordinaryAdapter?.membership === 'ordinary'
+            home.serverId === demoServerId || (!home.selectSession && home.ordinaryAdapter?.membership === 'ordinary'
             && supportByServerId[home.serverId] === false
-            && resolveOrdinarySessionListHomeOwner(home.serverId) !== null
+            && resolveOrdinarySessionListHomeOwner(home.serverId) !== null)
         ))
         .map((home) => home.serverId)
         .join('\u0000');
@@ -508,12 +535,21 @@ function useSessionListQueryHomeStatesLayer(input: SessionListQueryInput): Sessi
 
     React.useEffect(() => {
         for (const home of homes) {
+            controllersRef.current.get(home.serverId)?.observeOrdinaryLastSuccessAt(
+                ordinaryObservationsByServerId[home.serverId]?.lastSuccessAt ?? null,
+            );
+        }
+    }, [accountScopesByServerId, homes, ordinaryObservationsByServerId]);
+
+    React.useEffect(() => {
+        for (const home of homes) {
             const controller = controllersRef.current.get(home.serverId);
             if (!controller) continue;
             const availability = getSessionListQueryHomeAvailability(home.serverId);
             void controller.update({
                 query: home.query,
                 readMode: home.readMode,
+                selectSession: home.selectSession,
                 selected: input.enabled,
                 online: availability === 'pending' ? null : availability === 'online',
                 supported: resolveSessionListQueryHomeAdmissionSupport(
@@ -535,6 +571,7 @@ function useSessionListQueryHomeStatesLayer(input: SessionListQueryInput): Sessi
     }, [disposeController]);
 
     const readHomeState = React.useCallback((home: NormalizedQueryHome): SessionListQueryHomeState | undefined => {
+        if (demoStates[home.serverId]) return demoStates[home.serverId];
         if (!managedOrdinaryHomes.has(home.serverId)) {
             return controllersRef.current.get(home.serverId)?.getSnapshot();
         }
@@ -544,7 +581,7 @@ function useSessionListQueryHomeStatesLayer(input: SessionListQueryInput): Sessi
             requestedQueryKey: home.queryKey,
             online: availability === 'pending' ? null : availability === 'online',
         });
-    }, [managedOrdinaryHomes]);
+    }, [demoStates, managedOrdinaryHomes]);
     const loadNext = React.useCallback(async () => {
         await Promise.all(homes.map((home) => (
             managedOrdinaryHomes.has(home.serverId)
@@ -712,7 +749,8 @@ export function useSessionListQuerySourceState(input: SessionListQueryInput & Re
     // Project filtering cannot certify unknown Bot metadata in a different Project as complete.
     const selectedCoverageComplete = useSessionListRowsByServerId(input.rowPredicate ? homeServerIds : NO_SERVER_IDS, selectCoverage);
     useSessionListAgentTargetDemand(homeServerIds, input.enabled && input.agentTargetDemand === true);
-    const machineListsByServerId = useMachineListByServerId(input.enabled);
+    // Names only (machine displays): resource publications keep the list rows.
+    const machineDisplaysByServerId = useMachineDisplaysByServerId(homeServerIds);
     const layoutV1 = useSetting('sessionListLayoutV1');
     const previousRef = React.useRef<Readonly<{
         byServerId: Readonly<Record<string, ReadonlyArray<SessionListIndexItem> | null | undefined>>;
@@ -797,7 +835,7 @@ export function useSessionListQuerySourceState(input: SessionListQueryInput & Re
             nextByServerId[home.serverId] = buildSessionListQueryHomeIndex({
                 addresses,
                 rowsBySessionId: rowsByServerId[home.serverId],
-                machines: buildMachineDisplaysByIdFromMachineList(machineListsByServerId[home.serverId]),
+                machines: machineDisplaysByServerId[home.serverId] ?? {},
                 layoutV1,
                 serverId: home.serverId,
                 serverName: resolveHomeDisplayLabel(getServerProfileById(home.serverId), home.serverId),
@@ -841,7 +879,7 @@ export function useSessionListQuerySourceState(input: SessionListQueryInput & Re
             refresh: layer.refresh,
             retry: layer.retry,
         };
-    }, [layoutV1, input.enabled, input.rowPredicate, layer, machineListsByServerId, selectRows, selectedCoverageComplete]);
+    }, [layoutV1, input.enabled, input.rowPredicate, layer, machineDisplaysByServerId, selectRows, selectedCoverageComplete]);
     const result = useSessionListRowsByServerId(homeServerIds, selectResult);
     React.useLayoutEffect(() => {
         previousRef.current = { byServerId: result.byServerId, source: result.source, result };

@@ -11,10 +11,11 @@ function createRunToolMessage(params: {
     runId: string;
     state: 'running' | 'completed' | 'error';
     seq?: number;
+    createdAt?: number;
     input?: Record<string, unknown>;
     result?: unknown;
 }): ToolCallMessage {
-    const now = 1_700_000_000_000;
+    const now = params.createdAt ?? 1_700_000_000_000;
     return {
         kind: 'tool-call',
         id: params.id,
@@ -52,6 +53,20 @@ function deriveStatus(messages: readonly Message[], runId: string): string | und
 }
 
 describe('deriveExecutionRunSubagents status derivation', () => {
+    it('does not resurrect a completed run when an unsequenced row separates conflicting timestamps', () => {
+        const runId = 'run_ordering1111';
+        const messages = [
+            createRunToolMessage({
+                id: 'completed', runId, seq: 2, createdAt: 1_000, state: 'completed',
+                result: { status: 'succeeded', runId },
+            }),
+            { ...createAgentTextMessage({ id: 'unsequenced', text: 'Working.' }), createdAt: 2_000 },
+            createRunToolMessage({ id: 'started', runId, seq: 1, createdAt: 3_000, state: 'running' }),
+        ];
+
+        expect(deriveStatus(messages, runId)).toBe('succeeded');
+    });
+
     it('projects additive launch-origin fields from retained transcript tool payloads', () => {
         const launchOrigin = {
             kind: 'discussion',
@@ -253,10 +268,12 @@ describe('deriveExecutionRunSubagents status derivation', () => {
 
 describe('deriveExecutionRunSubagents display title', () => {
     it('names an unlabelled Run by what it is for, never by its id', () => {
-        const [summary, other] = deriveExecutionRunSubagents({ messages: [
+        const runs = deriveExecutionRunSubagents({ messages: [
             createRunToolMessage({ id: 'm-summary', runId: 'run_b7a65528', state: 'completed', input: { intent: 'scm_diff_summary' } }),
             createRunToolMessage({ id: 'm-other', runId: 'run_c19f0a77', state: 'completed' }),
         ] });
+        const summary = runs.find((run) => run.runRef?.runId === 'run_b7a65528');
+        const other = runs.find((run) => run.runRef?.runId === 'run_c19f0a77');
         expect(summary?.display.title).toBe('Change summary');
         expect(other?.display.title).toBe('Agent run');
         expect(JSON.stringify([summary?.display, other?.display])).not.toContain('run_');

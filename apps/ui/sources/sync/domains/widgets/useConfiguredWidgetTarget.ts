@@ -1,4 +1,5 @@
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { isDemoMachineWidgetRead } from '@/demoMode/runtime/demoMachinesWidgetBinding';
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { readInputFieldOptionsConstraint, readInputFieldSelectedValues, validateInputFieldSchema, validateInputFieldValue } from '@happier-dev/protocol/inputs/runtime';
 import type { QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
@@ -20,34 +21,40 @@ import { isSessionRouteHydrationPending } from '@/sync/domains/session/sessionRo
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { useProjectAccountWorkspaceRefs } from '@/sync/domains/workspaces/projectAccountRows';
+import type { ProjectWidgetAreaContextV1 } from './projectWidgetAreaContext';
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
+import type { SessionRecordingVisibility } from '@/sync/domains/session/listing/recordingPrivacy';
 
 const NO_PURPOSE_BINDINGS: QualifiedConnectedAccountPurposeBindingsV1 = { v: 1, bindings: [] };
 
-/** Physical placement supplies context; only the bound exact Session supplies execution facts. */
+/** Physical placement supplies context; exact Session and Project admission retain their existing owners. */
 type ConfiguredWidgetTargetOptions = Readonly<{
     scope: WidgetSurfaceRefV1;
     admittedViewer?: ServerAccountScope;
     instance: WidgetInstanceV1;
     descriptor: WidgetCandidate;
     providedContext: Readonly<Record<string, readonly JsonValue[]>>;
+    projectContext?: ProjectWidgetAreaContextV1 | null;
     groupBindings?: WidgetInputBindingsV1;
     appRuntime: PluginUiProjectionCurrentness;
     enabled?: boolean;
 }>;
 
 export function useConfiguredWidgetTarget(input: ConfiguredWidgetTargetOptions): ConfiguredWidgetTargetResolution {
+    const isSessionVisible = useSessionRecordingVisibility(input.enabled !== false);
     const retentionOwner = input.instance;
     input = { ...input, instance: inheritWidgetGroupViewerBindingsV1(input.instance, input.groupBindings, input.descriptor.inputs?.fields ?? []) };
-    return withWidgetInputRepairOutcome(useConfiguredWidgetTargetFacts(input, retentionOwner), { instance: input.instance, descriptor: input.descriptor });
+    return withWidgetInputRepairOutcome(useConfiguredWidgetTargetFacts(input, retentionOwner, isSessionVisible), { instance: input.instance, descriptor: input.descriptor, isSessionVisible });
 }
 
-function useConfiguredWidgetTargetFacts(input: ConfiguredWidgetTargetOptions, retentionOwner: WidgetInstanceV1): ConfiguredWidgetTargetResolution {
+function useConfiguredWidgetTargetFacts(input: ConfiguredWidgetTargetOptions, retentionOwner: WidgetInstanceV1, isSessionVisible: SessionRecordingVisibility): ConfiguredWidgetTargetResolution {
     const providedContext = composeWidgetGroupContextV1({ providedContext: input.providedContext, groupBindings: input.groupBindings });
     const targetDeclaration = readWidgetInputTargetV1(input.descriptor);
     const sessionPath = targetDeclaration.kind === 'session' ? targetDeclaration.path : undefined;
     const viewer = useActiveServerAccountScope();
     const workspaceRefs = useProjectAccountWorkspaceRefs(input.enabled !== false && targetDeclaration.kind === 'workspace');
-    const profile = useProfile();
+    const profile = useProfile(profile => ({ id: profile.id,
+        connectedAccountsV4: profile.connectedAccountsV4, connectedAccountGroupsV4: profile.connectedAccountGroupsV4 }));
     const purposePaths = Object.entries(input.instance.bindings).filter(([path, binding]) => binding.kind === 'viewer'
         && input.descriptor.connectedAccountPurposeBindings?.some(declaration => declaration.path === path && declaration.purpose === binding.purpose)
         && input.descriptor.inputs?.fields.some(field => field.path === path && field.connectedAccountOptions === true)).map(([path]) => path);
@@ -160,11 +167,12 @@ function useConfiguredWidgetTargetFacts(input: ConfiguredWidgetTargetOptions, re
     });
     const sessionRefusal = (status: WidgetInputIssueV1['status'], reasonCode: string): ConfiguredWidgetTargetResolution => withWidgetInputRepairOutcome({ status, reasonCode,
         ...(sessionPath ? { fields: [{ path: sessionPath, status, reasonCode }] } : {}) }, {
-            instance: input.instance, descriptor: input.descriptor,
+            instance: input.instance, descriptor: input.descriptor, isSessionVisible,
             ...(selectedIdentityMatches && selectedSession ? { sessionLabel: getSessionName(selectedSession, requested.serverId) } : {}),
         });
     if (input.enabled === false) return { status: 'unavailable', reasonCode: 'widget_inactive' };
-    if (!currentViewer) return { status: 'denied', reasonCode: 'widget_viewer_scope_mismatch' };
+    if (!currentViewer && !isDemoMachineWidgetRead(input.scope, input.instance.definition))
+        return { status: 'denied', reasonCode: 'widget_viewer_scope_mismatch' };
     if (!currentDefinition) return { status: 'unavailable', reasonCode: 'widget_type_unavailable' };
     if (needsPurposeCatalog && purposeCatalog.status === 'loading')
         return { status: 'loading', reasonCode: 'connected_account_purpose_catalog_loading' };
@@ -219,7 +227,8 @@ function useConfiguredWidgetTargetFacts(input: ConfiguredWidgetTargetOptions, re
         scope: input.scope, definition: input.instance.definition, targetKind: input.descriptor.target,
         authoredBody: candidate?.authoredDefinition?.body,
         resolvedInput: bound,
-        repairContext: { instance: input.instance, descriptor: candidate ?? input.descriptor, connection: { scope: input.scope,
+        projectContext: input.projectContext,
+        repairContext: { instance: input.instance, descriptor: candidate ?? input.descriptor, isSessionVisible, connection: { scope: input.scope,
             machineId: executableRuntime.phase === 'current' && executableRuntime.interactionEnabled ? executableRuntime.machineId : null,
             resources: Object.values(executableRuntime.pluginUiProjection?.resourcesById ?? {}) } },
         descriptor: candidate ?? input.descriptor,

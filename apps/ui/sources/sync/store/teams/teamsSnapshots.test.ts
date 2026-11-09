@@ -113,6 +113,72 @@ afterEach(() => {
 });
 
 describe('teamsSnapshots', () => {
+    it('publishes no content for repeated equal recipient catalog admissions at scale', () => {
+        // Constructed scale from the brief; no real Account census is available to this lane.
+        const resources = Array.from({ length: 400 }, (_, index): TeamCredentialResourceCatalogEntryV1 => ({
+            id: `resource-${index}`, teamId: groupAddressA.teamId, displayName: `Resource ${index}`,
+            resourceRevision: 1, readiness: { kind: 'available' }, recoveryAction: null,
+            mayBroker: true, mayReceiveDirect: false, directMaterialState: 'never_delivered',
+            sessionUsePolicy: 'personal_allowed', providerModels: [], connectedServiceSelections: [],
+            sourcePresentation: { kind: 'connected_service', service: { pluginId: 'happier.agent.claude', localId: 'anthropic' } },
+        }));
+        const publish = (rows: readonly TeamCredentialResourceCatalogEntryV1[], observedAt: number) =>
+            applyTeamCredentialResourceCatalog({ scope: scopeA, address: groupAddressA, resources: rows, observedAt });
+        publish(resources, 1);
+        const baseline = getTeamCredentialResourceCatalogSnapshot(scopeA, groupAddressA)!.data!;
+        const consumed: string[] = [];
+        let selectedReads = 0;
+        const releaseSelected = subscribeTeamsSnapshots(() => {
+            selectedReads += 1;
+            getTeamCredentialResourceCatalogsSelectionKey(scopeA, [{ address: groupAddressA }]);
+        }, { scope: scopeA, credentialCatalogs: [{ address: groupAddressA }] });
+        const release = subscribeTeamsSnapshots(() => {
+            consumed.push(getTeamCredentialResourceCatalogSnapshot(scopeA, groupAddressA)?.data?.[200]?.displayName ?? 'withdrawn');
+        });
+        try {
+            for (let i = 0; i < 22; i += 1) publish(structuredClone(resources), i + 2);
+            expect(consumed).toHaveLength(0);
+            expect(selectedReads).toBe(0);
+            expect(getTeamCredentialResourceCatalogSnapshot(scopeA, groupAddressA)?.lastObservedAt).toBe(23);
+            publish(resources.map((row, i) => i === 200 ? { ...row, displayName: 'Renamed' } : row), 24);
+            expect(consumed).toEqual(['Renamed']);
+            expect(selectedReads).toBe(1);
+            expect(getTeamCredentialResourceCatalogSnapshot(scopeA, groupAddressA)?.data?.[199]).toBe(baseline[199]);
+            selectedReads = 0;
+            for (let i = 0; i < 5; i += 1) applyTeamCredentialResourceCatalog({ scope: scopeB,
+                address: groupAddressB, resources: [{ ...resources[0]!, displayName: `Foreign ${i}` }], observedAt: i });
+            expect(selectedReads).toBe(0);
+            invalidateTeamsSnapshotsForServer(scopeA.serverId);
+            expect(selectedReads).toBe(1);
+            clearTeamsSnapshotsForServer(scopeA.serverId);
+            expect(selectedReads).toBe(2);
+            expect(getTeamCredentialResourceCatalogSnapshot(scopeA, groupAddressA)).toBeNull();
+            publish(resources, 100);
+            const admitted = getTeamCredentialResourceCatalogSnapshot(scopeA, groupAddressA)!;
+            // Entering refresh publishes its real progress fact once. Holding that
+            // read must publish nothing else or revoke the admitted selection facts.
+            beginTeamCredentialResourceCatalogLoad(scopeA, groupAddressA);
+            const held = getTeamCredentialResourceCatalogSnapshot(scopeA, groupAddressA)!;
+            consumed.length = 0;
+            selectedReads = 0;
+            for (let i = 0; i < 22; i += 1) beginTeamCredentialResourceCatalogLoad(scopeA, groupAddressA);
+            expect(consumed).toHaveLength(0);
+            expect(selectedReads).toBe(0);
+            expect(getTeamCredentialResourceCatalogSnapshot(scopeA, groupAddressA)).toBe(held);
+            expect(held.status).toBe('refreshing');
+            expect(held.data).toBe(admitted.data);
+            expect(held.selectionCurrent).toBe(true);
+            const retainedKeys = held.selectionCurrent ? held.data?.map(row => `${row.teamId}:${row.id}`) : [];
+            expect(retainedKeys).toEqual(resources.map(row => `${row.teamId}:${row.id}`));
+            applyTeamCredentialResourceCatalogFailure({ scope: scopeA, address: groupAddressA,
+                error: { kind: 'forbidden', retryable: false } });
+            expect(selectedReads).toBe(1);
+            expect(consumed).toEqual(['withdrawn']);
+            expect(getTeamCredentialResourceCatalogSnapshot(scopeA, groupAddressA)?.data).toBeNull();
+            expect(getTeamCredentialResourceCatalogSnapshot(scopeA, groupAddressA)?.selectionCurrent).toBe(false);
+        } finally { release(); releaseSelected(); }
+    });
+
     it('keeps immutable Team binding identities across loading and real Team edits', () => {
         const address = createTeamAddress(scopeA.serverId, 'team_1')!;
         applyTeamProjection({ scope: scopeA, address, team: team(address.teamId), observedAt: 1 });

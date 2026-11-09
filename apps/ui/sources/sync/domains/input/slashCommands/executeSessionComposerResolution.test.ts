@@ -186,7 +186,7 @@ describe('executeSessionComposerResolution', () => {
     expect(clearSemanticDraftValues).toHaveBeenCalledTimes(1);
   });
 
-  it('inserts a review.start action draft when /h.review has no instructions', async () => {
+  it('opens a seeded Run form without admission when /h.review has no instructions', async () => {
     const executeSessionComposerResolution = await loadSubject();
     const actionExecutor = { execute: vi.fn(async () => ({ ok: true as const, result: { ok: true } })) };
     const modalAlert = vi.fn();
@@ -198,6 +198,7 @@ describe('executeSessionComposerResolution', () => {
       resolved: { kind: 'action', actionId: 'review.start', rest: '   ' },
       sessionId: 's1',
       accountScope: { serverId: 'home-a', accountId: 'account-a' },
+      openExecutionRunDraft: seed => createSessionActionDraft(seed.scope, { serverId: seed.scope.serverId, sessionId: seed.sessionId }, { actionId: seed.actionId, input: seed.input }),
       agentId: 'claude',
       backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       permissionMode: 'default',
@@ -234,6 +235,7 @@ describe('executeSessionComposerResolution', () => {
       resolved: { kind: 'action', actionId: 'review.start', rest: '   ' },
       sessionId: 's1',
       accountScope: { serverId: 'home-a', accountId: 'account-a' },
+      openExecutionRunDraft: seed => createSessionActionDraft(seed.scope, { serverId: seed.scope.serverId, sessionId: seed.sessionId }, { actionId: seed.actionId, input: seed.input }),
       agentId: 'coderabbit',
       backendTarget: { kind: 'builtInAgent', agentId: 'coderabbit' },
       permissionMode: 'read_only',
@@ -258,7 +260,7 @@ describe('executeSessionComposerResolution', () => {
       }),
     );
     const draftArgs = createSessionActionDraft.mock.calls[0]?.[2] as any;
-    expect(draftArgs?.input?.engines).toBeUndefined();
+    expect(draftArgs?.input?.engines ?? {}).not.toHaveProperty('coderabbit');
   });
 
   it('executes review.start via the action executor with a safe review permission mode', async () => {
@@ -445,6 +447,7 @@ describe('executeSessionComposerResolution', () => {
       resolved: { kind: 'action', actionId: 'subagents.delegate.start', rest: '   ' },
       sessionId: 's1',
       accountScope: { serverId: 'home-a', accountId: 'account-a' },
+      openExecutionRunDraft: seed => createSessionActionDraft(seed.scope, { serverId: seed.scope.serverId, sessionId: seed.sessionId }, { actionId: seed.actionId, input: seed.input }),
       agentId: 'claude',
       backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       permissionMode: null,
@@ -477,6 +480,7 @@ describe('executeSessionComposerResolution', () => {
       resolved: { kind: 'action', actionId: 'subagents.plan.start', rest: '   ' },
       sessionId: 's1',
       accountScope: { serverId: 'home-a', accountId: 'account-a' },
+      openExecutionRunDraft: seed => createSessionActionDraft(seed.scope, { serverId: seed.scope.serverId, sessionId: seed.sessionId }, { actionId: seed.actionId, input: seed.input }),
       agentId: 'customAcp',
       backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
       permissionMode: 'safe-yolo',

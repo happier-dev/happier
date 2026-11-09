@@ -63,6 +63,8 @@ export type SubmitSessionUserMessageResult = Readonly<{
     errorCode?: string;
     errorMessage?: string;
     errorDetail?: SpawnSessionErrorDetail;
+    /** A send could not resume a stopped Session: the row stays queued behind the hold. */
+    stopHoldResumeFailed?: true;
     localId?: string;
 }>;
 

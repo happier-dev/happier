@@ -6,6 +6,10 @@ import { createSessionEncryptionUnavailableError } from '@/sync/encryption/sessi
 it('keeps explicit HTTP refusal codes and unsupported-shape failures without carrying response content', () => {
     expect(readUsageHistoryFailure(new SessionPartsHttpError(503, { error: 'private server diagnostic', code: 'database_unavailable' })))
         .toEqual({ errorCode: 'database_unavailable', retryable: true, errorName: 'Error', httpStatus: 503 });
+    expect(readUsageHistoryFailure(new SessionPartsHttpError(503, { error: 'database_transaction_timeout' })))
+        .toEqual({ errorCode: 'database_transaction_timeout', retryable: true, errorName: 'Error', httpStatus: 503 });
+    expect(readUsageHistoryFailure(new SessionPartsHttpError(503, { error: 'private server diagnostic' })))
+        .toEqual({ errorCode: 'http_error', retryable: true, errorName: 'Error', httpStatus: 503 });
     expect(readUsageHistoryFailure(new SessionPartsInvalidResponseError())).toMatchObject({ errorCode: 'usage_session_evidence_read_failed', retryable: true,
         errorName: 'SessionPartsInvalidResponseError' });
     expect(readUsageHistoryFailure({ errorCode: 'invalid_response' })).toMatchObject({ errorCode: 'invalid_response', retryable: false });

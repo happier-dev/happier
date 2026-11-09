@@ -49,6 +49,16 @@ export function buildDiscussionRequesterApprovalArtifact(input: Readonly<{
     const key = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(39));
     const caller = { kind: 'session' as const, sessionId: botSessionId, starterDepth: 0, turnDepth: 0 };
     const target = { kind: 'session' as const, sessionId: botSessionId };
+    const actionRequestAttributionV1 = {
+        requestRef,
+        requester: { serverId, accountId: input.requesterAccountId ?? 'bob' },
+        persona: { serverId, sessionId: botSessionId },
+        origin: input.origin !== undefined ? input.origin : {
+            kind: 'discussion' as const,
+            discussion: { serverId, discussionId: input.discussionId ?? 'discussion-1' },
+            messageId: input.originMessageId ?? 'message-ask',
+        },
+    };
     const context: ActionExecutorContext = {
         surface: 'agent', authority: 'account_automation', runtimeAccountId: executionAccountId,
         defaultSessionId: botSessionId, serverId, serverIdentityId, actionRequestId: 'action-1',
@@ -60,22 +70,13 @@ export function buildDiscussionRequesterApprovalArtifact(input: Readonly<{
             machineId: 'machine-1', installationId: 'installation', actionId, requestId: 'action-1', target,
             authentication: { kind: 'account', tokenEpoch: 0 },
             requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({ v: 1, requestId: 'action-1', target, input: actionArgs }),
-            sessionActionOrigin: { v: 1, caller, sourceTurnId: 'turn-1', callerPermissionMode: 'yolo', requestId: 'action-1' },
+            sessionActionOrigin: { v: 1, caller, sourceTurnId: 'turn-1', callerPermissionMode: 'yolo', requestId: 'action-1', actionRequestAttributionV1 },
             sessionActionSource: { machineId: 'machine-1', installationId: 'installation' },
         } },
         signExternalActionApprovalInput: args => signExternalActionApprovalInputV1({ authorizationToken: args.authorization.token,
             actionId: args.actionId, target: args.target, input: args.input, privateKey: key.secretKey,
             requesterConfirmation: args.requesterConfirmation, sessionTargetsV1: args.sessionTargetsV1 }),
-        actionRequestAttributionV1: {
-            requestRef,
-            requester: { serverId, accountId: input.requesterAccountId ?? 'bob' },
-            persona: { serverId, sessionId: botSessionId },
-            origin: input.origin !== undefined ? input.origin : {
-                kind: 'discussion',
-                discussion: { serverId, discussionId: input.discussionId ?? 'discussion-1' },
-                messageId: input.originMessageId ?? 'message-ask',
-            },
-        },
+        actionRequestAttributionV1,
     };
     const requesterConfirmation = buildApprovalRequesterConfirmationV1({ context, actionId, input: actionArgs });
     if (!requesterConfirmation && (input.requesterAccountId ?? 'bob') !== executionAccountId) throw new Error('Expected the admitted requester confirmation');

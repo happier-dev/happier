@@ -28,6 +28,23 @@ function parsePreviewUrl(rawUrl: string): URL | null {
     }
 }
 
+/** The displayed Service host is an address alias for its admitted preview, including its port. */
+export function isLocalServicePreviewAddress(rawUrl: string, addressLabel: string | null | undefined): boolean {
+    const requested = parsePreviewUrl(rawUrl);
+    const serviceHost = addressLabel?.split('/')[0]?.trim();
+    if (!requested || !serviceHost || (requested.protocol !== 'http:' && requested.protocol !== 'https:')) return false;
+    const service = parsePreviewUrl(`${requested.protocol}//${serviceHost}`);
+    return service !== null && requested.host === service.host;
+}
+
+/** A preview may navigate to an ordinary site; that document keeps its own address. */
+export function resolveLocalServicePreviewExternalUrl(rawUrl: string, previewUrl: string | null, addressLabel?: string | null): string | null {
+    const requested = parsePreviewUrl(rawUrl);
+    if (!requested || isLoopbackHostname(requested.hostname) || isLocalServicePreviewAddress(rawUrl, addressLabel)) return null;
+    const preview = previewUrl ? parsePreviewUrl(previewUrl) : null;
+    return requested.origin === preview?.origin ? null : rawUrl;
+}
+
 function isNativePlatform(platform: LocalServicePreviewPlatform): boolean {
     return platform === "ios" || platform === "android";
 }
@@ -67,4 +84,17 @@ export function withoutPreviewAdmission(rawUrl: string): string {
     if (!parsed || !parsed.searchParams.has(PREVIEW_ADMISSION_QUERY)) return rawUrl;
     parsed.searchParams.delete(PREVIEW_ADMISSION_QUERY);
     return parsed.toString();
+}
+
+/** Preserve the page location while using only the current server admission and its origin. */
+export function resolveLocalServicePreviewServerUrl(currentUrl: string, accessUrl: string): string {
+    const admitted = new URL(accessUrl);
+    const current = new URL(currentUrl, admitted);
+    const token = admitted.searchParams.get(PREVIEW_ADMISSION_QUERY);
+    admitted.pathname = current.pathname;
+    admitted.search = current.search;
+    admitted.hash = current.hash;
+    admitted.searchParams.delete(PREVIEW_ADMISSION_QUERY);
+    if (token) admitted.searchParams.set(PREVIEW_ADMISSION_QUERY, token);
+    return admitted.toString();
 }

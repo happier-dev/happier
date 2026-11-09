@@ -14,9 +14,13 @@ export type AuthenticatedWebServerUrlOverrideAction =
 export function resolveWebServerUrlOverrideAction(
     params: Readonly<{
         bootstrappedServerUrl?: string | null;
+        /** Native app links carry the same supplied Home in their route parameters. */
+        serverUrlOverride?: string | null;
     }>,
 ): AuthenticatedWebServerUrlOverrideAction {
-    const override = readWebServerUrlOverrideFromLocation();
+    const override = params.serverUrlOverride === undefined
+        ? readWebServerUrlOverrideFromLocation()
+        : params.serverUrlOverride ? { serverUrl: params.serverUrlOverride } : null;
     if (!override) return { kind: 'none' };
 
     const desired = normalizeServerUrl(override.serverUrl);

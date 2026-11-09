@@ -55,7 +55,7 @@ afterEach(async () => {
 function requestFor(destinationMachine: string) {
     const destination = destinationMachine === 'source-controller' ? { kind: 'primary' as const }
         : { kind: 'workers' as const, destination: { kind: 'machine' as const, machineId: destinationMachine } };
-    return ProjectServiceRelocateInputV1Schema.parse({ workspace: { serverId, refId: 'source-ref' }, serviceName: 'web', requestId: 'move-web',
+    return ProjectServiceRelocateInputV1Schema.parse({ workspace: { serverId, refId: 'source-ref' }, sourceMachineId: 'source-controller', serviceName: 'web', requestId: 'move-web',
         currentTarget: { kind: 'managed_service', managedServiceId: 'native-web',
             machineId: destinationMachine === 'source-controller' ? 'source-controller' : 'old-worker' },
         destination, selectedTarget: { machineId: destinationMachine },

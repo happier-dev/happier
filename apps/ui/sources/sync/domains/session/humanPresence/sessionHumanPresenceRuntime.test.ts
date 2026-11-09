@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { attachSessionHumanPresenceSocket, registerDiscussionHumanPresence, reportDiscussionTypingEdit, reportSessionTypingEdit, stopDiscussionTyping, stopSessionTyping, type SessionHumanPresenceSocketTransport } from './sessionHumanPresenceRuntime';
+import { attachSessionHumanPresenceSocket, registerDiscussionHumanPresence, registerSessionPendingMessageEdit, reportDiscussionTypingEdit, reportSessionTypingEdit, stopDiscussionTyping, stopSessionTyping, type SessionHumanPresenceSocketTransport } from './sessionHumanPresenceRuntime';
 import { SessionHumanPresenceVisibleReplaceV1Schema, SessionHumanPresenceTypingSetV1Schema } from '@happier-dev/protocol/sessions';
 import { act } from 'react-test-renderer';
 import { renderHook } from '@/dev/testkit';
@@ -51,6 +51,9 @@ function transport() {
                 ...('locations' in (payload as object)
                     ? { admittedLocations: (payload as { locations: unknown[] }).locations }
                     : {}),
+                ...('pendingMessageEdits' in (payload as object)
+                    ? { admittedPendingMessageEdits: (payload as { pendingMessageEdits: unknown[] }).pendingMessageEdits }
+                    : {}),
             };
         },
         snapshot(payload: unknown) { snapshot?.(payload); },
@@ -87,6 +90,64 @@ beforeAll(() => {
 afterEach(async () => { for (const fn of cleanup.splice(0).reverse()) await fn(); Object.defineProperty(AppState, 'currentState', {value:'active', configurable:true}); hostChanged?.(); vi.useRealTimers(); });
 async function settle() { for (let i = 0; i < 8; i++) await Promise.resolve(); }
 describe('human presence runtime', () => {
+    it('keeps an admitted edit on the socket lifetime while hidden, redeclares on reconnect and releases without renewal', async () => {
+        const home = (await scopeHomes(['pending-edit'])).get('pending-edit')!;
+        const target = { serverId: home.serverId, sessionId: 's' };
+        const boundary = transport();
+        cleanup.push(attachSessionHumanPresenceSocket({ serverId: home.serverId, accountId: 'self', transport: boundary.socket }));
+        await settle();
+        const release = await registerSessionPendingMessageEdit(target, 'edit-1', home.getLifetime());
+        cleanup.push(release);
+        await settle();
+        expect(boundary.sent.at(-1)?.[1]).toEqual({ v: 1, sessionIds: [], pendingMessageEdits: [{ sessionId: 's', holdId: 'edit-1' }] });
+        Object.defineProperty(AppState, 'currentState', { value: 'background', configurable: true });
+        hostChanged();
+        await settle();
+        vi.useFakeTimers();
+        const settledCount = boundary.sent.length;
+        await vi.advanceTimersByTimeAsync(120_000);
+        expect(boundary.sent).toHaveLength(settledCount);
+        boundary.socket.change(false);
+        boundary.socket.change(true);
+        await settle();
+        expect(boundary.sent.at(-1)?.[1]).toEqual({ v: 1, sessionIds: [], pendingMessageEdits: [{ sessionId: 's', holdId: 'edit-1' }] });
+        release();
+        await settle();
+        expect(boundary.sent.at(-1)?.[1]).toEqual({ v: 1, sessionIds: [] });
+    });
+
+    it('does not admit an edit when the Home acknowledges visibility but not the requested edit', async () => {
+        const home = (await scopeHomes(['pending-refusal'])).get('pending-refusal')!;
+        const boundary = transport();
+        cleanup.push(attachSessionHumanPresenceSocket({ serverId: home.serverId, accountId: 'self', transport: {
+            ...boundary.socket,
+            sendWithAck: async () => ({ v: 1, ok: true, admittedSessionIds: [] }),
+        } }));
+        await settle();
+        await expect(registerSessionPendingMessageEdit({ serverId: home.serverId, sessionId: 's' }, 'edit-1', home.getLifetime())).rejects.toThrow();
+    });
+    it('settles an unacknowledged edit when its socket disconnects instead of waiting on the retired acknowledgement', async () => {
+        const home = (await scopeHomes(['pending-disconnect'])).get('pending-disconnect')!;
+        const boundary = transport();
+        let acknowledge: ((value: unknown) => void) | undefined;
+        cleanup.push(attachSessionHumanPresenceSocket({ serverId: home.serverId, accountId: 'self', transport: {
+            ...boundary.socket,
+            sendWithAck: async (_event, payload) => 'pendingMessageEdits' in (payload as object)
+                ? new Promise(resolve => { acknowledge = resolve; })
+                : { v: 1, ok: true, admittedSessionIds: [] },
+        } }));
+        await settle();
+        let result: 'pending' | 'admitted' | 'unavailable' = 'pending';
+        const admission = registerSessionPendingMessageEdit({ serverId: home.serverId, sessionId: 's' }, 'edit-1', home.getLifetime())
+            .then(release => { release(); result = 'admitted'; }, () => { result = 'unavailable'; });
+        await settle();
+        expect(acknowledge).toBeTypeOf('function');
+        boundary.socket.change(false);
+        await settle();
+        expect(result).toBe('unavailable');
+        acknowledge?.({ v: 1, ok: true, admittedSessionIds: [], admittedPendingMessageEdits: [{ sessionId: 's', holdId: 'edit-1' }] });
+        await admission;
+    });
     it('declares qualified surfaces on each Home and redeclares on reconnect', async () => {
         markSessionSurfaceVisible('same', 'a'); markSessionSurfaceVisible('same', 'b');
         cleanup.push(() => { markSessionSurfaceHidden('same', 'a'); markSessionSurfaceHidden('same', 'b'); });

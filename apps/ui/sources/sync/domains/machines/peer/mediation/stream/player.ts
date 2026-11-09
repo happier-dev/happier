@@ -1,4 +1,5 @@
-import type { MachineLiveStreamCodecIdV1, SimulatorOrientationV1 } from '@happier-dev/protocol';
+import type { MachineLiveStreamCodecIdV1} from '@happier-dev/protocol/machines/peer/mediation/stream/codecsV1';
+import type { SimulatorOrientationV1 } from '@happier-dev/protocol/devices/simulator/inputV1';
 
 import { resolveMachineLiveStreamCodecPreference } from './codecs';
 import type { LiveStreamRendererKind, LiveStreamViewerCapabilities } from './capabilities';

@@ -74,11 +74,15 @@ describe('sessionModelsSeed', () => {
             id: 'reasoning_effort',
             name: 'Thinking',
             type: 'select',
+            category: 'thought_level',
             currentValue: 'medium',
             options: [
                 { value: 'low', name: 'Low' },
                 { value: 'high', name: 'High' },
             ],
+            groups: [{ id: 'native', name: 'Native', options: [
+                { value: 'low', name: 'Low' }, { value: 'high', name: 'High' },
+            ] }],
         };
         const seed = buildSessionModelsSeedRequest({
             agentId: 'pi',

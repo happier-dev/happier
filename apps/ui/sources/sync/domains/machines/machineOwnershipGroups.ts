@@ -8,7 +8,9 @@ export function describeMachineSharedOwnership(machine: Pick<MachineDisplayRende
     const platform = formatOSPlatform(machine.metadata?.platform);
     // Like the group title: an owner without a public name is left out, never drawn as a bare "'s".
     const owner = machine.access.custodian.displayName?.trim();
-    return owner ? t('machines.destinations.owner', { owner, platform }) : platform;
+    // A locked machine has published no platform: name the owner alone, never a dangling separator.
+    if (!owner) return platform;
+    return platform ? t('machines.destinations.owner', { owner, platform }) : t('machines.destinations.ownerOnly', { owner });
 }
 
 export type MachineOwnershipGroup<T extends MachineDisplayRenderable> = Readonly<{

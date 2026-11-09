@@ -11,8 +11,13 @@ import { signRunnerReadinessV1 } from '@happier-dev/protocol/ephemeralRunner/rea
 import { signRunnerBrokerReadinessRequestV1 } from '@happier-dev/protocol/teams';
 import { openBoxBundleWithSecretKey } from '@happier-dev/protocol/crypto/boxBundle';
 import { computeRunnerMachineContentKeyFingerprintV1, openRunnerMachineContentKeyVerifierFactV1, verifyRunnerMachineContentKeyBindingV1 } from '@happier-dev/protocol/ephemeralRunner/machineContentKeyBinding';
-import { MACHINE_PLAIN_DATA_KEY_MARKER, decodePlainMachineStoredContent, sealBoxBundle, signAccountContentKeyBindingV1, computeContentPublicKeyFingerprint, openEncryptedDataKeyEnvelopeV1, openSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol';
-import { SessionDisplayProjectionV1Schema, openSessionOwnerDisplayEnvelopeV1, openSessionSharedDisplayEnvelopeV1 } from '@happier-dev/protocol';
+import { MACHINE_PLAIN_DATA_KEY_MARKER, decodePlainMachineStoredContent} from '@happier-dev/protocol/machines/machineStoredContent';
+import { sealBoxBundle} from '@happier-dev/protocol/crypto/boxBundle';
+import { signAccountContentKeyBindingV1} from '@happier-dev/protocol/crypto/accountContentKeyBindingV1';
+import { computeContentPublicKeyFingerprint} from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
+import { openEncryptedDataKeyEnvelopeV1} from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { openSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
+import { SessionDisplayProjectionV1Schema, openSessionOwnerDisplayEnvelopeV1, openSessionSharedDisplayEnvelopeV1 } from '@happier-dev/protocol/sessions';
 import type { RunnerEndpointFactsRecipientV1 } from '@happier-dev/protocol/ephemeralRunner/activation';
 import { RunnerRuntimeBootstrapV1Schema } from '@happier-dev/protocol/ephemeralRunner/bootstrap';
 import { Encryption } from '@/sync/encryption/encryption';

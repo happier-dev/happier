@@ -41,9 +41,11 @@ import { storage } from '@/sync/domains/state/storage';
 import {
     clearWarmCacheAccountScope,
     saveSessionListWarmCacheEntries,
+    saveMachineDisplayWarmCacheEntries,
     type SessionListCacheEntryV1,
 } from '@/sync/domains/state/warmCachePersistence';
 import { prepareWarmCacheEncryptionKey } from '@/sync/domains/state/warmCacheEncryptionKey';
+import { getServerProfileById, setActiveServerId, setServerProfileIdentityForUrl } from '@/sync/domains/server/serverProfiles';
 
 function buildTokenWithSub(sub: string): string {
     const payload = encodeBase64(encodeUTF8(JSON.stringify({ sub })), 'base64');
@@ -81,8 +83,41 @@ describe('Sync local hydration (cache before transport)', () => {
         await prepareWarmCacheEncryptionKey();
     });
 
+    it('hydrates alias-only Machine displays offline after the Home learns its portable identity', async () => {
+        const serverUrl = 'http://localhost:53292';
+        const profile = await upsertAndActivateServer({ serverUrl, scope: 'device' });
+        const alias = profile.id;
+        // The 0.2 writer saved the active id before portable identity discovery.
+        saveMachineDisplayWarmCacheEntries(alias, 'account-warm', {
+            offline: { machineId: 'offline', metadataVersion: 1, updatedAt: 20,
+                active: false, activeAt: 10, revokedAt: null, displayName: 'Offline laptop' },
+        });
+        await setServerProfileIdentityForUrl(serverUrl, 'srv_warm_hydration');
+        expect(getServerProfileById('srv_warm_hydration')?.id).toBe(alias);
+        await setActiveServerId(alias, { scope: 'device' });
+        expect(getActiveServerSnapshot().serverId).toBe('srv_warm_hydration');
+        storage.getState().replaceMachineDisplays([]);
+        const { syncHydrateLocalState } = await import('./syncEngine');
+        syncHydrateLocalState({ token: buildTokenWithSub('account-warm'),
+            secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') }, {
+            ...getActiveServerSnapshot(), serverId: 'srv_warm_hydration',
+        });
+        expect(storage.getState().machineDisplayById.offline?.metadata?.displayName).toBe('Offline laptop');
+        expect(storage.getState().machineDisplayById.offline?.active).toBe(false);
+        saveMachineDisplayWarmCacheEntries('srv_warm_hydration', 'account-warm', {
+            portable: { machineId: 'portable', metadataVersion: 1, updatedAt: 30,
+                active: false, activeAt: 10, revokedAt: null, displayName: 'Portable-key laptop' },
+        });
+        storage.getState().replaceMachineDisplays([]);
+        syncHydrateLocalState({ token: buildTokenWithSub('account-warm'),
+            secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') }, {
+            ...getActiveServerSnapshot(), serverId: alias,
+        });
+        expect(Object.keys(storage.getState().machineDisplayById).sort()).toEqual(['offline', 'portable']);
+    });
+
     it('publishes the same Account/Home warm rows synchronously, before any transport exists', async () => {
-        upsertAndActivateServer({ serverUrl: 'http://localhost:53291', scope: 'tab' });
+        await upsertAndActivateServer({ serverUrl: 'http://localhost:53291', scope: 'tab' });
         const serverId = getActiveServerSnapshot().serverId;
         saveSessionListWarmCacheEntries(serverId, 'account-a', { s1: cacheEntry('s1', 'repo-a') });
         saveSessionListWarmCacheEntries(serverId, 'account-b', { s2: cacheEntry('s2', 'repo-b') });

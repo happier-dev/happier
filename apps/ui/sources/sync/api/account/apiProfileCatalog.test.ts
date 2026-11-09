@@ -21,13 +21,15 @@ import { AccountSettingsV2UpdateRequestSchema } from '@happier-dev/protocol/acco
 import { PROFILE_REFERENCE_GUARD_ROUTE_V1, buildProfilePhysicalKey } from '@happier-dev/protocol/profiles/profileRecordV1';
 import { observeProfileCatalog, resetProfileCatalogEngineForTests } from '@/sync/engine/settings/profileCatalogEngine';
 import { getProfileCatalogSnapshot, resetProfileCatalogSnapshotsForTests } from '@/sync/store/settings/profileCatalogSnapshot';
-import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
-import { planSyncActionsFromChanges, plannedChangesAffectProfileCatalog } from '@/sync/runtime/orchestration/changesPlanner';
+import { publishHomeAccountChange, publishHomeAccountChangeWake } from '@/sync/runtime/orchestration/homeAccountChange';
+import { planSyncActionsFromChanges, plannedArtifactKinds, plannedChangesAffectProfileCatalog } from '@/sync/runtime/orchestration/changesPlanner';
+import { deriveArtifactStoredKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { deleteSavedSecretResource, promotePersonalSavedSecretResource } from '@/sync/ops/settings/savedSecretResourceOperations';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { refreshSavedSecretCatalog, resetSavedSecretCatalogEngineForTests } from '@/sync/engine/settings/savedSecretCatalogEngine';
 import { getSavedSecretCatalogSnapshot, resetSavedSecretCatalogSnapshotsForTests } from '@/sync/store/settings/savedSecretCatalogSnapshot';
 import { SharedSavedSecretPromoteInputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
+import { SavedSecretResourceMaterialsResponseV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { deriveSavedSecretImportResourceIdV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import { createAccountScopedCryptoMaterialSnapshotV1, openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
@@ -40,7 +42,11 @@ import { PROVIDER_CONNECTIONS_ROWS_ROUTE_V1 } from '@happier-dev/protocol/provid
 import { PROMPT_LIBRARY_ROWS_ROUTE_V1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import { NOTIFICATION_CHANNELS_ROUTE_V1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
-import { createDeferred } from '@/dev/testkit';
+import { createDeferred, renderHook } from '@/dev/testkit';
+import { useAiLaunchProfilesWithReadState } from '@/sync/store/useAiLaunchProfiles';
+import { useSessionAuthoringControlFacts } from '@/components/sessions/authoring/controls/useSessionAuthoringControlFacts';
+import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { apiSocket } from '@/sync/api/session/apiSocket';
 import { refreshProfileCatalog, invalidateProfileCatalogProjection } from '@/sync/engine/settings/profileCatalogEngine';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { readUiProfileCatalogSnapshot } from '@/sync/domains/profiles/aiLaunchProfileCollection';
@@ -54,8 +60,24 @@ let secretResources: unknown[];
 let sourceRaw: Readonly<Record<string, unknown>>;
 let guardRevision: number;
 let profileArtifact: Artifact | null;
+let currentnessGets = 0;
+const settingsReadCounter = { count: 0 };
+let settingsHeadVersion: number | undefined;
+function readSecretMetadataFixture(): Response {
+    const resources = SavedSecretResourceMaterialsResponseV1Schema.parse({ resources: secretResources }).resources;
+    return Response.json({ resources: resources.map(resource => resource.entry) });
+}
 const promotionActionsSettings = normalizeActionsSettingsV1({ v: 1, actions: {},
     approvalWaivedSurfaces: { 'secrets.shared.promote': ['ui'] } });
+function emptyArtifactListFixture(url: string): Response {
+    const query = new URL(url).searchParams;
+    // The server preserves the legacy array only for unfiltered reads.
+    // Exact-kind Profile discovery requires its completeness envelope.
+    if (!['kind', 'kinds', 'unclassified'].some(key => query.has(key))) return Response.json([]);
+    return Response.json({ items: [], hasUnclassified: false,
+        ...(query.has('kinds') || query.has('unclassified')
+            ? { coverage: { status: 'complete', unclassifiedCount: 0 } } : {}) });
+}
 function readAbsentReferenceCatalogFixture(path: string, init?: RequestInit): Response | undefined {
     // These Accounts store no rows in the other reference domains. Explicit wire
     // absence lets the real census readers distinguish that fact from unsupported HTTP.
@@ -89,18 +111,25 @@ beforeEach(async () => {
     sourceRaw = {};
     guardRevision = 3;
     profileArtifact = null;
+    currentnessGets = 0;
+    settingsHeadVersion = undefined;
     http.mockResolvedValue(Response.json(page));
     setRuntimeFetch(async (url, init) => {
-        const path = new URL(String(url)).pathname;
+        const requestUrl = new URL(String(url));
+        const path = requestUrl.pathname;
         if (path === '/health' || path === '/v1/auth/ping') return Response.json({});
         if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
-        if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+        if (path === '/v1/account/encryption/currentness') {
+            currentnessGets++;
+            return Response.json(createPlainAccountEncryptionCurrentnessFixture(settingsHeadVersion === undefined ? {} : { settingsVersion: settingsHeadVersion }));
+        }
         if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
-        if (path === '/v2/account/settings') return Response.json({ version: 4, content: { t: 'plain', v: sourceRaw } });
-        if (path === '/v1/artifacts') return Response.json([]);
+        if (path === '/v2/account/settings') { if ((init?.method ?? 'GET') === 'GET') settingsReadCounter.count++; return Response.json({ version: 4, content: { t: 'plain', v: sourceRaw } }); }
+        if (path === '/v1/artifacts') return emptyArtifactListFixture(String(url));
         if (path === '/v1/artifacts/a' && profileArtifact) return Response.json(profileArtifact);
         if (path === PROFILE_REFERENCE_GUARD_ROUTE_V1) return Response.json({ status: 'ready', revision: guardRevision });
         if (path === PROFILE_TRANSFER_ROUTE_V1) return Response.json({ status: 'absent' });
+        if (path === '/v1/account/saved-secrets/resources') return readSecretMetadataFixture();
         if (path === '/v1/account/saved-secrets/resources/materials') return Response.json({ resources: secretResources });
         const referenceCatalog = readAbsentReferenceCatalogFixture(path, init);
         if (referenceCatalog) return referenceCatalog;
@@ -121,6 +150,42 @@ afterEach(async () => {
     resetRuntimeFetch();
 });
 describe('Profile catalog captured Account transport', () => {
+    it('admits 300 Profile storage rows once at final projection disclosure', async () => {
+        installDisconnectedServerSocketBoundary(configureConnectedServerSocketBoundary);
+        scope = await activateHome('warm-count');
+        const binding = apiSocket.getAccountEncryptionObservationBinding(credentialsFor('warm-count'));
+        if (!binding) throw new Error('Expected the connected Account observation');
+        await binding.read();
+        const rows = Array.from({ length: 300 }, (_, index) => ({ ...page.rows[0], id: `profile-${index}`,
+            content: { t: 'plain', v: ProfileRecordV1Schema.parse({ ...page.rows[0]!.content.v, id: `profile-${index}` }) } }));
+        http.mockResolvedValue(Response.json({ ...page, rows }));
+        try {
+            const before = currentnessGets;
+            const projection = await readProfileCatalogProjection(scope, undefined, { migrateSkills: false });
+            expect(projection.catalog).toMatchObject({ status: 'ready' });
+            if (projection.catalog.status !== 'ready') throw new Error('Expected all captured Profile rows');
+            expect(projection.catalog.records).toHaveLength(300);
+            expect(currentnessGets - before).toBeLessThanOrEqual(1);
+        } finally { installDisconnectedServerSocketBoundary(); }
+    });
+    it('settles a Profile options read for a mismatched Account instead of leaving it loading', async () => {
+        const unavailableScope = { ...scope, accountId: 'another-account' };
+        getStorage().setState({ settingsScope: unavailableScope });
+        const hook = await renderHook(() => ({
+            catalog: useAiLaunchProfilesWithReadState(),
+            facts: useSessionAuthoringControlFacts({ machineId: null, serverId: unavailableScope.serverId }),
+        }));
+        try {
+            await vi.waitFor(() => expect(getProfileCatalogSnapshot(unavailableScope)?.catalog)
+                .toMatchObject({ status: 'unavailable', reason: 'scope-retired' }));
+            expect(hook.getCurrent().catalog).toMatchObject({ profiles: [], loading: false, unavailableReason: 'scope-retired' });
+            expect(hook.getCurrent().facts).toMatchObject({ profilesLoading: false, profilesUnavailableReason: 'scope-retired' });
+            expect(getProfileCatalogSnapshot(scope)).toBeNull();
+        } finally {
+            await hook.unmount();
+        }
+    });
+
     it('shows the first checked Profile read while a wake requires a newer census, without granting runtime authority', async () => {
         const first = createDeferred<Response>();
         const second = createDeferred<Response>();
@@ -215,7 +280,7 @@ describe('Profile catalog captured Account transport', () => {
             if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture({ settingsVersion: 4 }));
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
             if (path === '/v2/account/settings') return Response.json({ version: 4, content: { t: 'plain', v: {} } });
-            if (path === '/v1/artifacts') return Response.json([]);
+            if (path === '/v1/artifacts') return emptyArtifactListFixture(String(url));
             if (path === PROFILE_REFERENCE_GUARD_ROUTE_V1) return Response.json({ status: 'ready', revision: 3 });
             if (path === PROFILE_TRANSFER_ROUTE_V1) return Response.json(active);
             if (path === PROFILE_ROWS_ROUTE_V1) return Response.json({ ...page, transferControl: active,
@@ -242,8 +307,10 @@ describe('Profile catalog captured Account transport', () => {
             expect(getProfileCatalogSnapshot(scope)).toMatchObject({ stale: false,
                 catalog: { status: 'ready', records: [{ revision: 3 }] } });
             expect(historyReads).toBe(1);
-            // The same target key after reconnect is a new captured Account lifetime.
-            // It must own cleanup, not borrow the old request's pending maintenance.
+            // Retire the captured Account through credential removal before
+            // reactivation; reconnecting with unchanged credentials retains it.
+            // The replacement must not borrow the retired request's maintenance.
+            await TokenStorage.removeCredentialsForServerUrl('https://profile-home-a.example.test', { serverId: scope.serverId });
             scope = await activateHome('a');
             revision = 4;
             await refreshProfileCatalog(scope);
@@ -319,7 +386,7 @@ describe('Profile catalog captured Account transport', () => {
             if (path === PROFILE_REFERENCE_GUARD_ROUTE_V1) return Response.json({ status: 'ready', revision: 3 });
             if (path === PROFILE_TRANSFER_ROUTE_V1) return Response.json({ status: 'absent' });
             if (path === PROFILE_ROWS_ROUTE_V1) return Response.json({ ...page, rows: [] });
-            if (path === '/v1/artifacts') return Response.json([]);
+            if (path === '/v1/artifacts') return emptyArtifactListFixture(String(url));
             if (path === '/v1/account/saved-secrets/resources/materials') return Response.json({ resources: dispatched ? [{
                 resourceId, encryptionMode: 'plain', recipientEnvelope: null,
                 storedContent: { t: 'plain', v: { v: 1, name: secret.name, kind: secret.kind, value: 'fixture-private' } },
@@ -374,7 +441,8 @@ describe('Profile catalog captured Account transport', () => {
             if (path === PROFILE_REFERENCE_GUARD_ROUTE_V1) return Response.json({ status: 'ready', revision: 3 });
             if (path === PROFILE_TRANSFER_ROUTE_V1) return Response.json({ status: 'absent' });
             if (path === PROFILE_ROWS_ROUTE_V1) return Response.json({ ...page, rows: [] });
-            if (path === '/v1/artifacts') return Response.json([]);
+            if (path === '/v1/artifacts') return emptyArtifactListFixture(String(url));
+            if (path === '/v1/account/saved-secrets/resources') return readSecretMetadataFixture();
             if (path === '/v1/account/saved-secrets/resources/materials') return Response.json({ resources: secretResources });
             if (path === '/v1/account/saved-secrets/resources/promote' && init?.method === 'POST') {
                 const mutation = SharedSavedSecretPromoteInputV1Schema.parse(JSON.parse(String(init.body)));
@@ -443,6 +511,7 @@ describe('Profile catalog captured Account transport', () => {
             const path = new URL(String(url)).pathname;
             if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+            if (path === '/v1/account/saved-secrets/resources') return readSecretMetadataFixture();
             if (path === '/v1/account/saved-secrets/resources/materials') return Response.json({ resources: secretResources });
             if (path === PROFILE_ROWS_ROUTE_V1) return Response.json(page);
             if (path === PROFILE_REFERENCE_GUARD_ROUTE_V1) return Response.json({ status: 'ready', revision: 3 });
@@ -495,14 +564,21 @@ describe('Profile catalog captured Account transport', () => {
         // Account connection starts its independent Settings bootstrap. Capture
         // the unchanged-version baseline only after that real HTTP read lands.
         await vi.waitFor(() => expect(getStorage().getState().settingsVersion).toBe(4));
+        // This case measures catalog wakes, not Artifact definition availability.
+        // Admit a genuine inline record through the same Profile HTTP boundary.
+        const wakePage = { ...page, rows: [{ ...page.rows[0], content: { t: 'plain', v: ProfileRecordV1Schema.parse({
+            ...page.rows[0].content.v,
+            definition: { kind: 'inline', profile: { v: 2, id: 'p', name: 'Wake Profile', createdAt: 1, updatedAt: 2 } },
+        }) } }] };
+        http.mockResolvedValue(Response.json(wakePage));
         const release = observeProfileCatalog(scope);
         try {
             await vi.waitFor(() => expect(getProfileCatalogSnapshot(scope)?.catalog.status).toBe('ready'));
             const settingsVersion = getStorage().getState().settingsVersion;
             const old = getProfileCatalogSnapshot(scope)!;
             guardRevision = 4;
-            http.mockResolvedValue(Response.json({ ...page, referenceGuardRevision: 4,
-                rows: [{ ...page.rows[0], revision: 3 }] }));
+            http.mockResolvedValue(Response.json({ ...wakePage, referenceGuardRevision: 4,
+                rows: [{ ...wakePage.rows[0], revision: 3 }] }));
             const profileChange = { cursor: 1, kind: 'account' as const, entityId: buildProfilePhysicalKey('p'),
                 changedAt: 1, hint: { profiles: true } };
             publishHomeAccountChange(scope.serverId, [profileChange.entityId], {
@@ -520,7 +596,96 @@ describe('Profile catalog captured Account transport', () => {
             expect(getProfileCatalogSnapshot(scope)?.catalog.status).toBe('ready');
             expect(getStorage().getState().settingsVersion).toBe(settingsVersion);
             expect(getProfileCatalogSnapshot({ serverId: 'unobserved-home', accountId: scope.accountId })).toBeNull();
+            await new Promise<void>(resolve => setImmediate(resolve));
+            const settledGets = currentnessGets;
+            for (let index = 0; index < 1_000; index++) publishHomeAccountChange(scope.serverId, [`session-${index}`], {
+                source: 'catch-up-pending', changeKinds: ['session'],
+            });
+            publishHomeAccountChange(scope.serverId, undefined, { source: 'catch-up-pending', changeKinds: ['session'] });
+            publishHomeAccountChange(scope.serverId, undefined, { changeKinds: ['session'] });
+            publishHomeAccountChange(scope.serverId, undefined, { source: 'catch-up-pending', changeKinds: ['account'] });
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(currentnessGets - settledGets).toBe(0);
+            for (const changeKinds of [['account'], undefined, [], ['future-domain'], ['artifact'], ['savedSecretResource']] as const) {
+                const beforeWake = currentnessGets;
+                publishHomeAccountChange(scope.serverId, undefined, { source: 'socket', changeKinds,
+                    ...(changeKinds?.[0] === 'future-domain' ? { profileCatalogAffects: false } : {}) });
+                await vi.waitFor(() => expect(currentnessGets).toBeGreaterThan(beforeWake));
+                await refreshProfileCatalog(scope);
+                await new Promise<void>(resolve => setImmediate(resolve));
+                expect(getProfileCatalogSnapshot(scope)?.catalog.status).toBe('ready');
+            }
         } finally { release(); }
+    });
+    it('re-reads a demanded Profile catalog only for Artifact rows that can be Profiles', async () => {
+        const release = observeProfileCatalog(scope);
+        try {
+            await vi.waitFor(() => expect(getProfileCatalogSnapshot(scope)?.catalog.status).toBe('ready'));
+            await new Promise<void>(resolve => setImmediate(resolve));
+            const rowReads = () => http.mock.calls.filter(([url]) => new URL(String(url)).pathname === PROFILE_ROWS_ROUTE_V1).length;
+            const before = rowReads();
+            const ready = getProfileCatalogSnapshot(scope);
+            // A busy Account writes Workflow Runs, Discussions and documents all the time; none is a Profile.
+            const unrelated = ['workflow-run.v1', 'document', 'discussion.v1'].map(kind => deriveArtifactStoredKindV1({ kind }));
+            for (let index = 0; index < 5; index++) {
+                const entityId = `unrelated-${index}`;
+                const artifactKinds = [unrelated[index % unrelated.length]!];
+                // Feed page: the publisher forwards the planner's decision.
+                const planned = planSyncActionsFromChanges([{ cursor: 10 + index, kind: 'artifact', entityId, changedAt: 1, hint: { artifactKinds } }]);
+                publishHomeAccountChange(scope.serverId, [entityId], { feedPageConsumed: true, changeKinds: ['artifact'],
+                    artifactKinds: plannedArtifactKinds(planned), profileCatalogAffects: plannedChangesAffectProfileCatalog(planned) });
+                // Socket wake: the fan-out classifies the producer's kind hints.
+                publishHomeAccountChangeWake(scope.serverId, { t: 'account-change', changeKinds: ['artifact'], entityIds: [entityId], artifactKinds }, 'socket');
+            }
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(rowReads() - before).toBe(0);
+            expect(getProfileCatalogSnapshot(scope)).toBe(ready);
+            // A shared launch profile, or a row without kind hints, still re-reads.
+            publishHomeAccountChangeWake(scope.serverId, { t: 'account-change', changeKinds: ['artifact'], entityIds: ['shared-profile'],
+                artifactKinds: [deriveArtifactStoredKindV1({ kind: 'launch-profile.v1' })] }, 'socket');
+            await vi.waitFor(() => expect(rowReads() - before).toBe(1));
+            await refreshProfileCatalog(scope);
+            await new Promise<void>(resolve => setImmediate(resolve));
+            const afterProfile = rowReads();
+            publishHomeAccountChangeWake(scope.serverId, { t: 'account-change', changeKinds: ['artifact'], entityIds: ['legacy-row'] }, 'socket');
+            await vi.waitFor(() => expect(rowReads()).toBeGreaterThan(afterProfile));
+        } finally { release(); }
+    });
+    it('classifies the Profile source on a foreign Settings write from the socket copy, without a full Settings GET', async () => {
+        await readProfileCatalogProjection(scope);
+        const { handleUpdateAccountSocketUpdate } = await import('@/sync/engine/account/syncAccount');
+        const { profileDefaults } = await import('@/sync/domains/profiles/profile');
+        // Another device writes Settings; the socket delivers the whole new document at the new head.
+        settingsHeadVersion = 9;
+        await handleUpdateAccountSocketUpdate({ accountUpdate: { settingsV2: { content: { t: 'plain', v: { analyticsOptOut: true } }, version: 9 } },
+            updateCreatedAt: 1, currentProfile: { ...profileDefaults }, encryption: null, settingsScope: scope,
+            applyProfile: () => {}, applySettings: () => {}, applySettingsForScope: () => {}, log: { log: () => {} } });
+        settingsReadCounter.count = 0;
+        const projection = await readProfileCatalogProjection(scope);
+        expect(projection).toMatchObject({ source: 'destination' });
+        expect(settingsReadCounter.count).toBe(0);
+    });
+    it('reads no full Settings document for a foreign write delivered over a connected socket', async () => {
+        installDisconnectedServerSocketBoundary(configureConnectedServerSocketBoundary);
+        scope = await activateHome('socket-copy');
+        const binding = apiSocket.getAccountEncryptionObservationBinding(credentialsFor('socket-copy'));
+        if (!binding) throw new Error('Expected the connected Account observation');
+        await binding.read();
+        try {
+            const { handleUpdateAccountSocketUpdate } = await import('@/sync/engine/account/syncAccount');
+            const { profileDefaults } = await import('@/sync/domains/profiles/profile');
+            await handleUpdateAccountSocketUpdate({ accountUpdate: { settingsV2: { content: { t: 'plain', v: { analyticsOptOut: true } }, version: 9 } },
+                updateCreatedAt: 1, currentProfile: { ...profileDefaults }, encryption: null, settingsScope: scope,
+                applyProfile: () => {}, applySettings: () => {}, applySettingsForScope: () => {}, log: { log: () => {} } });
+            settingsReadCounter.count = 0;
+            // The head is deliberately unknown here: only the live observation may admit the delivered copy.
+            settingsHeadVersion = undefined;
+            const before = currentnessGets;
+            const projection = await readProfileCatalogProjection(scope, undefined, { migrateSkills: false });
+            expect(projection).toMatchObject({ source: 'destination' });
+            expect(settingsReadCounter.count).toBe(0);
+            expect(currentnessGets - before).toBeLessThanOrEqual(1);
+        } finally { installDisconnectedServerSocketBoundary(); }
     });
     it('selects native rows for a fresh Account without manufacturing transfer control', async () => {
         const projection = await readProfileCatalogProjection(scope);
@@ -550,7 +715,7 @@ describe('Profile catalog captured Account transport', () => {
             if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
             if (path === '/v2/account/settings') { activated = true; return Response.json({ version: 5, content: { t: 'plain', v: {} } }); }
-            if (path === '/v1/artifacts') return Response.json([]);
+            if (path === '/v1/artifacts') return emptyArtifactListFixture(String(url));
             if (path === PROFILE_REFERENCE_GUARD_ROUTE_V1) return Response.json({ status: 'ready', revision: 3 });
             if (path === PROFILE_TRANSFER_ROUTE_V1) return Response.json(activated ? active : { status: 'absent' });
             if (path === '/v1/account/entity-rows/profiles') return Response.json({ ...page, rows: [], transferControl: { status: 'absent' } });
@@ -584,7 +749,7 @@ describe('Profile catalog captured Account transport', () => {
                 return Response.json({ version: sourceVersion, content: { t: 'plain', v: sourceRaw } });
             }
             if (path === '/v2/account/settings/history') { historyRead = true; return Response.json({ snapshots: [] }); }
-            if (path === '/v1/artifacts') return Response.json([]);
+            if (path === '/v1/artifacts') return emptyArtifactListFixture(String(url));
             if (path === PROFILE_REFERENCE_GUARD_ROUTE_V1) return Response.json({ status: 'ready', revision: 3 });
             if (path === PROFILE_TRANSFER_ROUTE_V1) {
                 if (init?.method !== 'POST') return Response.json(transfer);
@@ -715,6 +880,9 @@ describe('Profile catalog captured Account transport', () => {
         const pending = readProfileCatalog(scope);
         await vi.waitFor(() => expect(http).toHaveBeenCalled());
         await activateHome('b');
+        // Focus changes retain an explicit Home's authority. Retire the
+        // captured A request through its real credential-removal boundary.
+        await TokenStorage.removeCredentialsForServerUrl('https://profile-home-a.example.test', { serverId: scope.serverId });
         finish(Response.json(page));
         await expect(pending).resolves.toMatchObject({ status: 'unavailable', reason: 'scope-retired' });
     });

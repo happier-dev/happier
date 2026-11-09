@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
-    PluginMachineMaterializationV1Schema,
+    PluginMachineMaterializationV1Schema} from '@happier-dev/protocol/plugins/availability/v1';
+import {
     PluginProjectionV2Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { PluginReleaseFactsV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { PluginUiArtifactsManifestEntryV2Schema } from '@happier-dev/protocol/plugins/ui';
 

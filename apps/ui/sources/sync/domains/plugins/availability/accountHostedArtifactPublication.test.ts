@@ -32,7 +32,7 @@ import { encodeBase64 } from '@/encryption/base64';
 import { createPluginReactNativeBundleCache } from '@/components/plugins/reactNative/bundleCache';
 import type {
     DaemonPluginUiArtifactBytesReadResponse,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { PluginReactNativeBundleCacheIdentity } from '@/sync/domains/plugins/ui/reactNativeRuntime';

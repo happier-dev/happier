@@ -2,11 +2,27 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { FetchChangesFn } from './socketReconnectViaChanges';
 import { runSocketReconnectCatchUpViaChanges } from './socketReconnectViaChanges';
+import { plannedChangesAffectUsageAccounting } from './changesPlanner';
 import { applyPlannedChangeActions } from './changesApplier';
 
 const credentials: AuthCredentials = { token: 't', secret: 's' };
 
 describe('runSocketReconnectCatchUpViaChanges', () => {
+    it('classifies coalesced accounting changes against the consumed page cursor', async () => {
+        for (const [afterCursor, expected] of [['7', true], ['8', false]] as const) {
+            const decisions: boolean[] = [];
+            await runSocketReconnectCatchUpViaChanges({
+                credentials, accountId: 'a', afterCursor, changesPageLimit: 200,
+                fetchChanges: async () => ({ status: 'ok', nextCursor: '14', changes: [{
+                    cursor: 14, kind: 'session', entityId: 'session-a', changedAt: 1,
+                    hint: { agentStateVersion: 3, usageAccountingChanged: false, usageAccountingUnchangedSinceCursor: 8 },
+                }] }),
+                applyPlanned: async planned => { decisions.push(plannedChangesAffectUsageAccounting(planned)); },
+                snapshotRefresh: async () => ({ status: 'complete' }),
+            });
+            expect(decisions).toEqual([expected]);
+        }
+    });
     it('repairs a missing cursor before reading changes and checkpoints only the repaired base', async () => {
         const events: string[] = [];
         const fetchChanges = vi.fn<FetchChangesFn>(async ({ afterCursor }) => {
@@ -15,7 +31,7 @@ describe('runSocketReconnectCatchUpViaChanges', () => {
         });
         const result = await runSocketReconnectCatchUpViaChanges({
             credentials, accountId: 'a', afterCursor: null, changesPageLimit: 200,
-            forceSnapshotRefresh: false, fetchChanges,
+            fetchChanges,
             fetchCurrentCursor: async () => { events.push('capture'); return { status: 'ok', cursor: '42' }; },
             snapshotRefresh: async () => { events.push('snapshot'); return { status: 'complete' }; },
             checkpointCursor: (cursor) => { events.push(`checkpoint:${cursor}`); return true; },
@@ -30,7 +46,7 @@ describe('runSocketReconnectCatchUpViaChanges', () => {
         const checkpointCursor = vi.fn();
         const result = await runSocketReconnectCatchUpViaChanges({
             credentials, accountId: 'a', afterCursor: null, changesPageLimit: 200,
-            forceSnapshotRefresh: false, fetchChanges,
+            fetchChanges,
             fetchCurrentCursor: async () => ({ status: 'ok', cursor: '42' }),
             snapshotRefresh: async () => ({ status: 'partial' }),
             checkpointCursor, applyPlanned: async () => {},
@@ -46,7 +62,6 @@ describe('runSocketReconnectCatchUpViaChanges', () => {
             accountId: 'a',
             afterCursor: '0',
             changesPageLimit: 200,
-            forceSnapshotRefresh: false,
             fetchChanges: (async () => ({ status: 'error' })) as FetchChangesFn,
             applyPlanned: async () => {},
             snapshotRefresh: async () => ({ status: 'complete' }),
@@ -62,7 +77,6 @@ describe('runSocketReconnectCatchUpViaChanges', () => {
             accountId: 'a',
             afterCursor: '0',
             changesPageLimit: 200,
-            forceSnapshotRefresh: false,
             fetchChanges,
             applyPlanned: async () => {},
             snapshotRefresh: async () => ({ status: 'complete' }),
@@ -83,7 +97,6 @@ describe('runSocketReconnectCatchUpViaChanges', () => {
             accountId: 'a',
             afterCursor: '10',
             changesPageLimit: 200,
-            forceSnapshotRefresh: false,
             fetchChanges,
             applyPlanned: async () => {},
             snapshotRefresh,
@@ -110,7 +123,6 @@ describe('runSocketReconnectCatchUpViaChanges', () => {
             accountId: 'a',
             afterCursor: '10',
             changesPageLimit: 200,
-            forceSnapshotRefresh: false,
             fetchChanges,
             fetchCurrentCursor,
             applyPlanned: async () => {},
@@ -138,7 +150,6 @@ describe('runSocketReconnectCatchUpViaChanges', () => {
             accountId: 'a',
             afterCursor: '10',
             changesPageLimit: 200,
-            forceSnapshotRefresh: false,
             fetchChanges,
             fetchCurrentCursor,
             onSnapshotBaseCursorFetchFailed,
@@ -168,7 +179,6 @@ describe('runSocketReconnectCatchUpViaChanges', () => {
             accountId: 'a',
             afterCursor: '10',
             changesPageLimit: 200,
-            forceSnapshotRefresh: false,
             fetchChanges,
             fetchCurrentCursor,
             onSnapshotBaseCursorFetchFailed,
@@ -213,7 +223,6 @@ describe('runSocketReconnectCatchUpViaChanges', () => {
             accountId: 'a',
             afterCursor: '10',
             changesPageLimit: 200,
-            forceSnapshotRefresh: false,
             fetchChanges,
             fetchCurrentCursor,
             checkpointCursor,
@@ -242,7 +251,6 @@ describe('runSocketReconnectCatchUpViaChanges', () => {
             accountId: 'a',
             afterCursor: '10',
             changesPageLimit: 200,
-            forceSnapshotRefresh: false,
             fetchChanges,
             fetchCurrentCursor,
             checkpointCursor,
@@ -273,7 +281,6 @@ describe('runSocketReconnectCatchUpViaChanges', () => {
             accountId: 'a',
             afterCursor: '10',
             changesPageLimit: 200,
-            forceSnapshotRefresh: false,
             fetchChanges,
             applyPlanned,
             snapshotRefresh,
@@ -305,7 +312,6 @@ describe('runSocketReconnectCatchUpViaChanges', () => {
             accountId: 'a',
             afterCursor: '10',
             changesPageLimit: 200,
-            forceSnapshotRefresh: false,
             fetchChanges,
             onCursorContractAnomaly,
             applyPlanned,
@@ -346,7 +352,6 @@ describe('runSocketReconnectCatchUpViaChanges', () => {
             accountId: 'a',
             afterCursor: '10',
             changesPageLimit: 200,
-            forceSnapshotRefresh: false,
             fetchChanges,
             onCursorContractAnomaly,
             applyPlanned,
@@ -370,18 +375,16 @@ describe('runSocketReconnectCatchUpViaChanges', () => {
         });
     });
 
-    it('triggers snapshot refresh after the full-page catch-up budget is exhausted', async () => {
+    it('drains changed rows beyond the old page budget without a full inventory snapshot', async () => {
         const applyPlanned = vi.fn(async () => {});
         const snapshotRefresh = vi.fn(async () => ({ status: 'complete' as const }));
-        const fetchChanges = vi.fn<FetchChangesFn>(async () => ({
+        const changes = Array.from({ length: 401 }, (_, i) => ({
+            cursor: i + 1, kind: 'session' as const, entityId: `s${i}`, changedAt: 1,
+        }));
+        const fetchChanges = vi.fn<FetchChangesFn>(async ({ afterCursor }) => ({
             status: 'ok' as const,
-            changes: Array.from({ length: 200 }, (_, i) => ({
-                cursor: i + 1,
-                kind: 'session' as const,
-                entityId: `s${i}`,
-                changedAt: 1,
-            })),
-            nextCursor: '200',
+            changes: changes.slice(Number(afterCursor), Number(afterCursor) + 200),
+            nextCursor: String(Math.min(Number(afterCursor) + 200, changes.length)),
         }));
 
         const res = await runSocketReconnectCatchUpViaChanges({
@@ -389,24 +392,22 @@ describe('runSocketReconnectCatchUpViaChanges', () => {
             accountId: 'a',
             afterCursor: '0',
             changesPageLimit: 200,
-            maxChangesPagesPerResume: 2,
-            forceSnapshotRefresh: false,
             fetchChanges,
             applyPlanned,
             snapshotRefresh,
         });
 
-        expect(fetchChanges).toHaveBeenCalledTimes(2);
-        expect(snapshotRefresh).toHaveBeenCalledTimes(1);
-        expect(applyPlanned).toHaveBeenCalledTimes(2);
+        expect(fetchChanges.mock.calls.map(([call]) => call.afterCursor)).toEqual(['0', '200', '400']);
+        expect(snapshotRefresh).not.toHaveBeenCalled();
+        expect(applyPlanned).toHaveBeenCalledTimes(3);
         expect(res).toEqual({
             status: 'ok',
-            nextCursor: '200',
+            nextCursor: '401',
             shouldPersistCursor: true,
         });
     });
 
-    it('paginates full pages before snapshot escalation', async () => {
+    it('paginates full pages and materializes the short tail without a snapshot', async () => {
         const applyPlanned = vi.fn(async () => ({ status: 'complete' as const, safeAdvanceCursor: null }));
         const snapshotRefresh = vi.fn(async () => ({ status: 'complete' as const }));
         const fetchChanges = vi.fn<FetchChangesFn>()
@@ -429,7 +430,6 @@ describe('runSocketReconnectCatchUpViaChanges', () => {
             accountId: 'a',
             afterCursor: '0',
             changesPageLimit: 2,
-            forceSnapshotRefresh: false,
             fetchChanges,
             applyPlanned,
             snapshotRefresh,
@@ -480,7 +480,6 @@ describe('runSocketReconnectCatchUpViaChanges', () => {
             accountId: 'a',
             afterCursor: '0',
             changesPageLimit: 2,
-            forceSnapshotRefresh: false,
             fetchChanges,
             checkpointCursor,
             applyPlanned,
@@ -513,7 +512,6 @@ describe('runSocketReconnectCatchUpViaChanges', () => {
             accountId: 'a',
             afterCursor: '0',
             changesPageLimit: 200,
-            forceSnapshotRefresh: false,
             fetchChanges,
             applyPlanned,
             snapshotRefresh,
@@ -552,7 +550,6 @@ describe('runSocketReconnectCatchUpViaChanges', () => {
             accountId: 'a',
             afterCursor: '0',
             changesPageLimit: 200,
-            forceSnapshotRefresh: false,
             fetchChanges,
             checkpointCursor,
             onCursorBlocked,
@@ -577,7 +574,6 @@ describe('runSocketReconnectCatchUpViaChanges', () => {
         const requestedCursors: Array<string | null> = [];
         const result = await runSocketReconnectCatchUpViaChanges({
             credentials, accountId: 'a', afterCursor: '0', changesPageLimit: 2,
-            forceSnapshotRefresh: false,
             fetchChanges: async ({ afterCursor }) => {
                 requestedCursors.push(afterCursor);
                 return { status: 'ok', nextCursor: '2', changes: [
@@ -603,7 +599,6 @@ describe('runSocketReconnectCatchUpViaChanges', () => {
         const checkpoints: string[] = [];
         const result = await runSocketReconnectCatchUpViaChanges({
             credentials, accountId: 'a', afterCursor: '0', changesPageLimit: 2,
-            forceSnapshotRefresh: false,
             fetchChanges: async ({ afterCursor }) => {
                 requestedCursors.push(afterCursor);
                 const firstCursor = Number(afterCursor) + 1;
@@ -631,8 +626,8 @@ describe('runSocketReconnectCatchUpViaChanges', () => {
         expect(result).toEqual({ status: 'ok', nextCursor: '1', shouldPersistCursor: false });
     });
 
-    it('can force snapshot refresh even when under the page limit', async () => {
-        const applyPlanned = vi.fn(async () => {});
+    it('uses a valid cursor without a full snapshot and materializes the actual changed Session', async () => {
+        const applyPlanned = vi.fn(async (_planned: unknown) => {});
         const snapshotRefresh = vi.fn(async () => ({ status: 'complete' as const }));
         const fetchChanges = vi.fn<FetchChangesFn>()
             .mockResolvedValueOnce({
@@ -651,15 +646,15 @@ describe('runSocketReconnectCatchUpViaChanges', () => {
             accountId: 'a',
             afterCursor: '10',
             changesPageLimit: 200,
-            forceSnapshotRefresh: true,
             fetchChanges,
             applyPlanned,
             snapshotRefresh,
         });
 
-        expect(snapshotRefresh).toHaveBeenCalledTimes(1);
-        expect(fetchChanges.mock.calls.map(([call]) => call.afterCursor)).toEqual(['10', '11']);
-        expect(applyPlanned).not.toHaveBeenCalled();
+        expect(snapshotRefresh).not.toHaveBeenCalled();
+        expect(fetchChanges.mock.calls.map(([call]) => call.afterCursor)).toEqual(['10']);
+        expect(applyPlanned).toHaveBeenCalledTimes(1);
+        expect(applyPlanned.mock.calls[0]?.[0]).toMatchObject({ changes: [{ cursor: 11, kind: 'session', entityId: 's1' }] });
         expect(res).toEqual({
             status: 'ok',
             nextCursor: '11',

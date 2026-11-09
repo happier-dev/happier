@@ -170,7 +170,8 @@ export async function prepareCurrentSessionDataKeyEnvelopes(
         return settled('session_data_key_unavailable');
     }
 
-    const encryptionScope: EncryptionScopeInput = { serverId: scope.session.serverId };
+    // Captured for this Session: a re-key of it mid-pass must abandon the commit.
+    const encryptionScope: EncryptionScopeInput = { serverId: scope.session.serverId, sessionId: scope.session.sessionId };
     const encryption = params.encryption ?? null;
     const capturedEncryptionScope = params.capturedEncryptionScope
         ?? encryption?.getCurrentEncryptionGenerationScope(encryptionScope)

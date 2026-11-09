@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { Modal } from '@/modal';
+import { t } from '@/text';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/featureDecisionRuntime';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
@@ -6,8 +8,9 @@ import { resolveSessionHandoffSourceMachineId } from './resolveSessionHandoffSou
 import { resolveSessionHandoffUiAvailability } from './resolveSessionHandoffUiAvailability';
 import { useSessionHandoffSourceReachability } from './useSessionHandoffSourceReachability';
 import { runSessionHandoffPickerFlow } from './runSessionHandoffPickerFlow';
+import { probeSessionHandoffSourceReachability } from './probeSessionHandoffSourceReachability';
 
-/** Shared Session header/Inbox entry; transport proof and operation custody stay at their existing owners. */
+/** Shared Session header, Info and Inbox entry; probe only at the person's Handoff intent. */
 export function useSessionHandoffAction(input: Readonly<{
     sessionId: string;
     session: Session | null;
@@ -26,8 +29,16 @@ export function useSessionHandoffAction(input: Readonly<{
     const availability = resolveSessionHandoffUiAvailability({ sessionId: input.sessionId, serverId: input.serverId,
         reachableMachineId: input.reachableMachineId, session: input.session,
         sessionHandoffFeatureEnabled: input.sessionHandoffFeatureEnabled, serverSnapshot, runtimeAvailability });
-    const run = React.useCallback(() => runSessionHandoffPickerFlow({ execute: input.execute, sessionId: input.sessionId,
-        sourceMachineId, serverId: input.serverId, placement: input.placement, availability,
-    }), [input.execute, input.placement, input.serverId, input.sessionId, sourceMachineId, availability.available, availability.reason]);
-    return { availability, run };
+    const run = React.useCallback(async () => {
+        if (!availability.available) return null;
+        const reachability = await probeSessionHandoffSourceReachability({ serverId: input.serverId, sourceMachineId });
+        if (reachability === 'unavailable') {
+            Modal.alert(t('sessionHandoff.failure.title'), t('errors.daemonUnavailableBody'));
+            return null;
+        }
+        return runSessionHandoffPickerFlow({ execute: input.execute, sessionId: input.sessionId,
+            sourceMachineId, serverId: input.serverId, placement: input.placement,
+        });
+    }, [input.execute, input.placement, input.serverId, input.sessionId, sourceMachineId, availability.available]);
+    return { availability, run, sourceMachineId };
 }

@@ -5,14 +5,17 @@ import { isAbsolute, join, resolve } from 'node:path';
 
 import {
     createGitScmCapabilities,
-    createScmCapabilities,
+    createScmCapabilities} from '@happier-dev/protocol/scm/capabilities';
+import {
     isScmPatchBoundToPath,
     mapGitScmErrorCode,
-    normalizeScmRemoteRequest,
     SCM_COMMIT_PATCH_MAX_COUNT,
-    SCM_COMMIT_PATCH_MAX_LENGTH,
+    SCM_COMMIT_PATCH_MAX_LENGTH} from '@happier-dev/protocol/scm';
+import {
+    normalizeScmRemoteRequest} from '@happier-dev/protocol/scm/remoteNormalization';
+import {
     SCM_OPERATION_ERROR_CODES,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/scm/operationError';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 export function git(cwd: string, args: string[], env?: Record<string, string | undefined>): string {

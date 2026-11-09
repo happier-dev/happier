@@ -2,14 +2,17 @@ import { describe, expect, it } from 'vitest';
 import {
     createPasswordCredentialMutationDigestV1,
     createPasswordCredentialTargetDigestV1,
-    createAccountEncryptionMigrateRequestBindingDigestV1,
     createPasswordMutationChallengeSigningInputV1,
-    decodeBase64,
+    type PasswordMutationChallengeV1,
+} from '@happier-dev/protocol/auth/passwordMutationChallenge';
+import {
+    createAccountEncryptionMigrateRequestBindingDigestV1} from '@happier-dev/protocol/account/encryptionMigrate';
+import {
+    decodeBase64} from '@happier-dev/protocol/crypto/base64';
+import {
     encodePasswordCredentialFieldV1,
     type E2eeAccountPasswordCredentialV1,
-    type AccountPasswordCredentialV1,
-    type PasswordMutationChallengeV1,
-} from '@happier-dev/protocol';
+    type AccountPasswordCredentialV1} from '@happier-dev/protocol/auth/accountPasswordCredential';
 import sodium from '@/encryption/libsodium.lib';
 import type { ServerFetch } from '@/sync/http/client';
 

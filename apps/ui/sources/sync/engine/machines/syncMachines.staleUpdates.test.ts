@@ -7,9 +7,10 @@ import * as platformCrypto from 'rn-encryption'
 import { createDeferred, createMachineFixture } from '@/dev/testkit'
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent'
 import { hasCurrentMachineContent } from '@/sync/domains/machines/resolveServerScopedMachines'
-import { encodeBase64 } from '@/encryption/base64'
-import { storage } from '@/sync/domains/state/storageStore'
+import { publishMachineActivity } from '@/sync/domains/machines/machineActivity'
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures'
+import { storage } from '@/sync/domains/state/storageStore'
+import { encodeBase64 } from '@/encryption/base64'
 
 type MachineUpdate = {
     machineId: string
@@ -114,6 +115,16 @@ describe('buildUpdatedMachineFromSocketUpdate stale guards', () => {
             await fetchAndApplyMachines(params);
             expect(storage.getState().machines[fixture.id]).toBe(replacement);
         } finally { storage.setState(initialState, true); }
+    });
+
+    it('carries the latest exact activity through a content-only socket update', async () => {
+        const existing = buildMachine({ activeAt: 2 });
+        publishMachineActivity(existing, { active: true, activeAt: 100 }, []);
+        const updated = await buildUpdatedMachineFromSocketUpdate({ existingMachine: existing,
+            machineUpdate: { machineId: existing.id }, updateSeq: 3, updateCreatedAt: 3,
+            getMachineEncryption: () => null });
+        expect(updated?.activeAt).toBe(100);
+        expect(existing.activeAt).toBe(2);
     });
 
     it.each((['plain', 'e2ee'] as const).flatMap(storageMode =>

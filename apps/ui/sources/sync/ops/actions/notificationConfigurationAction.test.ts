@@ -15,6 +15,10 @@ import { AccountSettingsV2UpdateRequestSchema } from '@happier-dev/protocol/acco
 import { prepareLegacyNotificationChannelCatalogV1 } from '@happier-dev/protocol/account/settings/notificationChannelCatalogV1';
 import { BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID } from '@happier-dev/protocol/account/settings/notificationChannels';
 import { PushTokensRemoteAlertProjectionV2Schema } from '@happier-dev/protocol/push/pushTokenRegistration';
+import { storage } from '@/sync/domains/state/storage';
+
+// Expo asset resolution is the packaged-media boundary, with real playback through browser Audio.
+vi.mock('expo-asset', () => ({ Asset: { fromModule: (asset: string) => ({ uri: asset }) } }));
 
 vi.mock('socket.io-client', async importOriginal =>
   (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
@@ -50,6 +54,30 @@ it('retains captured Account admission for a policy-admitted native push permiss
 });
 
 describe('notification configuration Action authority', () => {
+  it.each(['accepted', 'rejected', 'unsupported'])('submits a remote push diagnostic to the captured Account Home and reports %s', async status => {
+    const requests: string[] = [];
+    setRuntimeFetch(async (url, init) => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/v1/push-tokens/registration-a/test') {
+        requests.push(String(url));
+        expect(init?.method).toBe('POST');
+        expect(JSON.parse(String(init?.body))).toEqual({});
+        return status === 'unsupported' ? Response.json({ error: 'Not found' }, { status: 404 }) : Response.json({ status });
+      }
+      if (path === '/health' || path === '/v1/auth/ping') return Response.json({});
+      return Response.json({ error: 'unexpected' }, { status: 404 });
+    });
+    const home = await upsertServerProfileOnly({ serverUrl: 'https://push-test-captured.example.test', name: 'Push test Home' });
+    await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.id }, {
+      token: `e30.${Buffer.from(JSON.stringify({ sub: 'push-test-account' })).toString('base64url')}.signature`,
+    });
+    const account = await captureLazyActionAccountContext(home.id);
+    try {
+      expect(await createNotificationConfigurationAction(account)({ actionId: 'notifications.push.test', input: { tokenId: 'registration-a' }, context: {} })).toEqual({ status });
+      expect(requests).toHaveLength(1);
+      expect(requests[0]).toContain(home.serverUrl);
+    } finally { account.dispose(); }
+  });
   it('removes only the addressed registration on the captured Home without exposing token material in the operand or receipt', async () => {
     const deletions: string[] = [];
     const token = 'ExponentPushToken[private-registration]';
@@ -223,6 +251,49 @@ async function withBuiltinCatalog<T>(membership: BuiltinMembership, run: (fixtur
 }
 
 describe('builtin push configuration Action authority', () => {
+  it.each(['soft', 'urgent', 'default', 'none'] as const)('previews the bundled sound %s on desktop and honors device sound disablement', async soundId => {
+    const played: string[] = [];
+    const original = storage.getState().localSettings.attentionDeviceOverridesV1;
+    storage.getState().applyLocalSettings({ attentionDeviceOverridesV1: {
+      ...original, sounds: { ...original.sounds, enabled: true },
+    } });
+    vi.stubGlobal('__TAURI_INTERNALS__', { invoke: async () => undefined });
+    vi.stubGlobal('Audio', class {
+      constructor(readonly src: string) {}
+      async play() { played.push(this.src); }
+    });
+    try {
+      await withBuiltinCatalog('present', async fixture => {
+        const policy = accountSettingsParse(fixture.readRaw()).attentionDeliveryPolicyV1;
+        fixture.readRaw().attentionDeliveryPolicyV1 = { ...policy, sounds: { ...policy.sounds, defaultSoundId: soundId } };
+        const preview = () => fixture.execute({ actionId: 'notifications.sounds.preview', input: {}, context: { surface: 'ui' } });
+        expect(await preview()).toMatchObject({ notificationId: expect.any(String) });
+        expect(played).toHaveLength(soundId === 'none' ? 0 : 1);
+        if (soundId !== 'none') expect(played[0]).toContain(soundId === 'urgent' ? 'happier_urgent.wav' : 'happier_soft.wav');
+        const local = storage.getState().localSettings;
+        storage.getState().applyLocalSettings({ attentionDeviceOverridesV1: {
+          ...local.attentionDeviceOverridesV1, sounds: { ...local.attentionDeviceOverridesV1.sounds, enabled: false },
+        } });
+        expect(await preview()).toMatchObject({ notificationId: expect.any(String) });
+        expect(played).toHaveLength(soundId === 'none' ? 0 : 1);
+      });
+    } finally {
+      storage.getState().applyLocalSettings({ attentionDeviceOverridesV1: original });
+      vi.unstubAllGlobals();
+    }
+  });
+  it('acknowledges a paired channel edit while remote consent remains disabled', async () => {
+    await withBuiltinCatalog('present', async fixture => {
+      fixture.readRaw().sessionRemoteAlertsEnabled = false;
+      const result = await fixture.execute({ actionId: 'notifications.expoPush.update', input: { patch: { enabled: true } },
+        context: { serverId: fixture.context.serverId, surface: 'ui' } });
+      expect(result).toEqual({ channelId: BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID });
+      expect(fixture.readRaw().sessionRemoteAlertsEnabled).toBe(false);
+      expect(fixture.readRecord().channels[0]).toMatchObject({ enabled: true });
+      expect(fixture.settingsWrites).toEqual([]);
+      expect(fixture.pairedRequests).toHaveLength(1);
+    });
+  });
   it('pairs enabled-only intent without materializing absent finite policy defaults', async () => {
     await withBuiltinCatalog('present', async fixture => {
       const before = fixture.readRaw();

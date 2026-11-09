@@ -1,4 +1,4 @@
-import type { RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess/catalog';
+import type { RelayAccessProviderId, RelayAccessRemedyId } from '@happier-dev/cli-common/relayAccess/catalog';
 
 export type AccessEndpointSource =
     | 'server-profile'
@@ -48,12 +48,7 @@ export type AccessEndpointDiagnostic = Readonly<{
 }>;
 
 export type AccessEndpointRemediationOwnerSurface =
-    | 'tailscale.install'
-    | 'tailscale.login'
-    | 'tailscale.serve.enable'
-    | 'tailscale.serve.approve'
-    | 'tailscale.funnel.approve'
-    | 'cloudflare.configure'
+    | RelayAccessRemedyId
     | 'serverProfile.configureShareableUrl'
     | 'remoteHost.add'
     | 'remoteHost.setup'

@@ -23,6 +23,24 @@ describe('human presence observation store', () => {
         expect(store.read(address).viewers).toHaveLength(2);
     });
 
+    it('publishes nothing when a snapshot only advances its observation clock', () => {
+        const store = createSessionHumanPresenceStore();
+        const home = store.attachHome(address.serverId, 'self');
+        home.beginDeclaration([address.sessionId]);
+        home.receiveSnapshot(snapshot([viewer('other')]));
+        const shown = store.read(address);
+        let notified = 0;
+        const off = store.subscribe(address, () => { notified += 1; });
+        home.receiveSnapshot({ ...snapshot([viewer('other')]), observedAt: 200 });
+        home.receiveSnapshot({ ...snapshot([viewer('other')]), observedAt: 300 });
+        expect(notified).toBe(0);
+        expect(store.read(address)).toBe(shown);
+        home.receiveSnapshot({ ...snapshot([viewer('other', true)]), observedAt: 400 });
+        expect(notified).toBe(1);
+        expect(store.read(address).viewers).toEqual([viewer('other', true)]);
+        off();
+    });
+
     it('retains last observation as stale across reconnect and ignores replaced socket callbacks', () => {
         const store = createSessionHumanPresenceStore();
         const old = store.attachHome(address.serverId, 'self');

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
     WorkspaceSyncConflictInspectRpcResultV1Schema,
     type WorkspaceSyncConflictPageV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 
 import { buildReviewedWorkspaceSyncResolution, isReviewedWorkspaceSyncResolutionCurrent, projectLoadedWorkspaceSyncConflicts, resolveWorkspaceSyncComparisonText } from './workspaceSyncConflictReviewModel';
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { MAX_COMPOSER_ATTACHMENT_INSTANCES_V1 } from '@happier-dev/protocol';
+import { MAX_COMPOSER_ATTACHMENT_INSTANCES_V1 } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
 
 import {
     SESSION_DRAFT_VALUE_SCHEMAS,

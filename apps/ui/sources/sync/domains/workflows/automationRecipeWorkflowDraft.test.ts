@@ -9,9 +9,9 @@ vi.mock('react-native-unistyles', async () => {
 
 import {
     AutomationRunExecutionTargetV1Schema,
-    SessionServerStartSpawnDraftV1Schema,
-    type AutomationRunExecutionTargetV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
+import {
+    SessionServerStartSpawnDraftV1Schema} from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 
 import {
     projectLegacyAutomationRecipeToEditorDraft,
@@ -23,8 +23,8 @@ const AGENT_TARGET = {
     identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
 };
 
-function spawnTarget(overrides?: Record<string, unknown>): AutomationRunExecutionTargetV1 {
-    return AutomationRunExecutionTargetV1Schema.parse({
+function spawnTarget(overrides?: Record<string, unknown>) {
+    const target = AutomationRunExecutionTargetV1Schema.parse({
         kind: 'newSession',
         spawn: SessionServerStartSpawnDraftV1Schema.parse({
             executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
@@ -47,9 +47,11 @@ function spawnTarget(overrides?: Record<string, unknown>): AutomationRunExecutio
             ...overrides,
         }),
     });
+    if (target.kind !== 'newSession') throw new Error('Expected a new Session target fixture');
+    return target;
 }
 
-function legacyDraft(target: AutomationRunExecutionTargetV1, machineId: string | null = 'machine-1') {
+function legacyDraft(target: Parameters<typeof projectLegacyAutomationRecipeToEditorDraft>[0]['target'], machineId: string | null = 'machine-1') {
     return projectLegacyAutomationRecipeToEditorDraft({
         draftId: 'draft-1',
         name: 'Nightly check',
@@ -118,6 +120,7 @@ describe('detached legacy Automation editing', () => {
             intent: 'task', backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
             permissionMode: 'read_only', retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response',
         } });
+        if (target.kind !== 'executionRun') throw new Error('Expected an execution Run target fixture');
         expect(legacyDraft(target).draft.defaults.agentTarget).toEqual(AGENT_TARGET);
     });
     it('preserves detached settings through the shared read projection', () => {
@@ -130,6 +133,7 @@ describe('detached legacy Automation editing', () => {
                 sessionConfigOptionOverrides: { v: 1, updatedAt: 10, overrides: { reasoning_effort: { value: 'high', updatedAt: 10 } } },
             },
         });
+        if (target.kind !== 'executionRun') throw new Error('Expected an execution Run target fixture');
         const projection = legacyDraft(target);
         expect(projection.project).toEqual({ machineId: 'machine-1', directory: '/detached-repo' });
         expect(projection.draft.defaults).toMatchObject({

@@ -12,6 +12,7 @@ import { resolveInstalledWidgetMount } from '@/components/widgets/installedWidge
 import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from '@happier-dev/triage-protocol/v1';
 import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
 import { unionPluginUiProjections } from '@/sync/domains/plugins/ui/projectionUnion';
+import { readProjectWidgetAreaContextV1 } from './projectWidgetAreaContext';
 import '@/sync/syncEngine';
 
 const runtime = (serverId: string, machineId: string): PluginUiProjectionCurrentness => ({
@@ -21,6 +22,43 @@ const runtime = (serverId: string, machineId: string): PluginUiProjectionCurrent
 const session = (id: string, serverId = 'home'): Session => createSessionFixture({ id, serverId });
 
 describe('configured widget executable target', () => {
+  it('uses the admitted Project target on its own dashboard without borrowing an App or Session target', async () => {
+    const connection = await restoreServerAccountForTest({ serverUrl: 'https://project-widget.test', accountId: 'viewer' });
+    try {
+      const lifetime = captureActiveServerAccountScopeLifetime()!;
+      const checkout = { serverId: connection.home.id, id: 'checkout', machineId: 'machine', rootPath: '/repo', createdAtMs: 0 };
+      const project = readProjectWidgetAreaContextV1({ serverId: connection.home.id, projectRef: checkout, activeCheckout: checkout, authority: lifetime });
+      expect(project.target).not.toBeNull();
+      const input = { scope: { ...lifetime.scope, owner: { kind: 'project' as const, projectId: project.target!.projectKey } },
+        definition: { kind: 'installed' as const, surface: { pluginId: 'acme.project', localId: 'status' } },
+        descriptor: {}, targetKind: 'project' as const, projectContext: project,
+        appRuntime: { ...runtime(connection.home.id, 'machine'), accountLifetime: lifetime },
+        resolvedInput: { status: 'ready' as const, input: {} },
+        readSession: () => { throw new Error('Project widgets must not read Session context'); } };
+      const result = resolveConfiguredWidgetTarget(input);
+      expect(result).toMatchObject({ status: 'ready', target: project.target });
+      if (result.status === 'ready') expect(result.target).toBe(project.target);
+      if (result.status === 'ready') expect(result.projectContext).toBe(project);
+      expect(resolveConfiguredWidgetTarget({ ...input, projectContext: null })).toMatchObject({ status: 'unavailable' });
+      expect(resolveConfiguredWidgetTarget({ ...input, scope: { ...input.scope, owner: { kind: 'home' } } })).toMatchObject({ status: 'denied' });
+      expect(resolveConfiguredWidgetTarget({ ...input, scope: { ...input.scope, owner: { kind: 'project', projectId: 'other' } } })).toMatchObject({ status: 'denied' });
+      expect(resolveConfiguredWidgetTarget({ ...input, projectContext: { ...project, scope: { ...project.scope, serverId: 'another-home' } } })).toMatchObject({ status: 'denied' });
+      expect(resolveConfiguredWidgetTarget({ ...input, projectContext: { ...project, scope: { ...project.scope, authority: { isCurrent: () => false } } } })).toMatchObject({ status: 'denied' });
+      const nextAccount = await restoreServerAccountForTest({ serverUrl: 'https://project-widget.test', accountId: 'another-viewer' });
+      try {
+        const nextLifetime = captureActiveServerAccountScopeLifetime()!;
+        expect(nextLifetime.isCurrent()).toBe(true);
+        expect(lifetime.isCurrent()).toBe(false);
+        expect(resolveConfiguredWidgetTarget({ ...input,
+          scope: { ...input.scope, accountId: nextLifetime.scope.accountId },
+          appRuntime: { ...input.appRuntime, accountLifetime: nextLifetime },
+        })).toMatchObject({ status: 'denied', reasonCode: 'widget_target_scope_mismatch' });
+      } finally { await nextAccount.dispose(); }
+      await connection.dispose();
+      expect(resolveConfiguredWidgetTarget(input)).toMatchObject({ status: 'denied' });
+    } finally { await connection.dispose(); }
+  });
+
   it('admits an installed Home widget from its current Account projection without inventing a union machine', async () => {
     const connection = await restoreServerAccountForTest({ serverUrl: 'https://home-widget-union.test', accountId: 'viewer' });
     try {

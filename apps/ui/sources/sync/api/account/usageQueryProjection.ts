@@ -37,7 +37,8 @@ export type OpenedQuotaRead = NonNullable<Parameters<typeof resolveUsagePageAggr
     sources?: readonly UsageQuerySourceState[];
 }>;
 
-export type UsageQueryReprojection = (signal?: AbortSignal) => UsageQueryBatchResult;
+export type UsageQueryReprojection = (signal?: AbortSignal,
+    allowance?: Readonly<{ quota: OpenedQuotaRead; nowMs: number }>) => UsageQueryBatchResult;
 
 /** Presentation derived from the same admitted answer; never serialized with its source. */
 export type PreparedUsageAccountingSnapshot = UsageAccountingSourceSnapshot & Readonly<{

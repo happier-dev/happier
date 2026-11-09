@@ -1,4 +1,5 @@
-import { BrowserProfileV1Schema, type BrowserProfileV1, type FeatureDecision } from '@happier-dev/protocol';
+import { BrowserProfileV1Schema, type BrowserProfileV1} from '@happier-dev/protocol/browser/profile/v1';
+import { type FeatureDecision } from '@happier-dev/protocol/features/decision';
 import { describe, expect, it } from 'vitest';
 
 import { evaluateBrowserTargetPolicy } from '../policy/evaluate';

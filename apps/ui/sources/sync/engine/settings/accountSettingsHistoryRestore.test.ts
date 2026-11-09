@@ -3,11 +3,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { Encryption } from '@/sync/encryption/encryption';
 import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
+import { createDefaultCollectionSpaceV1, reduceCollectionSpacesV1 } from '@happier-dev/protocol/collections/spaces/collectionSpacesV1';
+import { settingsParse } from '@/sync/domains/settings/settings';
 import {
-    ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION,
+    ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION} from '@happier-dev/protocol/account/settings/accountSettings';
+import {
     openAccountScopedBlobCiphertext,
     sealAccountScopedBlobCiphertext,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/crypto/accountScopedCipher';
 
 const mocks = vi.hoisted(() => {
     return {
@@ -40,8 +43,6 @@ const mocks = vi.hoisted(() => {
             applySettingsLocal: vi.fn(),
         },
         storageStoreState: {
-            setSessionOrganizationLoading: vi.fn(),
-            setSessionOrganizationError: vi.fn(),
             applySessionOrganizationSnapshot: vi.fn(),
             setSessionTagAssignmentsOptimistic: vi.fn(() => 'optimistic-tag-assignment'),
             commitSessionOrganizationOptimistic: vi.fn(),
@@ -130,7 +131,6 @@ vi.mock('@/sync/domains/state/persistence', () => ({
     loadProfile: () => ({}),
     loadSessionDrafts: () => ({}),
     loadSessionReviewCommentsDrafts: () => ({}),
-    loadSessionActionDrafts: () => ({}),
     loadNewSessionDraft: () => null,
     loadSessionPermissionModes: () => ({}),
     loadSessionPermissionModeUpdatedAts: () => ({}),
@@ -149,7 +149,6 @@ vi.mock('@/sync/domains/state/persistence', () => ({
     saveSessionDrafts: vi.fn(),
     saveSessionReviewCommentsDrafts: vi.fn(),
     saveWorkspaceReviewCommentsDrafts: vi.fn(),
-    saveSessionActionDrafts: vi.fn(),
     saveNewSessionDraft: vi.fn(),
     clearNewSessionDraft: vi.fn(),
     saveSessionPermissionModes: vi.fn(),
@@ -165,7 +164,8 @@ vi.mock('@/sync/domains/state/persistence', () => ({
     clearPersistence: vi.fn(),
 }));
 
-vi.mock('@/sync/domains/state/persistenceStorage', () => ({
+vi.mock('@/sync/domains/state/persistenceStorage', async importOriginal => ({
+    ...await importOriginal<typeof import('@/sync/domains/state/persistenceStorage')>(),
     getPersistenceStorage: () => ({
         getString: (key: string) => mocks.persistenceValues.get(key),
         set: (key: string, value: string) => {
@@ -510,6 +510,40 @@ describe('classification-aware account settings history restore', () => {
         }));
         expect(commitPrepared).not.toHaveBeenCalled();
         expect(mocks.serverFetch.mock.calls.filter(([, init]) => init?.method === 'POST')).toEqual([]);
+    });
+
+    it('rebases a space field intent on a CAS winner without losing another entity or a concurrent property', async () => {
+        const space = { ...createDefaultCollectionSpaceV1('sessionWork'), id: 'work', name: 'Work' };
+        const workflow = { ...createDefaultCollectionSpaceV1('workflow'), id: 'flows', name: 'Concurrent flow' };
+        const baseline = { schemaVersion: 2, collectionSpacesV1: { v: 1, spaces: [space] } };
+        const winner = { ...baseline, collectionSpacesV1: { v: 1, spaces: [{ ...space, includeNeedsYouEverywhere: true }, workflow] } };
+        const writes: { expectedVersion: number; content: { t: 'plain'; v: Record<string, unknown> } }[] = [];
+        mocks.serverFetch.mockImplementation(async (path: string, init?: RequestInit) => {
+            if (path === '/v1/account/encryption/currentness') return currentnessResponse('plain');
+            if (path === '/v1/account/encryption') return jsonResponse({ mode: 'plain', updatedAt: 0 });
+            if (path === '/v2/account/settings' && init?.method === 'POST') {
+                writes.push(JSON.parse(String(init.body)));
+                return jsonResponse(writes.length === 1 ? { success: false, error: 'version-mismatch', currentVersion: 8,
+                    currentContent: { t: 'plain', v: winner } } : { success: true, version: 9 });
+            }
+            if (path === '/v2/account/settings') return jsonResponse({ content: { t: 'plain', v: baseline }, version: 7 });
+            throw new Error(`Unexpected request ${path}`);
+        });
+        expect(await syncSettings({ credentials, encryption: null, settingsScope: SETTINGS_SCOPE,
+            pendingSettings: {}, clearPendingSettings: () => {}, oneShotServerSettingsMutation: {
+                expectedSettingsVersion: 7, rebaseOnConflict: true,
+                mutate: raw => {
+                    const result = reduceCollectionSpacesV1(settingsParse(raw).collectionSpacesV1, {
+                        kind: 'collection_space', entityKind: 'sessionWork', mutation: { op: 'edit', spaceId: 'work', changes: { name: 'Renamed' } },
+                    });
+                    if (!result.ok) throw new Error(result.reason);
+                    return { settings: { ...raw, collectionSpacesV1: result.value }, value: result.value };
+                },
+            } })).toMatchObject({ status: 'applied', settingsVersion: 9 });
+        expect(writes.map(write => write.expectedVersion)).toEqual([7, 8]);
+        expect(writes[1]?.content.v.collectionSpacesV1).toEqual({ v: 1, spaces: [
+            { ...space, name: 'Renamed', includeNeedsYouEverywhere: true }, workflow,
+        ] });
     });
 
     it('allows an explicitly prepared empty document and refuses a malformed rebase candidate', async () => {

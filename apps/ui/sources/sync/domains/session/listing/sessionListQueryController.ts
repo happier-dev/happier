@@ -63,6 +63,7 @@ export type SessionListQueryHomeState = Readonly<{
      */
     metadataUpgradeRequiredCount?: number;
     membershipUnavailableReason?: SessionListFetchResult['membershipUnavailableReason'];
+    selectionUnavailable?: boolean;
 }>;
 
 /**
@@ -88,12 +89,16 @@ export type SessionListQueryPageRequest = Readonly<{
     membership: SessionListPageMembership;
     /** Predicate consumers need settled summaries, not just structural membership. */
     hydration?: 'required';
+    /** Client-only selection over settled summaries; null means unreadable membership. */
+    selectSession?: SessionListPageSelection;
     candidateStartedBy?: Parameters<typeof fetchAndApplySessions>[0]['candidateStartedBy'];
     limit?: number;
     cursor?: string | null;
     attentionCursor?: string | null;
     signal: AbortSignal;
 }>;
+
+export type SessionListPageSelection = (sessionId: string, serverId: string) => boolean | null;
 
 export type SessionListQueryHomeController = Readonly<{
     getSnapshot(): SessionListQueryHomeState;
@@ -135,6 +140,7 @@ type ControllerInput = Readonly<{
     query: SessionListQueryV1;
     /** Exhaustive consumers apply one exhausted relation; omission preserves progressive pages. */
     readMode?: 'complete';
+    selectSession?: SessionListPageSelection;
     selected: boolean;
     /** `null` means the selected Home's transport ownership is being transferred. */
     online: boolean | null;
@@ -150,6 +156,15 @@ type ControllerInput = Readonly<{
 }>;
 
 type RequestFamily = 'replace' | 'ordinary' | 'attention';
+
+/** The pagination owner's existing non-advancing continuation rule. */
+export function isSessionListCursorRepeated(
+    requestedCursor: string | null | undefined,
+    nextCursor: string | null,
+    hasNext: boolean,
+): boolean {
+    return hasNext && Boolean(requestedCursor) && nextCursor === requestedCursor;
+}
 
 type PageRequestPlan = Readonly<{
     source: SessionListPageSource;
@@ -181,7 +196,7 @@ function resolvePageRequestPlan(input: ControllerInput | null): PageRequestPlan 
                 path: input.ordinaryAdapter.path,
                 allowV1Fallback: input.ordinaryAdapter.allowV1Fallback,
             },
-            membership: input.ordinaryAdapter.membership,
+            membership: input.queryMembership === 'rowOnly' ? 'rowOnly' : input.ordinaryAdapter.membership,
             supportsAttentionContinuation: false,
         };
     }
@@ -244,6 +259,18 @@ export function createSessionListQueryHomeController(params: Readonly<{
     let inFlight: Promise<void> | null = null;
     let refreshQueued = false;
     let ordinaryLastSuccessAt: number | null = null;
+    /**
+     * A corpus that was current when its transport dropped. The changes catch-up and
+     * presence placement deliver what changed while away, so a reconnect re-reads the
+     * corpus only when a change reached it while it could not read (`missed`).
+     */
+    let offlineHold: { queryKey: string; membership: PageRequestPlan['membership']; missed: boolean } | null = null;
+    /**
+     * Row placements that landed while a page read was in flight. The read may have been
+     * answered before those rows changed, so its published membership re-applies them
+     * (latest placement per Session wins) instead of resurrecting a row that already left.
+     */
+    let placementsDuringRead: Map<string, Readonly<{ facts: SessionListRowPlacementFacts; readSortKey: (sessionId: string) => number | null }>> | null = null;
     let state: SessionListQueryHomeState = {
         requestedQueryKey: '',
         appliedQueryKey: null,
@@ -320,6 +347,47 @@ export function createSessionListQueryHomeController(params: Readonly<{
         && resolvePageRequestPlan(input) !== null
     );
 
+    /** Place decided rows into `addresses` by server order; cursors say which pages are unread. */
+    const placeRows = (
+        query: SessionListQueryV1,
+        current: readonly SessionAddress[],
+        rows: readonly SessionListRowPlacement[],
+        readSortKey: (sessionId: string) => number | null,
+        cursors: Readonly<{ hasNext: boolean; attentionHasNext: boolean }>,
+    ): readonly SessionAddress[] => {
+        const placementBySessionId = new Map(rows.map(row => [row.sessionId, row.facts]));
+        const sortKeyOf = (sessionId: string) => placementBySessionId.get(sessionId)?.sortKey ?? readSortKey(sessionId);
+        let addresses = current;
+        for (const { sessionId, facts } of rows) {
+            const member = resolveSessionListQueryRowMembership(query, facts);
+            const index = addresses.findIndex(address => address.sessionId === sessionId);
+            const loaded = index >= 0;
+            if (loaded) addresses = addresses.filter(address => address.sessionId !== sessionId);
+            if (!member || (input?.selectSession && input.selectSession(sessionId, serverId) !== true)) continue;
+            const address = loaded ? current.find(other => other.sessionId === sessionId)! : normalizeSessionAddress(serverId, sessionId);
+            if (!address) continue;
+            // Server order: sort key descending, then id descending.
+            const position = addresses.findIndex(other => {
+                const otherKey = sortKeyOf(other.sessionId);
+                return otherKey === null || otherKey < facts.sortKey
+                    || (otherKey === facts.sortKey && other.sessionId < sessionId);
+            });
+            if (position >= 0) addresses = [...addresses.slice(0, position), address, ...addresses.slice(position)];
+            // Older than every loaded row: a loaded member stays last; an unloaded
+            // one belongs to an unread page. An active-storage first page carries
+            // every pinned member, and an includeAttention one every attention row
+            // (while its attention partition is fully read), ahead of the window.
+            else if (loaded || (!cursors.hasNext && !cursors.attentionHasNext)
+                || (query.storage === 'active' && facts.pinned)
+                || (query.includeAttention === true && facts.needsAttention && !cursors.attentionHasNext)) {
+                addresses = [...addresses, address];
+            }
+        }
+        const unchanged = addresses.length === current.length
+            && addresses.every((address, index) => address === current[index]);
+        return unchanged ? current : addresses;
+    };
+
     const startPage = (family: RequestFamily): Promise<void> => {
         if (disposed) return Promise.resolve();
         const plan = resolvePageRequestPlan(input);
@@ -335,6 +403,8 @@ export function createSessionListQueryHomeController(params: Readonly<{
         }
         const abortController = new AbortController();
         activeAbortController = abortController;
+        const placements: NonNullable<typeof placementsDuringRead> = new Map();
+        placementsDuringRead = placements;
         let operation = family;
         let requestedCursor = family === 'ordinary' ? state.nextCursor : null;
         let requestedAttentionCursor = family === 'attention' ? state.attentionNextCursor : null;
@@ -358,6 +428,7 @@ export function createSessionListQueryHomeController(params: Readonly<{
                 const pageIds = new Set<string>();
                 let metadataUpgradeRequiredCount = 0;
                 let membershipUnavailableReason: SessionListFetchResult['membershipUnavailableReason'];
+                let selectionUnavailable = false;
                 let nextCursor: string | null = null;
                 let hasNext = false;
                 let attentionNextCursor: string | null = null;
@@ -370,6 +441,7 @@ export function createSessionListQueryHomeController(params: Readonly<{
                     const result = await params.fetchPage({
                         source: plan.source,
                         membership: plan.membership,
+                        ...(requestInput.selectSession ? { selectSession: requestInput.selectSession, hydration: 'required' as const } : {}),
                         ...(!complete && plan.source.kind === 'query'
                             ? { limit: pageLimit - pageIds.size }
                             : typeof requestInput.query.limit === 'number'
@@ -386,13 +458,9 @@ export function createSessionListQueryHomeController(params: Readonly<{
                     }
 
                     const repeatedOrdinaryCursor = operation === 'ordinary'
-                        && result.hasNext
-                        && Boolean(requestedCursor)
-                        && result.nextCursor === requestedCursor;
+                        && isSessionListCursorRepeated(requestedCursor, result.nextCursor, result.hasNext);
                     const repeatedAttentionCursor = operation === 'attention'
-                        && result.attentionHasNext
-                        && Boolean(requestedAttentionCursor)
-                        && result.attentionNextCursor === requestedAttentionCursor;
+                        && isSessionListCursorRepeated(requestedAttentionCursor, result.attentionNextCursor, result.attentionHasNext);
                     const missingCompleteCursor = complete && ((operation !== 'attention' && result.hasNext && !result.nextCursor)
                         || (operation !== 'ordinary' && plan.supportsAttentionContinuation && result.attentionHasNext && !result.attentionNextCursor));
 
@@ -432,6 +500,7 @@ export function createSessionListQueryHomeController(params: Readonly<{
                     }
                     metadataUpgradeRequiredCount += result.metadataUpgradeRequiredCount ?? 0;
                     membershipUnavailableReason ??= result.membershipUnavailableReason;
+                    selectionUnavailable ||= result.selectionUnavailable === true;
                     if (complete) {
                         if (hasNext && nextCursor) {
                             operation = 'ordinary';
@@ -463,9 +532,17 @@ export function createSessionListQueryHomeController(params: Readonly<{
                     // Each page's retirement fence stays live until the whole relation commits.
                     // An equal replacement keeps the published membership identity, so a background
                     // refetch never re-publishes unchanged membership to its consumers.
-                    const addresses = appendAddresses(family === 'replace' ? [] : state.addresses, serverId,
+                    const readAddresses = appendAddresses(family === 'replace' ? [] : state.addresses, serverId,
                         completePages.flatMap(page => page.sessionIds.filter(
                             sessionId => page.isSessionCurrent?.(sessionId) !== false)), family === 'replace' ? state.addresses : undefined);
+                    const placedRows = [...placements].map(([sessionId, { facts }]) => ({ sessionId, facts }));
+                    const lastReadSortKey = [...placements.values()].at(-1)?.readSortKey;
+                    const addresses = placedRows.length && lastReadSortKey && isSessionListQueryRowPlaceable(requestInput.query)
+                        ? placeRows(requestInput.query, readAddresses, placedRows, lastReadSortKey, {
+                            hasNext: readOrdinary ? hasNext : state.hasNext,
+                            attentionHasNext: readAttention ? attentionHasNext : state.attentionHasNext,
+                        })
+                        : readAddresses;
                     publish({
                         ...state,
                         appliedQueryKey: requestQueryKey,
@@ -475,6 +552,7 @@ export function createSessionListQueryHomeController(params: Readonly<{
                             : (family === 'replace' ? 0 : state.metadataUpgradeRequiredCount ?? 0) + metadataUpgradeRequiredCount,
                         membershipUnavailableReason: complete ? membershipUnavailableReason
                             : membershipUnavailableReason ?? (family === 'replace' ? undefined : state.membershipUnavailableReason),
+                        selectionUnavailable: selectionUnavailable || (family !== 'replace' && state.selectionUnavailable === true),
                         ...(readOrdinary ? {
                             nextCursor,
                             hasNext,
@@ -507,6 +585,7 @@ export function createSessionListQueryHomeController(params: Readonly<{
                         freshnessAt: null,
                         metadataUpgradeRequiredCount: 0,
                         membershipUnavailableReason: undefined,
+                        selectionUnavailable: false,
                     } : {}),
                     phase: 'error',
                     failureReason: failure.reason,
@@ -514,6 +593,7 @@ export function createSessionListQueryHomeController(params: Readonly<{
                     failedOperation: family,
                 });
             } finally {
+                if (placementsDuringRead === placements) placementsDuringRead = null;
                 if (activeAbortController === abortController) {
                     activeAbortController = null;
                 }
@@ -556,7 +636,8 @@ export function createSessionListQueryHomeController(params: Readonly<{
             const previousInput = input;
             const previousQueryKey = previousInput ? deriveQueryKey(previousInput) : null;
             const nextQueryKey = deriveQueryKey(nextInput);
-            const readModeChanged = previousInput !== null && previousInput.readMode !== nextInput.readMode;
+            const readModeChanged = previousInput !== null && (previousInput.readMode !== nextInput.readMode
+                || previousInput.selectSession !== nextInput.selectSession);
             input = nextInput;
             if (readModeChanged && nextInput.readMode === 'complete') {
                 // A progressive prefix cannot become a complete answer merely by changing policy.
@@ -574,6 +655,15 @@ export function createSessionListQueryHomeController(params: Readonly<{
                 return;
             }
             if (nextInput.online === false) {
+                const previousPlan = resolvePageRequestPlan(previousInput);
+                if (previousPlan) {
+                    offlineHold = inFlight === null && !refreshQueued && state.phase === 'ready'
+                        && state.appliedQueryKey === nextQueryKey && previousQueryKey === nextQueryKey
+                        ? { queryKey: nextQueryKey, membership: previousPlan.membership, missed: false }
+                        : null;
+                } else if (offlineHold && offlineHold.queryKey !== nextQueryKey) {
+                    offlineHold = null;
+                }
                 revision += 1;
                 activeAbortController?.abort('session-list-query-home-offline');
                 activeAbortController = null;
@@ -620,6 +710,13 @@ export function createSessionListQueryHomeController(params: Readonly<{
                 || state.appliedQueryKey !== nextQueryKey;
             const previousPlan = resolvePageRequestPlan(previousInput);
             const nextPlan = resolvePageRequestPlan(input);
+            const hold = offlineHold;
+            offlineHold = null;
+            if (hold && previousInput?.online === false && !hold.missed && !queryChanged && !readModeChanged
+                && hold.queryKey === nextQueryKey && nextPlan?.membership === hold.membership) {
+                publishPhase(nextQueryKey, 'ready');
+                return;
+            }
             const membershipChanged = previousPlan === null
                 || previousPlan.membership !== nextPlan?.membership;
             // The same query re-applied while its page is still in flight is not a new request:
@@ -648,7 +745,7 @@ export function createSessionListQueryHomeController(params: Readonly<{
             return refresh();
         },
         invalidate: (scope, rowFacets) => {
-            if (disposed || !input?.selected || !input.online) return Promise.resolve();
+            if (disposed || !input?.selected) return Promise.resolve();
             // An unread page may hold a member a row write reorders into view, so only a
             // fully read corpus narrows the re-read to the inputs the writes can move.
             const fullyRead = !state.hasNext && !state.attentionHasNext;
@@ -656,57 +753,41 @@ export function createSessionListQueryHomeController(params: Readonly<{
                 && !canRowWriteChangeSessionListMembership(input.query, fullyRead ? rowFacets : undefined)) return Promise.resolve();
             // Row-decided selections are placed from the batch-read row instead (`place`).
             if (scope === 'structural' && isSessionListQueryRowPlaceable(input.query)) return Promise.resolve();
+            if (!input.online) {
+                // The held corpus could not read this change: the reconnect re-reads it.
+                if (offlineHold && scope !== 'recover' && input.online === false) offlineHold.missed = true;
+                return Promise.resolve();
+            }
             if (scope === 'recover') {
                 // A read already replacing the corpus (the online transition starts one) is the recovery.
                 if (inFlight) return inFlight;
                 if (state.phase === 'ready' && state.appliedQueryKey === state.requestedQueryKey) return Promise.resolve();
             }
-            if (inFlight) {
-                refreshQueued = true;
-                const currentRequest = inFlight;
-                // Coalesce onto the same completion contract as refresh: the
-                // queued replacement is installed synchronously from the
-                // current request's `finally`, so chain to it rather than
-                // reporting completion after only the stale request.
-                return currentRequest.then(() => inFlight ?? Promise.resolve());
-            }
-            return startPage('replace');
+            return refresh();
         },
         place: (rows, readSortKey) => {
-            if (disposed || !input?.selected || !input.online) return true;
-            if (!isSessionListQueryRowPlaceable(input.query)) return false;
-            if (!state.appliedQueryKey) return true;
-            const placementBySessionId = new Map(rows.map(row => [row.sessionId, row.facts]));
-            const sortKeyOf = (sessionId: string) => placementBySessionId.get(sessionId)?.sortKey ?? readSortKey(sessionId);
-            let addresses = state.addresses;
-            for (const { sessionId, facts } of rows) {
-                const member = resolveSessionListQueryRowMembership(input.query, facts);
-                const index = addresses.findIndex(address => address.sessionId === sessionId);
-                const loaded = index >= 0;
-                if (loaded) addresses = addresses.filter(address => address.sessionId !== sessionId);
-                if (!member) continue;
-                const address = loaded ? state.addresses.find(other => other.sessionId === sessionId)! : normalizeSessionAddress(serverId, sessionId);
-                if (!address) continue;
-                // Server order: sort key descending, then id descending.
-                const position = addresses.findIndex(other => {
-                    const otherKey = sortKeyOf(other.sessionId);
-                    return otherKey === null || otherKey < facts.sortKey
-                        || (otherKey === facts.sortKey && other.sessionId < sessionId);
-                });
-                if (position >= 0) addresses = [...addresses.slice(0, position), address, ...addresses.slice(position)];
-                // Older than every loaded row: a loaded member stays last; an unloaded
-                // one belongs to an unread page. An active-storage first page carries
-                // every pinned member, and an includeAttention one every attention row
-                // (while its attention partition is fully read), ahead of the window.
-                else if (loaded || (!state.hasNext && !state.attentionHasNext)
-                    || (input.query.storage === 'active' && facts.pinned)
-                    || (input.query.includeAttention === true && facts.needsAttention && !state.attentionHasNext)) {
-                    addresses = [...addresses, address];
-                }
+            // A held offline corpus still takes rows read over HTTP (presence recovery).
+            if (disposed || !input?.selected || (!input.online && !(offlineHold && input.online === false))) return true;
+            const { query } = input;
+            if (!isSessionListQueryRowPlaceable(query)) return false;
+            // A row the facts cannot decide (a Space's manual branch) takes the Home's answer.
+            if (rows.some(({ facts }) => resolveSessionListQueryRowMembership(query, facts) === null)) {
+                if (!state.appliedQueryKey) return true;
+                // A held offline corpus re-reads on reconnect, as for any change it could not read.
+                if (!input.online) { if (offlineHold) offlineHold.missed = true; }
+                else void refresh();
+                return true;
             }
-            const unchanged = addresses.length === state.addresses.length
-                && addresses.every((address, index) => address === state.addresses[index]);
-            if (!unchanged) publish({ ...state, addresses });
+            if (placementsDuringRead) for (const { sessionId, facts } of rows) {
+                placementsDuringRead.delete(sessionId);
+                placementsDuringRead.set(sessionId, { facts, readSortKey });
+            }
+            if (!state.appliedQueryKey) return true;
+            if (input.selectSession && rows.some(row => input?.selectSession?.(row.sessionId, serverId) === null)) {
+                publish({ ...state, selectionUnavailable: true });
+            }
+            const addresses = placeRows(query, state.addresses, rows, readSortKey, state);
+            if (addresses !== state.addresses) publish({ ...state, addresses });
             return true;
         },
         retire: (sessionIdRaw) => {

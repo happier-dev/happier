@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SessionDraftDocumentV2 } from '@happier-dev/protocol';
+import type { SessionDraftDocumentV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
 
 const custody = vi.hoisted(() => ({
     removeLaunch: vi.fn(async () => undefined),

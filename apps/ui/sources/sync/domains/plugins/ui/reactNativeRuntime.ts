@@ -1,4 +1,4 @@
-import type { PluginReactNativeCompatibilityDecisionV1 } from '@happier-dev/protocol';
+import type { PluginReactNativeCompatibilityDecisionV1 } from '@happier-dev/protocol/plugins/ui';
 import type { PluginUiArtifactDigestV1 } from '@happier-dev/protocol/plugins/ui';
 
 export type PluginReactNativeCompatibilityDecision = Readonly<

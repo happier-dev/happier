@@ -11,6 +11,7 @@ import {
 } from '@happier-dev/connection-supervisor';
 
 import { probeAuthenticatedServerAuthPingEndpoint } from '@/sync/api/capabilities/probeAuthenticatedServerAuthPingEndpoint';
+import { CredentialRequestRedirectError } from '@happier-dev/cli-common/homeTarget';
 import { canonicalizeServerUrl } from '@/sync/domains/server/url/serverUrlCanonical';
 import type { HomeCarrier } from '@/sync/runtime/homeCarrier';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
@@ -348,7 +349,16 @@ function waitForState(params: Readonly<{
             // A previously online transport cannot admit a request while its
             // replacement is still starting. Cancellation stays independent
             // of that shared startup, including a pending initial probe.
-            if (!started || !params.predicate(state)) return;
+            if (!started) return;
+            if (state.failure) {
+                const error = state.failure.code === 'credential_request_redirect_refused'
+                    ? new CredentialRequestRedirectError(state.failure.status ?? 0)
+                    : Object.assign(new Error(state.lastErrorMessage ?? 'Server request refused'), state.failure);
+                cleanup();
+                reject(error);
+                return;
+            }
+            if (!params.predicate(state)) return;
             cleanup();
             resolve();
         };
@@ -599,7 +609,7 @@ export async function invalidateAllServerReachabilitySupervisors(): Promise<void
 
 export function reportServerUnreachable(serverUrl: string, error: unknown, token?: string | null): void {
     // A caller's deadline or cancellation is not evidence about the Home.
-    if (error instanceof ServerReachabilityWaitTimeoutError || (error instanceof Error && error.name === 'AbortError')) return;
+    if (error instanceof CredentialRequestRedirectError || error instanceof ServerReachabilityWaitTimeoutError || (error instanceof Error && error.name === 'AbortError')) return;
     const entry = findEntryForRead(serverUrl, token);
     if (!entry) return;
     if (entry.state.phase !== 'online' && entry.state.phase !== 'connecting') {
@@ -635,6 +645,14 @@ export function reportServerReachabilityProbeResult(
 ): void {
     const entry = findEntryForRead(serverUrl, token);
     if (!entry || !scope) return;
+    if (probe.status === 'server_unreachable') {
+        // An operation's network failure is evidence to recheck this Home,
+        // just like a socket failure, not a verdict about every HTTP route.
+        // Keep the captured-operation fence before using the shared probe.
+        if (entry.supervisor.captureProbeReportScope?.().generation !== scope.generation) return;
+        reportServerUnreachable(entry.serverUrl, new Error(probe.errorMessage ?? 'Network request failed'), entry.token);
+        return;
+    }
     entry.supervisor.reportProbeResult?.(probe, scope);
 }
 

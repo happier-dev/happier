@@ -1,10 +1,11 @@
+import { createSessionListSourceFixture } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createSessionFixture, createPlainSessionByIdResponseFixture, createSessionOwnerViewerFixture, createSessionAccessFixture, createSessionViewerFixture, createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
-import { SessionListQueryResponseV1Schema } from '@happier-dev/protocol/sessions/listing/response';
 import { SESSION_LIST_PAGE_MAX_LIMIT, SessionListQueryV1Schema } from '@happier-dev/protocol/sessions/listing/query';
-import { encodeV2SessionListCursorV1 } from '@happier-dev/protocol';
+import { SessionReadBatchRequestV1Schema } from '@happier-dev/protocol/sessions/read/sessionReadBatchV1';
+import { encodeV2SessionListCursorV1 } from '@happier-dev/protocol/sessions/control/contract';
 import { normalizeSessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createWorkflowDefinitionFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
@@ -52,9 +53,9 @@ afterEach(async () => { await restoredAccount?.dispose(); restoredAccount = unde
 it('keeps mounted rule counts current after source changes without restarting useful reads for unrelated traffic', async () => {
     const serverId = await addAppliedHome('Rule counts', 'https://rule-counts.test');
     homes.answer(serverId, '/v2/account/session-follow-rules', { body: { rules: [] } });
-    const member = (id: string) => queryRow(createSessionFixture({ id, serverId,
+    const member = (id: string) => queryRow(createSessionFixture({ id, serverId, projectKey: 'payments',
         metadata: { path: '/payments', host: 'test', projectId: 'payments' } }));
-    const page = (ids: string[]) => SessionListQueryResponseV1Schema.parse({ sessions: ids.map(member),
+    const page = (ids: string[]) => createSessionListSourceFixture({ sessions: ids.map(member),
         hasNext: false, nextCursor: null, attentionHasNext: false, attentionNextCursor: null });
     homes.answer(serverId, '/v2/sessions/query', { body: page(['first']) });
     const filter = normalizeSessionListFilterV1({ show: 'sessions', homeServerIds: [serverId], scope: 'all_accessible',
@@ -111,7 +112,7 @@ it('keeps mounted rule counts current after source changes without restarting us
     await hook.unmount();
 });
 
-it.each(['cold', 'newer-row', 'provenance-filter'] as const)('settles Matching from %s encrypted query summaries without opening each Session', async state => {
+it.each(['cold', 'newer-row', 'provenance-filter'] as const)('settles Matching from %s encrypted compact query rows through batched display hydration', async state => {
     const serverUrl = 'https://cold-encrypted-preview.test';
     const secret = new Uint8Array(32).fill(4);
     const credentials = { token: createAccountTokenForTests('alice', { currentAccount: true }), secret: encodeBase64(secret, 'base64') };
@@ -130,29 +131,25 @@ it.each(['cold', 'newer-row', 'provenance-filter'] as const)('settles Matching f
     const encryption = await Encryption.create(secret);
     const key = new Uint8Array(32).fill(7);
     const cipher = await encryption.openEncryption(key);
-    const base = queryRow(createSessionFixture({ id: 'cold-member', active: false,
+    const base = queryRow(createSessionFixture({ id: 'cold-member', active: false, projectKey: 'payments',
         metadata: { path: '/payments', host: 'test', projectId: 'payments' } }));
     if (base.ownerMetadata?.t !== 'plain') throw new Error('Expected the canonical plaintext fixture owner envelope');
     const [metadata] = await cipher.encrypt([JSON.parse(base.metadata)]);
-    const row = { ...base, ownerAccountId: 'alice', origin: { kind: 'none' as const }, encryptionMode: 'e2ee', metadata: encodeBase64(metadata!, 'base64'),
+    const row = { ...base, ownerAccountId: 'alice', origin: { kind: 'none' as const }, encryptionMode: 'e2ee' as const, metadata: encodeBase64(metadata!, 'base64'),
         ownerMetadata: sealSessionOwnerMetadataEnvelopeV1({ ownerMetadata: base.ownerMetadata.v,
             material: material.material, randomBytes: length => new Uint8Array(length).fill(3) }),
         dataEncryptionKey: encodeBase64(await encryption.encryptEncryptionKey(key), 'base64') };
-    if (state === 'newer-row') getStorage().setState({ sessionListRowsByServerId: { [serverId]: {
-        [row.id]: createSessionListRenderableSessionFixture({ id: row.id, seq: row.seq + 1, updatedAt: row.updatedAt + 1,
-            encryptionMode: 'e2ee', encryptedContentAvailability: undefined, metadataLayoutVersion: 1,
-            metadata: null, metadataVersion: row.metadataVersion, agentStateVersion: row.agentStateVersion ?? 1 }),
-    } } });
     homes.answer(serverId, '/v2/account/session-follow-rules', { body: { rules: [] } });
-    const foreignBase = queryRow(createSessionFixture({ id: 'other-account', accessLevel: 'view',
+    const foreignBase = queryRow(createSessionFixture({ id: 'other-account', accessLevel: 'view', viewer: createSessionViewerFixture(),
         metadata: { path: '/payments', host: 'test', projectId: 'payments' } }));
-    const rows = state === 'provenance-filter' ? [
+    const { ownerMetadata: _ownerMetadata, ...sharedRow } = row;
+    const rows = createSessionListSourceFixture({ sessions: state === 'provenance-filter' ? [
         ...Array.from({ length: 1_000 }, (_, index) => ({ ...row, id: `automation-${index}`,
             origin: { kind: 'run_step' as const, runId: 'workflow' } })),
-        { ...row, ...foreignBase, ownerAccountId: 'other', origin: { kind: 'none' as const },
-            encryptionMode: 'e2ee', metadata: row.metadata, dataEncryptionKey: row.dataEncryptionKey, ownerMetadata: undefined },
+        { ...sharedRow, ...foreignBase, ownerAccountId: 'other', origin: { kind: 'none' as const },
+            encryptionMode: 'e2ee', metadata: row.metadata, dataEncryptionKey: row.dataEncryptionKey },
         row,
-    ] : [row];
+    ] : [row], nextCursor: null, hasNext: false, attentionHasNext: false, attentionNextCursor: null }).sessions;
     const pageOffsets = new Map<string, number>();
     homes.answer(serverId, '/v2/sessions/query', { select: body => {
         const query = SessionListQueryV1Schema.parse(body);
@@ -160,20 +157,38 @@ it.each(['cold', 'newer-row', 'provenance-filter'] as const)('settles Matching f
         const end = offset + SESSION_LIST_PAGE_MAX_LIMIT;
         const nextCursor = end < rows.length ? encodeV2SessionListCursorV1(`offset-${end}`) : null;
         if (nextCursor) pageOffsets.set(nextCursor, end);
-        return { body: SessionListQueryResponseV1Schema.parse({ sessions: rows.slice(offset, end),
+        return { body: createSessionListSourceFixture({ sessions: rows.slice(offset, end),
             hasNext: nextCursor !== null, nextCursor, attentionHasNext: false, attentionNextCursor: null }) };
     } });
     const filter = normalizeSessionListFilterV1({ show: 'sessions', homeServerIds: [serverId], scope: 'all_accessible',
         startedBy: state === 'provenance-filter' ? ['you'] : ['you', 'agents', 'triggers'], projects: { include: [{ serverId, projectKey: 'payments' }], exclude: [] } });
+    if (state === 'newer-row') {
+        // Establish the newer row through its real admission and hydration owner.
+        homes.answer(serverId, '/v2/sessions/query', { body: createSessionListSourceFixture({
+            sessions: [{ ...row, seq: row.seq + 1, updatedAt: row.updatedAt + 1 }],
+            hasNext: false, nextCursor: null, attentionHasNext: false, attentionNextCursor: null,
+        }) });
+        expect(await createDefaultActionExecutor().execute('follow.preview', { receiver: { kind: 'account' }, filter },
+            { surface: 'ui', serverId, expectedAccountId: 'alice' })).toMatchObject({ ok: true });
+        homes.answer(serverId, '/v2/sessions/query', { body: createSessionListSourceFixture({
+            sessions: rows, hasNext: false, nextCursor: null, attentionHasNext: false, attentionNextCursor: null,
+        }) });
+    }
     const decrypts = vi.spyOn(SessionEncryption.prototype, 'decryptMetadataPayload');
     const preview = await createDefaultActionExecutor().execute('follow.preview', { receiver: { kind: 'account' }, filter },
         { surface: 'ui', serverId, expectedAccountId: 'alice' });
-    expect(homes.requests.filter(request => request.path === '/v2/sessions/query'), JSON.stringify(preview)).toHaveLength(Math.ceil(rows.length / SESSION_LIST_PAGE_MAX_LIMIT));
+    expect(homes.requests.filter(request => request.path === '/v2/sessions/query'), JSON.stringify(preview))
+        .toHaveLength(Math.ceil(rows.length / SESSION_LIST_PAGE_MAX_LIMIT) + (state === 'newer-row' ? 1 : 0));
     const applied = getStorage().getState().sessionListRowsByServerId[serverId]?.['cold-member'];
-    expect(applied, JSON.stringify(applied)).toMatchObject({ encryptedContentAvailability: 'ready',
+    expect(applied, JSON.stringify({ applied, preview })).toMatchObject({ encryptedContentAvailability: 'ready',
         metadata: { projectId: 'payments' }, seq: state === 'newer-row' ? row.seq + 1 : row.seq });
     expect(preview, JSON.stringify(preview)).toMatchObject({ ok: true, result: { coverage: 'complete', matchCount: 1,
         matches: [{ source: { kind: 'session', sessionId: 'cold-member' } }] } });
+    const initialDocumentReads = homes.requests.filter(request => request.path === '/v2/sessions/read-batch');
+    expect(initialDocumentReads).toHaveLength(1);
+    expect(SessionReadBatchRequestV1Schema.parse(initialDocumentReads[0]!.input)).toMatchObject({
+        sessionIds: ['cold-member'], includeTurns: false, includeMessages: false,
+    });
     if (state === 'provenance-filter') expect(decrypts.mock.calls).toHaveLength(1);
     decrypts.mockRestore();
     expect(await createDefaultActionExecutor().previewSessionTargets({ selector: 'matching', filter },
@@ -193,7 +208,13 @@ it.each(['cold', 'newer-row', 'provenance-filter'] as const)('settles Matching f
         expect(broad.addresses).toHaveLength(rows.length);
         expect(empty).toMatchObject({ coverage: 'complete', addresses: [] });
     }
-    expect(homes.requests.filter(request => /^\/v[12]\/sessions\/cold-member(?:\?|$)/.test(request.path))).toEqual([]);
+    const documentReads = homes.requests.filter(request => request.path === '/v2/sessions/read-batch');
+    expect(documentReads.length).toBeGreaterThan(0);
+    expect(documentReads.every(request => {
+        const input = SessionReadBatchRequestV1Schema.parse(request.input);
+        return input.includeTurns === false && input.includeMessages === false;
+    })).toBe(true);
+    expect(homes.requests.filter(request => /^\/v[12]\/sessions\/cold-member\/messages(?:\?|$)/.test(request.path))).toEqual([]);
 });
 
 it('resolves matching through the complete corpus at the transport page bound without attention duplication or mounted membership changes', async () => {
@@ -207,7 +228,7 @@ it('resolves matching through the complete corpus at the transport page bound wi
         const query = SessionListQueryV1Schema.parse(body);
         pages.push(query);
         const id = query.attentionCursor ? 'attention-match' : query.cursor ? 'older-match' : 'first-match';
-        return { body: SessionListQueryResponseV1Schema.parse({ sessions: [queryRow(createSessionFixture({ id,
+        return { body: createSessionListSourceFixture({ sessions: [queryRow(createSessionFixture({ id, projectKey: 'payments',
             metadata: { path: '/repo', host: 'test', projectId: 'payments' } }))],
             nextCursor: query.cursor || query.attentionCursor ? null : ordinaryCursor, hasNext: !query.cursor && !query.attentionCursor,
             attentionNextCursor: query.includeAttention && !query.attentionCursor ? attentionCursor : null,
@@ -244,10 +265,10 @@ it('previews portable-Home rules and Matching against the same captured local Ho
     const { sync } = await import('@/sync/sync');
     await sync.awaitBootstrapForegroundAcquisition();
     await vi.waitFor(() => expect(getStorage().getState().isDataReady).toBe(true));
-    const candidate = createSessionFixture({ id: 'portable-project-member', serverId,
+    const candidate = createSessionFixture({ id: 'portable-project-member', serverId, projectKey: 'payments',
         metadata: { path: '/payments', host: 'test', projectId: 'payments' } });
     homes.answer(serverId, '/v2/account/session-follow-rules', { body: { rules: [] } });
-    homes.answer(serverId, '/v2/sessions/query', { body: SessionListQueryResponseV1Schema.parse({ sessions: [queryRow(candidate)],
+    homes.answer(serverId, '/v2/sessions/query', { body: createSessionListSourceFixture({ sessions: [queryRow(candidate)],
         hasNext: false, nextCursor: null, attentionHasNext: false, attentionNextCursor: null }) });
     const filter = normalizeSessionListFilterV1({ show: 'sessions', homeServerIds: [portable], scope: 'all_accessible',
         startedBy: ['you', 'agents', 'triggers'], projects: { include: [{ serverId: portable, projectKey: 'payments' }], exclude: [] } });
@@ -272,7 +293,7 @@ it.each(['network', 'repeated_cursor', 'metadata_unavailable'] as const)('refuse
         const query = SessionListQueryV1Schema.parse(body);
         requestedCursors.push(query.cursor);
         if (reason === 'network' && query.cursor) return { status: 503, body: { error: 'unavailable' } };
-        return { body: SessionListQueryResponseV1Schema.parse({
+        return { body: createSessionListSourceFixture({
             sessions: [queryRow(createSessionFixture({ id: 'known-candidate' }))],
             hasNext: reason !== 'metadata_unavailable', nextCursor: reason === 'metadata_unavailable' ? null : cursor,
             attentionHasNext: false, attentionNextCursor: null,
@@ -287,7 +308,7 @@ it.each(['network', 'repeated_cursor', 'metadata_unavailable'] as const)('refuse
 
 it('previews rules from current authorized query rows without admitting unrelated retained rows', async () => {
     const serverId = await addAppliedHome('Rules', 'https://rules.test');
-    const session = createSessionFixture({ id: 'payments', serverId,
+    const session = createSessionFixture({ id: 'payments', serverId, projectKey: 'payments',
         metadata: { path: '/repo', host: 'test', projectId: 'payments' } });
     const retained = createSessionFixture({ ...session, id: 'retained-only' });
     getStorage().setState({ isDataReady: true, sessions: { [session.id]: session, [retained.id]: retained },
@@ -296,7 +317,7 @@ it('previews rules from current authorized query rows without admitting unrelate
         ordinarySessionListMembershipByServerId: { [serverId]: [session.id, retained.id] },
     });
     homes.answer(serverId, '/v2/account/session-follow-rules', { body: { rules: [] } });
-    homes.answer(serverId, '/v2/sessions/query', { body: SessionListQueryResponseV1Schema.parse({
+    homes.answer(serverId, '/v2/sessions/query', { body: createSessionListSourceFixture({
         sessions: [queryRow(session)], hasNext: false, nextCursor: null,
         attentionHasNext: false, attentionNextCursor: null,
     }) });
@@ -319,7 +340,7 @@ it('reports unreadable Project candidates as unavailable and withholds stale Acc
     homes.answer(serverId, '/v2/account/session-follow-rules', { body: { rules: [] } });
     const shared = queryRow(createSessionFixture({ id: session.id, access: createSessionAccessFixture('edit'),
         viewer: createSessionViewerFixture(), metadata: { path: '/repo', host: 'test', projectId: 'payments' } }));
-    homes.answer(serverId, '/v2/sessions/query', { body: SessionListQueryResponseV1Schema.parse({
+    homes.answer(serverId, '/v2/sessions/query', { body: createSessionListSourceFixture({
         sessions: [{ ...shared, encryptionMode: 'e2ee', metadata: 'unavailable-encrypted-content' }],
         hasNext: false, nextCursor: null, attentionHasNext: false, attentionNextCursor: null,
     }) });
@@ -337,7 +358,7 @@ it('reports unreadable Project candidates as unavailable and withholds stale Acc
 
 it('offers overlaps only with other Session receivers, not personal rules or the current receiver', async () => {
     const serverId = await addAppliedHome('Overlaps', 'https://overlaps-preview.test');
-    const session = createSessionFixture({ id: 'payments', serverId, metadata: { path: '/repo', host: 'test', projectId: 'payments' } });
+    const session = createSessionFixture({ id: 'payments', serverId, projectKey: 'payments', metadata: { path: '/repo', host: 'test', projectId: 'payments' } });
     getStorage().setState({ isDataReady: true, sessions: { [session.id]: session },
         sessionListRowsByServerId: { [serverId]: { [session.id]: buildSessionListRenderableFromSession(session) } },
         ordinarySessionListMembershipByServerId: { [serverId]: [session.id] } });
@@ -350,7 +371,7 @@ it('offers overlaps only with other Session receivers, not personal rules or the
         rule('personal', { kind: 'account' }), rule('current', receiver),
         rule('other', { kind: 'session', sessionId: 'other-coordinator' }),
     ] } });
-    homes.answer(serverId, '/v2/sessions/query', { body: SessionListQueryResponseV1Schema.parse({
+    homes.answer(serverId, '/v2/sessions/query', { body: createSessionListSourceFixture({
         sessions: [queryRow(session)], hasNext: false, nextCursor: null,
         attentionHasNext: false, attentionNextCursor: null,
     }) });
@@ -391,7 +412,7 @@ it('previews native loaded Runs only in their captured Home and Account', async 
     homes.answer(serverId, '/v3/automations/runs/workflow-storage', { body: {
         runs: [], acceptedEnvelopesByRunId: {}, keyCensusByRunId: {},
     } });
-    homes.answer(serverId, '/v2/sessions/query', { body: SessionListQueryResponseV1Schema.parse({
+    homes.answer(serverId, '/v2/sessions/query', { body: createSessionListSourceFixture({
         sessions: [], hasNext: false, nextCursor: null, attentionHasNext: false, attentionNextCursor: null,
     }) });
     expect(await executor.execute('follow.preview', { receiver: { kind: 'account' }, filter: { ...filter, underSessionId: 'manager' } }, { surface: 'ui', serverId }))
@@ -408,7 +429,7 @@ it('previews an Under Run only from server-proved descendant membership', async 
         const query = SessionListQueryV1Schema.parse(body);
         expect(query.underSessionId).toBe('manager');
         const id = query.cursor ? 'leaf' : 'manager';
-        return { body: SessionListQueryResponseV1Schema.parse({ sessions: [queryRow(createSessionFixture({ id, serverId }))],
+        return { body: createSessionListSourceFixture({ sessions: [queryRow(createSessionFixture({ id, serverId }))],
             nextCursor: query.cursor ? null : encodeV2SessionListCursorV1('next-subtree-page'), hasNext: !query.cursor,
             attentionNextCursor: null, attentionHasNext: false }) };
     } });

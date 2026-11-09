@@ -20,6 +20,7 @@ import { ScopedRpcSocketConnectionTimeoutError } from '@/sync/runtime/orchestrat
 import { ServerFetchAbortedForServerSwitchError } from '@/sync/http/client';
 import { isDemoModeActive } from '@/demoMode/runtime/enterExitDemoMode';
 import { readRpcRequestDisposition, type RpcRequestDisposition } from '@happier-dev/sync-client';
+import { readCapabilityInvokeFailure } from '@happier-dev/protocol/capabilities';
 
 export type {
     CapabilitiesDescribeResponse,
@@ -48,11 +49,11 @@ function describeCapabilityProbeError(error: unknown): CapabilityProbeError {
 
 export type MachineCapabilitiesDescribeResult =
     | { supported: true; response: CapabilitiesDescribeResponse }
-    | { supported: false; reason: 'not-supported' | 'error'; error?: CapabilityProbeError };
+    | { supported: false; reason: 'not-supported' | 'error' | 'server-switch-abort'; error?: CapabilityProbeError };
 
 export async function machineCapabilitiesDescribe(
     machineId: string,
-    options?: { serverId?: string | null; signal?: AbortSignal },
+    options?: { serverId?: string | null; accountId?: string | null; signal?: AbortSignal },
 ): Promise<MachineCapabilitiesDescribeResult> {
     try {
         const result = await machineRpcWithServerScope<unknown, {}>({
@@ -60,6 +61,7 @@ export async function machineCapabilitiesDescribe(
             method: RPC_METHODS.CAPABILITIES_DESCRIBE,
             payload: {},
             serverId: options?.serverId,
+            accountId: options?.accountId,
             signal: options?.signal,
         });
         if (isRpcMethodNotFoundResult(result)) return { supported: false, reason: 'not-supported' };
@@ -68,6 +70,9 @@ export async function machineCapabilitiesDescribe(
         if (!parsed) return { supported: false, reason: 'error' };
         return { supported: true, response: parsed };
     } catch (error) {
+        if (error instanceof ServerFetchAbortedForServerSwitchError) {
+            return { supported: false, reason: 'server-switch-abort' };
+        }
         return { supported: false, reason: 'error', error: describeCapabilityProbeError(error) };
     }
 }
@@ -116,7 +121,7 @@ export async function machineCapabilitiesDetect(
 
 export type MachineCapabilitiesInvokeResult =
     | { supported: true; response: CapabilitiesInvokeResponse }
-    | { supported: false; reason: 'not-supported' | 'error' | 'outcomeUnknown'; errorCode?: string; requestDisposition?: RpcRequestDisposition };
+    | { supported: false; reason: 'not-supported' | 'error' | 'outcomeUnknown'; errorCode?: string; retryable?: boolean; requestDisposition?: RpcRequestDisposition };
 
 export async function machineCapabilitiesInvoke(
     machineId: string,
@@ -145,7 +150,9 @@ export async function machineCapabilitiesInvoke(
         });
 
         if (isRpcMethodNotFoundResult(result)) return { supported: false, reason: 'not-supported' };
-        if (isPlainObject(result) && typeof result.error === 'string') return { supported: false, reason: 'error' };
+        if (isPlainObject(result) && typeof result.error === 'string') return {
+            supported: false, reason: 'error', ...readCapabilityInvokeFailure(result),
+        };
 
         const parsed = parseCapabilitiesInvokeResponse(result);
         if (!parsed) return { supported: false, reason: 'error' };
@@ -155,6 +162,7 @@ export async function machineCapabilitiesInvoke(
         if (isRpcMethodNotFoundError(error)) return { supported: false, reason: 'not-supported' };
         const requestDisposition = readRpcRequestDisposition(error);
         return { supported: false, reason: preflightOwnsOperation && requestDisposition === 'outcomeUnknown' ? 'outcomeUnknown' : 'error',
+            ...readCapabilityInvokeFailure(error),
             ...(requestDisposition ? { requestDisposition } : {}) };
     }
 }

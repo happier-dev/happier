@@ -79,6 +79,7 @@ import { resolveMachineAbsolutePath } from '@/sync/domains/fileSystem/resolveMac
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { readMachineControlTargetForSession } from './sessionMachineTarget';
 import { invokeUiScmAction, normalizeUiScmFacadeResult } from './scm/scmActionInvocation';
+import { createFrontDoorActionExecute } from './actions/frontDoorRuntimeActionExecutor';
 
 /** Resolve the admitted Session workspace once, before choosing its Action or RPC carrier. */
 export function resolveSessionScmRequestTarget(sessionId: string, method: string, request: Readonly<{ cwd?: string }>,
@@ -155,17 +156,16 @@ async function callScmPreferMachine<T extends { success: boolean; error?: string
     const actionId = ActionIdSchema.parse(method);
     const schema = getActionSpec(actionId).outputSchema;
     if (!schema) return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED, error: 'The SCM Action has no result contract.' };
-    const { createDefaultActionExecutor } = await import('./actions/defaultActionExecutor');
     // Preserve the ordinary facade's caller-relative path contract through its
     // existing Session target owner, beneath canonical Action admission.
-    const executor = createDefaultActionExecutor({ scmActionExecute: ({ input, context }) => {
+    const executor = createFrontDoorActionExecute(undefined, { scmActionExecute: ({ input, context }) => {
         call?.onDispatched?.();
         return callScmPreferMachineTransport(sessionId, method, input as R, context.serverId ?? serverId, context.signal, context.runtimeAccountId);
     } });
     const result: unknown = await invokeUiScmAction({ actionId, input: request, schema, executor,
+        confirmed: call?.confirmedByPerson ? true : undefined,
         context: { defaultSessionId: sessionId, externalActionTarget: { kind: 'session', sessionId },
             ...(serverId ? { serverId } : {}),
-            ...(call?.confirmedByPerson ? { presentUserConfirmation: { actionId } } : {}),
         } });
     return normalizeUiScmFacadeResult<T>(result);
 }

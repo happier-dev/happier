@@ -28,6 +28,17 @@ export type SyncPerformanceTelemetrySummary = Readonly<{
     events: SyncPerformanceTelemetryEvent[];
 }>;
 
+export type SyncPerformanceScopedRpcSetupPhase = 'retirement-wait' | 'retired' | 'acquire' | 'reachability-start' | 'reachability-ready' | 'connect' | 'connected';
+
+/** Private transport joins are consumed by the recorder, never projected into saved phase records. */
+export type SyncPerformanceScopedRpcSetup = Readonly<{
+    phase: SyncPerformanceScopedRpcSetupPhase;
+    connectionId: number;
+    atMs: number;
+    origin: string;
+    engineId?: string;
+}>;
+
 export type SyncPerformanceStoreNotification = Readonly<{
     atMs: number;
     changedKeys: readonly string[];
@@ -184,6 +195,10 @@ export class SyncPerformanceTelemetry {
     private flushTimer: ReturnType<typeof setTimeout> | null = null;
     private storageObserved = false;
     private readonly storeNotificationListeners = new Set<(event: SyncPerformanceStoreNotification) => void>();
+    private scopedRpcSetupObserved = false;
+    private readonly scopedRpcSetupListeners = new Set<(event: SyncPerformanceScopedRpcSetup) => void>();
+    private readonly scopedRpcConnections = new WeakMap<object, number>();
+    private nextScopedRpcConnectionId = 0;
 
     constructor(options?: SyncPerformanceTelemetryOptions) {
         this.enabled = resolveCaptureEnabled(options?.enabled);
@@ -208,6 +223,39 @@ export class SyncPerformanceTelemetry {
 
     isEnabled(): boolean {
         return this.enabled;
+    }
+
+    registerScopedRpcSetupSource(): void {
+        this.scopedRpcSetupObserved = true;
+    }
+
+    scopedRpcSetupAvailable(): boolean {
+        return this.scopedRpcSetupObserved;
+    }
+
+    subscribeScopedRpcSetup(listener: (event: SyncPerformanceScopedRpcSetup) => void): () => void {
+        if (!diagnosticsEnabled()) return () => {};
+        this.scopedRpcSetupListeners.add(listener);
+        return () => { this.scopedRpcSetupListeners.delete(listener); };
+    }
+
+    recordScopedRpcSetup(phase: SyncPerformanceScopedRpcSetupPhase, socket: object, serverUrl: string): void {
+        if (this.scopedRpcSetupListeners.size === 0 || !diagnosticsEnabled()) return;
+        let origin: string;
+        try { origin = new URL(serverUrl).origin; } catch { return; }
+        let connectionId = this.scopedRpcConnections.get(socket);
+        if (connectionId === undefined) {
+            connectionId = ++this.nextScopedRpcConnectionId;
+            this.scopedRpcConnections.set(socket, connectionId);
+        }
+        // This diagnostic boundary observes Socket.IO without extending the
+        // RPC adapter's port or requiring Engine internals from boundary stubs.
+        const manager: unknown = Reflect.get(socket, 'io');
+        const engine: unknown = manager && typeof manager === 'object' ? Reflect.get(manager, 'engine') : undefined;
+        const engineId: unknown = engine && typeof engine === 'object' ? Reflect.get(engine, 'id') : undefined;
+        const event: SyncPerformanceScopedRpcSetup = { phase, connectionId, atMs: this.now(), origin,
+            ...(typeof engineId === 'string' && engineId ? { engineId } : {}) };
+        for (const listener of this.scopedRpcSetupListeners) listener(event);
     }
 
     registerStorageNotificationSource(): void {
@@ -460,6 +508,8 @@ export function installSyncPerformanceTelemetryGlobal(
             markScenario: (name: string, fields?: SyncPerformanceTelemetryFields) => void;
             storeNotificationsAvailable: () => boolean;
             subscribeStoreNotifications: (listener: (event: SyncPerformanceStoreNotification) => void) => () => void;
+            scopedRpcSetupAvailable: () => boolean;
+            subscribeScopedRpcSetup: (listener: (event: SyncPerformanceScopedRpcSetup) => void) => () => void;
         };
         dispatchEvent?: (event: Event) => boolean;
     };
@@ -467,6 +517,8 @@ export function installSyncPerformanceTelemetryGlobal(
         isEnabled: () => telemetry.isEnabled(),
         storeNotificationsAvailable: () => telemetry.storeNotificationsAvailable(),
         subscribeStoreNotifications: (listener) => telemetry.subscribeStoreNotifications(listener),
+        scopedRpcSetupAvailable: () => telemetry.scopedRpcSetupAvailable(),
+        subscribeScopedRpcSetup: (listener) => telemetry.subscribeScopedRpcSetup(listener),
         snapshot: () => {
             return telemetry.snapshot();
         },

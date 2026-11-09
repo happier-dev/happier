@@ -2,7 +2,7 @@ import {
     AccountSettingsStoredContentEnvelopeSchema,
     type AccountSettingsStoredContentEnvelope,
 } from '@happier-dev/protocol/account/settings/accountSettingsStoredContentEnvelope';
-import { openAccountScopedBlobCiphertext, type AccountScopedCiphertextFormat } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { openAccountScopedBlobCiphertext, type AccountScopedCiphertextFormat, type AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
 
 import type { Encryption } from '@/sync/encryption/encryption';
 import {
@@ -12,7 +12,8 @@ import {
     unsealSecretsDeepWithKeys,
 } from '@/sync/encryption/secretSettings';
 
-import { pickLocalOnlyAccountSettings, stripLocalOnlyAccountSettings } from './localOnlyAccountSettings';
+import { stripLocalOnlyAccountSettings } from './localOnlyAccountSettings';
+import { parseLocalAccountSettings } from './registry/local/localAccountSettingDefinitions';
 import {
     projectRuntimeAccountSettings,
     settingsDefaults,
@@ -49,9 +50,9 @@ export type OpenedAccountSettingsStoredContent = Readonly<{
 
 type OpenAccountSettingsStoredContentParams = Readonly<{
     content: unknown;
-    encryption: Encryption | null;
     expectedMode?: AccountSettingsStorageMode;
-}>;
+}> & (Readonly<{ encryption: Encryption | null; material?: never }>
+    | Readonly<{ material: AccountScopedCryptoMaterial | null; encryption?: never }>);
 
 export function openAccountSettingsStoredContent(
     params: OpenAccountSettingsStoredContentParams & Readonly<{ content: AccountSettingsStoredContentEnvelope }>,
@@ -88,7 +89,11 @@ export function openAccountSettingsStoredContent(
     if (content.t === 'plain') {
         return { mode, raw: content.v, format: 'plain' };
     }
-    if (!params.encryption) {
+    const material = params.material ?? (params.encryption ? {
+        type: 'dataKey' as const,
+        machineKey: params.encryption.getContentPrivateKey(),
+    } : null);
+    if (!material) {
         throw new AccountSettingsStoredContentUnavailableError(
             'account_settings_encryption_material_unavailable',
             'Account settings encryption material is unavailable',
@@ -97,10 +102,7 @@ export function openAccountSettingsStoredContent(
 
     const opened = openAccountScopedBlobCiphertext({
         kind: 'account_settings',
-        material: {
-            type: 'dataKey',
-            machineKey: params.encryption.getContentPrivateKey(),
-        },
+        material,
         ciphertext: content.c,
     });
     if (!opened?.value || typeof opened.value !== 'object' || Array.isArray(opened.value)) {
@@ -136,7 +138,7 @@ export function normalizeAccountSettingsForLocalStorage(params: Readonly<{
                 writeKey: params.settingsSecretsKey,
             }).value as Settings
             : sealSecretsDeep(parsed, null);
-    const localOnly = pickLocalOnlyAccountSettings(settingsParse(params.localSettings ?? {}));
+    const localOnly = parseLocalAccountSettings(params.localSettings);
     return projectRuntimeAccountSettings({
         ...locallySealed,
         ...localOnly,
@@ -152,6 +154,9 @@ export function normalizeAccountSettingsForServerStorage(params: Readonly<{
 }>): Readonly<{ value: Record<string, unknown>; secretsChanged: boolean }> {
     const localOnlyStripped = stripLocalOnlyAccountSettings(params.raw) as Record<string, unknown>;
     const normalized = params.normalizeServerRaw?.(localOnlyStripped) ?? localOnlyStripped;
+    // A write must not commit a document this device cannot seal for local persistence.
+    // This admission needs the raw secret carriers, not another Settings schema parse.
+    if (!params.settingsSecretsKey) assertNoUnsealedSettingsSecretValues(normalized);
     if (params.mode === 'plain') {
         const unsealed = unsealSecretsDeepWithKeys(
             normalized,

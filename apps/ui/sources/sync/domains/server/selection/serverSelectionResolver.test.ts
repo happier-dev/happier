@@ -10,12 +10,26 @@ import {
 import { ALL_HOMES_SELECTION_TARGET_ID } from './allHomesSelectionTarget';
 import { primeServerFeaturesSnapshot, deleteServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { t } from '@/text';
 
 afterEach(() => {
     delete process.env.EXPO_PUBLIC_HAPPY_MULTI_SERVER_CONCURRENT;
 });
 
 describe('serverSelectionResolver', () => {
+    it('gives unnamed peer Homes distinct visible picker labels', () => {
+        const targets = listServerSelectionTargets({
+            serverProfiles: [
+                { id: 'home-a', name: 'home-a.example.test', serverUrl: 'https://home-a.example.test' },
+                { id: 'home-b', name: 'home-b.example.test', serverUrl: 'https://home-b.example.test' },
+            ],
+            groupProfiles: [],
+            currentServerId: 'home-a',
+        });
+        expect(targets.filter((target) => target.kind === 'server').map((target) => target.name))
+            .toEqual([t('settingsAccount.thisHomeTitle'), 'https://home-b.example.test']);
+    });
+
     it('uses the Home name for a selection whose saved label is its host', () => {
         const profile = { id: 'named-home', name: 'localhost:52753', serverUrl: 'http://localhost:52753' };
         primeServerFeaturesSnapshot({ serverId: profile.id, snapshot: {

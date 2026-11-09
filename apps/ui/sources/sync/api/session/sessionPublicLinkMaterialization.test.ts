@@ -11,7 +11,8 @@ import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch'
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
-import { computeAccountEncryptionMigrateKeyFingerprintV1, type AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol';
+import { computeAccountEncryptionMigrateKeyFingerprintV1} from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
+import { type AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
 import { encryptDataKeyForRecipientV0 } from '@/sync/encryption/directShareEncryption';
 import { decryptDataKeyFromPublicShare } from '@/sync/encryption/publicShareEncryption';
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';

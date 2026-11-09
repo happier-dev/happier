@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { deriveAutomationOccurrenceKeyV1 } from '@happier-dev/protocol';
+import { deriveAutomationOccurrenceKeyV1 } from '@happier-dev/protocol/automations/automationOccurrenceV1';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { listAutomationDefinitionRuns } from './apiAutomationRuns';

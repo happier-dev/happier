@@ -29,6 +29,7 @@ import { runWithHomeCredentialRequestSignal } from './serverAccountScopeRequestG
 import { getAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { readHomeDomainConfirmedRollbackV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { HappyError } from '@/utils/errors/errors';
+import type { UsageSessionTimingV1 } from '@happier-dev/protocol/usage/usageTimingV1';
 
 type SessionMetadataUpdateScope = Readonly<{
     sessionId: string;
@@ -49,6 +50,7 @@ type SessionMetadataUpdateParams =
         | Readonly<{
             expectedVersion: number;
             metadata: string;
+            usageTimingV1?: UsageSessionTimingV1;
             sessionExpectation?:
                 SessionMetadataInactiveModelIntentExpectationV1;
         }>
@@ -239,6 +241,7 @@ async function emitInactiveModelIntentLegacyPatch(params: Readonly<{
     sessionId: string;
     expectedVersion: number;
     metadata: string;
+    usageTimingV1?: UsageSessionTimingV1;
     sessionExpectation:
         SessionMetadataInactiveModelIntentExpectationV1;
     context: Awaited<ReturnType<typeof resolveServerAccountRequestContext>>;
@@ -247,6 +250,7 @@ async function emitInactiveModelIntentLegacyPatch(params: Readonly<{
 }>): Promise<UpdateMetadataAck> {
     const parsed =
         SessionMetadataInactiveModelIntentPatchV1Schema.safeParse({
+            ...(params.usageTimingV1 === undefined ? {} : { usageTimingV1: params.usageTimingV1 }),
             inactiveModelIntent: {
                 metadata: {
                     ciphertext: params.metadata,
@@ -327,6 +331,7 @@ async function emitLegacySessionMetadataUpdate(params: Readonly<{
     sessionId: string;
     expectedVersion: number;
     metadata: string;
+    usageTimingV1?: UsageSessionTimingV1;
     context: Awaited<ReturnType<typeof resolveServerAccountRequestContext>>;
     assertCurrent: () => void;
     transferCarrierCustody: () => (() => Promise<void>) | undefined;
@@ -335,6 +340,7 @@ async function emitLegacySessionMetadataUpdate(params: Readonly<{
         sid: params.sessionId,
         expectedVersion: params.expectedVersion,
         metadata: params.metadata,
+        ...(params.usageTimingV1 === undefined ? {} : { usageTimingV1: params.usageTimingV1 }),
     };
     const serverId = params.context.scope === 'scoped'
         ? params.context.targetServerId
@@ -422,6 +428,7 @@ export async function emitSessionMetadataUpdateWithServerScope(
             expectedVersion: params.expectedVersion,
             metadata: params.metadata,
             sessionExpectation: params.sessionExpectation,
+            usageTimingV1: params.usageTimingV1,
             context,
             request,
             assertCurrent,
@@ -431,6 +438,7 @@ export async function emitSessionMetadataUpdateWithServerScope(
         sessionId: params.sessionId,
         expectedVersion: params.expectedVersion,
         metadata: params.metadata,
+        usageTimingV1: params.usageTimingV1,
         context,
         assertCurrent,
         transferCarrierCustody: () => {

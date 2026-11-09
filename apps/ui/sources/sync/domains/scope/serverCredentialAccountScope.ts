@@ -79,6 +79,8 @@ export function captureServerCredentialAccountScopeLifetime(
 export function retryServerCredentialAccountScope(serverId: string): void {
     const canonicalServerId = resolveServerProfileScopeIdForIdentifier(serverId);
     if (!canonicalServerId) return;
+    // A retry exists to read storage again; it must not join the read it is retrying.
+    inFlightCredentialReads.clear();
     for (const listener of [...retryListeners]) {
         try {
             listener(canonicalServerId);
@@ -127,18 +129,46 @@ export function resolveAdmittedEmbedServerCredentialAccountScope(
     } } : { kind: 'unavailable' };
 }
 
-export async function resolveServerCredentialAccountScope(
+type SettledServerCredentialAccountScopeResolution = Exclude<ServerCredentialAccountScopeResolution, Readonly<{ kind: 'resolving' }>>;
+
+/**
+ * Every reader of one Home waits on the same storage read while it is in flight. A settings screen
+ * mounts one credential reader per setting; each paying its own read settled the screen's bindings
+ * one per macrotask, so the whole screen rendered once per reader. Only an unsettled read is shared
+ * (storage reads settle, so joining one cannot strand a later reader), and a credential change or a
+ * retry forgets it, so a read begun before the change is never handed to a reader after it.
+ */
+const inFlightCredentialReads = new Map<string, Promise<SettledServerCredentialAccountScopeResolution>>();
+
+subscribeHomeCredentialMutations(() => inFlightCredentialReads.clear());
+
+export function resolveServerCredentialAccountScope(
     serverId: string,
-): Promise<Exclude<ServerCredentialAccountScopeResolution, Readonly<{ kind: 'resolving' }>>> {
+): Promise<SettledServerCredentialAccountScopeResolution> {
     if (isEmbedWindowContext()) {
-        return resolveAdmittedEmbedServerCredentialAccountScope(serverId);
+        return Promise.resolve(resolveAdmittedEmbedServerCredentialAccountScope(serverId));
     }
     const canonicalServerId = resolveServerProfileScopeIdForIdentifier(serverId);
     const profile = getServerProfileById(canonicalServerId);
-    if (!profile?.serverUrl?.trim()) return { kind: 'unknown_home' };
+    if (!profile?.serverUrl?.trim()) return Promise.resolve({ kind: 'unknown_home' });
+    const readKey = JSON.stringify([canonicalServerId, profile.serverUrl]);
+    const inFlight = inFlightCredentialReads.get(readKey);
+    if (inFlight) return inFlight;
+    const read: Promise<SettledServerCredentialAccountScopeResolution> =
+        readServerCredentialAccountScope(canonicalServerId, profile.serverUrl).finally(() => {
+            if (inFlightCredentialReads.get(readKey) === read) inFlightCredentialReads.delete(readKey);
+        });
+    inFlightCredentialReads.set(readKey, read);
+    return read;
+}
+
+async function readServerCredentialAccountScope(
+    canonicalServerId: string,
+    serverUrl: string,
+): Promise<SettledServerCredentialAccountScopeResolution> {
     let credentials: Awaited<ReturnType<typeof TokenStorage.getCredentialsForServerUrl>>;
     try {
-        credentials = await TokenStorage.getCredentialsForServerUrl(profile.serverUrl, {
+        credentials = await TokenStorage.getCredentialsForServerUrl(serverUrl, {
             serverId: canonicalServerId,
             storageReadFailure: 'surface',
         });

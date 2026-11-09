@@ -13,6 +13,7 @@ import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { convertAccountEncryptionMigrationTemplate } from './buildAccountEncryptionMigrationAutomations';
+import { buildAccountEncryptionSettingsHistoryDirective, type AccountEncryptionSettingsHistoryMigrationCandidate } from './buildAccountEncryptionSettingsHistoryDirective';
 
 import {
   AccountEncryptionMigrateRequestSchema,
@@ -60,7 +61,8 @@ export async function buildAccountEncryptionMigrateToPlainRequest(params: Readon
   expectedContentKeyFingerprint: string | null;
   expectedSettingsVersion: number;
   settings: Settings;
-  rawSettings: Readonly<Record<string, unknown>>;
+  rawSettings: Readonly<Record<string, unknown>> | null;
+  settingsHistory?: readonly AccountEncryptionSettingsHistoryMigrationCandidate[];
   connectedServiceProfiles: ReadonlyArray<Readonly<{ serviceId: ConnectedServiceId; profileId: string }>>;
   qualifiedConnectedAccounts?: readonly QualifiedConnectedAccountProfileV4[];
   automations: ReadonlyArray<Readonly<{ id: string; templateVersion: number; templateCiphertext: string }>>;
@@ -89,19 +91,25 @@ export async function buildAccountEncryptionMigrateToPlainRequest(params: Readon
   decryptAutomationTemplateRaw: (payloadCiphertext: string) => Promise<unknown | null>;
   resolveSession?: Parameters<typeof convertAccountEncryptionMigrationTemplate>[0]['resolveSession'];
 }> & AccountEncryptionEntityCatalogMigrationCandidates & AccountEncryptionConnectedAccountCatalogMigrationCandidates): Promise<AccountEncryptionMigrateRequest> {
-  const settingsSecretsReadKeys = (() => {
+  const settingsCrypto = (() => {
     try {
-      return deriveSettingsSecretsKeySet(resolveAccountScopedCryptoMaterialFromCredentials(params.credentials)).readKeys;
+      const material = resolveAccountScopedCryptoMaterialFromCredentials(params.credentials);
+      return { material, readKeys: deriveSettingsSecretsKeySet(material).readKeys };
     } catch {
-      return [];
+      return { material: null, readKeys: [] };
     }
   })();
+  const settingsSecretsReadKeys = settingsCrypto.readKeys;
+  const settingsHistory = buildAccountEncryptionSettingsHistoryDirective({ candidates: params.settingsHistory ?? [],
+    target: { mode: 'plain', material: settingsCrypto.material } });
 
+  const rawSettings = params.rawSettings ?? {};
   const settingsForServer = restoreAccountEncryptionAcpCatalogSettingsSource({ settings: restoreAccountEncryptionMcpServerCatalogSettingsSource({ settings: restoreAccountEncryptionPromptLibrarySettingsSources({
-    settings: normalizeVoiceSettingsServerDelta(stripLocalOnlyAccountSettings(params.settings), params.rawSettings),
-    rawSettings: params.rawSettings,
-  }), rawSettings: params.rawSettings }), rawSettings: params.rawSettings });
-  const plainSettings = unsealSecretsDeepWithKeysForPlainStorage(settingsForServer, settingsSecretsReadKeys);
+    settings: normalizeVoiceSettingsServerDelta(stripLocalOnlyAccountSettings(params.settings), rawSettings),
+    rawSettings,
+  }), rawSettings }), rawSettings });
+  const plainSettings = params.rawSettings === null ? null
+    : unsealSecretsDeepWithKeysForPlainStorage(settingsForServer, settingsSecretsReadKeys);
 
   const connectedServices = await (async () => {
     const qualifiedAccounts = params.qualifiedConnectedAccounts ?? [];
@@ -239,12 +247,13 @@ export async function buildAccountEncryptionMigrateToPlainRequest(params: Readon
     expectedContentKeyFingerprint:
       params.expectedContentKeyFingerprint,
     expectedSettingsVersion: params.expectedSettingsVersion,
-    settingsContent: { t: 'plain', v: plainSettings },
+    settingsContent: plainSettings === null ? null : { t: 'plain', v: plainSettings },
     connectedServices,
     automations,
     ...params.storageDirectives,
     ...entityCatalogs,
     ...connectedCatalogs,
+    ...(settingsHistory ? { settingsHistory } : {}),
     ...(sessionDrafts ? { sessionDrafts } : {}),
     ...(authoringMemory ? { authoringMemory } : {}),
     ...(sessionFollowRules ? { sessionFollowRules } : {}),

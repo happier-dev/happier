@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
     canonicalSessionDraftAddressV2,
-    SessionDraftDocumentV1Schema,
     type SessionDraftAddressV2,
     type SessionDraftDocumentV2,
     type SessionDraftStoredContentEnvelopeV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/drafts/sessionDraftsV2';
+import {
+    SessionDraftDocumentV1Schema} from '@happier-dev/protocol/drafts/sessionDrafts';
 
 import {
     createSessionDraftRepository,
@@ -29,6 +30,7 @@ function createMemoryStorage() {
     return {
         values,
         getString: (key: string) => values.get(key),
+        getAllKeys: () => [...values.keys()],
         set: (key: string, value: string) => values.set(key, value),
         delete: (key: string) => values.delete(key),
     };

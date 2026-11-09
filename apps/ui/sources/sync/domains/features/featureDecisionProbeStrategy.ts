@@ -1,6 +1,6 @@
-import type { FeatureId } from '@happier-dev/protocol';
+import type { FeatureId } from '@happier-dev/protocol/features/catalog';
 
-import { featureRequiresServerSnapshot } from '@happier-dev/protocol/features/catalog';
+import { featureRequiresServerSnapshot, getCanonicalFeatureId } from '@happier-dev/protocol/features/catalog';
 
 import { getFeatureBuildPolicyDecision } from './featureBuildPolicy';
 import { resolveLocalFeaturePolicyEnabled, type FeatureLocalPolicySettings } from './featureLocalPolicy';
@@ -14,8 +14,9 @@ export type FeatureDecisionSnapshotStrategy = Readonly<{
     mainSelectionEnabled: boolean;
 }>;
 
-export function resolveFeatureDecisionProbesEnabled(featureId: FeatureId, settings: FeatureLocalPolicySettings,
+export function resolveFeatureDecisionProbesEnabled(requestedFeatureId: FeatureId, settings: FeatureLocalPolicySettings,
     snapshotDemand: 'decision' | 'details' = 'decision'): boolean {
+    const featureId = getCanonicalFeatureId(requestedFeatureId);
     const buildPolicy = getFeatureBuildPolicyDecision(featureId);
     const localPolicyEnabled = resolveLocalFeaturePolicyEnabled(featureId, settings);
     // Client-only admission needs no Home, but selecting its Home diagnostics does.

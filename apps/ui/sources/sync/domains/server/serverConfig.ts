@@ -35,7 +35,8 @@ export function getServerUrl(): string {
 export async function setServerUrl(url: string | null): Promise<void> {
     const normalized = normalizeUrl(String(url ?? ''));
     if (!normalized) {
-        await setActiveServer({ serverId: getResetToDefaultServerId(), scope: 'device' });
+        const serverId = getResetToDefaultServerId();
+        if (serverId !== null) await setActiveServer({ serverId, scope: 'device' });
         return;
     }
 

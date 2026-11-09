@@ -61,38 +61,6 @@ export function readSessionInitialPromptV1(metadata: Metadata | null | undefined
     };
 }
 
-export function writeSessionInitialPromptV1(params: Readonly<{
-    metadata: Metadata;
-    text: string;
-    mode: 'replace' | 'append';
-    createdAtMs: number;
-    sourceMessageIds?: ReadonlyArray<string> | null;
-    sourceSessionId?: string | null;
-    source?: Omit<DiscussionSelectionSourceV1, 'draftCorrelationId'> | null;
-}>): Metadata {
-    const text = typeof params.text === 'string' ? params.text : String(params.text ?? '');
-    if (!text.trim()) return params.metadata;
-    const sourceMessageIds = sanitizeSourceMessageIds(params.sourceMessageIds);
-    const sourceSessionId = typeof params.sourceSessionId === 'string' && params.sourceSessionId.trim().length > 0
-        ? params.sourceSessionId.trim()
-        : null;
-    const sourceResult = SessionInitialPromptDiscussionSourceV1Schema.safeParse(params.source);
-    const source = sourceResult.success ? sourceResult.data : null;
-
-    return {
-        ...params.metadata,
-        sessionInitialPromptV1: {
-            v: 1,
-            text,
-            mode: params.mode,
-            createdAtMs: params.createdAtMs,
-            ...(sourceMessageIds ? { sourceMessageIds } : null),
-            ...(sourceSessionId ? { sourceSessionId } : null),
-            ...(source ? { source } : null),
-        },
-    } as Metadata;
-}
-
 export function clearSessionInitialPromptV1(params: Readonly<{
     metadata: Metadata;
 }>): Metadata {

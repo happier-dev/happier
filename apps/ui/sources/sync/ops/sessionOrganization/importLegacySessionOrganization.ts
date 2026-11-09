@@ -1,6 +1,6 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { importLegacySessionOrganization as importLegacySessionOrganizationApi } from '@/sync/api/session/sessionOrganizationApi';
-import type { ImportLegacySessionOrganizationRequest } from '@happier-dev/protocol';
+import type { ImportLegacySessionOrganizationRequest } from '@happier-dev/protocol/sessions/organization/mutations';
 
 import { fetchAndApplySessionOrganizationSnapshot } from './fetchSessionOrganizationSnapshot';
 import { prepareSessionOrganizationDisplayEnvelopeForWrite } from './sessionOrganizationDisplayEnvelope';
@@ -24,6 +24,7 @@ export async function importLegacySessionOrganization(params: Readonly<{
             ...folder,
             display: await prepareSessionOrganizationDisplayEnvelopeForWrite({
                 credentials: params.credentials,
+                serverUrl: params.serverUrl,
                 envelope: folder.display,
                 accountMode: params.accountMode,
                 request: params.requestAtEndpoint,
@@ -33,6 +34,7 @@ export async function importLegacySessionOrganization(params: Readonly<{
             ...tag,
             display: await prepareSessionOrganizationDisplayEnvelopeForWrite({
                 credentials: params.credentials,
+                serverUrl: params.serverUrl,
                 envelope: tag.display,
                 accountMode: params.accountMode,
                 request: params.requestAtEndpoint,
@@ -42,6 +44,7 @@ export async function importLegacySessionOrganization(params: Readonly<{
             ...label,
             display: await prepareSessionOrganizationDisplayEnvelopeForWrite({
                 credentials: params.credentials,
+                serverUrl: params.serverUrl,
                 envelope: label.display,
                 accountMode: params.accountMode,
                 request: params.requestAtEndpoint,

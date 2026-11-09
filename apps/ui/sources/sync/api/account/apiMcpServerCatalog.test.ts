@@ -140,6 +140,42 @@ describe('MCP row HTTP inventory boundary', () => {
         } finally { owner.dispose(); await account.dispose(); }
     });
 
+    it('checks retained-source maintenance on a foreign Settings write from the socket copy, without a full Settings GET', async () => {
+        const catalog: McpServerCatalogV1 = { v: 1, servers: [], bindings: [] };
+        let settingsGets = 0;
+        const account = await restoreServerAccountForTest({ serverUrl: 'https://mcp-socket-copy.example.test',
+            accountId: 'mcp-socket-copy', request: async (url, init) => {
+                const path = new URL(String(url)).pathname;
+                if (path === '/health') return Response.json({});
+                if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
+                if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture({ settingsVersion: 8 }));
+                if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+                if (path === '/v2/account/settings') {
+                    if ((init?.method ?? 'GET') === 'GET') settingsGets++;
+                    return Response.json({ version: 7, content: { t: 'plain', v: {} } });
+                }
+                if (path === '/v2/account/settings/history') return Response.json({ snapshots: [] });
+                if (path === '/v1/artifacts') return Response.json([]);
+                if (path === MCP_SERVER_CATALOG_ROWS_ROUTE_V1) return Response.json({ status: 'present', revision: 3, content: { t: 'plain', v: catalog } });
+                return Response.json({ error: 'not_found' }, { status: 404 });
+            } });
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const { handleUpdateAccountSocketUpdate } = await import('@/sync/engine/account/syncAccount');
+        const { profileDefaults } = await import('@/sync/domains/profiles/profile');
+        const owner = await captureLazyActionAccountContext(account.home.id);
+        try {
+            // Another device writes Settings; the socket delivers the whole new document.
+            await handleUpdateAccountSocketUpdate({ accountUpdate: { settingsV2: { content: { t: 'plain', v: { analyticsOptOut: true } }, version: 8 } },
+                updateCreatedAt: 1, currentProfile: { ...profileDefaults }, encryption: null,
+                settingsScope: { serverId: owner.serverId, accountId: owner.accountId },
+                applyProfile: () => {}, applySettings: () => {}, applySettingsForScope: () => {}, log: { log: () => {} } });
+            settingsGets = 0;
+            // A maintenance wake (published read) runs source maintenance to completion before returning.
+            expect(await readMcpServerCatalogInContext(owner, undefined, { onReady: () => {} })).toMatchObject({ status: 'ready', authority: 'active', revision: 3 });
+            expect(settingsGets).toBe(0);
+        } finally { owner.dispose(); await account.dispose(); }
+    });
+
     it('preserves canonical Account refusals returned by the row route', async () => {
         const result = await fetchMcpServerCatalogRowV1({
             request: async () => Response.json({ status: 'account-mode-mismatch' }),

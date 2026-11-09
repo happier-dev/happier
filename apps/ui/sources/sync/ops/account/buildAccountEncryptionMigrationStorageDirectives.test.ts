@@ -1,27 +1,36 @@
-import { HappyError } from '@/utils/errors/errors';
 import { describe, expect, it } from 'vitest';
+import { HappyError } from '@/utils/errors/errors';
 import { createHash, randomBytes } from 'node:crypto';
 import { ed25519, x25519 } from '@noble/curves/ed25519';
-import * as protocol from '@happier-dev/protocol';
+import type { ArtifactBlobStoredContentV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import {
     ARTIFACT_PLAIN_DATA_KEY_MARKER,
-    computeContentPublicKeyFingerprint,
-    createAccountScopedCryptoMaterialSnapshotV1,
-    convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
     decodePlainArtifactStoredContent,
-    encodePlainArtifactStoredContent,
+    encodePlainArtifactStoredContent} from '@happier-dev/protocol/storage/artifactStoredContent';
+import {
+    computeContentPublicKeyFingerprint} from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
+import {
+    createAccountScopedCryptoMaterialSnapshotV1} from '@happier-dev/protocol/crypto/accountScopedCipher';
+import {
+    convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1} from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
+import {
     openSessionOwnerMetadataEnvelopeV1,
-    sealSessionOwnerMetadataEnvelopeV1,
+    sealSessionOwnerMetadataEnvelopeV1} from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
+import {
     projectSessionDisplayV1,
     sealSessionSharedDisplayEnvelopeV1Sync,
     sealSessionOwnerDisplayEnvelopeV1,
-    openSessionOwnerDisplayEnvelopeV1,
-    signAccountContentKeyBindingV1,
+    openSessionOwnerDisplayEnvelopeV1} from '@happier-dev/protocol/sessions';
+import {
+    signAccountContentKeyBindingV1} from '@happier-dev/protocol/crypto/accountContentKeyBindingV1';
+import {
     sealEncryptedDataKeyEnvelopeV1,
-    openEncryptedDataKeyEnvelopeV1,
-    WorkflowDefinitionArtifactHeaderV1Schema,
+    openEncryptedDataKeyEnvelopeV1} from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import {
+    WorkflowDefinitionArtifactHeaderV1Schema} from '@happier-dev/protocol/workflows/workflowDefinitionV1';
+import {
     workflowDefinitionArtifactSharingAdapterV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/artifacts/artifactSharingV1';
 
 import { Encryption } from '@/sync/encryption/encryption';
 import { ArtifactEncryption } from '@/sync/encryption/artifactEncryption';
@@ -32,8 +41,8 @@ import {
     MACHINE_PLAIN_DATA_KEY_MARKER,
     encodePlainMachineStoredContent,
     decodePlainMachineStoredContent,
-} from '@happier-dev/protocol';
-import { encodeAccountStoredJsonContent } from '@/sync/encryption/accountStoredJsonContent';
+} from '@happier-dev/protocol/machines/machineStoredContent';
+import { decodeAccountStoredJsonContent, encodeAccountStoredJsonContent } from '@/sync/encryption/accountStoredJsonContent';
 import {
     buildAccountEncryptionMigrationStorageDirectives,
 } from './buildAccountEncryptionMigrationStorageDirectives';
@@ -64,6 +73,68 @@ describe('buildAccountEncryptionMigrationStorageDirectives', () => {
             labels: [],
         },
     };
+
+    it.each(['plain', 'e2ee'] as const)('preserves Coach suppression content and version when converting a %s Account', async (fromMode) => {
+        const encryption = await Encryption.create(new Uint8Array(32).fill(7));
+        const toMode = fromMode === 'plain' ? 'e2ee' : 'plain';
+        const value = { v: 1, suppressions: [{ kind: 'dismissed', evidenceKey: 'dismissed' },
+            { kind: 'snoozed', evidenceKey: 'snoozed', untilMs: 3 }] };
+        const encoded = await encodeAccountStoredJsonContent({ mode: fromMode, value, encryption });
+        const result = await buildAccountEncryptionMigrationStorageDirectives({ ...emptyTransitionInventories,
+            fromMode, toMode, sourceEncryption: fromMode === 'e2ee' ? encryption : null,
+            targetEncryption: toMode === 'e2ee' ? encryption : null,
+            machines: [], todos: [], workspace: [{ key: 'workspace:usage-coach:suppressions', version: 9, value: encoded }], artifacts: [], sessions: [],
+            sessionSourceCredentials: fromMode === 'e2ee' ? legacyCredentials : tokenOnlyCredentials,
+            sessionTargetCredentials: toMode === 'e2ee' ? legacyCredentials : null,
+        });
+        expect(result.workspace).toMatchObject({ action: 'migrate', items: [{ key: 'workspace:usage-coach:suppressions', expectedVersion: 9 }] });
+        if (result.workspace?.action !== 'migrate') throw new Error('Expected Coach conversion');
+        expect(await decodeAccountStoredJsonContent({ encoded: result.workspace.items[0]!.value, expectedMode: toMode, encryption })).toEqual(value);
+    });
+
+    it('opens shared Todo content with its resource key and emits explicit target envelopes during Account conversion', async () => {
+        const encryption = await Encryption.create(new Uint8Array(32).fill(7));
+        const dataKey = new Uint8Array(32).fill(42);
+        const dataEncryptionKey = Buffer.from(await encryption.encryptEncryptionKey(dataKey)).toString('base64');
+        const task = { id: 'shared', title: 'Resource encrypted task', done: false, createdAt: 1, updatedAt: 1 };
+        const cipher = new AES256Encryption(dataKey);
+        const content = { t: 'encrypted', k: 'task', c: Buffer.from((await cipher.encrypt([task]))[0]!).toString('base64') };
+        const result = await buildAccountEncryptionMigrationStorageDirectives({ ...emptyTransitionInventories,
+            fromMode: 'e2ee', toMode: 'plain', sourceEncryption: encryption, targetEncryption: null,
+            machines: [], todos: [{ key: 'todo.shared', version: 3, value: Buffer.from(JSON.stringify(content)).toString('base64'),
+                resource: { ownerAccountId: 'account-a', access: 'owner', encryptionMode: 'e2ee',
+                    dataEncryptionKey, callerDataEncryptionKey: dataEncryptionKey, recipients: [] } }],
+            artifacts: [], sessions: [], sessionSourceCredentials: legacyCredentials, sessionTargetCredentials: null });
+        expect(result.todos.action).toBe('migrate');
+        if (result.todos.action !== 'migrate') throw new Error('Expected converted task');
+        expect(result.todos.items[0]).toMatchObject({ key: 'todo.shared', expectedVersion: 3, recipientKeyEnvelopes: [] });
+        expect(JSON.parse(Buffer.from(result.todos.items[0]!.value, 'base64').toString())).toEqual({ t: 'plain', v: task });
+        const signing = ed25519.utils.randomSecretKey();
+        const signingPublicKey = ed25519.getPublicKey(signing);
+        const signingSecretKey = new Uint8Array([...signing, ...signingPublicKey]);
+        const recipientKey = x25519.utils.randomSecretKey();
+        const recipientPublicKey = x25519.getPublicKey(recipientKey);
+        const fingerprint = computeContentPublicKeyFingerprint(recipientPublicKey);
+        const reverse = await buildAccountEncryptionMigrationStorageDirectives({ ...emptyTransitionInventories,
+            fromMode: 'plain', toMode: 'e2ee', sourceEncryption: null, targetEncryption: encryption,
+            machines: [], todos: [{ key: 'todo.shared', version: 4, value: result.todos.items[0]!.value,
+                resource: { ownerAccountId: 'account-a', access: 'owner', encryptionMode: 'plain', dataEncryptionKey: null, callerDataEncryptionKey: null,
+                    recipients: [{ recipientAccountId: 'recipient', contentPublicKeyFingerprint: fingerprint, encryptedDataKey: null, recipientContentPublicKeyFingerprint: null,
+                        contentKey: { status: 'available', accountSigningPublicKey: Buffer.from(signingPublicKey).toString('hex'),
+                            contentPublicKey: Buffer.from(recipientPublicKey).toString('base64'), contentPublicKeySignature: Buffer.from(signAccountContentKeyBindingV1({ accountSigningSecretKey: signingSecretKey, contentPublicKey: recipientPublicKey })).toString('base64') } }] } }],
+            artifacts: [], sessions: [], sessionSourceCredentials: tokenOnlyCredentials, sessionTargetCredentials: legacyCredentials });
+        if (reverse.todos.action !== 'migrate') throw new Error('Expected encrypted task conversion');
+        const replacement = reverse.todos.items[0]!;
+        expect(replacement.recipientKeyEnvelopes?.map(envelope => envelope.recipientAccountId)).toEqual(['account-a', 'recipient']);
+        const ownerEnvelope = replacement.recipientKeyEnvelopes![0]!;
+        const ownerKey = await encryption.decryptEncryptionKey(ownerEnvelope.encryptedDataKey);
+        if (!ownerKey) throw new Error('Missing target owner resource key');
+        const recipientEnvelope = replacement.recipientKeyEnvelopes![1]!;
+        expect(openEncryptedDataKeyEnvelopeV1({ envelope: new Uint8Array(Buffer.from(recipientEnvelope.encryptedDataKey, 'base64')), recipientSecretKeyOrSeed: recipientKey })).toEqual(ownerKey);
+        const stored = JSON.parse(Buffer.from(replacement.value, 'base64').toString());
+        expect(stored).toMatchObject({ t: 'encrypted', k: 'task' });
+        expect((await new AES256Encryption(ownerKey).decrypt([Buffer.from(stored.c, 'base64')]))[0]).toEqual(task);
+    });
 
     it.each(['plain', 'e2ee'] as const)('reseals owner display from full owner content for a %s Account target while retaining Session mode', async (toMode) => {
         const fromMode = toMode === 'plain' ? 'e2ee' : 'plain';
@@ -217,8 +288,8 @@ describe('buildAccountEncryptionMigrationStorageDirectives', () => {
         };
         const inputs = { ...emptyTransitionInventories, machines: [], todos: [], sessions: [],
             sessionSourceCredentials: tokenOnlyCredentials, sessionTargetCredentials: legacyCredentials };
-        const staged = new Map<string, protocol.ArtifactBlobStoredContentV1>();
-        const stageArtifactBlob = async (_id: string, blobId: string, content: protocol.ArtifactBlobStoredContentV1) => {
+        const staged = new Map<string, ArtifactBlobStoredContentV1>();
+        const stageArtifactBlob = async (_id: string, blobId: string, content: ArtifactBlobStoredContentV1) => {
             staged.set(blobId, content);
             const encoded = content.t === 'plain' ? content.v : content.c;
             return { t: content.t, uploadId: `11111111-1111-4111-8111-${String(staged.size).padStart(12, '0')}`,

@@ -5,11 +5,10 @@ import {
     type ProfileRecordV1, type ProfileRowMutationV1, type ProfileRowsListResponseV1,
 } from '@happier-dev/protocol/profiles/profileRecordV1';
 import { loadProfileCatalogV1, type ProfileCatalogSnapshotV1 } from '@happier-dev/protocol/profiles/profileCatalogV1';
-import { core } from 'zod/mini';
 import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
-import { resolveAccountStorageContext } from '@/sync/encryption/accountStorageContext';
+import { classifyAccountStorageReadFailure, resolveAccountStorageContext, resolveAccountStorageContextForDisclosure } from '@/sync/encryption/accountStorageContext';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { classifyHttpMutationRequestFailure } from '@/sync/http/mutationRequestOutcome';
 import { isLegacyProfileSourcePreservingCloneV1, loadAiLaunchProfileArtifacts, removeProfilePreferenceReferencesV1, readLegacyProfileRecordsV1,
@@ -19,12 +18,13 @@ import { prepareBuiltinProfileAttachmentV1 } from '@happier-dev/protocol/profile
 import { transferLegacyProfilesV1, cleanupTransferredProfileSourcesV1,
     type LegacyProfileTransferResultV1, type ProfileTransferSourceCleanupResultV1 } from '@happier-dev/protocol/profiles/transferLegacyProfilesV1';
 import { normalizeAccountSettingsHistoryAfterTransfer } from '@/sync/engine/settings/accountSettingsHistoryRestore';
+import { readCurrentAccountSettingsRawSnapshot } from '@/sync/engine/settings/accountSettingsRawSnapshot';
 import type { ArtifactSharingResourceV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
 import type { ArtifactRevisionV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { readAccountSettingsBaseline } from '@/sync/engine/settings/accountSettingsBaseline';
 import { sealAccountSettingsCleanup } from '@/sync/engine/settings/sealAccountSettingsCleanup';
 import { parseSavedSecretCatalogReferenceV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
-import { readSavedSecretCatalogInContext } from './apiSavedSecretCatalog';
+import { readSavedSecretCatalogMetadataInContext } from './apiSavedSecretCatalog';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { applyAcknowledgedProfileRecord } from '@/sync/store/settings/profileCatalogSnapshot';
@@ -88,7 +88,7 @@ async function readResponse(context: ProfileAccountContext, path: string, signal
 /** Full opened inventory; partial data can be displayed but cannot authorize a write or conversion. */
 async function readCapturedProfileCatalog(context: ProfileAccountContext, mode: 'plain' | 'e2ee', material: AccountScopedCryptoMaterial | null,
     signal?: AbortSignal, readSource?: () => Promise<unknown>, onPage?: (page: ProfileRowsListResponseV1) => void,
-    migrateSkills = false): Promise<ProfileCatalogSnapshotV1> {
+    migrateSkills = false, disclosure: 'final' | 'projection' = 'final'): Promise<ProfileCatalogSnapshotV1> {
     const catalog = await loadProfileCatalogV1({ mode, material, signal,
         ...(readSource ? { readSource } : {}),
         ...(migrateSkills ? { skillMigration: {
@@ -100,9 +100,14 @@ async function readCapturedProfileCatalog(context: ProfileAccountContext, mode: 
                 return artifact;
             },
             writeRecord: async (record: ProfileRecordV1, expectedRevision: number) => {
-                const written = await writeCapturedProfileRecord(context, mode, material, { record, expectedRevision, operation: 'update' }, signal);
-                return written.status === 'updated' ? { status: 'updated' as const, revision: written.revision }
-                    : { status: written.status === 'conflict' ? 'conflict' as const : 'unavailable' as const };
+                // A descriptive read becomes a migration write only here.
+                return await admitProfileAccount(context, async (captured, currentMode, currentMaterial) => {
+                    if (currentMode !== mode) return { status: 'unavailable' as const };
+                    const written = await writeCapturedProfileRecord(captured, currentMode, currentMaterial,
+                        { record, expectedRevision, operation: 'update' }, signal);
+                    return written.status === 'updated' ? { status: 'updated' as const, revision: written.revision }
+                        : { status: written.status === 'conflict' ? 'conflict' as const : 'unavailable' as const };
+                });
             },
         } } : {}),
         readPage: async cursor => {
@@ -118,24 +123,15 @@ async function readCapturedProfileCatalog(context: ProfileAccountContext, mode: 
         readTransfer: async () => ProfileTransferRowReadResponseV1Schema.parse(await readResponse(context,
             PROFILE_TRANSFER_ROUTE_V1, signal)),
     });
+    // Projection keeps these rows private until its own final check after Artifact opening.
+    if (disclosure === 'projection') return catalog;
     const { encryption } = await context.resolveAccountEncryption();
-    const current = await resolveAccountStorageContext(context.credentials, { encryption, request: context.request, usage: 'fresh-authority' });
+    const current = await resolveAccountStorageContextForDisclosure(context.credentials, { encryption, request: context.request });
     context.assertCurrent();
     return current.mode === mode ? catalog : { status: 'unavailable', reason: 'account-mode-mismatch' };
 }
 function catalogFailure(error: unknown, signal?: AbortSignal): ProfileCatalogSnapshotV1 {
-    if (signal?.aborted) return { status: 'unavailable', reason: 'cancelled' };
-    if (error instanceof ProfileRowOperationError && (error.code === 'unauthorized' || error.code === 'forbidden'
-        || error.code === 'unsupported' || error.code === 'scope-retired')) return { status: 'unavailable', reason: error.code };
-    if (error instanceof Error) {
-        // The incumbent capture uses these code strings as messages for setup refusals.
-        const code = 'code' in error ? error.code : error.message;
-        if (code === 'action_account_scope_changed' || code === 'action_home_not_found') return { status: 'unavailable', reason: 'scope-retired' };
-        if (code === 'action_home_signed_out') return { status: 'unavailable', reason: 'unauthorized' };
-        if (code === 'account_storage_currentness_unavailable') return { status: 'unavailable', reason: 'encryption-material-unavailable' };
-    }
-    if (error instanceof core.$ZodError) return { status: 'unavailable', reason: 'invalid-stored-content' };
-    return { status: 'unavailable', reason: 'unreachable' };
+    return { status: 'unavailable', reason: classifyAccountStorageReadFailure(error, signal) };
 }
 export async function readProfileCatalog(scope: ServerAccountScope, signal?: AbortSignal): Promise<ProfileCatalogSnapshotV1> {
     try {
@@ -169,7 +165,7 @@ type ProfileReadPublication = Readonly<{
 export async function readProfileCatalogProjection(scope: ServerAccountScope, signal?: AbortSignal,
     publication?: ProfileReadPublication): Promise<ProfileCatalogProjection> {
     try {
-        return await withProfileAccount(scope, signal, (context, mode, material) => readCapturedProfileCatalogProjection(context, mode, material, signal, publication));
+        return await withProfileAccount(scope, signal, (context, mode, material) => readCapturedProfileCatalogProjection(context, mode, material, signal, publication), 'identity');
     } catch (error) { return { catalog: catalogFailure(error, signal), artifactsById: new Map(), source: null }; }
 }
 async function readCapturedProfileCatalogProjection(context: ProfileAccountContext, mode: 'plain' | 'e2ee', material: AccountScopedCryptoMaterial | null,
@@ -179,7 +175,7 @@ async function readCapturedProfileCatalogProjection(context: ProfileAccountConte
     let catalog = await readCapturedProfileCatalog(context, mode, material, signal, async () => {
         capturedSource.baseline = await readProfileTransferSourceInContext(context, 'identity');
         return capturedSource.baseline.source.raw;
-    }, undefined, migrateSkills);
+    }, undefined, migrateSkills, 'projection');
     if (catalog.status !== 'ready' && catalog.status !== 'partial') return { catalog, artifactsById: new Map(), source: null };
     // An opened active control is destination authority even when stale source roots remain.
     // Every other case needs the genuine baseline; row presence never decides the source.
@@ -198,16 +194,17 @@ async function readCapturedProfileCatalogProjection(context: ProfileAccountConte
             // owner refuses historical environment classification, not display/repair.
             providerContributions: null, homeServerId: context.serverId, mode, material, assertCurrent: context.assertCurrent, signal, randomBytes: getRandomBytes,
             readSavedSecretRevisions: async refs => {
-                const metadata = await readSavedSecretCatalogInContext(context, signal);
+                const metadata = await readSavedSecretCatalogMetadataInContext(context, signal);
                 context.assertCurrent();
                 if (!metadata.ok) return { status: 'unavailable' };
                 const resourcesByRef = new Map<string, Readonly<{ resourceId: string; revision: number }>>();
                 for (const ref of refs) {
                     const parsed = parseSavedSecretCatalogReferenceV1(ref);
-                    const resource = parsed?.kind === 'shared_resource' ? metadata.resources.find(row => 'resourceId' in row && row.resourceId === parsed.id) : undefined;
-                    if (!resource || !('resourceId' in resource) || resource.entry.materialStatus !== 'ready'
-                        || !resource.entry.capabilities.use || resource.entry.revision === null) return { status: 'partial' };
-                    resourcesByRef.set(ref, { resourceId: resource.resourceId, revision: resource.entry.revision });
+                    const resource = parsed?.kind === 'shared_resource'
+                        ? metadata.resources.find(row => row.materialStatus === 'ready' && row.ref === ref) : undefined;
+                    if (!parsed || parsed.kind !== 'shared_resource' || !resource || resource.materialStatus !== 'ready'
+                        || !resource.capabilities.use || resource.revision === null) return { status: 'partial' };
+                    resourcesByRef.set(ref, { resourceId: parsed.id, revision: resource.revision });
                 }
                 return { status: 'ready', resourcesByRef };
             },
@@ -227,7 +224,7 @@ async function readCapturedProfileCatalogProjection(context: ProfileAccountConte
         });
         context.assertCurrent();
         if (transfer.status === 'active') {
-            catalog = await readCapturedProfileCatalog(context, mode, material, signal, undefined, undefined, migrateSkills);
+            catalog = await readCapturedProfileCatalog(context, mode, material, signal, undefined, undefined, migrateSkills, 'projection');
             if (catalog.status !== 'ready' || catalog.control?.record.phase !== 'active'
                 || catalog.control.revision !== transfer.revision) return { catalog: { status: 'unavailable', reason: 'reference-conflict' }, artifactsById: new Map(), source: null };
             source = resolveProfileCatalogAuthorityV1({ rawSettings: undefined, control: catalog.control.record });
@@ -235,7 +232,7 @@ async function readCapturedProfileCatalogProjection(context: ProfileAccountConte
     }
     const project = async (): Promise<ProfileCatalogProjection> => {
         const { encryption } = await context.resolveAccountEncryption();
-        const current = await resolveAccountStorageContext(context.credentials, { encryption, request: context.request, usage: 'fresh-authority' });
+        const current = await resolveAccountStorageContextForDisclosure(context.credentials, { encryption, request: context.request });
         context.assertCurrent();
         if (current.mode !== mode) return { catalog: { status: 'unavailable', reason: 'account-mode-mismatch' }, artifactsById: new Map(), source: null };
         if (catalog.status !== 'ready' && catalog.status !== 'partial') return { catalog, artifactsById: new Map(), source: null };
@@ -324,18 +321,26 @@ export function mutateProfileTransferInContext(context: ProfileAccountContext, m
     });
 }
 
-/** Settings/version remain a genuine HTTP read; initial discovery may borrow identity before its later authority admission. */
+/** Authority reads stay genuine HTTP; initial discovery may borrow both identity and Sync's current document before later admission. */
 export function readProfileTransferSourceInContext(context: ProfileAccountContext,
     usage: 'identity' | 'fresh-authority' = 'fresh-authority'): Promise<Readonly<{
     source: Readonly<{ raw: Readonly<Record<string, unknown>>; version: number }>;
     mode: 'plain' | 'e2ee'; material: AccountScopedCryptoMaterial | null;
 }>> {
     return admitProfileAccount(context, async (captured, mode, material) => {
-        const { encryption } = await captured.resolveAccountEncryption();
-        const baseline = await readAccountSettingsBaseline({ credentials: captured.credentials, encryption, accountMode: mode,
-            request: (path, init) => captured.request(path, init, { retry: 'none' }) });
+        const readBaseline = async () => {
+            const { encryption } = await captured.resolveAccountEncryption();
+            const baseline = await readAccountSettingsBaseline({ credentials: captured.credentials, encryption, accountMode: mode,
+                request: (path, init) => captured.request(path, init, { retry: 'none' }) });
+            return { raw: baseline.raw ?? {}, version: baseline.version };
+        };
+        // Only a passive discovery read may borrow Sync's document; transactions keep a genuine read.
+        const source = usage === 'identity'
+            ? await readCurrentAccountSettingsRawSnapshot({ serverId: captured.serverId, accountId: captured.accountId },
+                { credentials: captured.credentials, request: captured.request, readBaseline })
+            : await readBaseline();
         captured.assertCurrent();
-        return { source: { raw: baseline.raw ?? {}, version: baseline.version }, mode, material };
+        return { source: { raw: source.raw, version: source.version }, mode, material };
     }, usage);
 }
 
@@ -353,7 +358,7 @@ export async function readProfileCatalogInContext(context: ProfileAccountContext
 }
 export async function readProfileCatalogProjectionInContext(context: ProfileAccountContext, signal?: AbortSignal,
     options?: Readonly<{ deferCleanup?: boolean; migrateSkills?: boolean }>): Promise<ProfileCatalogProjection> {
-    try { return await admitProfileAccount(context, (captured, mode, material) => readCapturedProfileCatalogProjection(captured, mode, material, signal, options)); }
+    try { return await admitProfileAccount(context, (captured, mode, material) => readCapturedProfileCatalogProjection(captured, mode, material, signal, options), 'identity'); }
     catch (error) { return { catalog: catalogFailure(error, signal), artifactsById: new Map(), source: null }; }
 }
 export function mutateProfileRowInContext(context: ProfileAccountContext, mutation: ProfileRowMutationV1, signal?: AbortSignal): Promise<ProfileRowMutationResponseV1> {
@@ -436,19 +441,23 @@ async function resolveProfileSecretRevisions(context: ProfileAccountContext, ref
         if (parsed.kind === 'shared_resource') ids.add(parsed.id);
     }
     if (ids.size === 0) return [];
-    const catalog = await readSavedSecretCatalogInContext(context, signal);
+    const catalog = await readSavedSecretCatalogMetadataInContext(context, signal);
     context.assertCurrent();
     if (!catalog.ok) throw new ProfileRowOperationError('invalid-reference', catalog.failure);
-    const resources = new Map(catalog.resources.flatMap(resource => 'resourceId' in resource ? [[resource.resourceId, resource] as const] : []));
+    const resources = new Map(catalog.resources.flatMap(resource => {
+        if (resource.materialStatus !== 'ready') return [];
+        const parsed = parseSavedSecretCatalogReferenceV1(resource.ref);
+        return parsed?.kind === 'shared_resource' ? [[parsed.id, resource] as const] : [];
+    }));
     const overrides = new Map(capturedRevisions?.map(proof => [proof.resourceId, proof.expectedRevision]));
     return [...ids].map(resourceId => {
         const resource = resources.get(resourceId);
         const selected = overrides.get(resourceId);
         if (!resource && allowCreatedResource && selected === 1) return { resourceId, expectedRevision: selected };
-        if (!resource || resource.entry.materialStatus !== 'ready' || !resource.entry.capabilities.use
-            || resource.entry.revision === null) throw new ProfileRowOperationError('invalid-reference');
-        if (selected !== undefined && selected !== resource.entry.revision) throw new ProfileRowOperationError('reference-conflict');
-        return { resourceId, expectedRevision: resource.entry.revision };
+        if (!resource || resource.materialStatus !== 'ready' || !resource.capabilities.use
+            || resource.revision === null) throw new ProfileRowOperationError('invalid-reference');
+        if (selected !== undefined && selected !== resource.revision) throw new ProfileRowOperationError('reference-conflict');
+        return { resourceId, expectedRevision: resource.revision };
     });
 }
 function sealProfileMutation(mode: 'plain' | 'e2ee', material: AccountScopedCryptoMaterial | null, input: ProfileSealInput,

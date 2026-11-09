@@ -42,6 +42,18 @@ describe('Provider causes in Session-start failures', () => {
         },
     );
 
+    it('names a missing Session folder instead of the generic spawn failure', async () => {
+        await preloadTranslations('en');
+        const result = SessionSpawnNewResultV1Schema.parse({ type: 'error', code: 'spawn_failed', retryable: true,
+            launchError: { kind: 'launch_error', code: 'SESSION_DIRECTORY_MISSING',
+                message: 'The Session folder does not exist on the Machine. Choose another folder.' },
+        });
+        if (result.type !== 'error') throw new Error('Expected a missing-folder refusal');
+        const message = resolveSessionSpawnNewResultFailureMessage(result);
+        expect(message).toContain(t('errors.workspaceFolderMissing'));
+        expect(message).not.toContain('spawn_failed');
+    });
+
     it.each(['provider_authorization_changed', 'provider_secret_missing'] as const)(
         'retains %s through the strict spawn result and canonical Provider presenter', async code => {
             await preloadTranslations('en');

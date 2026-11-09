@@ -26,6 +26,13 @@ export function createUiClientActionReverseHandler(binding: Readonly<{
         const readOnly = spec.sideEffectClass === 'read' || spec.sideEffectClass === 'none';
         const parentRequestId = admitted.actionRequestId;
         const executor = createDefaultActionExecutor({ admittedClientActionId: actionId,
+            ...(actionId === 'template.release' ? { onPublicLinkIssued: async (issued: Readonly<{ url: string }>) => {
+                if (!binding.isCurrent() || context.signal.aborted) return;
+                const { showIssuedDocumentSignedInLink } = await import('@/components/sharing/documents/showDocumentShareSheet');
+                if (!binding.isCurrent() || context.signal.aborted) return;
+                showIssuedDocumentSignedInLink({ shareUrl: issued.url,
+                    scope: { serverId: binding.serverId, accountId: binding.accountId } });
+            } } : {}),
             ...(binding.machineId && parentRequestId
                 ? { admittedClientActionParent: { machineId: binding.machineId, requestId: parentRequestId } } : {}) });
         try {

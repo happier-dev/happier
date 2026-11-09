@@ -1,6 +1,8 @@
 import type { ApiChangeEntry } from '@/sync/api/types/apiTypes';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { readDiscussionChangeHintV1 } from '@happier-dev/protocol/discussions';
+import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 
 export type MountedDiscussionChangeWatch = Readonly<{
     dispose(): void;
@@ -9,43 +11,61 @@ export type MountedDiscussionChangeWatch = Readonly<{
 type ActiveWatch = Readonly<{
     scope: ServerAccountScope;
     address: Readonly<{ serverId: string }>;
-    onInvalidated(discussionIds: readonly string[], revisions: ReadonlyMap<string, number>): void;
+    onInvalidated(discussionIds: readonly string[], revisions: ReadonlyMap<string, number>, readStateOnlyIds?: ReadonlySet<string>, docArtifactIds?: ReadonlySet<string>): void;
     includeDocSourceChanges?: () => boolean;
+    onSnapshotInvalidated?: () => void;
 }>;
 
 const activeWatches = new Set<ActiveWatch>();
 
 /**
- * Observe the incumbent AccountChange catch-up for one mounted Discussion
- * surface. This opens no socket and owns no cursor or cached data: it only asks
- * the mounted repository/controller to reread canonical HTTP state.
+ * Observe detailed AccountChange pages and the incumbent Home's snapshot
+ * revalidation for a mounted Discussion. The Home still owns its connection
+ * and cursor; this only asks the repository to reread canonical HTTP state.
  */
 export function watchMountedDiscussions(input: Readonly<{
     scope: ServerAccountScope;
     address: Readonly<{ serverId: string }>;
-    onInvalidated(discussionIds: readonly string[], revisions: ReadonlyMap<string, number>): void;
+    onInvalidated: ActiveWatch['onInvalidated'];
     includeDocSourceChanges?: () => boolean;
+    onSnapshotInvalidated?: () => void;
 }>): MountedDiscussionChangeWatch {
     const watch: ActiveWatch = Object.freeze({
         scope: Object.freeze({ ...input.scope }),
         address: Object.freeze({ ...input.address }),
         onInvalidated: input.onInvalidated,
         includeDocSourceChanges: input.includeDocSourceChanges,
+        onSnapshotInvalidated: input.onSnapshotInvalidated,
     });
     activeWatches.add(watch);
+    const stopSnapshotWatch = input.onSnapshotInvalidated ? subscribeHomeAccountChange(event => {
+        if (!areServerProfileIdentifiersEquivalent(event.serverId, watch.address.serverId) || event.feedPageConsumed) return;
+        if (event.discussionAffects === false) return;
+        // Ordinary focused wakes are followed by their detailed page. A blocked
+        // cursor/snapshot repair instead requests current projections without
+        // claiming that the missing historical page was materialized. A local
+        // receipt with known kinds (no source, e.g. an Artifact write's socket
+        // receipt) is not a repair either: its Account wake follows, as the
+        // detailed page on the focused Home or a `socket` wake elsewhere.
+        if ((event.source === 'catch-up-pending' || event.source === undefined) && event.changeKinds !== undefined) return;
+        if (event.changeKinds !== undefined && !event.changeKinds.includes('discussion')
+            && !(event.changeKinds.includes('artifact') && watch.includeDocSourceChanges?.())) return;
+        watch.onSnapshotInvalidated?.();
+    }, { includeCatchUpPending: true, serverIds: [watch.address.serverId], reconnect: 'refresh' }) : undefined;
     let disposed = false;
     return Object.freeze({
         dispose(): void {
             if (disposed) return;
             disposed = true;
             activeWatches.delete(watch);
+            stopSnapshotWatch?.();
         },
     });
 }
 
 /**
- * Called by the one changes-page application path before checkpointing. Hints
- * are deliberately ignored for correctness because resource changes coalesce.
+ * Called by the one changes-page application path before checkpointing. Only
+ * a validated, union-coalesced readState-only hint can narrow the reread work.
  */
 export function publishMountedDiscussionChanges(input: Readonly<{
     serverId: string;
@@ -54,12 +74,19 @@ export function publishMountedDiscussionChanges(input: Readonly<{
 }>): void {
     if (activeWatches.size === 0) return;
     const revisions = new Map<string, number>();
+    const readStateOnly = new Map<string, boolean>();
     for (const change of input.changes) {
-        if (change.kind === 'discussion') revisions.set(change.entityId, Math.max(revisions.get(change.entityId) ?? 0, change.cursor));
+        if (change.kind !== 'discussion') continue;
+        revisions.set(change.entityId, Math.max(revisions.get(change.entityId) ?? 0, change.cursor));
+        const hint = readDiscussionChangeHintV1(change.hint);
+        readStateOnly.set(change.entityId, readStateOnly.get(change.entityId) !== false
+            && hint?.changes.readState === true && hint.changes.resource !== true);
     }
+    const readStateOnlyIds = new Set([...readStateOnly].filter(([, only]) => only).map(([id]) => id));
     const discussionIds = [...revisions.keys()];
     const discussionChanged = discussionIds.length > 0;
-    const docChanged = input.changes.some(change => change.kind === 'artifact');
+    const docArtifactIds = new Set(input.changes.filter(change => change.kind === 'artifact').map(change => change.entityId));
+    const docChanged = docArtifactIds.size > 0;
     if (!discussionChanged && !docChanged) return;
 
     for (const watch of [...activeWatches]) {
@@ -71,7 +98,9 @@ export function publishMountedDiscussionChanges(input: Readonly<{
         }
         if (!discussionChanged && !(docChanged && watch.includeDocSourceChanges?.())) continue;
         try {
-            watch.onInvalidated(discussionIds, revisions);
+            if (docChanged) watch.onInvalidated(discussionIds, revisions, readStateOnlyIds, docArtifactIds);
+            else if (readStateOnlyIds.size > 0) watch.onInvalidated(discussionIds, revisions, readStateOnlyIds);
+            else watch.onInvalidated(discussionIds, revisions);
         } catch {
             // A presentation refresh cannot suppress sibling observers or the
             // AccountChange owner's own canonical materialization/checkpoint.

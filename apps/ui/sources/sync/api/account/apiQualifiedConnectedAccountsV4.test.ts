@@ -2,10 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import {
-    parseQualifiedConnectedAccountV4StructuredQueryValue,
+    parseQualifiedConnectedAccountV4StructuredQueryValue} from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4QueryCodec';
+import {
     QualifiedConnectedAccountGroupRefSchema,
     QualifiedConnectedAccountServiceRefSchema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 
 const credentials: AuthCredentials = { token: 'token', secret: 'secret' };
 const service = {
@@ -42,8 +43,6 @@ function makeGroup(overrides: Record<string, unknown> = {}) {
             cooldownMs: 30_000,
             honorProviderResetsAt: true,
             autoRestorePrimaryWhenReset: false,
-            maxSwitchesPerTurn: 1,
-            maxSwitchesPerSessionHour: 3,
             softSwitchRemainingPercent: 15,
             probeIfSnapshotOlderThanMs: 300_000,
             preTurnProbeMode: 'when_stale',
@@ -97,6 +96,16 @@ describe('apiQualifiedConnectedAccountsV4', () => {
         await expect(api.listQualifiedConnectedAccountsV4(credentials, { service, request, signal: controller.signal,
             requestPurpose: 'connected-accounts:persistence', retry: 'none' })).resolves.toEqual({ service, accounts: [] });
         expect(requests).toEqual(['/v4/connect/qualified/accounts']);
+    });
+
+    it('lists groups through the captured Home request instead of the active Home', async () => {
+        vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+            if (isServerReadinessProbe(new URL(String(input)).pathname)) return Response.json({ ok: true });
+            return Response.json({ groups: [makeGroup()] });
+        }));
+        const params = { service, request: async () => Response.json({ groups: [] }) };
+        const { listQualifiedConnectedAccountGroupsV4 } = await import('./apiQualifiedConnectedAccountsV4');
+        await expect(listQualifiedConnectedAccountGroupsV4(credentials, params)).resolves.toEqual({ groups: [] });
     });
 
     it.each(['credential', 'configuration'] as const)('keeps a captured %s read on its cancellation and persistence purpose', async kind => {
@@ -211,7 +220,7 @@ describe('apiQualifiedConnectedAccountsV4', () => {
         })).resolves.toBe(true);
     });
 
-    it('lists groups for a novel qualified service without flattening its identity', async () => {
+    it.each([false, true])('lists groups without flattening identity or retaining retired policy fields (predecessor=%s)', async (predecessor) => {
         const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
             const url = new URL(String(input));
             if (isServerReadinessProbe(url.pathname)) {
@@ -222,7 +231,11 @@ describe('apiQualifiedConnectedAccountsV4', () => {
                 QualifiedConnectedAccountServiceRefSchema,
                 url.searchParams.get('service') ?? '',
             )).toEqual(service);
-            return Response.json({ groups: [makeGroup()] });
+            const group = makeGroup();
+            // cli-v0.2.17/current ../0.2 policy output; no legacy mutation is sent.
+            return Response.json({ groups: [{ ...group, policy: predecessor
+                ? { ...group.policy, maxSwitchesPerTurn: 1, maxSwitchesPerSessionHour: 3 }
+                : group.policy }] });
         });
         vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
@@ -230,6 +243,8 @@ describe('apiQualifiedConnectedAccountsV4', () => {
         const result = await listQualifiedConnectedAccountGroupsV4(credentials, { service });
 
         expect(result.groups[0]?.ref).toEqual(groupRef);
+        expect(result.groups[0]?.policy).not.toHaveProperty('maxSwitchesPerTurn');
+        expect(result.groups[0]?.policy).not.toHaveProperty('maxSwitchesPerSessionHour');
     });
 
     it('threads the current runtime-state revision through member, policy, and active-account mutations', async () => {

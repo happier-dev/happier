@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PluginAccountAvailabilityIntentReadResponseV1Schema } from '@happier-dev/protocol/plugins/availability';
+import * as React from 'react';
+import { PluginHostApiProvider } from '@happier-dev/plugin-ui/advanced';
+import { useTriageSessionPullRequestWatchDefaultsV1 } from '../../../../../../packages/plugins/triage/src/sessions/useSessionPullRequestControls';
+import { createPackageAssetArchiveV1, PluginAccountAvailabilityIntentReadResponseV1Schema, PluginPortableReleaseManifestV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { ApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { PluginSettingsContributionV2Schema } from '@happier-dev/protocol/plugins/contributions/settings';
@@ -12,17 +15,21 @@ import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccount
 import { projectPluginSettingsContributionV2, PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
+import { normalizePluginUiDestinationBindingV1, PluginUiSurfaceContextV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 
 // Only Home HTTP, device credentials and disconnected sockets are replaced.
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 installDisconnectedServerSocketBoundary();
+const { act, renderHook } = await import('@/dev/testkit/hooks/renderHook');
+const { createPluginSurfaceContextFixture } = await import('@/dev/testkit/fixtures/pluginSurfaceContextFixture');
+const { createPluginSurfaceActionHostApi } = await import('@/components/plugins/surfaces/pluginSurfaceActionDispatch');
+const { createCanonicalPluginReactNativeHostApiAdapter } = await import('@/components/plugins/reactNative/hostApi');
 const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
 const { restoreConnectionToActiveServer, disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
-const { getActiveServerAccountScope } = await import('@/sync/domains/scope/activeServerAccountScope');
-const { replacePluginAccountAvailabilityProjection, clearPluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
+const { getActiveServerAccountScope, captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+const { replacePluginAccountAvailabilityProjection, clearPluginAccountAvailabilityProjection, readPluginAccountAvailability } = await import('@/sync/domains/plugins/availability/projection');
 
 beforeEach(async () => { await homes.reset(); await loadSyncSingletonForTests(); });
 afterEach(async () => {
@@ -32,6 +39,116 @@ afterEach(async () => {
 });
 
 describe('Plugin Settings through the default Account Action host', () => {
+    it('admits the Triage Watch offer reader through its real captured plugin host only on explicit demand', async () => {
+        const serverUrl = 'https://triage-watch-defaults.test';
+        const serverId = await homes.addHome({ name: 'Watch defaults Home', serverUrl, serverIdentityId: 'srv_watch_defaults',
+            accountId: 'alice', currentAccount: true });
+        const home = homes.findByServerUrl(serverUrl);
+        if (!home?.token) throw new Error('Missing Watch defaults credential');
+        await restoreConnectionToActiveServer({ token: home.token });
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) throw new Error('Missing captured Watch defaults Account');
+        const { PLUGIN_MANIFEST } = await import('@happier-dev/plugins-channels/manifest');
+        const manifest = PluginPortableReleaseManifestV1Schema.parse(PLUGIN_MANIFEST);
+        // Availability's selected release is the declaration boundary. Unlike
+        // bundled Agent preferences, Channels has no bundled-Agent fallback.
+        const archive = createPackageAssetArchiveV1({ manifest, files: manifest.contributes.resources.flatMap(resource =>
+            resource.kind === 'asset' && 'path' in resource ? [{ path: resource.path, bytes: new TextEncoder().encode('{}') }] : []) });
+        if (!archive) throw new Error('Missing Channels package asset fixture');
+        replacePluginAccountAvailabilityProjection({ scope: lifetime.scope, snapshot: { availabilityCursor: 1,
+            materializations: [], snapshots: [], intentReads: [{ pluginId: manifest.id,
+                response: PluginAccountAvailabilityIntentReadResponseV1Schema.parse({ availabilityCursor: 1, packageAssets: [],
+                    hostingCapability: { enabled: true, maxArtifactBytes: 1024, maxAccountBytes: 2048 },
+                    intent: { pluginId: manifest.id, desiredVersion: manifest.version, enabled: true, offlineUiHosting: 'enabled',
+                        writableCollections: [], revision: 'intent-1' },
+                    release: { ref: { pluginId: manifest.id, version: manifest.version },
+                        archiveDigestSha256: `sha256:${'a'.repeat(64)}`, normalizedManifest: manifest,
+                        collectionContracts: [], uiSlots: [], packageAssetArchive: archive.descriptor }, uiArtifacts: [] }) }],
+        } });
+        expect(readPluginAccountAvailability(lifetime.scope).readCurrentSettingsDeclaration({ pluginId: manifest.id }).kind)
+            .toBe('available');
+        let reads = 0;
+        let values: Record<string, unknown> = {
+            'pr-watch-default-mode': 'address', 'pr-watch-fix-attempt-limit': null,
+            'pr-watch-stop-when-merged': false, 'pr-watch-archive-after-merge': true,
+        };
+        let respondAfter: Promise<void> | undefined;
+        homes.answer(serverId, '/v1/account/plugin-settings/happier.channels', { select: () => {
+            reads += 1;
+            return { ...(respondAfter ? { respondAfter } : {}),
+                body: { status: 'present', revision: 7, content: { t: 'plain', v: { v: 1, values } } } };
+        } });
+        const sourceCustody = { kind: 'development', registeredRootId: 'triage-offer-fixture-root' } as const;
+        const surface = createPluginSurfaceContextFixture({
+            mount: { kind: 'destination', destination: { pluginId: 'happier.triage', localId: 'scm-pull-request' }, container: 'detailsTab' },
+            accountEncryptionMode: 'plain', accountScope: lifetime.scope,
+            targetedContributions: { target: { pluginId: 'happier.triage', occurrenceId: 'triage-offer-current', sourceCustody }, points: [] } });
+        const requestSurface = PluginUiSurfaceContextV1Schema.parse({ pluginId: 'happier.triage',
+            contributionId: 'scm-pull-request', surfaceId: 'triage-offer:session-1', sessionId: 'session-1',
+            platform: 'web', channel: 'internal' });
+        let current = true;
+        const outcomes: unknown[] = [];
+        const executor = createDefaultActionExecutor();
+        const boundary = createPluginSurfaceActionHostApi({ surfaceContext: requestSurface,
+            actionAccountLifetime: lifetime, invocationSurface: 'plugin',
+            callerSourceCustody: sourceCustody,
+            callerBinding: { pluginId: 'happier.triage', contributionLocalId: 'scm-pull-request',
+                occurrenceId: 'triage-offer-current', sourceCustody },
+            hostAction: { execute: async (action, input, context) => {
+                const outcome = await executor.execute(action, input, context);
+                outcomes.push(outcome);
+                return outcome;
+            }, context: { serverId, expectedAccountId: 'alice' } },
+            isCurrent: () => current && lifetime.isCurrent() });
+        const adapter = createCanonicalPluginReactNativeHostApiAdapter({ surface, requestSurface,
+            handleRequest: async (request, options) => {
+                const response = await boundary.handleRequest(request, options);
+                outcomes.push(response);
+                return response;
+            },
+            installedMethods: boundary.installedMethods });
+        const hook = await renderHook(({ enabled }) => useTriageSessionPullRequestWatchDefaultsV1(enabled), {
+            initialProps: { enabled: false },
+            wrapper: ({ children }) => React.createElement(PluginHostApiProvider, { hostApi: adapter.api }, children),
+        });
+        try {
+            expect(reads).toBe(0);
+            await expect(hook.getCurrent()()).resolves.toEqual({ kind: 'unavailable' });
+            await hook.rerender({ enabled: true });
+            expect(reads).toBe(0);
+            expect(lifetime.isCurrent()).toBe(true);
+            expect(adapter.api.version().methods).toContain('executeAction');
+            let result: Awaited<ReturnType<ReturnType<typeof hook.getCurrent>>> | undefined;
+            await act(async () => { result = await hook.getCurrent()(); });
+            expect(result, JSON.stringify(outcomes)).toEqual({ kind: 'ready', policy: { mode: 'address', archiveAfterMerge: true }, fixAttemptLimit: null });
+            expect(reads).toBe(1);
+            values = {};
+            await act(async () => { result = await hook.getCurrent()(); });
+            expect(result).toEqual({ kind: 'ready', policy: { mode: 'notify', archiveAfterMerge: false }, fixAttemptLimit: 3 });
+            expect(reads).toBe(2);
+            let release!: () => void;
+            respondAfter = new Promise<void>(resolve => { release = resolve; });
+            const cancellation = new AbortController();
+            const cancelled = hook.getCurrent()({ signal: cancellation.signal });
+            const cancelledResult = expect(cancelled).rejects.toMatchObject({ name: 'AbortError' });
+            await vi.waitFor(() => expect(reads).toBe(3));
+            cancellation.abort();
+            release();
+            await cancelledResult;
+            respondAfter = new Promise<void>(resolve => { release = resolve; });
+            const pending = hook.getCurrent()();
+            await vi.waitFor(() => expect(reads).toBe(4));
+            // Retire the actual captured Account, not only an unbound facade's
+            // synthetic mount-current flag. Mounts carry their AbortSignal above.
+            await disconnectActiveServerConnection();
+            expect(lifetime.isCurrent()).toBe(false);
+            release();
+            await expect(pending).resolves.toEqual({ kind: 'unavailable' });
+            await expect(hook.getCurrent()()).resolves.toEqual({ kind: 'unavailable' });
+            expect(reads).toBe(4);
+        } finally { current = false; await hook.unmount(); adapter.dispose(); boundary.dispose?.(); }
+    });
+
     it('reads and changes bundled Claude Account preferences without a selected machine or Account-installed release', async () => {
         const serverUrl = 'https://bundled-settings-actions.test';
         const serverId = await homes.addHome({ name: 'Bundled Settings Home', serverUrl, serverIdentityId: 'srv_bundled_settings',
@@ -111,7 +228,7 @@ describe('Plugin Settings through the default Account Action host', () => {
         const definition = PluginSettingsContributionV2Schema.parse({ id: 'preferences', title: 'Preferences', scope: 'account',
             target: { kind: 'plugin' }, fields: [{ id: 'enabled', title: 'Enabled', schema: { type: 'boolean' } }] });
         const projectedSettings = projectPluginSettingsContributionV2({ pluginId, definition });
-        let projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1, agentsById: {}, actionsById: {},   resourcesById: {},
+        let projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1, agentsById: {}, actionsById: {}, resourcesById: {},
             settingsById: { [projectedSettings.id]: projectedSettings }, diagnostics: [], installedPackagesById: {
                 [pluginId]: { id: pluginId, displayName: 'Source Settings', version: '1.0.0', enabled: true,
                     source: { kind: 'localPath', locator: 'source-root' }, occurrenceId: 'source-occurrence',
@@ -171,7 +288,7 @@ describe('Plugin Settings through the default Account Action host', () => {
             currentModel = readModel();
             candidates.publish(currentModel, [], [pluginId]);
         };
-        const invalidateProjection = () => publishMachineContributionRegistryProjectionInvalidation({ machineId, serverId: connection.home.id });
+        const invalidateProjection = () => publishMachineContributionRegistryProjectionInvalidation({ machineId, serverId: connection.home.id }, 'authority');
         const unpublish = publishCommittedAppShellPluginUiProjection(() => currentModel,
             id => currentModel ? candidates.getSnapshot().get(id) ?? null : null);
         try {
@@ -181,7 +298,7 @@ describe('Plugin Settings through the default Account Action host', () => {
                 ...readPluginUiExecutionOriginCandidates({ projection: model, pluginId }) }), 'Fresh source must be admitted before exercising Settings')
                 .toMatchObject({ origin });
             transportReady = true;
-            const declarations = await loadDaemonMergedProjectionInputs({ machineId, serverId: connection.home.id, accountLifetime: lifetime });
+            const declarations = await loadDaemonMergedProjectionInputs({ sections: 'complete', machineId, serverId: connection.home.id, accountLifetime: lifetime });
             expect(declarations?.pluginProjectionById[pluginId]?.editableSettingsGroups[0]?.fields[0]?.key,
                 JSON.stringify(readCachedDaemonMergedProjectionCacheEntry({ machineId, serverId: connection.home.id }))).toBe('enabled');
             let revision = 7;

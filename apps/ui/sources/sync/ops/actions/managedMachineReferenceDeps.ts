@@ -22,6 +22,7 @@ export function createUiMachineDeploymentReferenceReader(account: LazyActionAcco
 
 /** Requester-owned disclosure. Native controllers never supply another Account's private references. */
 export function createUiManagedMachineReferenceReader(account: LazyActionAccountContext): NonNullable<ActionExecutorDeps['managedMachineReferences']> {
+    const readDeploymentReferences = createUiMachineDeploymentReferenceReader(account);
     return async ({ input, signal }) => {
         account.assertCurrent();
         const unavailable = (reason: MachineReferenceCensusV1['unavailable'][number]): MachineReferenceCensusV1 => ({
@@ -49,6 +50,7 @@ export function createUiManagedMachineReferenceReader(account: LazyActionAccount
                 serverId: account.serverId, signal,
             }),
             readAssignments: cursor => listAutomationDefinitions(account.credentials, cursor ? { cursor } : {}, account),
+            readDeployments: selection => readDeploymentReferences(selection, signal),
         });
         account.assertCurrent();
         return census;

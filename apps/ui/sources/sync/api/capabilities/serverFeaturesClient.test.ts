@@ -1,4 +1,4 @@
-import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 let activeServerSnapshot = {

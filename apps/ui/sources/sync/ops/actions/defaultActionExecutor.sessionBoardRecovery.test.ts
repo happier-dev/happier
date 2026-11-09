@@ -54,14 +54,29 @@ describe('retired Session Board Action result projection', () => {
 
     it('keeps a pre-dispatch retirement definite and carries no recovery packet', () => {
         expect(projectRetiredSessionBoardActionFailure({
+            actionId: 'session.board.item.upsert',
             mutationDispatched: false,
             retirementStatus: 'forbidden',
             recoveryDetails: issued.details,
         })).toEqual({ ok: false, errorCode: 'forbidden', error: 'forbidden' });
+        expect(projectRetiredSessionBoardActionFailure({
+            actionId: 'session.board.item.upsert',
+            mutationDispatched: false,
+            retirementStatus: 'feature_disabled',
+            recoveryDetails: null,
+        })).toEqual({ ok: false, errorCode: 'feature_disabled', error: 'feature_disabled',
+            details: { operation: 'session.board.item.upsert' } });
+        expect(projectRetiredSessionBoardActionFailure({
+            actionId: 'session.board.item.upsert',
+            mutationDispatched: false,
+            retirementStatus: 'session_board_storage_mode_mismatch',
+            recoveryDetails: null,
+        })).toEqual({ ok: false, errorCode: 'session_board_storage_mode_mismatch', error: 'session_board_storage_mode_mismatch' });
     });
 
     it('returns only the strict originating recovery packet when scope retires after dispatch', () => {
         expect(projectRetiredSessionBoardActionFailure({
+            actionId: 'session.board.item.upsert',
             mutationDispatched: true,
             retirementStatus: 'forbidden',
             recoveryDetails: issued.details,
@@ -70,6 +85,7 @@ describe('retired Session Board Action result projection', () => {
 
     it('stays definite when a dispatch was observed without the frozen request', () => {
         expect(projectRetiredSessionBoardActionFailure({
+            actionId: 'session.board.item.upsert',
             mutationDispatched: true,
             retirementStatus: 'forbidden',
             recoveryDetails: null,
@@ -78,9 +94,9 @@ describe('retired Session Board Action result projection', () => {
 
     it('never answers a retirement with a failure the strict Board union cannot parse', () => {
         for (const projected of [
-            projectRetiredSessionBoardActionFailure({ mutationDispatched: false, retirementStatus: 'offline', recoveryDetails: null }),
-            projectRetiredSessionBoardActionFailure({ mutationDispatched: true, retirementStatus: 'offline', recoveryDetails: null }),
-            projectRetiredSessionBoardActionFailure({ mutationDispatched: true, retirementStatus: 'offline', recoveryDetails: issued.details }),
+            projectRetiredSessionBoardActionFailure({ actionId: 'session.board.item.upsert', mutationDispatched: false, retirementStatus: 'offline', recoveryDetails: null }),
+            projectRetiredSessionBoardActionFailure({ actionId: 'session.board.item.upsert', mutationDispatched: true, retirementStatus: 'offline', recoveryDetails: null }),
+            projectRetiredSessionBoardActionFailure({ actionId: 'session.board.item.upsert', mutationDispatched: true, retirementStatus: 'offline', recoveryDetails: issued.details }),
         ]) {
             expect(SessionBoardActionFailureV1Schema.safeParse(projected).success).toBe(true);
         }

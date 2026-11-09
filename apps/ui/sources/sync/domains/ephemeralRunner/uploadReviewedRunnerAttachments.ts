@@ -5,12 +5,12 @@ import type { AttachmentsUploadConfig } from '@/sync/domains/transfers/ops/uploa
 import {
     buildUploadedAttachment,
     uploadAttachmentDraftsToSession,
-    type UploadedAttachment,
+    type IssuedUploadedAttachment,
 } from '@/components/sessions/attachments/uploadAttachmentDraftsToSession';
 import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
 import type { ExactSessionMachineTargetIdentity } from '@/sync/ops/sessionMachineTarget';
 
-export type ReviewedRunnerAttachmentUpload = UploadedAttachment & Readonly<{
+export type ReviewedRunnerAttachmentUpload = IssuedUploadedAttachment & Readonly<{
     id: string;
 }>;
 
@@ -26,6 +26,7 @@ export type ResumedRunnerAttachmentUpload = Readonly<{
     path: string;
     sizeBytes: number;
     sha256: string;
+    attachmentHandle?: IssuedUploadedAttachment['attachmentHandle'];
 }>;
 
 export type RunnerAttachmentAdmissionErrorCode =
@@ -115,6 +116,7 @@ export async function uploadReviewedRunnerAttachments(input: Readonly<{
             uploadedSizeBytes: resumed.sizeBytes,
             ...(resumed.mimeType ? { uploadedMimeType: resumed.mimeType } : {}),
             sha256: resumed.sha256.toLowerCase(),
+            ...(resumed.attachmentHandle ? { attachmentHandle: resumed.attachmentHandle } : {}),
         });
     }
     if (resumedById.size !== 0) {
@@ -147,6 +149,7 @@ export async function uploadReviewedRunnerAttachments(input: Readonly<{
                     path: draft.uploadedPath,
                     sizeBytes: reviewed.sizeBytes,
                     sha256,
+                    attachmentHandle: draft.attachmentHandle,
                 });
             } } : {}),
             ...(input.uploadFile ? { uploadFile: input.uploadFile } : {}),
@@ -180,8 +183,10 @@ export async function uploadReviewedRunnerAttachments(input: Readonly<{
                 ...(reviewed.mimeType ? { mimeType: reviewed.mimeType } : {}),
                 sizeBytes: ordinaryUploaded.sizeBytes,
                 sha256,
+                attachmentHandle: ordinaryUploaded.attachmentHandle,
             }),
             id: reviewed.id,
+            attachmentHandle: ordinaryUploaded.attachmentHandle,
         };
     });
 

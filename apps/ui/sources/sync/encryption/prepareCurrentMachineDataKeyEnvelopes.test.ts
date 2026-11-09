@@ -1,3 +1,4 @@
+import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import nacl from 'tweetnacl';
 import { encodeBase64, decodeBase64 } from '@happier-dev/protocol/crypto/base64';
@@ -43,7 +44,7 @@ describe('Machine current key preparation', () => {
             daemonState: encodeBase64((await historical.encrypt([rawPrivate]))[0]!), storageMode: 'e2ee' };
         let transmissions = 0;
         const prepared = await encryption.prepareMachineContentKey({ machineId: 'machine', custodianAccountId: 'owner', readAccountMode: async () => 'e2ee',
-            observe: async () => row,
+            accountE2eeCustody: 'active', observe: async () => row,
             transition: async input => { transmissions++; row = { ...row, ...input.next, metadataVersion: 4, daemonStateVersion: 5 }; throw new Error('lost acknowledgement'); },
             isCurrent: () => true,
         });
@@ -57,6 +58,17 @@ describe('Machine current key preparation', () => {
                 content: { metadata: row.metadata!, metadataVersion: 4, daemonState: row.daemonState, daemonStateVersion: 5 } }), patchPage,
         }, resolveTransferableMachineDataKey: async () => prepared.encryptionKey ?? null, isHostScopeCurrent: () => true })).toEqual({ kind: 'pending_holder' });
         expect(patchPage).not.toHaveBeenCalled();
+    });
+    it('admits an own row the Home reports Plain only when this device keeps its Account keys as history', async () => {
+        const encryption = await Encryption.createFromContentKeyPair({ publicKey: holder.publicKey, machineKey: holder.secretKey });
+        const row: MachinePublishedRowV1 = { id: 'machine', managedMachineRef: null, dataEncryptionKey: null, metadataVersion: 1, daemonStateVersion: 0,
+            metadata: encodePlainMachineStoredContent({ host: 'host', platform: 'linux', happyCliVersion: '0.3', homeDir: '/home/owner', happyHomeDir: '/home/owner/.happier' }),
+            daemonState: null, storageMode: 'plain' };
+        const prepare = (accountE2eeCustody: 'active' | 'historical') => encryption.prepareMachineContentKey({ machineId: 'machine',
+            custodianAccountId: 'owner', readAccountMode: async () => 'e2ee', accountE2eeCustody, observe: async () => row,
+            transition: async () => { throw new Error('a Plain row is never transitioned'); }, isCurrent: () => true });
+        await expect(prepare('active')).rejects.toMatchObject({ code: 'encryption_material_unavailable' });
+        await expect(prepare('historical')).resolves.toMatchObject({ encryptionMode: 'plain' });
     });
     it('custodian material selection rejects Account borrowing and opens an independent current owner key', async () => {
         const encryption = await Encryption.createFromContentKeyPair({ publicKey: holder.publicKey, machineKey: holder.secretKey });

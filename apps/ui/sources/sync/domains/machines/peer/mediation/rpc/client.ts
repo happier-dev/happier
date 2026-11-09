@@ -1,6 +1,5 @@
 import { PEER_MACHINE_RPC_DIRECT_PATH_V2, PeerMachineRpcDirectResponseV2Schema, type PeerMachineRpcDirectRequestV2, type PeerMachineRpcDirectResponseV2 } from '@happier-dev/protocol/machines/peer/mediation/rpc/directV2';
 import { PEER_MEDIATION_RECEIPTS } from '@happier-dev/protocol/machines/peer/mediation/receipts';
-import { createPeerMachineRpcRequestHashV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/commandReceiptV1';
 import { isMachineRpcDirectRoutePolicy, resolveMachineRpcRelayFallbackDecision, resolveMachineRpcRoutePolicy, type MachineRpcRelayFallbackDecision, type MachineRpcRoutePolicyV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import type { PeerRouteEphemeralProofV2 } from '@happier-dev/protocol/machines/peer/mediation/ephemeralPeerRouteProofV2';
 import type { SignedDirectRouteGrantV2 } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantV2';
@@ -247,14 +246,6 @@ export async function machineRpcWithPeerMediationRoute<R, A>(
         endpointFingerprint: route.endpoint.endpointFingerprint,
     });
 
-    const replayKey = requestId;
-    const requestHash = policy.commandReceiptRequired ? createPeerMachineRpcRequestHashV1({
-        method: params.method,
-        params: params.payload,
-        grantId: route.grant.payload.grantId,
-        endpointFingerprint: route.endpoint.endpointFingerprint,
-        replayKey,
-    }) : undefined;
     const directRequest: PeerMachineRpcDirectRequestV2 = {
             v: 2,
             requestId,
@@ -265,17 +256,6 @@ export async function machineRpcWithPeerMediationRoute<R, A>(
             routeKind: 'loopback_direct',
             flowKind: 'machine_rpc',
             endpointFingerprint: route.endpoint.endpointFingerprint,
-            ...(policy.commandReceiptRequired
-                ? {
-                    commandReceipt: {
-                        v: 1 as const,
-                        issuer: 'ui' as const,
-                        issuedAtMs: Date.now(),
-                        requestHash: requestHash!,
-                        replayKey,
-                    },
-                }
-                : {}),
         };
     const sendDirect = async (signal: AbortSignal | undefined, onIssued: () => void): Promise<R> => {
         let dispatched = false;

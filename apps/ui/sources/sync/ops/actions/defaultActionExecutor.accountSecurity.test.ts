@@ -3,12 +3,15 @@ import { createFrontDoorActionExecute } from './frontDoorRuntimeActionExecutor';
 import React from 'react';
 import { act } from 'react-test-renderer';
 import {
-    ActionsSettingsV1Schema,
-    sealAccountScopedBlobCiphertext,
+    ActionsSettingsV1Schema} from '@happier-dev/protocol/actions/actionSettings';
+import {
+    sealAccountScopedBlobCiphertext} from '@happier-dev/protocol/crypto/accountScopedCipher';
+import {
     encodePasswordCredentialFieldV1,
-    type PlainAccountPasswordCredentialV1,
+    type PlainAccountPasswordCredentialV1} from '@happier-dev/protocol/auth/accountPasswordCredential';
+import {
     type AccountSecurityGetResponseV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/auth/accountSecurity';
 
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -48,7 +51,7 @@ installDisconnectedServerSocketBoundary();
 const initialState = getStorage().getState();
 const tokenWithPayload = (payload: object) => `e30.${Buffer.from(JSON.stringify(payload)).toString('base64url')}.signature`;
 const enrolledSecuritySummary = {
-    v: 1, encryptionMode: 'plain', terminalPresentUserPolicy: 'allowed', nativeEmail: 'person@example.test',
+    v: 1, encryptionMode: 'plain', nativeEmail: 'person@example.test',
     password: { status: 'enrolled', revision: 4 },
 } satisfies AccountSecurityGetResponseV1;
 

@@ -1,9 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { SessionModelSelectionIntentV1Schema, type CodexBackendMode } from '@happier-dev/protocol';
+import { SessionModelSelectionIntentV1Schema} from '@happier-dev/protocol/providers/selection/v1';
+import { type CodexBackendMode } from '@happier-dev/protocol/sessions/metadata/overrides';
 
 import { deriveSessionAuthoringSnapshot } from './deriveSessionAuthoringSnapshot';
+import { projectComposerOptionsInputV1 } from '@happier-dev/protocol/embed';
 
 describe('deriveSessionAuthoringSnapshot', () => {
+    it('reads renewed permission intent without promoting the frame to an owner', () => {
+        const session = { id: 'frame', encryptionMode: 'e2ee' as const, metadataLayoutVersion: 1,
+            metadata: { path: '/', host: '', flavor: 'codex' }, ownerMetadataView: null,
+            composerOptionsInput: projectComposerOptionsInputV1({ permissionMode: 'read-only', permissionModeUpdatedAt: 321 }) };
+        expect(deriveSessionAuthoringSnapshot({ session })).toMatchObject({ permissionMode: 'read-only', permissionModeUpdatedAt: 321,
+            agentTarget: null, backendTarget: null });
+    });
     it('retains Herdr terminal selection when continuing an existing session', () => {
         const snapshot = deriveSessionAuthoringSnapshot({
             session: {

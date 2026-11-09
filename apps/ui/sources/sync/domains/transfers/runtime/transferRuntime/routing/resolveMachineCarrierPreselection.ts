@@ -18,6 +18,9 @@ export type MachineCarrierPreselection =
     | Readonly<{ kind: 'server_rpc' }>
     | Readonly<{ kind: 'unavailable' }>;
 
+/** Some byte families already promise the encrypted Home route on every host. */
+export type MachineCarrierRequirements = Readonly<{ homeRpcFallback?: 'required' }>;
+
 /** Browser identity survives an unavailable Iroh lifecycle so Home RPC remains eligible. */
 export function resolveMachineCarrierHostEligibility(input: Readonly<{
     browserIroh: BrowserIrohHostDecision;
@@ -73,6 +76,7 @@ export function isIrohMachineCarrierFeatureEnabled(serverFeatures: ServerFeature
 
 /** The one pure, pre-prepare finite-transfer route decision shared by controls and execution. */
 export function resolveMachineCarrierPreselection(input: Readonly<{
+    homeRpcFallback?: MachineCarrierRequirements['homeRpcFallback'];
     applicationCarrierEligibility?: HomeApplicationCarrierEligibility;
     serverFeatures: ServerFeatures | null;
     targetEndpoint: unknown;
@@ -102,5 +106,6 @@ export function resolveMachineCarrierPreselection(input: Readonly<{
         }
     }
 
-    return input.host.kind === 'browser' ? { kind: 'server_rpc' } : { kind: 'unavailable' };
+    return input.host.kind === 'browser' || input.homeRpcFallback === 'required'
+        ? { kind: 'server_rpc' } : { kind: 'unavailable' };
 }

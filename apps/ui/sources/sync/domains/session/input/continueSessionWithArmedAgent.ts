@@ -3,7 +3,7 @@ import type {
     SessionAgentTransitionInputV1,
     SessionAgentTransitionRejectedCodeV1,
     SessionAgentTransitionResultV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/agentTransition';
 import { parsePermissionIntentAlias } from '@happier-dev/agents/permissions';
 import type { Metadata } from '@happier-dev/session-core/state';
 

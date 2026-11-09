@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { V2SessionRecordSchema, type SessionListQueryV1 } from '@happier-dev/protocol';
+import { V2SessionRecordSchema} from '@happier-dev/protocol/sessions/control/contract';
+import { type SessionListQueryV1 } from '@happier-dev/protocol/sessions/listing/query';
 import { createCompactSessionListRowFixture } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { createPlainV2SessionRecordFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 

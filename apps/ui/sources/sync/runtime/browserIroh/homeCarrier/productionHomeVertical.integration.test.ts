@@ -5,7 +5,7 @@ import { attach, type Server as EngineServer } from 'engine.io';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { createHappierSocket } from '@happier-dev/sync-client';
-import { buildAccountStoredContentCompatibilitySocketAuthV1, CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol';
+import { buildAccountStoredContentCompatibilitySocketAuthV1, CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 import { createServerFetchAtEndpoint } from '@/sync/http/client';
 
 import type { BrowserIrohEndpointClient, BrowserIrohStream } from '../endpointClient';

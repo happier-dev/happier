@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, beforeEach } from 'vitest';
+import { selectActiveTestHomeForTests } from '@/dev/testkit/fixtures/persistedHomeProfiles';
 import * as React from 'react';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
@@ -6,7 +7,12 @@ import { SessionPresentedSurfacePresentationTarget } from '@/components/sessions
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { createWidgetActionInputResolverV1, WidgetMoveCaptureV1Schema } from '@happier-dev/protocol/widgets';
 import { createHomeHubArtifactPortV1 } from '@happier-dev/protocol/home';
-import { createActionExecutor, createWorkBoardArtifactPortV1, RPC_METHODS, UiActionDispatchRequestV1Schema, type ActionExecuteResult, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { createActionExecutor} from '@happier-dev/protocol/actions/actionExecutor';
+import { createWorkBoardArtifactPortV1} from '@happier-dev/protocol/boards/workBoardArtifactV1';
+import { RPC_METHODS} from '@happier-dev/protocol/rpc/methods';
+import { UiActionDispatchRequestV1Schema} from '@happier-dev/protocol/actions/clientDispatchV1';
+import { type ActionExecuteResult} from '@happier-dev/protocol/actions/actionExecutionResult';
+import { type ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { createClientActionReverseDispatcher } from '../../../../../cli/src/session/actions/clientActionReverseDispatch';
 import { createWorkBoardArtifactBoundary } from '../../../../../../packages/protocol/src/boards/workBoardArtifactV1.testkit';
 import { localSettingsDefaults, LocalSettingsSchema } from '@/sync/domains/settings/localSettings';
@@ -42,7 +48,7 @@ describe('mounted Companion widget Action dependency', () => {
                 readDescriptor: async () => ({ sizeDeclaration: { sizes: ['medium', 'full'], defaultSize: 'medium' }, inputs: { fields: [{ path: 'count', title: 'Count', widget: 'integer' }] },
                     inputSchema: { type: 'object', properties: { count: { type: 'integer' } }, required: ['count'], additionalProperties: false } }),
                 readContext: async request => {
-                    const context: Readonly<Record<string, readonly import('@happier-dev/protocol').JsonValue[]>> = request.ref.surface.owner.kind === 'home' ? { sessionCount: [3] } : {};
+                    const context: Readonly<Record<string, readonly import('@happier-dev/protocol/json/strictJsonValue').JsonValue[]>> = request.ref.surface.owner.kind === 'home' ? { sessionCount: [3] } : {};
                     return context;
                 }, readViewerValues: async () => ({ values: {} }),
                 validateValue: async () => ({ status: 'valid' }), resolveOptions: async () => [],
@@ -121,7 +127,7 @@ describe('mounted Companion widget Action dependency', () => {
                     readDescriptor: async () => ({ sizeDeclaration: { sizes: ['medium', 'full'], defaultSize: 'medium' }, inputs: { fields: [{ path: 'count', title: 'Count', widget: 'integer' }] },
                         inputSchema: { type: 'object', properties: { count: { type: 'integer' } }, required: ['count'], additionalProperties: false } }),
                     readContext: async request => {
-                        const context: Readonly<Record<string, readonly import('@happier-dev/protocol').JsonValue[]>> = request.ref.surface.owner.kind === 'companion' ? { sessionCount: [3] } : {};
+                        const context: Readonly<Record<string, readonly import('@happier-dev/protocol/json/strictJsonValue').JsonValue[]>> = request.ref.surface.owner.kind === 'companion' ? { sessionCount: [3] } : {};
                         return context;
                     }, readViewerValues: async () => ({ values: {} }),
                     validateValue: async () => ({ status: 'valid' }), resolveOptions: async () => [],
@@ -187,7 +193,7 @@ describe('mounted Companion widget Action dependency', () => {
             const updateBindings = (bindings: Parameters<typeof setSessionCompanionInstanceInputs>[2]) => React.act(async () => {
                 const localSettings = storage.getState().localSettings;
                 const updated = LocalSettingsSchema.parse({ ...localSettings, sessionCompanionPreferencesBySessionV1: { ...localSettings.sessionCompanionPreferencesBySessionV1,
-                    [key]: setSessionCompanionInstanceInputs(localSettings.sessionCompanionPreferencesBySessionV1[key]!, instance.id, bindings) } });
+                    [key]: setSessionCompanionInstanceInputs(normalizeSessionCompanionPreference(localSettings.sessionCompanionPreferencesBySessionV1[key]), instance.id, bindings) } });
                 storage.getState().applyLocalSettings({ sessionCompanionPreferencesBySessionV1: updated.sessionCompanionPreferencesBySessionV1 });
             });
             await updateBindings({ count: { kind: 'context', slot: 'sessionCount' } });
@@ -303,3 +309,6 @@ describe('mounted Companion widget Action dependency', () => {
         expect(await port!.read(surface, {})).toMatchObject({ ok: false, errorCode: 'widgets_surface_unavailable' });
     });
 });
+
+// P03-TESTKIT-SERVER: the unconfigured test build seeds no Home; select one through the real owner.
+beforeEach(async () => { await selectActiveTestHomeForTests(); });

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ScmDiffSummaryGenerateInputSchema, ScmDiffSummaryGenerateOutputSchema, type TurnChangeSet } from '@happier-dev/protocol';
+import { ScmDiffSummaryGenerateInputSchema, ScmDiffSummaryGenerateOutputSchema} from '@happier-dev/protocol/scm/diffSummary';
+import { type TurnChangeSet } from '@happier-dev/protocol/sessions/changes/types';
 import { ACP_CATALOG_ROWS_ROUTE_V1, AcpCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { buildTurnChangeSetDiffInput } from '../../../../../cli/src/agent/tools/diff/buildTurnChangeSetDiffInput';
@@ -7,10 +8,11 @@ import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { AGENT_IDS, getAgentCore, getAgentStaticModels } from '@happier-dev/agents';
 import { buildScmDiffSummaryModelProfiles } from '@/settings/scmDiffSummary/models';
+import { ExternalActionExecutionAuthorizationRequestV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 
-// Authenticated SCM RPC and execution-run RPC are transport boundaries.
-const network = vi.hoisted(() => ({ generate: vi.fn() }));
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope: network.generate }));
+// Account Action HTTP and execution-run RPC are transport boundaries.
+const network = vi.hoisted(() => ({ generate: vi.fn(), rawRpc: vi.fn() }));
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope: network.rawRpc }));
 vi.mock('@/sync/ops/sessionExecutionRuns', () => ({ sessionExecutionRunGet: vi.fn() }));
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
@@ -21,6 +23,7 @@ const { selectSessionScmWalkthroughKey } = await import('@/sync/domains/scm/diff
 const { prefetchCompletedCheckpointMessages } = await import('./checkpointPrefetch');
 const { getScmDiffSummaryState, retireScmDiffSummaryScope } = await import('./generate');
 const { storage } = await import('@/sync/domains/state/storage');
+const { answerScmRunMachineCustodyForTests } = await import('@/dev/testkit/harness/scmActionTransport');
 await import('@/sync/ops/actions/defaultActionExecutor');
 
 let scope = { serverId: 'checkpoint-home', accountId: 'checkpoint-account' };
@@ -53,8 +56,18 @@ let session: ReturnType<typeof createSessionFixture>;
 beforeEach(async () => {
     await harness.reset();
     const serverId = await harness.addHome({ name: 'Checkpoint Home', serverUrl: 'https://checkpoint-home.example',
-        accountId: 'checkpoint-account', serverIdentityId: 'srv-checkpoint-home', currentAccount: true });
+        accountId: 'checkpoint-account', serverIdentityId: 'srv_checkpoint_home', currentAccount: true });
     scope = { serverId, accountId: 'checkpoint-account' };
+    answerScmRunMachineCustodyForTests(harness, serverId, 'scm.diffSummary.generate', {
+        homeId: 'srv_checkpoint_home', accountId: scope.accountId, machineId: 'fixture-machine', installationId: 'installation',
+    });
+    harness.answer(serverId, '/v1/actions/scm.diffSummary.generate', { select: async (body, request) => {
+        const admission = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+        if (admission.envelope.v !== 1) throw new Error('Plain checkpoint fixture requires a plain envelope');
+        const output: unknown = await network.generate({ payload: admission.envelope.input, signal: request.signal });
+        return { body: { v: 1, actionId: 'scm.diffSummary.generate', requestId: admission.envelope.requestId,
+            execution: { ok: true, result: output } } };
+    } });
     harness.answer(serverId, ACP_CATALOG_ROWS_ROUTE_V1, { body: AcpCatalogRowReadResponseV1Schema.parse({ status: 'absent' }) });
     harness.answer(serverId, '/v1/account/encryption/currentness', { body: {
         mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
@@ -64,7 +77,7 @@ beforeEach(async () => {
     storage.setState({ sessions: { [session.id]: session } });
 });
 
-afterEach(() => { retireScmDiffSummaryScope(scope); network.generate.mockReset(); standardCleanup(); });
+afterEach(() => { retireScmDiffSummaryScope(scope); network.generate.mockReset(); network.rawRpc.mockReset(); standardCleanup(); });
 
 describe('completed checkpoint transcript prefetch', () => {
     it.each(['unset', 'saved'] as const)('preserves the %s model preference through checkpoint generation and reuses its run on replay', async preference => {
@@ -91,6 +104,7 @@ describe('completed checkpoint transcript prefetch', () => {
         expect(network.generate, JSON.stringify({ http: harness.requests.map(({ serverUrl, path }) => ({ serverUrl, path })),
             state: getScmDiffSummaryState(),
         })).toHaveBeenCalledTimes(1);
+        expect(network.rawRpc).not.toHaveBeenCalled();
         expect(network.generate.mock.calls[0]?.[0]?.payload).toMatchObject({ cwd: '/repo', sessionId: session.id,
             source: { kind: 'turnCheckpoint', sessionId: session.id, turnId: turn.turnId,
                 checkpointReceiptId: 'checkpoint.finalized', evidenceMode: 'checkpoint' },

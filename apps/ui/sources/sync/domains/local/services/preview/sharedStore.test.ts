@@ -10,7 +10,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', a
     return createServerScopedMachineRpcBoundaryMock(rpc.machine);
 });
 
-import type { LocalServicePreviewResourceV1 } from '@happier-dev/protocol';
+import type { LocalServicePreviewResourceV1 } from '@happier-dev/protocol/local/services/preview/v1';
 
 import { expectNoWallClockPolling } from '../noPollingTestHelpers';
 import {
@@ -68,6 +68,87 @@ function snapshotResponse(snapshot: LocalServicePreviewSnapshot) {
 }
 
 describe('shared local-service preview store (PRV-4)', () => {
+    it('publishes nothing for equal receipts and replaces only changed preview facts', async () => {
+        const initial = snapshotWith('preview_1');
+        rpc.machine.mockResolvedValue(snapshotResponse(initial));
+        const key = { machineId: 'machine_1' };
+        const listener = vi.fn();
+        const release = subscribeLocalServicePreviewStore(key, listener);
+        try {
+            await flushMicrotasks();
+            const ready = getLocalServicePreviewState(key);
+            listener.mockClear();
+            for (let receipt = 0; receipt < 10; receipt++) {
+                publishLocalServicePreviewSnapshot(key, structuredClone(initial));
+            }
+            expect(listener).toHaveBeenCalledTimes(0);
+            expect(getLocalServicePreviewState(key)).toBe(ready);
+
+            publishLocalServicePreviewSnapshot(key, { ...initial, generatedAt: 2_000 });
+            const newer = getLocalServicePreviewState(key);
+            expect(listener).toHaveBeenCalledTimes(1);
+            expect(newer.generatedAt).toBe(2_000);
+            expect(newer.previewIds).toBe(ready.previewIds);
+            expect(newer.previewsById).toBe(ready.previewsById);
+            expect(newer.diagnostics).toBe(ready.diagnostics);
+
+            publishLocalServicePreviewSnapshot(key, { ...initial, generatedAt: 2_000,
+                previews: initial.previews.map(row => ({ ...row, expiresAt: 3_000 })) });
+            const changed = getLocalServicePreviewState(key);
+            expect(listener).toHaveBeenCalledTimes(2);
+            expect(changed.previewIds).toBe(ready.previewIds);
+            expect(changed.previewsById.get('preview_1')?.expiresAt).toBe(3_000);
+            expect(changed.previewsById).not.toBe(ready.previewsById);
+
+            publishLocalServicePreviewSnapshot(key, { ...initial, generatedAt: 3_000, refreshState: 'error',
+                diagnostics: [{ v: 1, code: 'path_mode_degraded', severity: 'warning', scope: 'privatePreview' }] });
+            expect(listener).toHaveBeenCalledTimes(3);
+            expect(getLocalServicePreviewState(key)).toMatchObject({ refreshState: 'error',
+                diagnostics: [expect.objectContaining({ code: 'path_mode_degraded' })] });
+        } finally { release(); }
+    });
+    it('shares one admitted preview across a Home profile alias without crossing Accounts', async () => {
+        const { upsertServerProfile, setServerProfileIdentityForUrl } = await import('@/sync/domains/server/serverProfiles');
+        const home = await upsertServerProfile({ serverUrl: 'https://preview-scope.test' });
+        await setServerProfileIdentityForUrl(home.serverUrl, 'srv_preview_scope');
+        const firstAccount = { machineId: 'machine_1', serverId: home.id, accountId: 'account-a' };
+        const canonical = { ...firstAccount, serverId: 'srv_preview_scope' };
+        rpc.machine.mockResolvedValue(snapshotResponse(snapshotWith('preview_1')));
+        const release = subscribeLocalServicePreviewStore(firstAccount, () => {});
+        try {
+            await flushMicrotasks();
+            expect(getLocalServicePreviewState(firstAccount).previewIds).toEqual(['preview_1']);
+            expect(getLocalServicePreviewState(canonical)).toBe(getLocalServicePreviewState(firstAccount));
+            expect(getLocalServicePreviewState({ ...canonical, accountId: 'account-b' }).previewIds).toEqual([]);
+        } finally { release(); }
+    });
+
+    it('retires credential-owned previews and rejects a preceding Account read that settles late', async () => {
+        const { upsertServerProfile } = await import('@/sync/domains/server/serverProfiles');
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const { createAccountTokenForTests } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+        const { resolveAuthCredentialsScopeKey } = await import('@/auth/storage/resolveAuthCredentialsScopeKey');
+        const home = await upsertServerProfile({ serverUrl: 'https://preview-retirement.test' });
+        const credentials = { token: createAccountTokenForTests('account-a', { currentAccount: true }) };
+        expect(await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.id }, credentials)).toBe(true);
+        const key = { machineId: 'machine_1', serverId: home.id, accountId: 'account-a',
+            credentialKey: resolveAuthCredentialsScopeKey(credentials) };
+        const pending = createDeferred<unknown>();
+        rpc.machine.mockReturnValue(pending.promise);
+        const release = subscribeLocalServicePreviewStore(key, () => {});
+        try {
+            await flushMicrotasks();
+            publishLocalServicePreviewSnapshot(key, snapshotWith('preview_1'));
+            expect(getLocalServicePreviewState(key).previewIds).toEqual(['preview_1']);
+            expect(getLocalServicePreviewState({ ...key, accountId: 'account-b' }).previewIds).toEqual([]);
+            expect(await TokenStorage.setCredentialsForServerUrl(home.serverUrl,
+                { serverId: home.id }, { token: createAccountTokenForTests('account-b', { currentAccount: true }) })).toBe(true);
+            expect(getLocalServicePreviewState(key).previewIds).toEqual([]);
+            pending.resolve(snapshotResponse(snapshotWith('preview_late')));
+            await flushMicrotasks();
+            expect(getLocalServicePreviewState(key).previewIds).toEqual([]);
+        } finally { release(); }
+    });
     it.each(['snapshot', 'failure', 'rejection'] as const)('preserves a newer publication when an older read settles with %s', async (outcome) => {
         const pending = createDeferred<unknown>();
         rpc.machine.mockImplementation(async () => {

@@ -1,4 +1,4 @@
-import { PluginPortableReleaseManifestV1Schema } from '@happier-dev/protocol/plugins/availability/v1';
+import { PluginManifestV2LoadSchema } from '@happier-dev/protocol/plugins/manifest';
 import { normalizePluginAccountCollectionContractsV1, type NormalizedPluginAccountCollectionContractV1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
 import { resolvePluginCollectionMigrationArtifactOwnerV1 } from '@happier-dev/protocol/plugins/data/collectionContributionV1';
 import {
@@ -15,7 +15,7 @@ import {
 import {
     type PluginAccountCollectionMigrationRuntimeProjection,
 } from '@happier-dev/plugin-sdk';
-import { normalizePluginAccountCollectionMigrationRuntimeProjection } from '@happier-dev/plugin-sdk/host/registration';
+import { normalizePluginAccountCollectionMigrationRuntimeProjection } from '@/sync/domains/plugins/registrationProjections';
 
 import {
     createPluginReactNativeArtifactLeaseCacheSink,
@@ -94,7 +94,7 @@ export type CandidatePluginCollectionMigrationArtifactAccountHostedTargetResult 
 export type CandidatePluginCollectionMigrationArtifact = Readonly<{
     release: Readonly<{
         ref: Readonly<{ pluginId: string; version: string }>;
-        normalizedManifest: ReturnType<typeof PluginPortableReleaseManifestV1Schema.parse>;
+        normalizedManifest: ReturnType<typeof PluginManifestV2LoadSchema.parse>;
     }>;
     collectionContracts: readonly NormalizedPluginAccountCollectionContractV1[];
     collectionMigrations: PluginAccountCollectionMigrationRuntimeProjection;
@@ -543,7 +543,7 @@ export function createCandidatePluginCollectionMigrationArtifactLoader(
             }
             const payload = readCandidateModulePayload(moduleValue);
             const parsedManifest = payload
-                ? PluginPortableReleaseManifestV1Schema.safeParse(payload.manifest)
+                ? PluginManifestV2LoadSchema.safeParse(payload.manifest)
                 : null;
             if (
                 !payload

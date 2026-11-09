@@ -27,6 +27,7 @@ import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSet
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { projectExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 
 installApprovalCommonModuleMocks();
 
@@ -44,6 +45,20 @@ async function captureTransportAccount(signal?: AbortSignal) {
 }
 
 describe('private Account Action origination', () => {
+    it.each(['owner', 'unknown', 'other_account', 'other_home'] as const)('preserves only qualified host requester attribution (%s)', async scenario => {
+        const account = await captureTransportAccount();
+        const cause = { requestRef: 'original-user-input',
+            requester: scenario === 'unknown' ? null : { accountId: scenario === 'other_account' ? 'other-person' : account.accountId,
+                serverId: scenario === 'other_home' ? 'srv_other_home' : account.serverIdentityId! },
+            persona: { serverId: account.serverIdentityId!, sessionId: 'original-session' }, origin: null };
+        const projected = projectExternalActionRequesterInvocationV1({ actionId: 'session.message.send', account,
+            target: { kind: 'machine', machineId: 'original-machine' },
+            context: { surface: 'mcp', authority: 'account_automation', actionCaller: { kind: 'host' },
+                runtimeAccountId: account.accountId, serverId: account.serverId, serverIdentityId: account.serverIdentityId!,
+                actionRequestAttributionV1: cause } });
+        if (scenario === 'other_account' || scenario === 'other_home') expect(projected).toBeNull();
+        else expect(projected).toMatchObject({ actionRequestAttributionV1: cause });
+    });
     it.each(['installed', 'different'] as const)('replays a signed daemon Artifact with the %s signer through the real relay', async signer => {
         const account = await captureTransportAccount();
         const serverIdentityId = account.serverIdentityId!;

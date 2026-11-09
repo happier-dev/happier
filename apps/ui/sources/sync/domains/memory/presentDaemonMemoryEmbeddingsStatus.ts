@@ -1,4 +1,4 @@
-import type { MemoryStatusV1 } from '@happier-dev/protocol';
+import type { MemoryStatusV1 } from '@happier-dev/protocol/memory/memoryStatus';
 
 export type DaemonMemoryEmbeddingsStatusPresentation = Readonly<{
   state:

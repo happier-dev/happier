@@ -10,6 +10,7 @@ import { setActiveServer } from '../serverRuntime';
 import {
     bootstrapActiveServerFromWebLocation,
     commitWebServerUrlOverride,
+    consumeWebServerUrlOverrideFromLocation,
     readWebDestinationServerIdFromLocation,
     readWebServerUrlOverrideFromLocation,
 } from './bootstrapActiveServerFromWebLocation';
@@ -117,6 +118,21 @@ describe('bootstrapActiveServerFromWebLocation', () => {
         });
     });
 
+    it('publishes the retained selection when a supplied Home is dismissed', () => {
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_SERVER_URL = 'https://retained.example.test';
+        const serverUrl = 'https://new.example.test';
+        stubWebLocation(`https://app.example.test/?server=${encodeURIComponent(serverUrl)}`);
+        const published: string[] = [];
+        const unsubscribe = profiles.subscribeActiveServer((snapshot) => { published.push(snapshot.serverUrl); });
+        try {
+            consumeWebServerUrlOverrideFromLocation({ serverUrl });
+            expect(published).toEqual(['https://retained.example.test']);
+        } finally {
+            unsubscribe();
+        }
+    });
+
     it('keeps an unknown Home URL pending until the connect flow admits it', async () => {
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = randomScope();
         process.env.EXPO_PUBLIC_HAPPY_SERVER_URL = 'https://retained.example.test';
@@ -151,7 +167,8 @@ describe('bootstrapActiveServerFromWebLocation', () => {
         expect(profiles.resolveSavedServerProfileByUrl('https://shared.example.test')).toMatchObject({ kind: 'ambiguous' });
         expect(profiles.resolveUniqueServerProfileByUrl('https://shared.example.test')).toBeNull();
         await bootstrapActiveServerFromWebLocation({ scope: 'device' });
-        expect(profiles.getActiveServerId()).toBe('retained');
+        expect(profiles.getActiveServerId()).toBe('');
+        expect(profiles.getDeviceDefaultServerId()).toBe('retained');
 
         // URL equality cannot select a stable identity when two saved Homes share it.
         await setActiveServer({ serverId: 'first', scope: 'device' });

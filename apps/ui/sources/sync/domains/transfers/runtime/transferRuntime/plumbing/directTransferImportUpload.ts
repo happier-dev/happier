@@ -115,6 +115,7 @@ export async function uploadBulkPayloadFromFileViaDirectImport<TResponse>(params
                             timeoutMs: params.timeoutMs ?? null,
                             signal: params.signal ?? null,
                             request: prepared.session.request,
+                            carrierKind: prepared.session.carrierKind,
                         });
                         requestingPeer = false;
                         if (response.success === true) {
@@ -129,6 +130,7 @@ export async function uploadBulkPayloadFromFileViaDirectImport<TResponse>(params
                             timeoutMs: params.timeoutMs ?? null,
                             signal: params.signal ?? null,
                             request: prepared.session.request,
+                            carrierKind: prepared.session.carrierKind,
                         });
                         requestingPeer = false;
                         if (finalizeResponse.success !== true) {

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { selectActiveTestHomeForTests } from '@/dev/testkit/fixtures/persistedHomeProfiles';
 import { createStore } from 'zustand/vanilla';
 
 const mmkvStore = vi.hoisted(() => new Map<string, string>());
@@ -155,7 +156,9 @@ describe('sessions domain: batched project SCM snapshot publish', () => {
     expect(get()).toBe(settled);
     expect(getSetCount()).toBe(notifications);
     domain.publishSessionProjectScmSnapshots([{ ...publish, status: makeStatus(200) }]);
-    expect(getSetCount()).toBe(notifications + 1);
+    // Addressed SCM publishes through ProjectManager; only the legacy status mirror writes Zustand.
+    expect(getSetCount()).toBe(notifications + (exactHome ? 0 : 1));
+    expect(domain.getSessionProjectScmStatus('s1', exactHome ? serverId : undefined)).toEqual(makeStatus(200));
   });
 
   it('isolates duplicate Session SCM snapshots, selections and operation locks by Home', () => {
@@ -198,8 +201,8 @@ describe('sessions domain: batched project SCM snapshot publish', () => {
     const { get, domain, getSetCount } = createHarness();
     domain.applySessions([makeSession('s1'), makeSession('s2'), makeSession('s3')]);
 
-    // A stale touched path that the publish prune must drop.
-    domain.markWorkspaceScmTouchedPathsForSession('s1', ['gone.ts', 'src/a.ts']);
+    // A stale selected path that the publish prune must drop.
+    domain.markSessionProjectScmCommitSelectionPaths('s1', ['gone.ts', 'src/a.ts']);
     const setCountBeforePublish = getSetCount();
 
     const snapshot = makeSnapshot(100);
@@ -216,7 +219,7 @@ describe('sessions domain: batched project SCM snapshot publish', () => {
     expect(get().sessionScmStatus.s3).toBe(status);
     expect(domain.getSessionProjectScmSnapshot('s1')).toBe(snapshot);
     expect(domain.getSessionProjectScmSnapshot('s3')).toBe(snapshot);
-    expect(domain.getWorkspaceScmTouchedPathsForSession('s1')).toEqual(['src/a.ts']);
+    expect(domain.getSessionProjectScmCommitSelectionPaths('s1')).toEqual(['src/a.ts']);
   });
 
   it('keeps the equivalent-snapshot identity when only fetchedAt changes and still notifies once', () => {
@@ -253,3 +256,6 @@ describe('sessions domain: batched project SCM snapshot publish', () => {
     expect(domain.getSessionProjectScmSnapshotError('s1')).toBeNull();
   });
 });
+
+// P03-TESTKIT-SERVER: the unconfigured test build seeds no Home; select one through the real owner.
+beforeEach(async () => { await selectActiveTestHomeForTests(); });

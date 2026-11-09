@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { ACCOUNT_SETTING_DEFINITIONS } from '@happier-dev/protocol';
+import { ACCOUNT_SETTING_DEFINITIONS } from '@happier-dev/protocol/account/settings/accountSettings';
 import { describe, expect, it } from 'vitest';
 
 import {

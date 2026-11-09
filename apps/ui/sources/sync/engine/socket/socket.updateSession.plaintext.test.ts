@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { selectActiveTestHomeForTests } from '@/dev/testkit/fixtures/persistedHomeProfiles';
 
 import type { ApiUpdateContainer } from '@/sync/api/types/apiTypes';
 import { buildActivityOverviewSnapshot } from '@/activity/attention/buildActivityOverviewSnapshot';
@@ -15,12 +16,21 @@ import type { SessionListRenderableSession } from '@/sync/domains/session/listin
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { fetchAndApplySessionById } from '@/sync/engine/sessions/sessionById';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
+import { loadSyncTuning } from '@/sync/runtime/syncTuning';
 import { normalizeSessionAccessProjection } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
-import { SessionEncryption } from '@/sync/encryption/sessionEncryption';
+import { SessionEncryption, type AgentStateOpenResult } from '@/sync/encryption/sessionEncryption';
 import { EncryptionCache } from '@/sync/encryption/encryptionCache';
 import { SecretBoxEncryption, type Decryptor, type Encryptor } from '@/sync/encryption/encryptor';
 import { createSessionAccessFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { flushActivityUpdates, handleSocketUpdate, handleUpdateContainer } from './socket';
+import { sessionRuntimeObservations } from '@/sync/domains/session/sessionRuntimeObservation';
+import { projectUiSessionRuntimeAwareness } from '@/sync/domains/session/attention/runtimePresentation';
+import { SESSION_LIST_DOCUMENT_ADMISSION } from '@/sync/domains/session/sessionDocumentAdmission';
+import { hasAuthoritativeSessionRouteData } from '@/sync/domains/session/hasAuthoritativeSessionRouteData';
+import { SESSION_OWNER_METADATA_PROJECTION } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { projectSessionLayout1OwnerMetadata, readSessionLayout1OwnerMetadata } from '@/sync/engine/sessions/readSessionLayout1OwnerProjection';
+import { createPlainSessionOwnerMetadataEnvelopeV1, projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 
 const socketPostDecryptSideEffectMocks = vi.hoisted(() => ({
     notifyActivityAgentRequest: vi.fn(),
@@ -37,6 +47,8 @@ vi.mock('@/voice/context/reportNewAgentRequestsFromSessionTransition', () => ({
 }));
 
 const initialStorageState = storage.getInitialState();
+
+beforeEach(async () => { await selectActiveTestHomeForTests(); });
 
 function replaceActiveSessionListRows(rows: SessionListRenderableSession[]): void {
     const serverId = String(getActiveServerSnapshot().serverId ?? '').trim();
@@ -101,7 +113,6 @@ function buildBaseParams(overrides: Partial<HandleUpdateContainerBaseParams> = {
         invalidateSessions: vi.fn(),
         invalidateArtifacts: vi.fn(),
         invalidateFriends: vi.fn(),
-        invalidateFriendRequests: vi.fn(),
         invalidateFeed: vi.fn(),
         invalidateAutomations: vi.fn(),
         invalidateTodos: vi.fn(),
@@ -112,6 +123,91 @@ function buildBaseParams(overrides: Partial<HandleUpdateContainerBaseParams> = {
 }
 
 describe('socket update handling: plaintext update-session', () => {
+    it.each([false, true])('observes omitted metadata without opening it or refreshing the list and retains Agent-state request delivery (full consumer: %s)', async (fullConsumer) => {
+        const session = { ...buildSession('metadata-hint'), pendingPermissionRequestCount: 0,
+            pendingUserActionRequestCount: 0, [SESSION_LIST_DOCUMENT_ADMISSION]: {
+                scope: 'test', encryptionMode: 'plain' as const, metadataLayoutVersion: 0,
+                dataEncryptionKey: null, metadataAudience: 'owner' as const, openedMetadataVersion: 1,
+                observedMetadataVersion: 1, openedAgentStateVersion: 1,
+            } };
+        storage.getState().applySessions([session]);
+        if (fullConsumer) markSessionSurfaceVisible(session.id);
+        const markSessionStateHydrationDeferred = vi.fn();
+        const params = buildBaseParams({ applySessions: sessions => storage.getState().applySessions(sessions),
+            markSessionStateHydrationDeferred });
+        await handleSocketUpdate({ ...params, update: { id: 'metadata-hint', seq: 2, createdAt: 200,
+            body: { t: 'update-session', id: session.id, metadataDocument: 'omitted', metadataLayoutVersion: 0,
+                metadataVersion: 2, active: true, pendingPermissionRequestCount: 1, pendingUserActionRequestCount: 0,
+                agentState: { version: 2, value: JSON.stringify({ requests: { request: {
+                    tool: 'Bash', kind: 'permission', arguments: { command: 'git status' }, createdAt: 199,
+                } } }) } },
+        } });
+        const next = storage.getState().sessions[session.id];
+        expect(next.metadata).toEqual(session.metadata);
+        expect(next.metadataVersion).toBe(1);
+        expect(next[SESSION_LIST_DOCUMENT_ADMISSION]).toMatchObject({ openedMetadataVersion: 1, observedMetadataVersion: 2 });
+        expect(next.metadataLayoutVersion ?? 0).toBe(0);
+        expect(next[SESSION_LIST_DOCUMENT_ADMISSION]?.observedMetadataLayoutVersion).toBe(0);
+        expect(hasAuthoritativeSessionRouteData(next)).toBe(false);
+        expect(next.agentState?.requests?.request.tool).toBe('Bash');
+        expect(next.pendingPermissionRequestCount).toBe(1);
+        expect(params.invalidateSessions).not.toHaveBeenCalled();
+        expect(markSessionStateHydrationDeferred).toHaveBeenCalledWith(session.id);
+        if (fullConsumer) {
+            expect(params.hydrateSessionById).toHaveBeenCalledExactlyOnceWith(session.id, 'socket-update-owner-metadata');
+        } else {
+            expect(params.hydrateSessionById).not.toHaveBeenCalled();
+        }
+    });
+
+    it('records an omitted layout transition even when its numeric metadata revision resets', async () => {
+        const session = { ...buildSession('metadata-layout-hint'), metadataVersion: 99,
+            [SESSION_LIST_DOCUMENT_ADMISSION]: { scope: 'test', encryptionMode: 'plain' as const,
+                metadataLayoutVersion: 0, metadataAudience: 'owner' as const, dataEncryptionKey: null,
+                openedMetadataVersion: 99, observedMetadataVersion: 99, openedAgentStateVersion: 1 } };
+        storage.getState().applySessions([session]);
+        const params = buildBaseParams({ applySessions: rows => storage.getState().applySessions(rows) });
+        await handleSocketUpdate({ ...params, update: { id: 'layout-hint', seq: 2, createdAt: 2,
+            body: { t: 'update-session', id: session.id, metadataDocument: 'omitted', metadataLayoutVersion: 1, metadataVersion: 1 } } });
+        const next = storage.getState().sessions[session.id];
+        expect(next.metadataVersion).toBe(99);
+        expect(next.metadataLayoutVersion ?? 0).toBe(0);
+        expect(next[SESSION_LIST_DOCUMENT_ADMISSION]).toMatchObject({ openedMetadataVersion: 99,
+            observedMetadataVersion: 1, observedMetadataLayoutVersion: 1 });
+        expect(hasAuthoritativeSessionRouteData(next)).toBe(false);
+        expect(params.invalidateSessions).not.toHaveBeenCalled();
+        expect(params.hydrateSessionById).not.toHaveBeenCalled();
+    });
+
+    it.each(['hidden', 'list-row', 'full-consumer'] as const)('applies a metadata-only omitted observation with targeted hydration only for an active cache-only anchor (%s)', async (anchor) => {
+        vi.useFakeTimers();
+        const id = 'cached-metadata-hint';
+        const serverId = String(getActiveServerSnapshot().serverId);
+        replaceActiveSessionListRows([{ ...buildSession(id), hasPendingPermissionRequests: false,
+            hasPendingUserActionRequests: false, [SESSION_LIST_DOCUMENT_ADMISSION]: {
+                scope: 'test', encryptionMode: 'plain', metadataLayoutVersion: 0, metadataAudience: 'owner',
+                dataEncryptionKey: null, openedMetadataVersion: 1, observedMetadataVersion: 1,
+            } }]);
+        if (anchor === 'list-row') demandSessionListRow(id);
+        if (anchor === 'full-consumer') markSessionSurfaceVisible(id, serverId);
+        const params = buildBaseParams({ sourceServerId: serverId });
+        await handleSocketUpdate({ ...params, update: { id: 'cached-metadata-hint', seq: 2, createdAt: 2,
+            body: { t: 'update-session', id, metadataDocument: 'omitted', metadataLayoutVersion: 0, metadataVersion: 2 } } });
+        expect(storage.getState().sessionListRowsByServerId[serverId][id][SESSION_LIST_DOCUMENT_ADMISSION])
+            .toMatchObject({ openedMetadataVersion: 1, observedMetadataVersion: 1 });
+        await vi.advanceTimersByTimeAsync(loadSyncTuning().activityUpdateDebounceMs);
+        const row = storage.getState().sessionListRowsByServerId[serverId][id];
+        expect(row.hasPendingPermissionRequests).toBe(false);
+        expect(row.metadataVersion).toBe(1);
+        expect(row[SESSION_LIST_DOCUMENT_ADMISSION]).toMatchObject({ openedMetadataVersion: 1, observedMetadataVersion: 2 });
+        if (anchor !== 'hidden') {
+            expect(params.hydrateSessionById).toHaveBeenCalledExactlyOnceWith(id, 'socket-update-owner-metadata');
+        } else {
+            expect(params.hydrateSessionById).not.toHaveBeenCalled();
+        }
+        expect(params.invalidateSessions).not.toHaveBeenCalled();
+    });
+
     it('rejects prior-layout public pending counts after a cached privacy contraction', async () => {
         vi.useFakeTimers();
         const serverId = String(getActiveServerSnapshot().serverId ?? '').trim();
@@ -121,7 +217,7 @@ describe('socket update handling: plaintext update-session', () => {
         replaceActiveSessionListRows([session]);
         await handleUpdateContainer({ ...buildBaseParams(), sourceServerId: serverId, updateData: {
             id: 'prior-layout-public-pending', seq: 8, createdAt: 200,
-            body: { t: 'update-session', id: session.id,
+            body: { t: 'update-session', id: session.id, metadataLayoutVersion: 0,
                 agentState: { version: 8, value: 'prior-layout-ciphertext' },
                 pendingPermissionRequestCount: 1, pendingUserActionRequestCount: 0, pendingRequestObservedAt: 100 },
         } });
@@ -342,6 +438,7 @@ describe('socket update handling: plaintext update-session', () => {
         });
     });
     beforeEach(() => {
+        sessionRuntimeObservations.clear();
         storage.setState(initialStorageState, true);
         resetSessionSurfaceVisibilityForTests();
         socketPostDecryptSideEffectMocks.notifyActivityAgentRequest.mockClear();
@@ -447,6 +544,24 @@ describe('socket update handling: plaintext update-session', () => {
                 activeAt: 150,
             }),
         ]);
+    });
+
+    it('orders thinking resurrection against the full-publication witness', async () => {
+        vi.useFakeTimers();
+        const serverId = String(getActiveServerSnapshot().serverId ?? '').trim();
+        const session = { ...buildSession('full-publication-thinking'), serverId, updatedAt: 100, activeAt: 100 };
+        storage.getState().applySessions([session]);
+        const address = { serverId, sessionId: session.id };
+        sessionRuntimeObservations.observe(address, { active: true, activeAt: 100, thinking: false, presence: 'online' });
+        sessionRuntimeObservations.recordFullPublication(address, 300);
+        for (const activeAt of [200, 301]) {
+            flushActivityUpdates({ sourceServerId: serverId, applySessions: storage.getState().applySessions,
+                updates: new Map([[session.id, { type: 'activity', id: session.id, active: true, activeAt, thinking: true }]]) });
+            await vi.advanceTimersByTimeAsync(16);
+            expect(storage.getState().sessions[session.id].thinking).toBe(activeAt > 300);
+            expect(projectUiSessionRuntimeAwareness({ ...storage.getState().sessions[session.id], nowMs: 301 }).working)
+                .toBe(activeAt > 300);
+        }
     });
 
     it.each(['hydrated', 'cache-only'] as const)('does not resurrect %s working state from an equal-timestamp heartbeat after a stop', async (kind) => {
@@ -849,9 +964,10 @@ describe('socket update handling: plaintext update-session', () => {
         };
         const staleDecrypt = createDeferred<typeof staleAgentState>();
         const decryptAgentState = vi.fn((version: number) =>
-            version === 2
+            (version === 2
                 ? staleDecrypt.promise
-                : Promise.resolve(currentAgentState),
+                : Promise.resolve(currentAgentState))
+                .then(value => ({ status: 'available', value } satisfies AgentStateOpenResult)),
         );
         const applySessions = vi.fn((
             sessions: Parameters<HandleUpdateContainerBaseParams['applySessions']>[0],
@@ -862,7 +978,7 @@ describe('socket update handling: plaintext update-session', () => {
             encryption: {
                 getSessionEncryption: () => ({
                     decryptMetadata: vi.fn(),
-                    decryptAgentState,
+                    decryptAgentStateResult: decryptAgentState,
                 }),
                 getMachineEncryption: () => null,
                 removeSessionEncryption: () => {},
@@ -1498,6 +1614,80 @@ describe('socket update handling: plaintext update-session', () => {
         expect((params.applySessions as unknown as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
     });
 
+    it.each([
+        { kind: 'runtime-activity', createdAt: 300 },
+        { kind: 'turn', createdAt: 300 },
+        { kind: 'ready', createdAt: 300 },
+        { kind: 'runtime-activity', createdAt: 400 },
+    ] as const)('accepts independently newer $kind facts behind an unrelated row timestamp ($createdAt)', async ({ kind, createdAt }) => {
+        vi.useFakeTimers();
+        const sessionId = 's_independent_projection_ordering';
+        const serverId = String(getActiveServerSnapshot().serverId ?? '').trim();
+        replaceActiveSessionListRows([{
+            ...buildSession(sessionId), serverId, updatedAt: 400, activeAt: 10_000,
+            latestTurnId: 'turn-1', latestTurnStatus: kind === 'turn' ? 'in_progress' : 'completed',
+            latestTurnStatusObservedAt: 100,
+            runtimeActivityState: kind === 'runtime-activity' ? 'active' : 'idle',
+            runtimeActivityActiveCount: kind === 'runtime-activity' ? 1 : 0,
+            runtimeActivityObservedAt: 100, runtimeActivityRevision: 1,
+            latestReadyEventSeq: 1, latestReadyEventAt: 100,
+            archivedAt: null, lastViewedSessionSeq: 1, hasUnreadMessages: false,
+        }]);
+        const params = buildBaseParams({ sourceServerId: serverId });
+        if (createdAt === 400) {
+            await handleUpdateContainer({ ...params, updateData: { id: 'newer-envelope', seq: 6, createdAt,
+                body: { t: 'update-session', id: sessionId, archivedAt: null } } });
+            await vi.advanceTimersByTimeAsync(100);
+        }
+        const lifecycle = kind === 'runtime-activity'
+            ? { runtimeActivityState: 'idle' as const, runtimeActivityActiveCount: 0,
+                runtimeActivityObservedAt: 300, runtimeActivityRevision: 2 }
+            : kind === 'turn'
+                ? { latestTurnStatus: 'completed' as const, latestTurnStatusObservedAt: 300 }
+                : { latestReadyEventSeq: 2, latestReadyEventAt: 300 };
+        await handleUpdateContainer({
+            ...params,
+            updateData: { id: 'independently-newer', seq: 4, createdAt,
+                body: { t: 'update-session', id: sessionId, archivedAt: 250, ...lifecycle } },
+        });
+        await vi.advanceTimersByTimeAsync(100);
+
+        expect(storage.getState().sessionListRowsByServerId[serverId][sessionId]).toMatchObject({
+            ...lifecycle, updatedAt: 400, archivedAt: null,
+        });
+        if (kind === 'ready') expect(storage.getState().sessionListRowsByServerId[serverId][sessionId].hasUnreadMessages).toBe(true);
+        else expect(projectUiSessionRuntimeAwareness({ ...storage.getState().sessionListRowsByServerId[serverId][sessionId], nowMs: 10_000 }).working).toBe(false);
+        expect(params.invalidateSessions).not.toHaveBeenCalled();
+
+        const settledRow = storage.getState().sessionListRowsByServerId[serverId][sessionId];
+        let rowNotifications = 0;
+        const unsubscribe = storage.subscribe((state, previous) => {
+            if (state.sessionListRowsByServerId[serverId]?.[sessionId] !== previous.sessionListRowsByServerId[serverId]?.[sessionId]) rowNotifications++;
+        });
+        try {
+            await handleUpdateContainer({ ...params, updateData: { id: 'duplicate-lifecycle', seq: 4, createdAt,
+                body: { t: 'update-session', id: sessionId, archivedAt: 250, ...lifecycle } } });
+            await vi.advanceTimersByTimeAsync(100);
+            expect(storage.getState().sessionListRowsByServerId[serverId][sessionId]).toBe(settledRow);
+            expect(rowNotifications).toBe(0);
+        } finally {
+            unsubscribe();
+        }
+
+        // A later envelope cannot roll back independently ordered facts either.
+        await handleUpdateContainer({
+            ...params,
+            updateData: { id: 'older-lifecycle-newer-envelope', seq: 7, createdAt: 500,
+                body: { t: 'update-session', id: sessionId,
+                    runtimeActivityState: 'active', runtimeActivityActiveCount: 1,
+                    runtimeActivityObservedAt: 50, runtimeActivityRevision: 0,
+                    latestTurnStatus: 'in_progress', latestTurnStatusObservedAt: 50,
+                    latestReadyEventSeq: 0, latestReadyEventAt: 50 } },
+        });
+        await vi.advanceTimersByTimeAsync(100);
+        expect(storage.getState().sessionListRowsByServerId[serverId][sessionId]).toMatchObject(lifecycle);
+    });
+
     it('patches cache-only renderables for runtime activity update-session without forcing a sessions refresh', async () => {
         replaceActiveSessionListRows([
             {
@@ -1932,6 +2122,69 @@ describe('socket update handling: plaintext update-session', () => {
         expect(params.invalidateSessions).not.toHaveBeenCalled();
     });
 
+    describe('layout-1 owner frames that omit the unchanged owner envelope', () => {
+        const ownerMetadata = { v: 1 as const, workspace: { path: '/private/worktree', host: 'private-host', name: 'Owner title' } };
+        const ownerEnvelope = createPlainSessionOwnerMetadataEnvelopeV1(ownerMetadata);
+        const credentials = { token: 'token', secret: 'secret' } as unknown as AuthCredentials;
+        function seedOwnerSession(sessionId: string): Session {
+            const access = createSessionAccessFixture('owner');
+            const shared = projectSessionSharedMetadataV1({ metadata: {} });
+            const ownerRead = readSessionLayout1OwnerMetadata({ access, accountMode: 'plain', ownerMetadataEnvelope: ownerEnvelope, credentials });
+            const projection = projectSessionLayout1OwnerMetadata({ sharedMetadata: shared, ownerMetadataRead: ownerRead, metadataVersion: 1 });
+            if (projection.kind !== 'owner') throw new Error('expected an opened owner projection');
+            const session: Session = { ...buildSession(sessionId), access, metadataLayoutVersion: 1,
+                metadata: shared as unknown as Session['metadata'], ownerMetadataView: projection.ownerMetadataView,
+                composerOptionsInput: projection.composerOptionsInput, [SESSION_OWNER_METADATA_PROJECTION]: projection };
+            storage.getState().applySessions([session]);
+            markSessionSurfaceVisible(sessionId);
+            return session;
+        }
+        const tupleFrame = (sessionId: string, seq: number, metadataVersion: number, extra: Record<string, unknown> = {}) => ({
+            id: `u_${sessionId}_${seq}`, seq, createdAt: 1_000 + seq,
+            body: { t: 'update-session' as const, id: sessionId, metadataLayoutVersion: 1,
+                metadata: { version: metadataVersion, value: JSON.stringify(projectSessionSharedMetadataV1({ metadata: {} })) },
+                ...extra },
+        });
+
+        it('applies N Agent-state frames by version with zero Session re-reads and keeps the owner view current', async () => {
+            const sessionId = 's_layout1_owner_delta';
+            seedOwnerSession(sessionId);
+            const params = buildBaseParams({ applySessions: rows => storage.getState().applySessions(rows) });
+            for (let i = 1; i <= 5; i++) {
+                await handleUpdateContainer({ ...params, updateData: tupleFrame(sessionId, 10 + i, 1 + i, {
+                    agentState: { version: 1 + i, value: JSON.stringify({ requests: { [`r${i}`]: {
+                        tool: 'Bash', kind: 'permission', arguments: { command: `echo ${i}` }, createdAt: 100 + i } } }) },
+                }) });
+            }
+            // Applies are coalesced; wait for the batch to land in the store.
+            await vi.waitFor(() => expect(storage.getState().sessions[sessionId].metadataVersion).toBe(6));
+            expect(params.hydrateSessionById).not.toHaveBeenCalled();
+            const next = storage.getState().sessions[sessionId];
+            expect(next.agentStateVersion).toBe(6);
+            expect(Object.keys(next.agentState?.requests ?? {})).toEqual(['r5']);
+            expect(next[SESSION_OWNER_METADATA_PROJECTION]?.admittedMetadataVersion).toBe(6);
+            expect(next.ownerMetadataView).toMatchObject({ path: '/private/worktree', host: 'private-host' });
+        });
+
+        it('re-reads exactly once on a revision gap', async () => {
+            const sessionId = 's_layout1_owner_gap';
+            seedOwnerSession(sessionId);
+            const params = buildBaseParams({ applySessions: rows => storage.getState().applySessions(rows) });
+            await handleUpdateContainer({ ...params, updateData: tupleFrame(sessionId, 11, 3) });
+            expect(params.hydrateSessionById).toHaveBeenCalledExactlyOnceWith(sessionId, 'socket-update-owner-metadata');
+        });
+
+        it('still hands a full document (with its owner envelope) to the canonical owner reader', async () => {
+            const sessionId = 's_layout1_owner_full';
+            seedOwnerSession(sessionId);
+            const params = buildBaseParams({ applySessions: rows => storage.getState().applySessions(rows) });
+            await handleUpdateContainer({ ...params, updateData: tupleFrame(sessionId, 11, 2, {
+                ownerMetadata: { value: ownerEnvelope }, agentState: { version: 2, value: null } }) });
+            expect(params.hydrateSessionById).toHaveBeenCalledExactlyOnceWith(sessionId, 'socket-update-owner-metadata');
+            await vi.waitFor(() => expect(storage.getState().sessions[sessionId].metadataVersion).toBe(2));
+        });
+    });
+
     it.each(['view', 'edit', 'admin'] as const)(
         'applies a layout-1 %s participant shared metadata patch without requesting owner hydration',
         async (accessLevel) => {
@@ -2334,17 +2587,20 @@ describe('socket update handling: plaintext update-session', () => {
         expect((params.applySessions as unknown as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
     });
 
-    it('recomputes cache-only unread state after metadata read-state updates are applied', async () => {
+    it.each([1, 2000])('recomputes cache-only unread state and headline after metadata read-state updates (row timestamp: %s)', async (updatedAt) => {
         demandSessionListRow('s_cached_metadata_read_state');
         replaceActiveSessionListRows([
             {
                 id: 's_cached_metadata_read_state',
                 seq: 9,
                 createdAt: 1,
-                updatedAt: 1,
+                updatedAt,
                 active: true,
                 activeAt: 1,
                 archivedAt: null,
+                agentActivityHeadline: { v: 1, backendId: 'claude', updatedAt: 1,
+                    activeEntries: [{ entryId: 'workflow_agent:wf_1:toolu_1', kind: 'workflow_agent',
+                        title: 'Previous work', status: 'running', updatedAt: 1 }] },
                 metadataVersion: 1,
                 agentStateVersion: 0,
                 metadata: {
@@ -2373,6 +2629,7 @@ describe('socket update handling: plaintext update-session', () => {
                     metadata: {
                         version: 2,
                         value: JSON.stringify({
+                            sessionAgentActivityHeadlineV1: { v: 1, backendId: 'claude', updatedAt: 1238, activeEntries: [] },
                             path: '/work',
                             host: 'devbox',
                             readStateV1: { v: 1, sessionSeq: 14, pendingActivityAt: 0, updatedAt: 1238 },
@@ -2384,6 +2641,7 @@ describe('socket update handling: plaintext update-session', () => {
 
         expect(Object.values(storage.getState().sessionListRowsByServerId).map((rows) => rows['s_cached_metadata_read_state']).find(Boolean)).toEqual(
             expect.objectContaining({
+                agentActivityHeadline: { v: 1, backendId: 'claude', updatedAt: 1238, activeEntries: [] },
                 metadataVersion: 2,
                 metadata: expect.objectContaining({
                     path: '/work',
@@ -3351,15 +3609,15 @@ describe('socket update handling: plaintext update-session', () => {
             pendingPermissionRequestCount: 0,
             pendingUserActionRequestCount: 0,
         }]);
-        const decryptedAgentState = { controlledByUser: true, requests: { live: { status: 'pending' } } };
-        const decryptAgentState = vi.fn(async () => decryptedAgentState);
+        const decryptedAgentState = { controlledByUser: true, requests: { live: { tool: 'Bash', arguments: {}, createdAt: 1 } } };
+        const decryptAgentState = vi.fn(async () => ({ status: 'available', value: decryptedAgentState } satisfies AgentStateOpenResult));
         const decryptMetadata = vi.fn(async () => ({ path: '/work', host: 'devbox' }));
         const markSessionStateHydrationDeferred = vi.fn();
         const params = buildBaseParams({
             encryption: {
                 getSessionEncryption: () => ({
                     decryptMetadata,
-                    decryptAgentState,
+                    decryptAgentStateResult: decryptAgentState,
                 }),
                 getMachineEncryption: () => null,
                 removeSessionEncryption: () => {},
@@ -3409,13 +3667,13 @@ describe('socket update handling: plaintext update-session', () => {
             pendingPermissionRequestCount: 0,
             pendingUserActionRequestCount: 0,
         }]);
-        const decryptedAgentState = { controlledByUser: false, requests: { permission: { status: 'pending' } } };
-        const decryptAgentState = vi.fn(async () => decryptedAgentState);
+        const decryptedAgentState = { controlledByUser: false, requests: { permission: { tool: 'Bash', arguments: {}, createdAt: 1 } } };
+        const decryptAgentState = vi.fn(async () => ({ status: 'available', value: decryptedAgentState } satisfies AgentStateOpenResult));
         const params = buildBaseParams({
             encryption: {
                 getSessionEncryption: () => ({
                     decryptMetadata: vi.fn(async () => ({ path: '/work', host: 'devbox' })),
-                    decryptAgentState,
+                    decryptAgentStateResult: decryptAgentState,
                 }),
                 getMachineEncryption: () => null,
                 removeSessionEncryption: () => {},
@@ -3450,7 +3708,7 @@ describe('socket update handling: plaintext update-session', () => {
         }));
     });
 
-    it('skips fresh cache-only timestamp-only activity patches until runtime freshness needs refresh', async () => {
+    it('keeps cache-only content stable while timestamp-only observations advance', async () => {
         vi.useFakeTimers();
         syncPerformanceTelemetry.configure({
             enabled: true,
@@ -3501,11 +3759,9 @@ describe('socket update handling: plaintext update-session', () => {
                 updatedAt: 1,
             }),
         );
-        expect(syncPerformanceTelemetry.snapshot().events.find((entry) => entry.name === 'sync.socket.sessions.activity.flush')?.fields)
-            .toEqual(expect.objectContaining({
-                renderablePatches: 0,
-                renderableTimestampOnlySkippedFreshPatches: 1,
-            }));
+        expect(sessionRuntimeObservations.read({ serverId: getActiveServerSnapshot().serverId,
+            sessionId: 's_cached_activity_timestamp_gate' })?.activeAt).toBe(20_000);
+        expect(syncPerformanceTelemetry.snapshot().events.some((entry) => entry.name === 'sync.socket.sessions.activity.flush')).toBe(false);
 
         syncPerformanceTelemetry.reset();
         flushActivityUpdates({
@@ -3532,26 +3788,23 @@ describe('socket update handling: plaintext update-session', () => {
                 updatedAt: 1,
             }),
         );
-        expect(syncPerformanceTelemetry.snapshot().events.find((entry) => entry.name === 'sync.socket.sessions.activity.flush')?.fields)
-            .toEqual(expect.objectContaining({
-                renderablePatches: 1,
-                renderableTimestampOnlyPatches: 1,
-                renderableTimestampOnlySkippedFreshPatches: 0,
-            }));
+        expect(sessionRuntimeObservations.read({ serverId: getActiveServerSnapshot().serverId,
+            sessionId: 's_cached_activity_timestamp_gate' })?.activeAt).toBe(61_001);
+        expect(syncPerformanceTelemetry.snapshot().events.some((entry) => entry.name === 'sync.socket.sessions.activity.flush')).toBe(false);
 
         await vi.advanceTimersByTimeAsync(16);
 
         expect(Object.values(storage.getState().sessionListRowsByServerId).map((rows) => rows['s_cached_activity_timestamp_gate']).find(Boolean)).toEqual(
             expect.objectContaining({
-                activeAt: 61_001,
-                thinkingAt: 61_001,
-                updatedAt: 61_001,
+                activeAt: 1,
+                thinkingAt: 1,
+                updatedAt: 1,
             }),
         );
         expect(applySessions).not.toHaveBeenCalled();
     });
 
-    it('refreshes cache-only activity timestamps even when a durable projection has a newer updatedAt', async () => {
+    it('retains cache-only content timestamps while observing a heartbeat behind newer durable content', async () => {
         vi.useFakeTimers();
         replaceActiveSessionListRows([
             {
@@ -3605,13 +3858,15 @@ describe('socket update handling: plaintext update-session', () => {
         expect(Object.values(storage.getState().sessionListRowsByServerId).map((rows) => rows['s_cached_activity_heartbeat']).find(Boolean)).toEqual(
             expect.objectContaining({
                 active: true,
-                activeAt: 70_001,
+                activeAt: 1,
                 thinking: true,
-                thinkingAt: 70_001,
+                thinkingAt: 1,
                 presence: 'online',
                 updatedAt: 100_000,
             }),
         );
+        expect(sessionRuntimeObservations.read({ serverId: getActiveServerSnapshot().serverId,
+            sessionId: 's_cached_activity_heartbeat' })?.activeAt).toBe(70_001);
         expect(applySessions).not.toHaveBeenCalled();
     });
 
@@ -3682,7 +3937,7 @@ describe('socket update handling: plaintext update-session', () => {
                 thinking: true,
                 thinkingAt: 70_001,
                 presence: 'online',
-                updatedAt: 70_001,
+                updatedAt: 1,
             }),
         );
         expect(applySessions).not.toHaveBeenCalled();
@@ -3877,7 +4132,7 @@ describe('socket update handling: plaintext update-session', () => {
         expect(applySessions).not.toHaveBeenCalled();
     });
 
-    it('refreshes hydrated activity timestamps even when a durable session update has a newer updatedAt', () => {
+    it('retains hydrated content timestamps while observing a heartbeat behind newer durable content', () => {
         storage.getState().applySessions([
             {
                 ...buildSession('s_hydrated_activity_heartbeat'),
@@ -3907,17 +4162,12 @@ describe('socket update handling: plaintext update-session', () => {
             applySessions,
         });
 
-        expect(applySessions).toHaveBeenCalledTimes(1);
-        expect(applySessions.mock.calls[0]?.[0]).toEqual([
-            expect.objectContaining({
-                id: 's_hydrated_activity_heartbeat',
-                active: true,
-                activeAt: 70_001,
-                thinking: true,
-                thinkingAt: 70_001,
-                updatedAt: 100_000,
-            }),
-        ]);
+        expect(applySessions).not.toHaveBeenCalled();
+        expect(storage.getState().sessions.s_hydrated_activity_heartbeat).toMatchObject({
+            activeAt: 1, thinkingAt: 1, updatedAt: 100_000,
+        });
+        expect(sessionRuntimeObservations.read({ serverId: getActiveServerSnapshot().serverId,
+            sessionId: 's_hydrated_activity_heartbeat' })?.activeAt).toBe(70_001);
     });
 
     it('does not regress hydrated activity timestamps from older timestamp-only updates', () => {
@@ -3953,7 +4203,7 @@ describe('socket update handling: plaintext update-session', () => {
         expect(applySessions).not.toHaveBeenCalled();
     });
 
-    it('records activity flush telemetry for hydrated and cache-only renderable updates', () => {
+    it('records activity flush telemetry for real hydrated and cache-only state changes', () => {
         syncPerformanceTelemetry.configure({
             enabled: true,
             slowThresholdMs: 1_000_000,
@@ -3990,7 +4240,7 @@ describe('socket update handling: plaintext update-session', () => {
                         sessionId: 's_hydrated_activity',
                         active: true,
                         activeAt: 20,
-                        thinking: true,
+                        thinking: false,
                     },
                 ],
                 [
@@ -4001,7 +4251,7 @@ describe('socket update handling: plaintext update-session', () => {
                         sessionId: 's_cached_activity_timestamp_only',
                         active: true,
                         activeAt: 61_001,
-                        thinking: true,
+                        thinking: false,
                     },
                 ],
             ]),
@@ -4015,8 +4265,6 @@ describe('socket update handling: plaintext update-session', () => {
             updates: 2,
             sessions: 1,
             renderablePatches: 1,
-            renderableTimestampOnlyPatches: 1,
-            renderableStateChangePatches: 0,
         }));
     });
 

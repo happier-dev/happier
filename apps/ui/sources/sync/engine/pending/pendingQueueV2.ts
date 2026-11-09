@@ -46,6 +46,7 @@ import { settleReceivedSessionMessages } from '@/sync/engine/sessions/sessionMes
 import { isDemoModeActive } from '@/demoMode/runtime/enterExitDemoMode';
 import { ParticipantExecutionRunRecipientRoutingIdentityV1Schema, normalizeParticipantRecipientRoutingIdentityV1, withParticipantRecipientV1, readParticipantRecipientRoutingIdentityV1, type ParticipantRecipientV1 } from '@happier-dev/protocol/messages/structured/participantMessageV1';
 import { SessionExecutionRunPendingEnqueueRequestV1Schema } from '@happier-dev/protocol/sessions/messages/sessionPendingExecutionRunMachineAdmissionV2';
+import { projectUsageSessionMessageTimingV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import { normalizePendingDeliveryStatusV1, parsePendingDeliveryStatusV1, shouldExposePendingDeliveryInDiscardedHistoryV1, PendingDeliveryRecoveryV1Schema, type PendingDeliveryStatusV1 } from '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1';
 import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
 import { normalizePendingDeliveryBlockedReason, type PendingDeliveryBlockedReason } from '@happier-dev/protocol/sessions/messages/pendingDeliveryBlockedReason';
@@ -54,13 +55,12 @@ import { AutonomousExchangeRootV1Schema } from '@happier-dev/protocol/sessions/m
 import { SessionFollowReceiptDeliveryV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1, SessionPendingMessageComposerAdmissionAcceptedRequestV1Schema, type SessionPendingMessageComposerAdmissionAcceptedRequestV1, type SessionPendingMessageComposerAdmissionPrepareResponseV1 } from '@happier-dev/protocol/sessions/userMessageRpc';
-import { hasRawComposerAttachmentSelectionV1, HappierStructuredInputV1Schema, HappierStructuredInputV1StoredSchema, RawIngressStructuredInputV1Schema, RawIngressStructuredInputV1StoredSchema, readIngressComposerAttachmentSelectionV1, type RawIngressStructuredInputV1, type HappierStructuredInputV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
+import { HAPPIER_SKILL_MENTIONS_METADATA_KEY, HAPPIER_VENDOR_PLUGIN_MENTIONS_METADATA_KEY, hasRawComposerAttachmentSelectionV1, hasRawSessionAttachmentSelectionV1, HappierStructuredInputV1Schema, HappierStructuredInputV1StoredSchema, RawIngressStructuredInputV1Schema, RawIngressStructuredInputV1StoredSchema, readIngressComposerAttachmentSelectionV1, type RawIngressStructuredInputV1, type HappierStructuredInputV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 import { PendingMessageMutationFingerprintV1Schema } from '@happier-dev/protocol/sessions/pending/pendingMessageMutationFingerprintV1';
-import { SessionMediaMessageMetaV1Schema, type SessionMediaMessageMetaV1 } from '@happier-dev/protocol/sessions/messages/sessionMediaV1';
+import { SessionMediaMessageMetaV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMediaV1';
 import { SessionStoredMessageContentSchema, StrictSessionStoredMessageContentEnvelopeSchema, type SessionStoredMessageContent, type StrictSessionStoredMessageContentEnvelope } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
 import { SessionAccessErrorCodeV1Schema } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
 import { SessionInputAdmissionRejectionCodeV1Schema, type SessionInputAdmissionRejectionCodeV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmissionRejectionV1';
-import type { ComposerContentHandleV1 } from '@happier-dev/protocol/runtime/input/composerContentV1';
 import type { ProviderBoundModelRef } from '@happier-dev/protocol/providers/model-selection';
 import {
     admitMentionRefsV1ForText,
@@ -92,6 +92,7 @@ import {
     type PendingOutboxProjectionIdentity,
 } from './pendingOutboxProjectionIdentity';
 import type { PendingInputServerWireMode } from './pendingInputServerWireContract';
+import type { CapturedServerReadTransport } from '@/sync/runtime/orchestration/serverScopedRpc/capturedServerReadTransport';
 import { assertValidPendingMessageId } from '@/sync/domains/pending/pendingMessageId';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
@@ -112,14 +113,8 @@ type PendingStatus = 'queued' | 'delivering' | 'external_handoff' | 'blocked' | 
 export type PendingMessageComposerAdmissionAcceptedFactV1 =
     SessionPendingMessageComposerAdmissionAcceptedRequestV1;
 
-type PreparedPendingComposerAdmission = Readonly<{
-    stagedMediaHandles: readonly ComposerContentHandleV1[];
-    stagedMediaReleaseIntents?: SessionPendingMessageComposerAdmissionAcceptedRequestV1['stagedMediaReleaseIntents'];
-    sessionMediaMetadata?: Readonly<{
-        key: 'happier' | 'happierMedia';
-        envelope: SessionMediaMessageMetaV1;
-    }>;
-}>;
+type PreparedPendingComposerAdmission = Pick<Extract<SessionPendingMessageComposerAdmissionPrepareResponseV1, { ok: true }>,
+    'stagedMediaHandles' | 'stagedMediaReleaseIntents' | 'sessionMediaMetadata' | 'sessionAttachmentMetadata'>;
 
 function buildPreparedPendingComposerRecord<T extends RawRecord>(
     rawRecord: T,
@@ -128,6 +123,13 @@ function buildPreparedPendingComposerRecord<T extends RawRecord>(
     prepared: PreparedPendingComposerAdmission,
 ): Readonly<{ rawRecord: T; accepted: PendingMessageComposerAdmissionAcceptedFactV1 }> {
     const meta = isPlainObject(rawRecord.meta) ? { ...rawRecord.meta } : {};
+    if (prepared.sessionAttachmentMetadata) {
+        // The target already resolved the selection. Retain its descriptors,
+        // preserving an unrelated primary envelope in the same way as SessionMedia.
+        const primary = isPlainObject(meta.happier) ? meta.happier : null;
+        const key = meta.happier === undefined || primary?.kind === 'attachments.v1' ? 'happier' : 'happierAttachments';
+        meta[key] = prepared.sessionAttachmentMetadata.envelope;
+    }
     for (const key of ['happier', 'happierMedia'] as const) {
         if (SessionMediaMessageMetaV1Schema.safeParse(meta[key]).success) {
             throw new Error('Pending Composer admission cannot replace existing SessionMedia metadata');
@@ -589,6 +591,14 @@ function replacePendingEditStructuredInput(
     const nextStructuredInput: Record<string, unknown> & { v: 1 } = parsedExisting?.success
         ? { ...parsedExisting.data }
         : { v: 1 };
+    const { [HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1]: _existing, ...nextMeta } = existingMeta;
+    if (parsedExisting?.success && (parsedExisting.data.mentions?.length ?? 0) > 0) {
+        // Replacing canonical references must not reactivate their shadowed legacy mirrors.
+        delete nextStructuredInput.skillMentions;
+        delete nextStructuredInput.vendorPluginMentions;
+        delete nextMeta[HAPPIER_SKILL_MENTIONS_METADATA_KEY];
+        delete nextMeta[HAPPIER_VENDOR_PLUGIN_MENTIONS_METADATA_KEY];
+    }
     delete nextStructuredInput.mentions;
     delete nextStructuredInput.composerAttachments;
 
@@ -605,7 +615,6 @@ function replacePendingEditStructuredInput(
         nextStructuredInput.composerAttachments = parsedReplacement.data.composerAttachments;
     }
 
-    const { [HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1]: _existing, ...nextMeta } = existingMeta;
     if (Object.keys(nextStructuredInput).some((key) => key !== 'v')) {
         return {
             ...rawRecord,
@@ -1081,7 +1090,15 @@ function coercePendingUserTextRecord(decrypted: unknown): { rawRecord: RawRecord
 const enqueueCommitTailsByScopedSession = new Map<string, Promise<void>>();
 const pendingCancellationRequestedLocalIdsByScopedSession = new Map<string, Set<string>>();
 const deletedPendingLocalIdsByScopedSession = new Map<string, Set<string>>();
+/** Captured physical identity plus the producer's equivalent authority-check semantics.
+ * Each borrower still admits its own authority and retains its transport until completion.
+ */
+export type PendingSnapshotReadBinding = Readonly<Pick<CapturedServerReadTransport, 'key' | 'scope'> & {
+    currentness: 'session-route' | 'active-account' | `explicit-server:${string}`;
+}>;
+
 type PendingSnapshotRefreshToken = {
+    readonly readBinding: PendingSnapshotReadBinding | undefined;
     readonly acceptedLocalIdsAfterCapture: Set<string>;
     readonly committedTranscriptSeqAtCapture: number | null;
     readonly pendingVersionAtCapture: number | null;
@@ -1666,11 +1683,16 @@ async function buildPendingUserMessageWriteBody(params: {
     sessionEncryptionMode: 'e2ee' | 'plain';
     sessionEncryption: PendingQueueSessionEncryption | null | undefined;
 }): Promise<Record<string, unknown>> {
+    const usageTimingV1 = projectUsageSessionMessageTimingV1({
+        sessionId: params.sessionId,
+        message: { id: params.localId, localId: params.localId, content: params.rawRecord },
+    });
     if (params.sessionEncryptionMode === 'plain') {
         return {
             localId: params.localId,
             content: { t: 'plain', v: params.rawRecord },
             messageRole: 'user',
+            usageTimingV1,
         };
     }
     if (!params.sessionEncryption) {
@@ -1680,6 +1702,7 @@ async function buildPendingUserMessageWriteBody(params: {
         localId: params.localId,
         ciphertext: await params.sessionEncryption.encryptRawRecord(params.rawRecord),
         messageRole: 'user',
+        usageTimingV1,
     };
 }
 
@@ -1706,6 +1729,7 @@ async function buildPendingEnqueueWriteBody(params: Parameters<typeof buildPendi
         targetMachineId: params.targetMachineId,
         content: body.content ?? { t: 'encrypted', c: body.ciphertext },
         messageRole: 'user',
+        usageTimingV1: body.usageTimingV1,
         requestedAction: params.requestedAction,
     });
 }
@@ -1997,27 +2021,41 @@ export async function fetchAndApplyPendingMessagesV2(params: {
     outboxScope: ServerAccountScope;
     isOutboxScopeCurrent?: () => boolean | Promise<boolean>;
     invalidateSnapshot?: boolean;
+    readBinding?: PendingSnapshotReadBinding;
 }): Promise<void> {
     const { sessionId } = params;
     if (params.invalidateSnapshot) invalidatePendingSnapshotRefresh(params.outboxScope, sessionId);
     const refreshKey = pendingSnapshotKey(params.outboxScope, sessionId, params.recipient);
     const state = storage.getState();
-    const pendingVersionAtCapture = readPendingSnapshotVersion(params.outboxScope, sessionId);
-    const transcriptAtCapture = state.sessionMessages[sessionId];
+    let pendingVersionAtCapture = readPendingSnapshotVersion(params.outboxScope, sessionId);
+    let transcriptAtCapture = state.sessionMessages[sessionId];
     const scopedSession = readSessionListRowForServerId(state.sessionListRowsByServerId, params.outboxScope.serverId, sessionId);
     const sessionEncryptionMode = areServerAccountScopesEqual(getActiveServerAccountScope(), params.outboxScope)
         ? state.sessions[sessionId]?.encryptionMode ?? scopedSession?.encryptionMode
         : scopedSession?.encryptionMode;
-    const sessionEncryptionAtCapture = sessionEncryptionMode === 'plain'
+    let sessionEncryptionAtCapture = sessionEncryptionMode === 'plain'
         ? null
         : params.encryption?.getSessionEncryption(sessionId) ?? null;
+    if (params.readBinding) {
+        // Scoped sources return a fresh Promise for the same installed Session reader.
+        // Compare the reader, then capture freshness after its asynchronous admission.
+        sessionEncryptionAtCapture = await sessionEncryptionAtCapture;
+        pendingVersionAtCapture = readPendingSnapshotVersion(params.outboxScope, sessionId);
+        transcriptAtCapture = storage.getState().sessionMessages[sessionId];
+    }
     const inFlightRefresh = latestPendingSnapshotRefreshByScopedSession.get(refreshKey);
+    const sameReadOwner = inFlightRefresh && (params.readBinding && inFlightRefresh.readBinding
+        ? params.readBinding.key === inFlightRefresh.readBinding.key
+            && params.readBinding.scope === inFlightRefresh.readBinding.scope
+            && params.readBinding.currentness === inFlightRefresh.readBinding.currentness
+        : !params.readBinding && !inFlightRefresh.readBinding
+            && inFlightRefresh.requestAtCapture === params.request
+            && inFlightRefresh.isOutboxScopeCurrentAtCapture === params.isOutboxScopeCurrent);
     if (inFlightRefresh
         && !inFlightRefresh.isInvalidated
         && inFlightRefresh.pendingVersionAtCapture === pendingVersionAtCapture
         && inFlightRefresh.sessionEncryptionAtCapture === sessionEncryptionAtCapture
-        && inFlightRefresh.requestAtCapture === params.request
-        && inFlightRefresh.isOutboxScopeCurrentAtCapture === params.isOutboxScopeCurrent
+        && sameReadOwner
         && inFlightRefresh.transcriptAtCapture === transcriptAtCapture) {
         return inFlightRefresh.completion;
     }
@@ -2027,6 +2065,7 @@ export async function fetchAndApplyPendingMessagesV2(params: {
     // HTTP work. Each token consequently owns its own capture facts.
     const completion = Promise.resolve().then(() => fetchAndApplyPendingMessagesV2Owned(params, refreshKey, refreshToken));
     const refreshToken: PendingSnapshotRefreshToken = {
+        readBinding: params.readBinding,
         acceptedLocalIdsAfterCapture: new Set<string>(),
         committedTranscriptSeqAtCapture: captureCommittedTranscriptSeqForSession(sessionId),
         pendingVersionAtCapture,
@@ -2374,8 +2413,10 @@ async function enqueuePendingMessageV2Owned(params: {
     }
     const ownerMetadata = readSessionOwnerMetadataView(session);
     const correspondence = SessionCreationCorrespondenceV1ReadSchema.safeParse(ownerMetadata?.sessionCreationCorrespondenceV1);
+    // Creation correspondence describes birth, not the Machine serving a resumed Session.
     const ordinaryMachineId = params.deliveryMode === 'external_handoff' ? undefined
-        : correspondence.success ? correspondence.data.recipe.execution.machineId : resolveSessionMachineId(ownerMetadata);
+        : resolveSessionMachineId(ownerMetadata)
+            ?? (correspondence.success ? correspondence.data.recipe.execution.machineId : undefined);
     if (!recipient && ordinaryMachineId && params.targetMachineId && ordinaryMachineId !== params.targetMachineId) {
         throw createPendingTargetConflictError();
     }
@@ -2458,7 +2499,7 @@ async function enqueuePendingMessageV2Owned(params: {
             log.log(`Pending Composer preparation cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
         }
     };
-    if (!existingOutboxRow && hasRawComposerAttachmentSelectionV1(metaOverrides)) {
+    if (!existingOutboxRow && (hasRawComposerAttachmentSelectionV1(metaOverrides) || hasRawSessionAttachmentSelectionV1(metaOverrides))) {
         const response = await preparePendingMessageComposerAdmission(sessionId, {
             localId, text,
             structuredInput: RawIngressStructuredInputV1Schema.parse(metaOverrides?.[HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1]),
@@ -3148,7 +3189,12 @@ export async function updatePendingMessageV2(params: {
         })
         : undefined;
 
+    const usageTimingV1 = projectUsageSessionMessageTimingV1({
+        sessionId,
+        message: { id: params.replacementLocalId ?? localId, localId: params.replacementLocalId ?? localId, content: rawRecord },
+    });
     const writeBody = {
+        usageTimingV1,
         ...(
         sessionEncryptionMode === 'plain'
             ? { content: { t: 'plain', v: rawRecord }, messageRole: 'user' }
@@ -3660,13 +3706,14 @@ export async function markPendingDeliveryHandledV2(params: {
 export async function restoreDiscardedPendingMessageV2(params: {
     sessionId: string;
     pendingId: string;
+    targetExecutionRunId?: string;
     encryption: PendingQueueUpdateEncryption | null;
     request: (path: string, init?: RequestInit) => Promise<Response>;
     outboxScope: ServerAccountScope;
     isOutboxScopeCurrent?: () => boolean | Promise<boolean>;
 }): Promise<void> {
     const { sessionId, pendingId, encryption, request } = params;
-    const { localId, recipient } = (await resolvePendingMutationIdentity(sessionId, pendingId, params.outboxScope));
+    const { localId, recipient } = (await resolvePendingMutationIdentity(sessionId, pendingId, params.outboxScope, params.targetExecutionRunId));
 
     const response = await request(`${pendingMessagePath(sessionId, localId, recipient)}/restore`, { method: 'POST' });
     if (!response.ok) {

@@ -1,3 +1,4 @@
+import { readSessionRecordingVisibility } from '@/sync/store/sessionRecordingVisibility';
 import { describe, expect, it } from 'vitest';
 import { createSessionFixture, createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { storage } from '@/sync/domains/state/storage';
@@ -8,8 +9,11 @@ import {
     buildComposerSessionTokenSlug,
     projectComposerSessionSuggestionItems,
     readComposerSessionSuggestionDisplay,
+    readComposerSessionSuggestionItems,
     type ComposerSessionSuggestionState,
 } from './suggestionSession';
+import { buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization/keys';
+import { setScreenSharingPrivacyActive } from '@/desktop/capture/useNativeRecordingActive';
 
 type SessionOverrides = Record<string, unknown>;
 
@@ -48,6 +52,19 @@ function state(args: Readonly<{
 }
 
 describe('composer session suggestion source (D-7, D-8)', () => {
+    it('omits recording-private ordinary and carried candidates and restores them after sharing ends', () => {
+        const previous = storage.getState();
+        storage.setState({ settings: { ...previous.settings, sessionListHiddenTagIdsWhileRecording: { 'server-a': ['secret'] } },
+            sessionOrganizationTagAssignmentsBySessionKey: { [buildSessionOrganizationSessionKey('server-a', 'private')]: { sessionId: 'private', tagIds: ['secret'] } },
+            sessionListRowsByServerId: { 'server-a': { private: createSessionListRenderableSessionFixture({ id: 'private' }), public: createSessionListRenderableSessionFixture({ id: 'public' }) } } });
+        try {
+            setScreenSharingPrivacyActive(true);
+            expect(readComposerSessionSuggestionItems({ serverId: 'server-a', currentSessionId: null }, readSessionRecordingVisibility()).map(item => item.id)).toEqual(['public']);
+            expect(readComposerSessionSuggestionItems({ serverId: 'server-a', currentSessionId: null, candidateSessionId: 'private' }, readSessionRecordingVisibility())).toEqual([]);
+            setScreenSharingPrivacyActive(false);
+            expect(readComposerSessionSuggestionItems({ serverId: 'server-a', currentSessionId: null }, readSessionRecordingVisibility()).map(item => item.id)).toContain('private');
+        } finally { setScreenSharingPrivacyActive(false); storage.setState(previous, true); }
+    });
     it('reads an admitted hidden Session display only from its exact Home, without inventory eligibility', () => {
         const previous = storage.getState();
         const id = 'same-session-id';

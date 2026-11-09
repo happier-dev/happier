@@ -112,6 +112,7 @@ export function buildSessionListIndexWithServerScope(
         },
     );
 
+    // The store is a view-neutral creation seed; mounted append order belongs to the visible owner.
     return buildSessionListIndexFromViewData(viewData, params.previousIndex ?? null) ?? [];
 }
 

@@ -43,7 +43,13 @@ export type SessionListRenderableDelta = Readonly<{
     revision: number;
     changedSessionIds: readonly string[];
     removedSessionIds: readonly string[];
+    /** Sessions whose direct record was hydrated without a list-row change (a fallback reader's input). */
     hydratedSessionIds?: readonly string[];
+    /**
+     * The active Session list index projection changed. Row lists above are exhaustive whether or not
+     * it did: row readers reconcile them per row, and only index readers react to this flag. A row
+     * change without a published delta (no revision step) is the structural case that needs a full read.
+     */
     rebuiltSessionListIndex: boolean;
     /** Ephemeral exact-Home membership facts from the writer; absent means a full read is required. */
     ordinaryMembershipChanges?: readonly OrdinarySessionMembershipChange[];
@@ -58,6 +64,7 @@ export type OrdinarySessionMembershipChange = Readonly<{
 type SessionListRenderableDeltaPublication = Readonly<{
     changedSessionIds: readonly string[];
     removedSessionIds: readonly string[];
+    /** Hydrated admission can change a manager fallback without changing the admitted list row. */
     hydratedSessionIds?: readonly string[];
     ordinaryMembershipChanges?: readonly OrdinarySessionMembershipChange[];
 }>;
@@ -130,7 +137,7 @@ export function doesActiveSessionListIndexProjectionNeedRepair(state: SessionLis
     );
 }
 
-function buildNextSessionListRenderableDelta(input: Readonly<{
+export function buildNextSessionListRenderableDelta(input: Readonly<{
     previous: SessionListRenderableDelta | undefined;
     changedSessionIds: readonly string[];
     removedSessionIds: readonly string[];

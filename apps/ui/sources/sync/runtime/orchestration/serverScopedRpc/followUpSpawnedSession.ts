@@ -2,10 +2,9 @@ import { hasRawComposerAttachmentSelectionV1 } from '@happier-dev/protocol/runti
 import { createServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storage';
-import { createNotAuthenticatedError, isAuthenticationResponseStatus } from '@/sync/runtime/connectivity/authErrors';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 
-import { fetchSessionByIdWithServerScope } from './fetchSessionByIdWithServerScope';
+import { fetchSessionByIdWithServerScope, throwForFailedSessionHydration } from './fetchSessionByIdWithServerScope';
 import {
     requireLocalSessionVisibleForRoute,
     type EnsureSessionVisibleForMessageRoute,
@@ -78,23 +77,13 @@ function attachRecoverableFollowUpPayload(error: unknown, payload: RecoverableFo
     return decoratedError;
 }
 
-function throwForFailedScopedHydration(result: Awaited<ReturnType<typeof fetchSessionByIdWithServerScope>>): void {
-    if (result.ok) {
-        return;
-    }
-
-    const errorCode = typeof result.errorCode === 'string' ? result.errorCode : '';
-    if (
-        isAuthenticationResponseStatus(result.httpStatus)
-        || errorCode === 'unauthorized'
-        || errorCode === 'forbidden'
-        || errorCode === 'not_authenticated'
-    ) {
-        const status = isAuthenticationResponseStatus(result.httpStatus) ? result.httpStatus : undefined;
-        throw createNotAuthenticatedError(status);
-    }
-
-    throw new Error(errorCode || 'Failed to hydrate created session');
+function throwForFailedFirstTurnSend(result: Readonly<{ ok: true }> | Readonly<{
+    ok: false;
+    errorCode: string;
+}>): void {
+    if (result.ok) return;
+    const code = String(result.errorCode || 'session_first_turn_send_failed');
+    throw Object.assign(new Error(code), { code });
 }
 
 export function readRecoverableFollowUpPayload(error: unknown): RecoverableFollowUpPayload | null {
@@ -126,7 +115,7 @@ function getDefaultActiveSync() {
             text: string,
             displayText?: string,
             metaOverrides?: Record<string, unknown>,
-            options?: Readonly<{ localId?: string | null; requestedAction?: import('@happier-dev/protocol').PendingRequestedActionV1 }>,
+            options?: Readonly<{ localId?: string | null; requestedAction?: import('@happier-dev/protocol/sessions/pending/pendingRequestedActionV1').PendingRequestedActionV1 }>,
         ) => await getSyncSingleton().enqueuePendingMessage(sessionId, text, displayText, metaOverrides, {
             ...options,
             requestedAction: options?.requestedAction ?? { v: 1, kind: 'enqueue' },
@@ -236,9 +225,7 @@ export function createFollowUpSpawnedSessionWithServerScope(deps?: Readonly<{
                         messageLocalId: params.messageLocalId,
                         providerDeliveryIntent: 'first_turn',
                     });
-                    if (!result.ok) {
-                        throw new Error(result.error || 'Failed to send message');
-                    }
+                    throwForFailedFirstTurnSend(result);
                     return;
                 }
 
@@ -284,7 +271,7 @@ export function createFollowUpSpawnedSessionWithServerScope(deps?: Readonly<{
                 log: { log: () => {} },
                 timeoutMs: context.timeoutMs,
             });
-            throwForFailedScopedHydration(hydrationResult);
+            throwForFailedSessionHydration(hydrationResult);
 
             if (hasInitialInput) {
                 const result = await sendScopedMessage({
@@ -297,9 +284,7 @@ export function createFollowUpSpawnedSessionWithServerScope(deps?: Readonly<{
                     messageLocalId: params.messageLocalId,
                     providerDeliveryIntent: 'first_turn',
                 });
-                if (!result.ok) {
-                    throw new Error(result.error || 'Failed to send message');
-                }
+                throwForFailedFirstTurnSend(result);
             }
             } finally {
                 if (context.scope === 'scoped') await context.release?.();

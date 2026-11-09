@@ -2,6 +2,7 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { setSessionTagAssignments as setSessionTagAssignmentsApi } from '@/sync/api/session/sessionOrganizationApi';
 import { buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization';
 import { getStorage } from '@/sync/domains/state/storageStore';
+import { sessionOrganizationStoreFor } from './sessionOrganizationAccountStore';
 import type { MutateSessionTagAssignmentsRequest, SetSessionTagAssignmentsResponse } from '@happier-dev/protocol/sessions/organization/mutations';
 
 export async function setSessionTagAssignments(params: Readonly<{
@@ -15,11 +16,11 @@ export async function setSessionTagAssignments(params: Readonly<{
     params.assertCurrent?.();
     const request: MutateSessionTagAssignmentsRequest = 'tagIds' in params ? { tagIds: [...params.tagIds] }
         : { addTagIds: [...params.addTagIds], removeTagIds: [...params.removeTagIds] };
-    const current = getStorage().getState().sessionOrganizationTagAssignmentsBySessionKey[
+    const current = sessionOrganizationStoreFor(params).sessionOrganizationTagAssignmentsBySessionKey[
         buildSessionOrganizationSessionKey(params.serverId, params.sessionId)]?.tagIds ?? [];
     const optimisticIds = 'tagIds' in request ? request.tagIds
         : [...new Set([...current.filter(id => !request.removeTagIds.includes(id)), ...request.addTagIds])];
-    const recordId = getStorage().getState().setSessionTagAssignmentsOptimistic(params.serverId, params.sessionId, optimisticIds);
+    const recordId = sessionOrganizationStoreFor(params).setSessionTagAssignmentsOptimistic(params.serverId, params.sessionId, optimisticIds);
     try {
         const response = await setSessionTagAssignmentsApi({
             credentials: params.credentials,
@@ -31,7 +32,7 @@ export async function setSessionTagAssignments(params: Readonly<{
         params.assertCurrent?.();
         // Same rule as the pin and reminder writes: confirm this response's own key instead of
         // republishing it over a newer tag change that is still in flight for this Session.
-        getStorage().getState().confirmSessionOrganizationOptimistic(
+        sessionOrganizationStoreFor(params).confirmSessionOrganizationOptimistic(
             recordId,
             'sessionOrganizationTagAssignmentsBySessionKey',
             buildSessionOrganizationSessionKey(params.serverId, params.sessionId),

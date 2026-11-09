@@ -1,4 +1,5 @@
-import { type SessionMessagesPageV1 } from '@happier-dev/protocol';
+import { resolveLastViewedSessionSeq } from '@/sync/domains/session/readCursor/resolveLastViewedSessionSeq';
+import { type SessionMessagesPageV1 } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 import type { NormalizedMessage } from "@happier-dev/session-core/raw";
 import { computeNextSessionSeqFromUpdate } from '@/sync/domains/session/sequence/realtimeSessionSeq';
 import type { Session } from '@/sync/domains/state/storageTypes';
@@ -16,8 +17,8 @@ import {
 } from '@/sync/domains/session/listing/sessionListRenderable';
 import { buildSessionListRenderableMetadataComparison } from '@/sync/domains/session/listing/sessionListRenderableMetadataComparison';
 import { isSessionListRenderableOwnerProjection, readSessionListRenderableOwnerMetadataView } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
-import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
-import { isSessionAgentStateVisible } from './readSessionLayout1OwnerProjection';
+import { readSessionOwnerMetadataView, SESSION_OWNER_METADATA_PROJECTION } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { carrySessionLayout1OwnerProjection, isSessionAgentStateVisible } from './readSessionLayout1OwnerProjection';
 
 import { storage } from '@/sync/domains/state/storage';
 import { readExternalSessionStorageState } from './sessionHttpCompat';
@@ -61,6 +62,7 @@ import {
     type SessionRuntimeActivityResyncHandler,
 } from './sessionRuntimeActivityProjection';
 import { parseSessionAgentActivityHeadlineV1 } from '@happier-dev/protocol/sessions/work/agentActivity/agentActivityHeadlineV1';
+import { decideSessionImageInputAvailability } from '@/sync/domains/session/media/sessionImageInputAvailability';
 import { SessionAccessAccountSummaryV1Schema } from '@happier-dev/protocol/sessions/access/sessionAccessPrincipalV1';
 import type { PrimaryTurnStatusV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { resolveSessionViewerProjectionUpdate } from '@/sync/domains/session/readState/sessionViewer';
@@ -179,6 +181,7 @@ type NewSessionSocketUpdateBody = Readonly<{
     updatedAt?: unknown;
     meaningfulActivityAt?: unknown;
     currentStorageState?: unknown;
+    projectKey?: unknown;
 }>;
 
 function readNewSessionId(body: NewSessionSocketUpdateBody): string | null {
@@ -362,6 +365,7 @@ export async function buildNewSessionFromSocketUpdate(params: {
 
     return {
         id: sessionId,
+        projectKey: typeof updateBody.projectKey === 'string' ? updateBody.projectKey : undefined,
         viewer: resolveSessionViewerProjectionUpdate(updateBody.viewer, undefined),
         ...(typeof params.sourceServerId === 'string' && params.sourceServerId.trim().length > 0
             ? { serverId: params.sourceServerId.trim() }
@@ -585,6 +589,8 @@ export function buildUpdatedSessionProjectionFromSocketUpdate(params: {
             typeof updateBody.archivedAt === 'number' || updateBody.archivedAt === null
                 ? updateBody.archivedAt
                 : session.archivedAt,
+        projectKey: typeof updateBody.projectKey === 'string' || updateBody.projectKey === null
+            ? updateBody.projectKey : session.projectKey,
         // Only an explicit projection changes responsibility. An update that omits
         // the field says nothing about it and must not turn a known assignee, or a
         // server that does not project responsibility at all, into "No one".
@@ -601,6 +607,11 @@ export function buildUpdatedSessionProjectionFromSocketUpdate(params: {
             messageSeq: undefined,
         }),
     };
+    const observedDocuments = observeSessionListDocumentVersions(session[SESSION_LIST_DOCUMENT_ADMISSION], {
+        metadataVersion: updateBody.metadata?.version ?? (updateBody.metadataDocument === 'omitted' ? updateBody.metadataVersion : undefined),
+        metadataLayoutVersion: updateBody.metadataLayoutVersion,
+    });
+    if (observedDocuments) nextSession[SESSION_LIST_DOCUMENT_ADMISSION] = observedDocuments;
     // Missing optional projection fields carry no new fact. Do not manufacture
     // own undefined keys merely because this mapper mentions an omitted field;
     // retain explicit prior shape and every defined/null projection unchanged.
@@ -625,7 +636,7 @@ export async function buildUpdatedSessionFromSocketUpdate(params: {
     }>;
     onRuntimeActivityResyncRequired?: SessionRuntimeActivityResyncHandler;
     onResponsibilityResyncRequired?: SessionResponsibilityResyncHandler;
-}): Promise<{ nextSession: Session; agentState: any }> {
+}): Promise<{ nextSession: Session; agentState: any; ownerMetadataCarried?: true }> {
     const { session, updateBody, updateSeq, updateCreatedAt, sessionEncryption } = params;
 
     const encryptionMode: 'e2ee' | 'plain' = session.encryptionMode === 'plain' ? 'plain' : 'e2ee';
@@ -675,6 +686,7 @@ export async function buildUpdatedSessionFromSocketUpdate(params: {
         && sessionEncryption?.decryptSessionSnapshotStateResult,
     );
     let metadataAuthenticationFailed = false;
+    let openedSharedMetadata: unknown;
     let agentStateOpenResult: AgentStateOpenResult | undefined;
     const metadataDecryptOptions = { onAuthenticationFailure: () => { metadataAuthenticationFailed = true; } };
     const readUpdatedContentAvailability = () => hydrateMetadata
@@ -707,10 +719,12 @@ export async function buildUpdatedSessionFromSocketUpdate(params: {
 
         const metadataPromise = updateBody.metadata && hydrateMetadata
             ? encryptionMode === 'plain'
-                ? Promise.resolve(parsePlainSessionMetadata(
-                    updateBody.metadata.value,
-                    nextMetadataLayoutVersion,
-                ))
+                ? Promise.resolve().then(() => {
+                    if (nextMetadataLayoutVersion === 1 && typeof updateBody.metadata.value === 'string') {
+                        try { openedSharedMetadata = JSON.parse(updateBody.metadata.value); } catch { openedSharedMetadata = undefined; }
+                    }
+                    return parsePlainSessionMetadata(updateBody.metadata.value, nextMetadataLayoutVersion);
+                })
                 : (
                     nextMetadataLayoutVersion === 1
                         ? sessionEncryption!.decryptMetadataPayload(
@@ -724,10 +738,10 @@ export async function buildUpdatedSessionFromSocketUpdate(params: {
                             metadataDecryptOptions,
                         )
                 )
-                    .then((value) => parseDecryptedSessionMetadata(
-                        value,
-                        nextMetadataLayoutVersion,
-                    ))
+                    .then((value) => {
+                        openedSharedMetadata = value;
+                        return parseDecryptedSessionMetadata(value, nextMetadataLayoutVersion);
+                    })
             : Promise.resolve(session.metadata);
 
         const readUpdatedAgentState = async () => {
@@ -799,20 +813,34 @@ export async function buildUpdatedSessionFromSocketUpdate(params: {
             ? updateBody.agentState.version : currentSession.agentStateVersion,
         metadata: hydrateMetadata ? mergedMetadata : currentSession.metadata,
         metadataVersion: hydrateMetadata ? updateBody.metadata.version : currentSession.metadataVersion,
-        // A layout-1 socket patch carries only the shared metadata; the owner view for the new
-        // revision is re-read by the caller's targeted owner hydration. Until that lands the
-        // last-known owner view stays (from `projectionSession`): clearing it made the owner's
-        // row unknown-hidden and title-less on every metadata write, so the list lost and
-        // regained rows while idle. The hydration replaces it, or locks it when unreadable.
+        // A layout-1 socket patch carries the shared metadata and, only when it changed, the owner
+        // envelope. An omitted envelope at the next revision carries the retained owner read
+        // forward below. Otherwise the caller's targeted owner hydration re-reads it; until that
+        // lands the last-known owner view stays (from `projectionSession`): clearing it made the
+        // owner's row unknown-hidden and title-less on every metadata write.
     };
+    const carriedOwner = hydrateMetadata && !metadataAuthenticationFailed && nextMetadataLayoutVersion === 1
+        ? carrySessionLayout1OwnerProjection({
+            previous: currentSession,
+            frame: { ownerMetadata: updateBody.ownerMetadata, metadataLayoutVersion: updateBody.metadataLayoutVersion,
+                metadataVersion: updateBody.metadata.version },
+            sharedMetadata: openedSharedMetadata,
+        })
+        : null;
+    if (carriedOwner) {
+        nextSession.ownerMetadataView = carriedOwner.ownerMetadataView;
+        nextSession.composerOptionsInput = carriedOwner.composerOptionsInput;
+        nextSession[SESSION_OWNER_METADATA_PROJECTION] = carriedOwner;
+    }
 
     let admission = observeSessionListDocumentVersions(currentSession[SESSION_LIST_DOCUMENT_ADMISSION], {
-        metadataVersion: updateBody.metadata?.version, agentStateVersion: updateBody.agentState?.version });
+        metadataVersion: updateBody.metadata?.version ?? (updateBody.metadataDocument === 'omitted' ? updateBody.metadataVersion : undefined),
+        metadataLayoutVersion: updateBody.metadataLayoutVersion, agentStateVersion: updateBody.agentState?.version });
     if (admission && hydrateMetadata && !metadataAuthenticationFailed) admission = admitOpenedSessionListDisplayMetadata(admission, nextSession);
     if (admission && agentStateOpenResult?.status === 'available') admission = admitOpenedSessionListAgentState(admission, updateBody.agentState.version);
     if (admission) nextSession[SESSION_LIST_DOCUMENT_ADMISSION] = admission;
 
-    return { nextSession, agentState };
+    return { nextSession, agentState, ...(carriedOwner ? { ownerMetadataCarried: true as const } : {}) };
 }
 
 export async function buildUpdatedSessionListRenderablePatchFromSocketUpdate(params: {
@@ -1045,10 +1073,15 @@ export async function buildUpdatedSessionListRenderablePatchFromSocketUpdate(par
             ? updateBody.agentState.version : renderable.agentStateVersion,
         metadata: mergedRenderableMetadata,
         agentActivityHeadline,
+        imageInputAvailability: parsedMetadata === undefined || retainOwnerProjection
+            ? renderable.imageInputAvailability
+            : decideSessionImageInputAvailability(parsedMetadata),
         archivedAt:
             typeof updateBody.archivedAt === 'number' || updateBody.archivedAt === null
                 ? updateBody.archivedAt
                 : renderable.archivedAt,
+        projectKey: typeof updateBody.projectKey === 'string' || updateBody.projectKey === null
+            ? updateBody.projectKey : renderable.projectKey,
         lastViewedSessionSeq: nextLastViewedSessionSeq,
         latestTurnId: nextLatestTurnId,
         latestTurnStatus: nextLatestTurnStatus,
@@ -1085,11 +1118,13 @@ export async function buildUpdatedSessionListRenderablePatchFromSocketUpdate(par
             nextLatestReadyEventSeq,
             readableActivity: readRenderablePatchReadableActivity(renderable.id),
             previousHasUnreadMessages: renderable.hasUnreadMessages,
+            previousLastViewedSessionSeq: resolveLastViewedSessionSeq(renderable),
             recomputeUnread: shouldRecomputeUnread,
         }),
     };
     let admission = observeSessionListDocumentVersions(renderable[SESSION_LIST_DOCUMENT_ADMISSION], {
-        metadataVersion: updateBody.metadata?.version, agentStateVersion: updateBody.agentState?.version });
+        metadataVersion: updateBody.metadata?.version ?? (updateBody.metadataDocument === 'omitted' ? updateBody.metadataVersion : undefined),
+        metadataLayoutVersion: updateBody.metadataLayoutVersion, agentStateVersion: updateBody.agentState?.version });
     if (admission && hydrateMetadata && !metadataAuthenticationFailed) {
         admission = admitOpenedSessionListDisplayMetadata(admission, { ...renderable, ...patch });
     }

@@ -1,11 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
-    normalizePluginAccountCollectionContractsV1,
-    PluginAccountAvailabilityIntentReadResponseV1Schema,
-    PluginPortableReleaseManifestV1Schema,
+    normalizePluginAccountCollectionContractsV1} from '@happier-dev/protocol/plugins/data/collectionsV1';
+import {
+    PluginAccountAvailabilityIntentReadResponseV1Schema} from '@happier-dev/protocol/plugins/availability/v1';
+import {
+    PluginPortableReleaseManifestV1Schema} from '@happier-dev/protocol/plugins/availability/compatibilityProjectionV1';
+import {
     type JsonValue,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/json/strictJsonValue';
 import type {
     PluginAccountCollectionMigrationRuntimeProjection,
 } from '@happier-dev/plugin-sdk';

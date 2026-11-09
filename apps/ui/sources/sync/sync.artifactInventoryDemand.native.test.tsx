@@ -52,7 +52,7 @@ describe('Sync native route Artifact inventory demand', () => {
         const { NavigationContainer, createNavigationContainerRef } = await import('@react-navigation/native');
         const { createNativeStackNavigator } = await import('@react-navigation/native-stack');
         const { WorkspaceRouteEntry } = await import('@/components/appShell/workspace/createWorkspaceRouteEntry');
-        const { WorkspaceNavigationContext } = await import('@/components/appShell/workspace/WorkspaceNavigationContext');
+        const { WorkspaceNavigationProvider } = await import('@/components/appShell/workspace/WorkspaceNavigationContext');
         const { createWorkspaceState } = await import('@/components/appShell/workspace/workspaceState');
         const { useArtifactInventoryRead } = await import('@/components/artifacts/useArtifactInventoryRead');
         const { storage } = await import('./domains/state/storage');
@@ -82,14 +82,14 @@ describe('Sync native route Artifact inventory demand', () => {
             // Resolve the SDK scene before mounting; a platform import failure must
             // reject this test directly rather than strand a suspended browser.
             await vi.importActual('../../../../node_modules/@react-navigation/native-stack/src/views/NativeStackView.native.tsx');
-            screen = await renderScreen(<WorkspaceNavigationContext.Provider value={workspace}>
+            screen = await renderScreen(<WorkspaceNavigationProvider value={workspace}>
                 <NavigationContainer ref={navigation}>
                     <Stack.Navigator screenOptions={{ headerShown: false }}>
                         <Stack.Screen name="browser" component={BrowserRoute} />
                         <Stack.Screen name="detail" component={DetailRoute} />
                     </Stack.Navigator>
                 </NavigationContainer>
-            </WorkspaceNavigationContext.Provider>);
+            </WorkspaceNavigationProvider>);
             try {
                 // Flush native scene admission before waiting on its deliberately held HTTP read.
                 expect(screen.findByTestId('native-artifact-browser')).not.toBeNull();

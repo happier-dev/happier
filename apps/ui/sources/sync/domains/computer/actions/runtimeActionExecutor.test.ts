@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
-import { createActionExecutor, createUnavailableRuntimeActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { createActionExecutor} from '@happier-dev/protocol/actions/actionExecutor';
+import { createUnavailableRuntimeActionExecutor} from '@happier-dev/protocol/actions/executor/dispatch';
+import { type ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { useComputerSessionControl } from '@/components/computer/useComputerSessionControl';

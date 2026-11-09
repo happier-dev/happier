@@ -117,7 +117,6 @@ describe('local service launcher machine RPC client', () => {
         });
         const { startLocalServiceLauncherTargetViaMachineRpc } = await import('./machineRpc');
         const { createLocalServicesRuntimeActionExecutor } = await import('../actions/runtimeActionExecutor');
-        const runtime = createLocalServicesRuntimeActionExecutor();
         const { buildLocalServiceLauncherStartRequest } = await import('@/components/sessions/localServices/launcherStartAction');
         const execute = createLocalServicesRuntimeActionExecutor({ startLauncherTarget: startLocalServiceLauncherTargetViaMachineRpc });
         const request = buildLocalServiceLauncherStartRequest({ target: { ...startResponse.snapshot.targets[0]!,
@@ -223,7 +222,6 @@ describe('local service launcher machine RPC client', () => {
         });
         const { startLocalServiceLauncherTargetViaMachineRpc } = await import('./machineRpc');
         const { createLocalServicesRuntimeActionExecutor } = await import('../actions/runtimeActionExecutor');
-        const runtime = createLocalServicesRuntimeActionExecutor();
         const execute = createLocalServicesRuntimeActionExecutor({ startLauncherTarget: startLocalServiceLauncherTargetViaMachineRpc });
         const input = { machineId: 'machine_1', targetId: 'target_1', workspace, declaration, expectedEffectDigest, choice: { kind: 'primary' } };
         await expect(execute({ actionId: 'localServices.launcher.start', input,

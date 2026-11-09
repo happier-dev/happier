@@ -42,7 +42,7 @@ export async function readTransferableSessionDataKey(params: Readonly<{
     const envelope = params.session?.dataEncryptionKey;
     const metadata = params.session?.metadata;
     if (typeof envelope !== 'string' || !envelope || typeof metadata !== 'string' || !params.encryption) return null;
-    const key = await params.encryption.decryptEncryptionKey(envelope);
+    const key = await params.encryption.decryptEncryptionKey(envelope, { workClass: 'interactive' });
     if (key?.byteLength !== ENCRYPTED_DATA_KEY_V1_BYTES) return null;
     return await isSessionKeyBoundToServedMetadata({
         key,

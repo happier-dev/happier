@@ -7,7 +7,7 @@
  * - `list`: the Sessions list as the person last saw it — the frozen cursor order that the
  *   sideways swipe has always stepped through (`sessionNavigationCursor`).
  * - `recent`: what this device opened, by time. Open tabs lead when two or more are open
- *   (the rail is a set the person chose to keep), then this device's recents (`sessionMruOrderV1`).
+ *   (the rail is a set the person chose to keep), then this device's navigation history.
  *
  * Keys are session address keys (`sessionAddressKey`, the same keys the cursor and the MRU store)
  * and `tab:<id>` for an open tab, so a session that is open as a tab appears once, as the tab.

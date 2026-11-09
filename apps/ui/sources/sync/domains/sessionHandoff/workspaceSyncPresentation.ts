@@ -1,5 +1,7 @@
 import { t } from '@/text';
+import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import type { WorkspaceSyncSetAttention } from './workspaceSyncRelationshipModel';
+import type { WorkspaceSyncStatusSnapshot } from './workspaceSyncStatusStore';
 
 /** Keep known conflicts distinct from links whose current status needs checking. */
 export function formatWorkspaceSyncSetAttention(attention: WorkspaceSyncSetAttention): string | null {
@@ -49,6 +51,8 @@ export type WorkspaceSyncErrorTranslationKey =
  * read the same field rather than parsing messages.
  */
 export function readWorkspaceSyncErrorCode(error: unknown): string | null {
+    const rpcCode = readRpcErrorCode(error);
+    if (rpcCode) return rpcCode;
     if (!error || typeof error !== 'object') return null;
     const code = (error as { code?: unknown }).code;
     return typeof code === 'string' && code.length > 0 ? code : null;
@@ -56,11 +60,13 @@ export function readWorkspaceSyncErrorCode(error: unknown): string | null {
 
 /**
  * The refusal copy for a failed Workspace Sync Action: the daemon's typed code mapped through
- * the one error presentation, or null when the code has none (the caller keeps its own fallback).
+ * the one error presentation, with the exact code available for diagnosis.
  */
 export function presentWorkspaceSyncFailure(error: unknown): string | null {
-    const key = resolveWorkspaceSyncErrorTranslationKey(readWorkspaceSyncErrorCode(error));
-    return key ? t(key) : null;
+    const code = readWorkspaceSyncErrorCode(error);
+    if (!code) return null;
+    const key = resolveWorkspaceSyncErrorTranslationKey(code);
+    return key ? `${t(key)} (${code})` : code;
 }
 
 export function resolveWorkspaceSyncModeTranslationKey(value: unknown): WorkspaceSyncModeTranslationKey | null {
@@ -150,10 +156,12 @@ export function resolveWorkspaceSyncRelationshipStateLabel(input: Readonly<{
     enabled: boolean;
     statusState: unknown;
     errorCode: unknown;
-    statusPhaseHasError: boolean;
+    statusPhase: WorkspaceSyncStatusSnapshot['phase'];
 }>): WorkspaceSyncRelationshipStateLabelKey {
     if (input.errorCode === 'engine_unavailable') return 'workspaceSync.state.engineUnavailable';
-    if (input.statusPhaseHasError) return 'workspaceSync.state.controllerUnavailable';
+    if (input.statusPhase === 'error' || (input.enabled && input.statusPhase === 'ready' && !input.statusState)) {
+        return 'workspaceSync.state.controllerUnavailable';
+    }
     const statusStateKey = resolveWorkspaceSyncStateTranslationKey(input.statusState);
     if (statusStateKey) return statusStateKey;
     if (!input.enabled) return 'workspaceSync.state.paused';

@@ -14,6 +14,18 @@ const row = { id: 'skill', ownerAccountId: 'account', access: 'owner', encryptio
     dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, seq: 0, createdAt: 1, updatedAt: 1 } as const;
 
 describe('Artifact coarse-kind transport', () => {
+    it('preserves received membership and structural continuation through the existing header transport', async () => {
+        const paths: string[] = [];
+        const selection = { audience: 'received' as const, kinds: ['bot_template.v1'], limit: 1, cursor: 'frontier' };
+        await fetchArtifactListPage({ token: 'received-header-page' }, { ...selection, retry: 'none',
+            request: async path => { paths.push(path); return Response.json({ items: [], hasUnclassified: false,
+                coverage: { status: 'complete', unclassifiedCount: 0 } }); } });
+        const query = new URL(paths[0]!, 'https://home.invalid').searchParams;
+        expect(query.get('audience')).toBe('received');
+        expect(query.get('kinds')).toBe('["bot_template.v1"]');
+        expect(query.get('cursor')).toBe('frontier');
+        expect(query.has('includeBody')).toBe(false);
+    });
     it('requires the typed witness for browser selection instead of accepting an unfiltered array', async () => {
         const selection = { browserListed: true as const };
         await expect(fetchArtifactListPage({ token: 'browser-witness' }, { ...selection, retry: 'none',

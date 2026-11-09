@@ -3,9 +3,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { serverAccountScopedStorageKey } from '@/sync/domains/scope/serverAccountScope';
 import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
 import {
-    deriveSessionCreationTagV1,
+    deriveSessionCreationTagV1} from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
+import {
     buildSessionSpawnInitialInputLocalIdV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/messages/spawnedFirstTurn';
 
 const scope = { serverId: 'server-a', accountId: 'account-a' } as const;
 const attempt = {
@@ -20,6 +21,26 @@ const targetRecordId = `${attempt.machineId.length}:${attempt.machineId}${attemp
 const compositeRecordId = `${targetRecordId}${attempt.userAttemptId.length}:${attempt.userAttemptId}`;
 
 describe('spawnAttemptNonceStore persistence', () => {
+    it('retains a terminal refusal for the original Account and attempt without admitting a daemon operation', async () => {
+        const store = await import('./spawnAttemptNonceStore');
+        const { settleManualSessionSpawnNewActionCustody } = await import('@/sync/ops/actions/sessionSpawnNewCustody');
+        const acquired = await store.acquireSpawnAttemptCustody({ ...attempt, seedNonce: 'refused-nonce', submissionState: 'submitted' });
+        if (acquired.status !== 'acquired') throw new Error('Expected acquired custody');
+        const result = { type: 'error', code: 'incompatible_target', retryable: false,
+            incompatibleTarget: { reason: 'target_preparation_invalid_result' } } as const;
+        await settleManualSessionSpawnNewActionCustody({ acquired, action: { ok: true, result }, committed: null,
+            executionTarget: { serverId: scope.serverId, machineId: attempt.machineId }, sourceAdmissionRetired: false });
+        expect(store.readSpawnAttemptCustodyState(scope)).toMatchObject({ status: 'valid', attempts: {
+            [compositeRecordId]: { terminalResult: result },
+        } });
+        const { awaitManualSessionSpawnOperation } = await import('./manualSessionSpawnOperation');
+        await expect(awaitManualSessionSpawnOperation(scope, attempt.userAttemptId,
+            new AbortController().signal, attempt.machineId)).resolves.toEqual(result);
+        expect(store.readSpawnAttemptCustodyState({ ...scope, accountId: 'another-account' })).toEqual({ status: 'missing' });
+        expect(await store.acquireSpawnAttemptCustody({ ...attempt, submissionState: 'submitted' }))
+            .toMatchObject({ status: 'acquired', reused: true, record: { terminalResult: result } });
+    });
+
     it.each(['daemon-birth', 'legacy-checkpoint'] as const)('retains %s origin writer through submission, recovery, and a changed capability', async authoringOriginPersistence => {
         const store = await import('./spawnAttemptNonceStore');
         const acquired = await store.acquireSpawnAttemptCustody({ ...attempt, seedNonce: 'origin-writer', authoringOriginPersistence });
@@ -109,6 +130,43 @@ describe('spawnAttemptNonceStore persistence', () => {
         expect(Object.values(persisted.attempts)).toEqual([
             expect.objectContaining({ submissionState: 'submitted' }),
         ]);
+    });
+
+    it('atomically submits prepared custody without replacing its nonce or first-dispatch writer', async () => {
+        const store = await import('./spawnAttemptNonceStore');
+        const prepared = await store.acquireSpawnAttemptCustody({ ...attempt,
+            seedNonce: 'original-prepared-nonce', authoringOriginPersistence: 'legacy-checkpoint' });
+        if (prepared.status !== 'acquired') throw new Error('Expected prepared custody');
+        // Earlier recovery coverage reloads modules; observe the owner's current
+        // MMKV handle rather than the static fixture handle to the same backing.
+        const persistence = (await import('@/sync/domains/state/persistenceStorage')).getPersistenceStorage();
+        const reads = vi.spyOn(persistence, 'getString');
+        const writes = vi.spyOn(persistence, 'set');
+        try {
+            const submitted = await store.acquireSpawnAttemptCustody({ ...attempt, submissionState: 'submitted',
+                seedNonce: 'must-not-replace', authoringOriginPersistence: 'daemon-birth' });
+            expect(submitted).toMatchObject({ status: 'acquired', reused: true, previousSubmissionState: 'prepared',
+                record: { ...prepared.record, submissionState: 'submitted' } });
+            expect(reads).toHaveBeenCalledTimes(1);
+            expect(writes).toHaveBeenCalledTimes(1);
+            const persisted = store.readSpawnAttemptCustodyState(scope);
+            expect(persisted.status === 'valid' && Object.values(persisted.attempts)[0])
+                .toEqual({ ...prepared.record, submissionState: 'submitted' });
+            await expect(store.acquireSpawnAttemptCustody({ ...attempt, submissionState: 'submitted',
+                seedNonce: 'must-not-replace-on-retry' })).resolves.toMatchObject({
+                status: 'acquired', reused: true, previousSubmissionState: 'submitted',
+                record: { nonce: prepared.record.nonce, submissionState: 'submitted' },
+            });
+            // Record the first submitted retry so an overlapping first dispatch
+            // cannot prune its custody; later retries need no further write.
+            expect(writes).toHaveBeenCalledTimes(2);
+            await expect(store.acquireSpawnAttemptCustody({ ...attempt, submissionState: 'submitted' }))
+                .resolves.toMatchObject({ record: { hasSubmittedRetry: true, nonce: prepared.record.nonce } });
+            expect(writes).toHaveBeenCalledTimes(2);
+        } finally {
+            reads.mockRestore();
+            writes.mockRestore();
+        }
     });
 
     it('rehydrates version-two custody conservatively as already submitted', async () => {
@@ -472,6 +530,14 @@ describe('spawnAttemptNonceStore persistence', () => {
 
         await expect(store.clearSpawnAttemptCustody({
             ...attempt,
+            nonce: 'nonce-lifecycle',
+            onlyIfUncommitted: true,
+        })).resolves.toBe(false);
+        expect(store.readSpawnAttemptCustodyState(scope)).toMatchObject({ status: 'valid',
+            attempts: { [compositeRecordId]: { createdSessionId: 'session-created' } } });
+
+        await expect(store.clearSpawnAttemptCustody({
+            ...attempt,
             nonce: 'wrong-nonce',
         })).resolves.toBe(false);
         await expect(store.clearSpawnAttemptCustody({
@@ -556,6 +622,7 @@ describe('spawnAttemptNonceStore persistence', () => {
                 machineId: 'machine-shared',
                 targetFingerprint: 'target-shared',
                 userAttemptId: 'attempt-shared',
+                submissionState: 'submitted',
             } as const;
             const [sharedFirst, sharedSecond] = await Promise.all([
                 firstInstance.acquireSpawnAttemptCustody({ ...sharedAttempt, seedNonce: 'shared-nonce-first' }),

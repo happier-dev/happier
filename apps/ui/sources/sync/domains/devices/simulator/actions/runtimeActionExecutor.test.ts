@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
-    RuntimeActionExecuteArgs,
+    RuntimeActionExecuteArgs} from '@happier-dev/protocol/actions/executor/types';
+import type {
     SimulatorPreviewActionResultV1,
     SimulatorPreviewSnapshotV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/devices/simulator/runtimeV1';
 
 // Cold transforms belong to collection, outside each action behavior's deadline.
 await import('./runtimeActionExecutor');

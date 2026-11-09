@@ -1,8 +1,10 @@
 import type {
-    ActionExecuteResult,
-    ActionExecutorContext,
+    ActionExecuteResult} from '@happier-dev/protocol/actions/actionExecutionResult';
+import type {
+    ActionExecutorContext} from '@happier-dev/protocol/actions/executor/types';
+import type {
     ActionUiPlacement,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/actions/actionUiPlacements';
 import { router } from 'expo-router';
 
 import { openSessionHandoffPicker } from '@/components/sessions/handoff/openSessionHandoffPicker';

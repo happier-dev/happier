@@ -7,7 +7,7 @@ import {
     pairingStatus,
 } from './apiPairingAuth';
 import { resolveHomeEnrollmentTransport } from '@/auth/enrollment/homeEnrollmentTransport';
-import { encodeBase64 } from '@happier-dev/protocol';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 
 const endpointFetchMock = vi.hoisted(() => vi.fn());
 const createServerFetchAtEndpointMock = vi.hoisted(() => vi.fn<(input: unknown) => typeof endpointFetchMock>(() => endpointFetchMock));

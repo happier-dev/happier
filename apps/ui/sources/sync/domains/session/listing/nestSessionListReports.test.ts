@@ -26,6 +26,30 @@ function shape(items: SessionListIndexItem[]) {
 }
 
 describe('nestSessionListReports', () => {
+    it('preserves a filed child membership and execution workspace when its lead owns display placement', () => {
+        const lead = { ...session('lead', 'lead-project'), type: 'session' as const, sessionId: 'lead',
+            folderId: null, workspace: { t: 'workspaceScope' as const, serverId: 'home', machineId: 'lead-machine', rootPath: '/lead' } };
+        const child = { ...session('child', 'filed-section'), type: 'session' as const, sessionId: 'child', folderId: 'launch',
+            workspace: { t: 'workspaceScope' as const, serverId: 'home', machineId: 'child-machine', rootPath: '/child' } };
+        const nested = nestSessionListReports([header('lead-project'), lead, header('filed-section'), child],
+            rows({ lead: null, child: 'lead' }));
+        expect(nested[2]).toMatchObject({ sessionId: 'child', reportsDepth: 1, groupKey: 'lead-project',
+            folderId: 'launch', workspace: child.workspace });
+    });
+
+    it('keeps attention shortcuts flat while the base child nests under its visible lead', () => {
+        const child = { ...session('child'), type: 'session' as const, sessionId: 'child', occurrenceRole: 'needsYou' as const, groupKey: 'attention' };
+        const lead = { ...session('lead'), type: 'session' as const, sessionId: 'lead', occurrenceRole: 'working' as const, groupKey: 'working' };
+        const nested = nestSessionListReports([
+            header('attention'), child, header('working'), lead,
+            header('base'), session('lead', 'base'), session('child', 'filed-section'),
+        ], rows({ lead: null, child: 'lead' }));
+        expect(nested[1]).toBe(child);
+        expect(nested[3]).toBe(lead);
+        expect(shape(nested)).toEqual(['# attention', 'child:0', '# working', 'lead:0', '# base', 'lead:0', 'child:1']);
+        expect(nested[5]).toMatchObject({ reportsParent: true });
+    });
+
     it('projects Bot child disclosure from the admitted parent marker and clears it after demotion', () => {
         const resolve = rows({ bot: null, worker: 'bot', ordinary: null, other: 'ordinary' });
         const items = [session('bot'), session('worker'), session('ordinary'), session('other')];

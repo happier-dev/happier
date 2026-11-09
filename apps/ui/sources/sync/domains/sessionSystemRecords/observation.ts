@@ -7,16 +7,10 @@ import type { SessionSystemRecordFetchResult } from './transport';
 
 export type SessionSystemRecordUnavailableReason = Exclude<SessionSystemRecordFetchResult<never>, { status: 'ok' }>['status']
     | 'invalid_address' | Exclude<ServerCredentialAccountScopeResolution['kind'], 'bound' | 'resolving'>;
-export type SessionSystemRecordAuthority = Readonly<{
-    contentContext: SessionStoredContentContext | null;
-    capabilities: SessionBoardCapabilities | null;
-}>;
 export type SessionSystemRecordObservationBase = Readonly<{
     session: SessionAddress;
     repository: SessionSystemRecordRepository;
-    authority: SessionSystemRecordAuthority;
     readCapabilities: () => SessionBoardCapabilities | null;
     readContentContext: () => SessionStoredContentContext | null;
-    renewAuthority: () => Promise<SessionSystemRecordFetchResult<SessionSystemRecordAuthority>>;
     isCurrent: () => boolean;
 }>;

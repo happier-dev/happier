@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ConnectedServiceIdSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { QualifiedConnectedAccountGroupV4Schema, QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
-import { ConnectedAccountUiProjectionEntryV1Schema } from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';
+import { ConnectedAccountUiProjectionEntryV1Schema, projectConnectedAccountDescriptorV1 } from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';
 import { BUNDLED_ACCOUNT_CONNECTED_SERVICE_DECLARATIONS } from '@/agents/registry/generatedBundledPluginEntries';
 
 import {
@@ -15,8 +15,10 @@ import {
   retireConnectedAccountDescriptorProjection,
   canExecuteConnectedServiceAction,
   getConnectedServiceSetupPresentation,
+  getConnectedServiceRegistryIdentityFallback,
   isConnectedServiceUsageCapable,
   getConnectedAccountAuthentication,
+  projectConnectedServiceRegistryEntries,
 } from './connectedServiceRegistry';
 import { buildConnectedAccountPurposeTargetChoices } from './connectedAccountPurposeTargetChoices';
 import { advanceConnectedAccountDescriptorProjectionState, createConnectedAccountDescriptorProjectionLoadingState,
@@ -42,6 +44,134 @@ function manualAuthentication(fields: Array<Readonly<{
 }
 
 describe('connectedServiceRegistry', () => {
+  it.each(['loading', 'ready', 'stale', 'error'] as const)('offers bundled Account-runtime authentication during %s Machine coverage without native execution', (status) => {
+    const entries = projectConnectedServiceRegistryEntries({ scopeKey: 'account-cloud', status,
+      descriptors: [], conflicts: [], errorReason: status === 'stale' || status === 'error' ? 'partial_machine_failure' : null });
+    const hetzner = entries.find(entry => entry.service?.pluginId === 'happier.machine.hetzner'
+      && entry.service.localId === 'hetzner-account');
+    expect(hetzner).toMatchObject({ executable: false, projectionStatus: 'ready',
+      projectedDescriptor: { ui: { category: 'cloud-machines' } } });
+    expect(canExecuteConnectedServiceAction(hetzner!, 'advertised-v4')).toBe(true);
+  });
+
+  it('normalizes bundled declarations through the closed UI projection without leaking producer metadata', () => {
+    const bundled = BUNDLED_ACCOUNT_CONNECTED_SERVICE_DECLARATIONS['happier.agent.codex/openai-codex']!;
+    const descriptor = projectConnectedAccountDescriptorV1({ descriptor: bundled.descriptor,
+      pluginId: bundled.service.pluginId, serviceId: bundled.service.localId, provenance: 'first_party', sourceKind: 'bundled',
+      availability: { state: 'available', reason: 'resolved' }, diagnostics: [] });
+    const result = mergeConnectedAccountDescriptorProjections([{ kind: 'ready', descriptors: [descriptor] }]);
+    expect(result.kind).toBe('ready');
+    expect(ConnectedAccountUiProjectionEntryV1Schema.safeParse(result.descriptors?.[0]).success).toBe(true);
+  });
+
+  it.each([
+    { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
+    { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+  ])('offers another $localId account from its admitted auth declaration without granting native execution', (service) => {
+    const entry = getConnectedServiceRegistryIdentityFallback(service);
+    expect(entry.executable).toBe(false);
+    expect(canExecuteConnectedServiceAction(entry, 'advertised-v4')).toBe(true);
+    expect(canExecuteConnectedServiceAction({ ...entry, availability: {
+      state: 'blocked', reason: 'execution_origin_unavailable',
+    } }, 'advertised-v4')).toBe(true);
+    for (const availability of [
+      { state: 'disabled' as const, reason: 'disabled' },
+      { state: 'blocked' as const, reason: 'policy_refused' },
+    ]) {
+      expect(canExecuteConnectedServiceAction({ ...entry, availability }, 'advertised-v4')).toBe(false);
+    }
+    expect(canExecuteConnectedServiceAction({ ...entry, projectionStatus: 'conflict' }, 'advertised-v4')).toBe(false);
+  });
+
+  it('publishes selected Account authentication declarations without manufacturing native execution or unchanged updates', () => {
+    const service = { pluginId: 'acme.portable-auth', localId: 'portable' };
+    const descriptor = projectConnectedAccountDescriptorV1({ descriptor: {
+      id: service.localId, title: 'Portable account', authentication: {
+        defaultModeId: 'device', account: { artifactId: 'account-auth', exportName: 'activate' },
+        modes: [{ id: 'device', kind: 'oauthDeviceCode', outcomeReconciliation: 'none' }],
+      },
+    }, serviceId: service.localId, pluginId: service.pluginId, provenance: 'external', sourceKind: 'account_release',
+      availability: { state: 'available', reason: 'account_declaration' }, diagnostics: [] });
+    const declarations = [descriptor];
+    const lifetime = { scope: { serverId: 'portable-home', accountId: 'account-a' }, isCurrent: () => true,
+      onRetire: () => ({ dispose() {} }) };
+    const projection = { scopeKey: 'portable-home', status: 'ready' as const, descriptors: [], conflicts: [], errorReason: null };
+    let publications = 0;
+    const unsubscribe = subscribeConnectedServiceRegistry(() => { publications += 1; });
+    try {
+      installConnectedAccountDescriptorProjection(projection, lifetime, declarations);
+      const entry = getQualifiedConnectedServiceRegistryEntry(service);
+      expect(entry).toMatchObject({ executable: false, projectionStatus: 'ready',
+        projectedDescriptor: { authentication: { account: { artifactId: 'account-auth', exportName: 'activate' } } } });
+      expect(canExecuteConnectedServiceAction(entry!, 'advertised-v4')).toBe(true);
+      expect(publications).toBe(1);
+      installConnectedAccountDescriptorProjection(projection, lifetime, declarations);
+      expect(publications).toBe(1);
+      expect(getQualifiedConnectedServiceRegistryEntry(service)).toBe(entry);
+      installConnectedAccountDescriptorProjection(projection, lifetime, []);
+      expect(getQualifiedConnectedServiceRegistryEntry(service)).toBeNull();
+      expect(publications).toBe(2);
+    } finally { unsubscribe(); retireConnectedAccountDescriptorProjection(lifetime); }
+  });
+
+  it('keeps selected Account authoring independent from an enrolled Machine declaration', () => {
+    const descriptor = projectConnectedAccountDescriptorV1({ descriptor: {
+      id: 'portable', title: 'Current Account title', authentication: {
+        defaultModeId: 'device', account: { artifactId: 'account-auth', exportName: 'activate' },
+        modes: [{ id: 'device', kind: 'oauthDeviceCode', outcomeReconciliation: 'none' }],
+      },
+    }, serviceId: 'portable', pluginId: 'acme.portable-auth', provenance: 'external', sourceKind: 'account_release',
+      availability: { state: 'available', reason: 'account_declaration' }, diagnostics: [] });
+    const machineDescriptor = { ...descriptor, title: 'Old Machine title', sourceKind: 'installed',
+      authentication: manualAuthentication([]), availability: { state: 'disabled' as const, reason: 'disabled' } };
+    const projection = { scopeKey: 'portable-home', status: 'ready' as const,
+      descriptors: [machineDescriptor], conflicts: [], errorReason: null };
+    const readPortable = (entries: ReturnType<typeof projectConnectedServiceRegistryEntries>) => entries.find(
+      entry => entry.service?.pluginId === 'acme.portable-auth' && entry.service.localId === 'portable',
+    )!;
+    const entry = readPortable(projectConnectedServiceRegistryEntries(projection, [descriptor]));
+    expect(entry).toMatchObject({ projectedTitle: 'Current Account title', executable: false, projectionStatus: 'ready' });
+    expect(canExecuteConnectedServiceAction(entry, 'advertised-v4')).toBe(true);
+    const nativeEntry = readPortable(projectConnectedServiceRegistryEntries({ ...projection,
+      descriptors: [{ ...machineDescriptor, availability: { state: 'available', reason: 'resolved' } }],
+    }, [descriptor]));
+    expect(nativeEntry).toMatchObject({ projectedTitle: 'Current Account title', executable: true });
+  });
+
+  it('offers the bundled Account-direct key declaration without inventing a Machine executable', () => {
+    const entries = projectConnectedServiceRegistryEntries({ scopeKey: 'no-machine-home', status: 'ready',
+      descriptors: [], conflicts: [], errorReason: null });
+    const entry = entries.find(entry => entry.service?.pluginId === 'happier.agent.claude' && entry.service.localId === 'anthropic');
+    expect(entry).toMatchObject({ executable: false, projectionStatus: 'ready',
+      authenticationModes: [expect.objectContaining({ id: 'api-key', accountDirectSave: true })] });
+    expect(canExecuteConnectedServiceAction(entry!, 'advertised-v4')).toBe(true);
+    expect(canExecuteConnectedServiceAction({ ...entry!, availability: { state: 'disabled', reason: 'disabled' } }, 'advertised-v4')).toBe(false);
+  });
+  it('admits retained bundled Account-direct authoring without borrowing missing native execution or bypassing real policy', () => {
+    const service = { pluginId: 'happier.agent.claude', localId: 'anthropic' };
+    const declared = projectConnectedServiceRegistryEntries({ scopeKey: 'declaration', status: 'ready',
+      descriptors: [], conflicts: [], errorReason: null }).find(entry => entry.service?.pluginId === service.pluginId && entry.service.localId === service.localId)!;
+    const resolved = mergeConnectedAccountDescriptorProjections([{ kind: 'ready', descriptors: [declared.projectedDescriptor!],
+      executionUnavailablePluginIds: [service.pluginId] }]);
+    if (resolved.kind !== 'ready') throw new Error('Expected retained declaration');
+    const lifetime = { scope: { serverId: 'offline-home', accountId: 'account-a' }, isCurrent: () => true,
+      onRetire: () => ({ dispose() {} }) };
+    const projection = { ...resolved, scopeKey: 'offline-home', status: 'stale' as const, answeredDescriptorIdentities: [], errorReason: 'transport' as const };
+    installConnectedAccountDescriptorProjection(projection, lifetime);
+    const entry = getQualifiedConnectedServiceRegistryEntry(service)!;
+    expect(entry.availability).toEqual({ state: 'blocked', reason: 'execution_origin_unavailable' });
+    expect(entry.executable).toBe(false);
+    expect(canExecuteConnectedServiceAction(entry, 'advertised-v4')).toBe(true);
+    expect(getAccountConnectedServiceConfigurationMode({ service, modeId: 'api-key' }, lifetime.scope)).toMatchObject({ accountDirectSave: true });
+    for (const availability of [{ state: 'disabled' as const, reason: 'disabled' },
+      { state: 'blocked' as const, reason: 'plugin_declaration_unusable' }]) {
+      installConnectedAccountDescriptorProjection({ ...projection, status: 'ready', answeredDescriptorIdentities: undefined,
+        descriptors: projection.descriptors.map(descriptor => ({ ...descriptor, availability })) }, lifetime);
+      expect(canExecuteConnectedServiceAction(getQualifiedConnectedServiceRegistryEntry(service)!, 'advertised-v4')).toBe(false);
+      expect(getAccountConnectedServiceConfigurationMode({ service, modeId: 'api-key' }, lifetime.scope)).toBeNull();
+    }
+    retireConnectedAccountDescriptorProjection(lifetime);
+  });
   it('keeps a repeated descriptor publication stable while adopting replacement Account lifetimes', () => {
     const projection = createConnectedAccountDescriptorProjectionLoadingState('publication-home');
     const lifetime = { scope: { serverId: 'publication-home', accountId: 'account-a' }, isCurrent: () => true,
@@ -104,11 +234,11 @@ describe('connectedServiceRegistry', () => {
   it.each(['no Machine', 'two Machines', 'two Machines with different declarations'] as const)('keeps a saved bundled pool selectable with %s supplying declarations', (suppliers) => {
     const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
     const bundled = BUNDLED_ACCOUNT_CONNECTED_SERVICE_DECLARATIONS[`${service.pluginId}/${service.localId}`]!;
-    const descriptor = ConnectedAccountUiProjectionEntryV1Schema.parse({
-      ...bundled.descriptor, pluginId: service.pluginId, serviceId: service.localId,
-      provenance: 'first_party', sourceKind: 'bundled', capabilities: bundled.descriptor.capabilities ?? [],
+    const descriptor = ConnectedAccountUiProjectionEntryV1Schema.parse(projectConnectedAccountDescriptorV1({
+      descriptor: bundled.descriptor, pluginId: service.pluginId, serviceId: service.localId,
+      provenance: 'first_party', sourceKind: 'bundled',
       availability: { state: 'available', reason: 'resolved' }, diagnostics: [],
-    });
+    }));
     const { usageIdentity, ...withoutUsageIdentity } = descriptor;
     expect(usageIdentity).toBeDefined();
     const merged = mergeConnectedAccountDescriptorProjections(suppliers === 'no Machine' ? [] : [
@@ -142,8 +272,10 @@ describe('connectedServiceRegistry', () => {
     const selected = choices.find(choice => choice.current && choice.kind === 'group');
     expect(selected).toMatchObject({ eligibility: 'usable', selectable: true });
     expect(selected?.presentation.unavailableReason).toBeUndefined();
-    // Passive declaration truth does not admit a sign-in/refresh operation.
-    if (suppliers === 'no Machine') expect(getQualifiedConnectedServiceRegistryEntry(service)).toBeNull();
+    // Account-runtime authoring stays offered without granting native execution.
+    if (suppliers === 'no Machine') expect(getQualifiedConnectedServiceRegistryEntry(service)).toMatchObject({
+      executable: false, projectionStatus: 'ready',
+    });
     else {
       expect(merged.kind).toBe('ready');
       expect(merged.descriptors).toHaveLength(1);
@@ -159,12 +291,12 @@ describe('connectedServiceRegistry', () => {
   it.each(['external', 'external with bundled key', 'unknown bundled', 'first-party installed'] as const)('refuses genuinely divergent usage declarations for %s supplies', (variant) => {
     const bundled = BUNDLED_ACCOUNT_CONNECTED_SERVICE_DECLARATIONS['happier.agent.codex/openai-codex']!;
     const service = { pluginId: variant === 'first-party installed' || variant === 'external with bundled key' ? bundled.service.pluginId : 'acme.accounts', localId: bundled.service.localId };
-    const descriptor = ConnectedAccountUiProjectionEntryV1Schema.parse({
-      ...bundled.descriptor, pluginId: service.pluginId, serviceId: service.localId,
+    const descriptor = ConnectedAccountUiProjectionEntryV1Schema.parse(projectConnectedAccountDescriptorV1({
+      descriptor: bundled.descriptor, pluginId: service.pluginId, serviceId: service.localId,
       provenance: variant.startsWith('external') ? 'external' : 'first_party',
-      sourceKind: variant === 'first-party installed' ? 'installed' : 'bundled', capabilities: bundled.descriptor.capabilities ?? [],
+      sourceKind: variant === 'first-party installed' ? 'installed' : 'bundled',
       availability: { state: 'available', reason: 'resolved' }, diagnostics: [],
-    });
+    }));
     const other = { ...descriptor, usageIdentity: { providerId: 'acme.usage' } };
     const merged = mergeConnectedAccountDescriptorProjections([
       { kind: 'ready', descriptors: [descriptor] }, { kind: 'ready', descriptors: [other] },
@@ -180,12 +312,11 @@ describe('connectedServiceRegistry', () => {
   it('does not fill omitted usage metadata for an external declaration', () => {
     const bundled = BUNDLED_ACCOUNT_CONNECTED_SERVICE_DECLARATIONS['happier.agent.codex/openai-codex']!;
     const service = { pluginId: 'acme.accounts', localId: bundled.service.localId };
-    const descriptor = ConnectedAccountUiProjectionEntryV1Schema.parse({
-      ...bundled.descriptor, pluginId: service.pluginId, serviceId: service.localId,
-      title: 'Different declaration', provenance: 'external',
-      sourceKind: 'bundled', capabilities: bundled.descriptor.capabilities ?? [],
+    const descriptor = ConnectedAccountUiProjectionEntryV1Schema.parse(projectConnectedAccountDescriptorV1({
+      descriptor: { ...bundled.descriptor, title: 'Different declaration' }, pluginId: service.pluginId, serviceId: service.localId,
+      provenance: 'external', sourceKind: 'bundled',
       availability: { state: 'available', reason: 'resolved' }, diagnostics: [],
-    });
+    }));
     const { usageIdentity: omitted, ...withoutUsageIdentity } = descriptor;
     expect(omitted).toBeDefined();
     const merged = mergeConnectedAccountDescriptorProjections([
@@ -225,7 +356,8 @@ describe('connectedServiceRegistry', () => {
     expect(getAccountConnectedServiceConfigurationMode(target, lifetime.scope)).toBeNull();
     expect(getConnectedServiceRegistrySnapshot(lifetime.scope).entries).toEqual([]);
     installConnectedAccountDescriptorProjection(projection, lifetime);
-    expect(getConnectedServiceRegistrySnapshot(lifetime.scope).entries).toHaveLength(1);
+    expect(getConnectedServiceRegistrySnapshot(lifetime.scope).entries.filter(entry => entry.service?.pluginId === service.pluginId
+      && entry.service.localId === service.localId)).toHaveLength(1);
     expect(getConnectedServiceRegistrySnapshot({ ...lifetime.scope, accountId: 'account-b' }).entries).toEqual([]);
     expect(getQualifiedConnectedServiceRegistryEntry(service)?.executable).toBe(false);
     expect(getQualifiedConnectedServiceRegistryEntry(service)?.projectedDescriptor?.ui).toEqual({ category: 'cloud-machines' });
@@ -340,8 +472,9 @@ describe('connectedServiceRegistry', () => {
 
     expect(current.entries).not.toBe(previous.entries);
     expect(Object.isFrozen(current.entries)).toBe(true);
-    expect(previous.entries.map((entry) => entry.serviceId)).toEqual(['bitbucket']);
-    expect(current.entries.map((entry) => entry.serviceId)).toEqual(['openai']);
+    expect(previous.entries.some(entry => entry.serviceId === 'bitbucket')).toBe(true);
+    expect(current.entries.some(entry => entry.serviceId === 'bitbucket')).toBe(false);
+    expect(current.entries.some(entry => entry.serviceId === 'openai')).toBe(true);
   });
 
   it('preserves rich blocked descriptor facts while keeping the service visible and non-executable', () => {
@@ -484,8 +617,8 @@ describe('connectedServiceRegistry', () => {
     expect(getGeneratedLegacyConnectedServiceRegistryFallback({
       pluginId: 'happier.agent.claude', localId: 'claude-subscription',
     })).toMatchObject({ displayNameKey: 'connectedServices.serviceNames.claudeSubscription', executable: false });
-    expect(getLegacyConnectedServiceRegistryEntry('openai-codex').displayNameKey)
-      .toBe('connectedServices.serviceNames.openaiCodex');
+    expect(getLegacyConnectedServiceRegistryEntry('openai-codex').projectedTitle)
+      .toEqual(BUNDLED_ACCOUNT_CONNECTED_SERVICE_DECLARATIONS['happier.agent.codex/openai-codex']!.descriptor.title);
     // A service with no released built-in identity has nothing to name it by.
     expect(getGeneratedLegacyConnectedServiceRegistryFallback({
       pluginId: 'external.plugin', localId: 'gateway',

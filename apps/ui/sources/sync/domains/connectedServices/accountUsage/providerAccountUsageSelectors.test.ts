@@ -2,11 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import {
     ConnectedServiceQuotaSnapshotV1Schema,
+    type ConnectedServiceQuotaSnapshotV1} from '@happier-dev/protocol/connect/connected-service-schemas';
+import {
     ProviderAccountUsageSnapshotV1Schema,
     buildProviderAccountUsageRecordId,
-    type ConnectedServiceQuotaSnapshotV1,
     type ProviderAccountUsageSnapshotV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/account-usage-primitives';
 
 function makeSnapshot(overrides: Partial<ProviderAccountUsageSnapshotV1> = {}): ProviderAccountUsageSnapshotV1 {
     const recordKey = overrides.recordKey ?? {

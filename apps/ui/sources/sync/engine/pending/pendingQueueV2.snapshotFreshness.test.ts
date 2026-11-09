@@ -8,7 +8,7 @@ import { Encryption } from '@/sync/encryption/encryption';
 import { storage } from '@/sync/domains/state/storage';
 import { filterCommittedTranscriptMessageIdsForPendingState } from '@/sync/domains/pending/pendingTranscriptProjection';
 
-import { fetchAndApplyPendingMessagesV2 } from './pendingQueueV2';
+import { fetchAndApplyPendingMessagesV2, type PendingSnapshotReadBinding } from './pendingQueueV2';
 import { buildSession, resetPendingQueueState } from './pendingQueueV2.testHelpers';
 import { getPendingMessageVisualState } from '@/components/sessions/pending/pendingMessageVisualState';
 
@@ -158,6 +158,51 @@ describe('pending snapshot freshness on a newly opened session', () => {
         expect(storage.getState().sessionPending[sessionId]?.messages).toEqual([
             expect.objectContaining({ localId, text: 'hello' }),
         ]);
+    });
+
+    it('shares equivalent scoped readers and separates their transport and currentness lifetimes', async () => {
+        storage.getState().applySessions([buildSession({ sessionId })]);
+        const encryption = await Encryption.create(new Uint8Array(32).fill(6));
+        await encryption.initializeSessions(new Map([[sessionId, null]]));
+        const { createScopedSessionEncryptionSource } = await import('@/sync/runtime/orchestration/serverScopedRpc/resolveScopedSessionDataKey');
+        const { createCapturedServerReadTransport } = await import('@/sync/runtime/orchestration/serverScopedRpc/capturedServerReadTransport');
+        const credentials = { token: 'scoped-reader-token', secret: Buffer.from(new Uint8Array(32).fill(6)).toString('base64url') };
+        let release!: () => void;
+        const gate = new Promise<void>(resolve => { release = resolve; });
+        // The network is held; all reader/transport captures below use their real owners.
+        const network = vi.fn(async (_path: string, _init?: RequestInit) => { await gate; return Response.json({ pending: [] }); });
+        const refresh = (currentness: PendingSnapshotReadBinding['currentness'], token = credentials.token, transportScope?: object) => {
+            const transport = createCapturedServerReadTransport({ serverId: scope.serverId,
+                credentials: { ...credentials, token }, profile: { serverUrl: 'https://scoped-reader.example.test' } });
+            const context = { scope: 'scoped' as const, timeoutMs: 30_000, targetServerId: scope.serverId,
+                targetServerUrl: 'https://scoped-reader.example.test', targetAccountId: scope.accountId,
+                token, credentials: { ...credentials, token }, encryption };
+            const params = { sessionId, outboxScope: scope,
+                encryption: createScopedSessionEncryptionSource(context),
+                request: (path: string, init?: RequestInit) => network(path, init),
+                isOutboxScopeCurrent: () => true,
+                readBinding: { key: transport.key, scope: transportScope, currentness } };
+            return fetchAndApplyPendingMessagesV2(params);
+        };
+        let settled = 0;
+        const refreshes = Array.from({ length: 10 }, () => refresh('session-route').finally(() => { settled += 1; }));
+        try {
+            await vi.waitFor(() => expect(network).toHaveBeenCalled());
+            for (let index = 0; index < 50; index += 1) await Promise.resolve();
+            expect(settled).toBe(0);
+            expect(network).toHaveBeenCalledTimes(1);
+            refreshes.push(refresh('active-account'));
+            await vi.waitFor(() => expect(network).toHaveBeenCalledTimes(2));
+            refreshes.push(refresh('session-route', 'replacement-token'));
+            await vi.waitFor(() => expect(network).toHaveBeenCalledTimes(3));
+            refreshes.push(refresh('session-route', 'replacement-token', {}));
+            await vi.waitFor(() => expect(network).toHaveBeenCalledTimes(4));
+        } finally {
+            release();
+            await Promise.all(refreshes);
+        }
+        await refresh('session-route');
+        expect(network).toHaveBeenCalledTimes(5);
     });
 
     it('shares one complete refresh while its session freshness is unchanged', async () => {

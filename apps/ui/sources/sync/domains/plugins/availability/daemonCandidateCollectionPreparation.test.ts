@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-    normalizePluginAccountCollectionContractsV1,
+    normalizePluginAccountCollectionContractsV1} from '@happier-dev/protocol/plugins/data/collectionsV1';
+import {
     PluginPortableReleaseManifestV1Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/availability/compatibilityProjectionV1';
 import { PluginReleaseFactsV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { PluginUiArtifactsManifestEntryV2Schema } from '@happier-dev/protocol/plugins/ui';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';

@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createStore } from 'zustand/vanilla';
+import { subscribeWithSelector } from 'zustand/middleware';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
-import { getPreferredLanguage, setPreferredLanguageFromSettings, t } from '@/text/i18n';
+import { getPreferredLanguage, preloadTranslationsForSettings, setPreferredLanguageFromSettings, t } from '@/text/i18n';
 import { es } from '@/text/translations/es';
 
 import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
@@ -10,6 +11,8 @@ import type { AccountSettingsScope } from '@/sync/domains/settings/scope/account
 import { loadAccountSettings } from '@/sync/domains/state/accountSettingsPersistence';
 import type { CustomerInfo } from '@/sync/domains/purchases/types';
 import { clearPersistence } from '@/sync/domains/state/persistence';
+import { navigationPlacementStorageBinding } from '@/components/settings/appearance/navigationPlacementSettingBinding';
+import { countStoreNotifications } from '@/dev/testkit/performance/counts';
 
 const store = vi.hoisted(() => new Map<string, string>());
 
@@ -25,6 +28,10 @@ vi.mock('react-native-mmkv', () => {
 
         delete(key: string) {
             store.delete(key);
+        }
+
+        getAllKeys() {
+            return [...store.keys()];
         }
 
         clearAll() {
@@ -62,7 +69,7 @@ type TestState = SettingsDomainApi & Readonly<{
 }>;
 
 function createTestStore() {
-    return createStore<TestState>((set, get) => ({
+    return createStore<TestState>()(subscribeWithSelector((set, get) => ({
         sessions: {},
         machines: {},
         machineDisplayById: {},
@@ -74,7 +81,7 @@ function createTestStore() {
         machineListByServerId: {},
         getProjectForSession: undefined,
         ...createSettingsDomain<TestState>({ set, get }),
-    }));
+    })));
 }
 
 /**
@@ -104,7 +111,8 @@ describe('createSettingsDomain settings projection reference stability', () => {
         setPreferredLanguageFromSettings(null);
     });
 
-    it('notifies settings subscribers with the activated loaded locale and suppresses identical echoes', () => {
+    it('notifies settings subscribers with the activated loaded locale and suppresses identical echoes', async () => {
+        await preloadTranslationsForSettings('es');
         const api = createTestStore();
         const observed: Array<{ language: string; copy: string }> = [];
         api.subscribe(() => { observed.push({ language: getPreferredLanguage(), copy: t('tabs.inbox') }); });
@@ -190,22 +198,76 @@ describe('createSettingsDomain settings projection reference stability', () => {
 
     it('preserves equal local collections alongside a real setting change', () => {
         const api = createTestStore();
-        api.getState().applyLocalSettings({ acknowledgedCliVersions: { 'machine-a': '1.2.3' } });
+        api.getState().applyLocalSettings({ collectionRailWidthsV1: { sessions: 300 } });
         const previous = api.getState();
         const notified = vi.fn();
         api.subscribe(notified);
 
-        api.getState().applyLocalSettings({ acknowledgedCliVersions: { 'machine-a': '1.2.3' } });
+        api.getState().applyLocalSettings({ collectionRailWidthsV1: { sessions: 300 } });
         expect(api.getState()).toBe(previous);
         expect(notified).not.toHaveBeenCalled();
 
-        api.getState().applyLocalSettings({ acknowledgedCliVersions: { 'machine-a': '1.2.3' }, uiFontScale: 1.1 });
-        expect(api.getState().localSettings.acknowledgedCliVersions).toBe(previous.localSettings.acknowledgedCliVersions);
+        api.getState().applyLocalSettings({ collectionRailWidthsV1: { sessions: 300 }, uiFontScale: 1.1 });
+        expect(api.getState().localSettings.collectionRailWidthsV1).toBe(previous.localSettings.collectionRailWidthsV1);
         expect(api.getState().localSettings.uiFontScale).toBe(1.1);
         expect(notified).toHaveBeenCalledTimes(1);
     });
 
-    it('keeps unchanged concurrent indexes when grouping changes leave their empty result unchanged', () => {
+    it('keeps composer subscribers quiet on other placement writes and publishes nothing on equal replay', () => {
+        const api = createTestStore();
+        const binding = navigationPlacementStorageBinding;
+        if (!('kind' in binding) || binding.kind !== 'localOwner') throw new Error('Expected the local placement owner');
+        const commit = (value: unknown) => {
+            const parsed = binding.parse(value);
+            expect(parsed.success).toBe(true);
+            if (parsed.success) {
+                binding.commit(api.getState().localSettings, parsed.value,
+                    delta => api.getState().applyLocalSettings(delta, { persist: false }));
+            }
+        };
+        commit({
+            composer: { orderedIds: ['goal'], placements: { goal: 'hidden' } },
+            sessionRail: { orderedIds: ['terminal'], placements: { terminal: 'pinned' } },
+        });
+        const composer = api.getState().localSettings.navigationSurfacePlacementsV1.composer;
+        const composerChanged = vi.fn();
+        const unsubscribe = api.subscribe(state => state.localSettings.navigationSurfacePlacementsV1.composer, composerChanged);
+        const notifications = countStoreNotifications(api);
+        try {
+            const railPatch = { sessionRail: { orderedIds: [], placements: {} } };
+            commit(railPatch);
+            expect(api.getState().localSettings.navigationSurfacePlacementsV1.composer).toBe(composer);
+            expect(composerChanged).not.toHaveBeenCalled();
+            expect(notifications.read()).toEqual([['localSettings']]);
+
+            notifications.reset();
+            const afterRailChange = api.getState();
+            commit(railPatch);
+            api.getState().applyLocalSettings({
+                navigationSurfacePlacementsV1: structuredClone(afterRailChange.localSettings.navigationSurfacePlacementsV1),
+            }, { persist: false });
+            expect(api.getState()).toBe(afterRailChange);
+            expect(notifications.read()).toEqual([]);
+            expect(composerChanged).not.toHaveBeenCalled();
+
+            const sessionRail = api.getState().localSettings.navigationSurfacePlacementsV1.sessionRail;
+            commit({ composer: {} });
+            expect(api.getState().localSettings.navigationSurfacePlacementsV1.composer).toEqual({ orderedIds: [], placements: {} });
+            expect(api.getState().localSettings.navigationSurfacePlacementsV1.sessionRail).toBe(sessionRail);
+            expect(composerChanged).toHaveBeenCalledTimes(1);
+            expect(notifications.read()).toEqual([['localSettings']]);
+
+            notifications.reset();
+            commit({ composer: {} });
+            expect(notifications.read()).toEqual([]);
+            expect(composerChanged).toHaveBeenCalledTimes(1);
+        } finally {
+            unsubscribe();
+            notifications.stop();
+        }
+    });
+
+    it('keeps unchanged concurrent indexes when layout changes leave their empty result unchanged', () => {
         const api = createTestStore();
         api.setState({
             ordinarySessionListMembershipByServerId: { 'server-other': [] },
@@ -291,6 +353,30 @@ describe('createSettingsDomain settings projection reference stability', () => {
         expect(getState().settings).not.toBe(settingsBeforeLocalWrite);
         expect(getState().settings.favoriteDirectories).toEqual(['~/code/happier', '~/code/other']);
         expect(getState().settings.favoriteMachines).toBe(settingsBeforeLocalWrite.favoriteMachines);
+    });
+
+    it.each(['local', 'remote'] as const)('keeps unchanged Machine entries when a sibling preference changes (%s)', async source => {
+        const { getState } = createTestStore();
+        await getState().activateSettingsScope(scope);
+        getState().applySettingsForScope(scope, buildServerEchoSettings({
+            computerUseByMachineId: {
+                selected: { enabledProviders: ['cua'], defaultProvider: 'cua' },
+                sibling: { enabledProviders: ['cua'], defaultProvider: 'cua' },
+            },
+        }), 1);
+        const before = getState().settings.computerUseByMachineId;
+        const computerUseByMachineId: Settings['computerUseByMachineId'] = {
+            ...structuredClone(before),
+            sibling: { enabledProviders: ['agent-desktop'], defaultProvider: 'agent-desktop' },
+        };
+        if (source === 'local') getState().applySettingsLocal({ computerUseByMachineId });
+        else getState().applySettingsForScope(scope, { ...getState().settings, computerUseByMachineId }, 2);
+
+        const after = getState().settings.computerUseByMachineId;
+        expect(after).not.toBe(before);
+        expect(after.selected).toBe(before.selected);
+        expect(after.sibling).not.toBe(before.sibling);
+        expect(after.sibling?.defaultProvider).toBe('agent-desktop');
     });
 
     it('does not resurrect a previous value when a local write re-sets an equal collection', async () => {

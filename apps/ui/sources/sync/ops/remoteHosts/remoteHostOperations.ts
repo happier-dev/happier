@@ -246,7 +246,7 @@ export function createUiRemoteHostActionExecuteV1(account: LazyActionAccountCont
                 if (request.actionId === 'remote_hosts.setup_as_machine') {
                     if (!resolveSetupSurfacePolicy().machine.allowRemoteSshMachineSetup
                         || runner.mode === 'native' && getFeatureBuildPolicyDecision('setup.ssh.nativeTransport') === 'deny') {
-                        throw new RemoteHostOperationError('machine_setup_unavailable');
+                        throw new RemoteHostOperationError('machine_enroll_unavailable');
                     }
                     return startRemoteHostSetupTask({ ...admission, scope, host, expectedRevision: request.input.expectedRevision,
                         remoteHostId: host.id, homeTarget: await account.resolveHomeTarget(), shareableServerUrl: account.shareableServerUrl });

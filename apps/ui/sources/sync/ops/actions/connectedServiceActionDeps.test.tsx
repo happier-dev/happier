@@ -1,15 +1,12 @@
-import * as React from 'react';
-import { act } from 'react-test-renderer';
 import { expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { QualifiedConnectedAccountGroupV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import { ConnectedServiceAuthGroupPolicyV1Schema, ConnectedServiceCredentialRevisionV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
-import { useConnectedServiceGroupsRefreshSignal } from '@/sync/domains/connectedServices/connectedServiceGroupsRefreshSignal';
 import { createUiConnectedServiceAction } from './connectedServiceActionDeps';
 import type { LazyActionAccountContext } from './actionAccountContext';
 import * as machineRpc from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions';
-import { AccountProfileSchema, PluginProjectionV2Schema } from '@happier-dev/protocol';
+import { AccountProfileSchema} from '@happier-dev/protocol/account/profile';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { ConnectedAccountCatalogRowMutationV1Schema, ConnectedPurposeCatalogV1Schema, type ConnectedPurposeCatalogV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import { CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, ConnectedAccountAuthenticationCommandRequestSchema, CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD, ConnectedAccountControlCommandRequestSchema, ConnectedAccountRevokeResponseV1Schema } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
@@ -282,6 +279,7 @@ it.each([
     ['unreadable acknowledgement', 'outcome_unknown'],
     ['post-commit internal error', 'outcome_unknown'],
     ['pre-dispatch read internal error', 'Internal Server Error'],
+    ['pre-dispatch read loss', 'connect_group_read_failed'],
 ] as const)('preserves the %s disposition of a semantic pool move', async (disposition, errorCode) => {
     const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
     const group = QualifiedConnectedAccountGroupV4Schema.parse({ v: 1, ref: { service, groupId: 'work' }, incarnation: 'life', displayName: null,
@@ -296,6 +294,7 @@ it.each([
     const account = {
         credentials: { token: 'transport-boundary' }, assertCurrent() {},
         async request(_path: string, init: RequestInit, options?: Readonly<{ onIssued?: () => void }>) {
+            if (init.method === 'GET' && disposition === 'pre-dispatch read loss') throw new TypeError('Failed to fetch');
             if (init.method === 'GET') return disposition === 'pre-dispatch read internal error'
                 ? Response.json({ error: 'Internal Server Error', message: 'An unexpected error occurred', statusCode: 500 }, { status: 500 })
                 : Response.json({ group });
@@ -318,10 +317,6 @@ it('admits quota refresh through the exact Home machine before requesting the se
     const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
     const accountRef = { service, accountId: 'work-account' };
     const requests: unknown[] = [];
-    let groupRevision = 0;
-    function GroupProbe() { groupRevision = useConnectedServiceGroupsRefreshSignal(); return null; }
-    const screen = await renderScreen(React.createElement(GroupProbe));
-    const beforeRefresh = groupRevision;
     const rpc = vi.spyOn(machineRpc, 'machineRpcWithServerScope').mockResolvedValue({
         status: 'described', service,
         descriptor: { id: 'openai-codex', title: 'Codex', authentication: { defaultModeId: 'oauth', modes: [{ id: 'oauth', kind: 'oauthAuthorizationCode', callbackUrl: 'http://127.0.0.1:4000/auth/callback', pkce: 'required', outcomeReconciliation: 'none' }] } },
@@ -335,45 +330,12 @@ it('admits quota refresh through the exact Home machine before requesting the se
     try {
         const action = createUiConnectedServiceAction(account);
         const args = { actionId: 'connectedServices.quota.refresh' as const, input: { account: accountRef, machineId: 'work-machine' }, context: { surface: 'ui' as const, authority: 'present_user' as const } };
-        await act(async () => { expect(await action(args)).toEqual({ applied: true }); });
-        expect(groupRevision).toBe(beforeRefresh);
+        expect(await action(args)).toEqual({ applied: true });
         expect(rpc).toHaveBeenCalledWith(expect.objectContaining({ serverId: 'work-home', machineId: 'work-machine',
             payload: { v: 1, machineId: 'work-machine', command: { operation: 'describeService', service, requiredOperation: 'quota_refresh' } } }));
         expect(requests).toEqual([{ path: '/v4/connect/qualified/quotas/refresh', method: 'POST', body: { ref: accountRef } }]);
         rpc.mockResolvedValue({ status: 'unavailable', code: 'quota_refresh_unavailable' });
         expect(await action(args)).toMatchObject({ ok: false, errorCode: 'quota_refresh_unavailable' });
         expect(requests).toHaveLength(1);
-    } finally { rpc.mockRestore(); await screen.unmount(); }
-});
-
-it('publishes a successful Action pool mutation to the real mounted group refresh subscription', async () => {
-    const bridge = await loadSyncSingletonForTests();
-    const previous = storage.getState();
-    const accountId = 'pool-refresh';
-    const http = createHomeHubArtifactHttpBoundary(accountId);
-    let observed = 0;
-    function Probe() { observed = useConnectedServiceGroupsRefreshSignal(); return null; }
-    const screen = await renderScreen(React.createElement(Probe));
-    const before = observed;
-    const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
-    const group = QualifiedConnectedAccountGroupV4Schema.parse({ v: 1, ref: { service, groupId: 'work' }, incarnation: 'life', displayName: null,
-        policy: ConnectedServiceAuthGroupPolicyV1Schema.parse({}), activeConnectedAccountId: 'personal', generation: 2, runtimeStateRevision: 1,
-        state: {}, createdAt: 0, updatedAt: 0, members: [],
-    });
-    // Only HTTP is substituted; captured Account custody and its lifetime stay real.
-    const connection = await restoreServerAccountForTest({ accountId, serverUrl: 'https://pool-refresh.test', request: async (input, init) => {
-        if (new URL(String(input)).pathname.startsWith('/v4/connect/qualified/group')) return Response.json({ group });
-        return http.request(input, init);
-    } });
-    storage.setState({ profileScope: { serverId: connection.home.id, accountId }, profile: AccountProfileSchema.parse({ id: accountId }) });
-    const account = await captureLazyActionAccountContext(connection.home.id);
-    try {
-        await act(async () => {
-            expect(await createUiConnectedServiceAction(account)({ actionId: 'connectedServices.pools.switchNow',
-                input: { group: group.ref, connectedAccountId: 'personal', expectedGeneration: 1 },
-                context: { surface: 'ui', authority: 'present_user' },
-            })).toEqual({ applied: true });
-        });
-        expect(observed).toBeGreaterThan(before);
-    } finally { account.dispose(); await screen.unmount(); storage.setState(previous, true); await connection.dispose(); bridge.dispose(); }
+    } finally { rpc.mockRestore(); }
 });

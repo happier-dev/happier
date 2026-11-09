@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { SessionAttentionStanding, SessionOrganizationSnapshot } from '@happier-dev/protocol';
+import type { SessionAttentionStanding} from '@happier-dev/protocol/sessions/organization/standings';
+import type { SessionOrganizationSnapshot } from '@happier-dev/protocol/sessions/organization/snapshot';
 
 import { buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization';
 

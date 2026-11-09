@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildSessionMessageObservationFactsV1 } from '@happier-dev/protocol';
+import { buildSessionMessageObservationFactsV1 } from '@happier-dev/protocol/sessions';
 import type { DecryptedMessage, Session } from '@/sync/domains/state/storageTypes';
 import { handleNewMessageSocketUpdate } from './sessionSocketUpdate';
 import { sessionRuntimeObservations } from '@/sync/domains/session/sessionRuntimeObservation';

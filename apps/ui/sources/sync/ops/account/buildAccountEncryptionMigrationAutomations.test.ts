@@ -27,6 +27,18 @@ const retainedSession = async (sessionId: string) => ({ sessionId, encryptionMod
 const row = (templateCiphertext: string) => ({ automationId: 'automation-old', expectedTemplateVersion: 4, templateCiphertext });
 
 describe('Account transition Automation recovery', () => {
+    it('preserves observation-only intent while advancing the existing definition revision on a mode change', async () => {
+        const observationOnly = JSON.stringify({ kind: 'observationOnly', templateVersion: 4 });
+        const converted = await convertAccountEncryptionMigrationTemplate({ id: 'monitor',
+            templateCiphertext: observationOnly, toMode: 'e2ee' });
+        expect(JSON.parse(converted)).toEqual({ kind: 'observationOnly', templateVersion: 5 });
+        const writes: string[] = [];
+        expect(await recoverAccountEncryptionMigrationAutomations({ templates: [row(observationOnly)],
+            historicalMaterial, resolveSession: plainSession,
+            commitTemplate: async (_id, _version, content) => { writes.push(content); },
+        })).toEqual([{ automationId: 'automation-old', status: 'already_plain' }]);
+        expect(writes).toEqual([]);
+    });
     it('normalizes retained occurrence evidence before deriving transition equality', async () => {
         const targetCredentials = { token: 'target', secret: Buffer.from(new Uint8Array(32).fill(7)).toString('base64url') };
         const knownEvidence = { v: 1 as const, kind: 'schedule' as const, scheduledFor: 1234 };

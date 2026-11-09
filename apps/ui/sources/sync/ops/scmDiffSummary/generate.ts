@@ -1,18 +1,21 @@
 import { EXECUTION_RUN_KIND_BY_INTENT } from '@happier-dev/protocol/execution/runs/startRequest';
 import type {
-    BackendTargetRefV2,
+    BackendTargetRefV2} from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type {
     ExecutionRunGetRequest,
     ExecutionRunGetResponse,
-    ExecutionRunPublicState,
+    ExecutionRunPublicState} from '@happier-dev/protocol/execution/runs/responseSchemas';
+import type {
     ScmDiffSummaryGenerateInput,
     ScmDiffSummaryGenerateOutput,
-    ScmDiffSummaryGenerateSuccess,
     ScmDiffSummaryOutputKind,
     ScmComparisonCaptureInput,
-    ScmComparisonCaptureOutput,
-    TurnChangeSet,
+    ScmComparisonCaptureOutput} from '@happier-dev/protocol/scm/diffSummary';
+import type {
+    TurnChangeSet} from '@happier-dev/protocol/sessions/changes/types';
+import type {
     ScmDiffSummaryResult,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/scm/diffSummaryResult';
 import { SCM_DIFF_SUMMARY_CACHE_SCHEMA_VERSION, ScmComparisonCaptureOutputSchema, ScmDiffSummaryGenerateOutputSchema } from '@happier-dev/protocol/scm';
 import { ScmDiffFileResponseSchema, type ScmDiffFileResponse } from '@happier-dev/protocol/scm';
 import type { ScmComparisonSource, ScmComparisonFile } from '@happier-dev/protocol/scm/comparison';
@@ -31,18 +34,9 @@ import {
     type ScmDiffSummaryViewModel,
     type CapturedScmRead,
 } from '@/sync/domains/scm/diffSummary/state';
-import {
-    createScmDiffSummaryCacheState,
-    pruneScmDiffSummaryCacheByCheckpointCleanupReceipt,
-    putScmDiffSummaryCacheEntry,
-    type CheckpointCleanupReceiptLike,
-    type ScmDiffSummaryCacheState,
-} from '@/sync/domains/scm/diffSummary/cache/cacheState';
-import type { ScmDiffSummaryCacheKeyInput } from '@/sync/domains/scm/diffSummary/cache/cacheKey';
 import type { ScmDiffSummaryHost } from './results';
 import type { ScmReviewComparisonSelector } from '@/sync/domains/scm/diffSummary/selection';
 import { invokeUiScmAction, type UiScmActionExecutor } from '@/sync/ops/scm/scmActionInvocation';
-import { scmReviewComparisonMatchesSource } from '@/sync/domains/scm/diffSummary/selection';
 import { sessionExecutionRunGet } from '@/sync/ops/sessionExecutionRuns';
 import { getPreferredLanguage } from '@/text';
 import { readServerAccountScopeOwnerLifetime, serverAccountScopeKeySuffix, type ServerAccountScope, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -95,7 +89,7 @@ export type GenerateScmDiffSummaryParams = ScmDiffSummaryHost & Readonly<{
     backendTarget?: BackendTargetRefV2;
     input: ScmDiffSummaryGenerateInput;
     turnChangeSet?: TurnChangeSet;
-    intent?: Exclude<ScmDiffSummaryOperationIntent, 'copy'>;
+    intent?: ScmDiffSummaryOperationIntent;
     settings?: Readonly<Record<string, unknown>>;
     catalogProfiles?: readonly ScmDiffSummaryCatalogProfile[];
     resolvedSelector?: Readonly<{ catalogId: string }>;
@@ -175,17 +169,12 @@ function resolveSelectorCatalogId(params: GenerateScmDiffSummaryParams): string 
     return params.backendTarget ? buildBackendTargetKeyV2(params.backendTarget) : 'default';
 }
 
-function buildResolvedSelector(params: GenerateScmDiffSummaryParams): Readonly<{ catalogId: string }> {
-    const modelSelector = buildGenerateRequest(params).modelSelector;
-    return { catalogId: JSON.stringify([resolveSelectorCatalogId(params), modelSelector?.profileId ?? null, modelSelector?.modelId ?? null, modelSelector?.backendTargetKey ?? null]) };
-}
-
 function buildRequestKey(params: GenerateScmDiffSummaryParams): string {
     const key = buildScmDiffSummaryRequestKey({
         sessionId: params.sessionId ?? null, ...(params.machineId ? { machineId: params.machineId } : {}),
         input: buildGenerateRequest(params),
         summarySchemaVersion: SCM_DIFF_SUMMARY_CACHE_SCHEMA_VERSION,
-        resolvedSelector: buildResolvedSelector(params),
+        resolvedSelector: { catalogId: resolveSelectorCatalogId(params) },
     });
     return params.scope ? `${serverAccountScopeKeySuffix(params.scope)}|${key}` : key;
 }
@@ -208,35 +197,6 @@ export function readCompletedScmDiffSummaryCheckpointReceipt(turn: TurnChangeSet
         && receipt.phase === 'turn-final' && receipt.ref?.trim() === checkpoint.finalRef?.trim()) ?? null;
 }
 
-function buildCacheKeyInput(params: Readonly<{ sessionId?: string | null; machineId?: string; serverId?: string | null; input: ScmDiffSummaryGenerateInput }>, output: ScmDiffSummaryGenerateSuccess, resolvedSelector: Readonly<{ catalogId: string }>): ScmDiffSummaryCacheKeyInput | null {
-    if (!output.comparison) return null;
-    return {
-        source: { kind: 'comparison', comparisonId: output.comparison.id },
-        summarySchemaVersion: SCM_DIFF_SUMMARY_CACHE_SCHEMA_VERSION,
-        resolvedSelector,
-        outputs: params.input.outputs,
-        ...(params.input.outputLanguage ? { outputLanguage: params.input.outputLanguage } : {}),
-        investigateSurroundingFiles: params.input.investigateSurroundingFiles === true,
-        scopeKey: JSON.stringify([params.serverId?.trim() ?? null, params.sessionId ?? null, params.machineId ?? null, params.input.cwd]),
-    };
-}
-
-function readCheckpointRef(params: GenerateScmDiffSummaryParams): string | undefined {
-    const receipts = params.turnChangeSet?.repositoryCheckpoint?.receipts ?? [];
-    const checkpointReceiptId = params.input.source.kind === 'turnCheckpoint'
-        ? (params.input.source.checkpointReceiptId ?? params.input.checkpointReceiptId)?.trim() : undefined;
-    const exact = receipts.find((receipt) => checkpointReceiptId && receipt.id === checkpointReceiptId)?.ref?.trim();
-    if (exact) return exact;
-    const fallback = receipts.length === 1 ? receipts[0]?.ref?.trim() : '';
-    return fallback || undefined;
-}
-
-function hasCompletedRequestedOutputs(output: ScmDiffSummaryGenerateSuccess, input: ScmDiffSummaryGenerateInput): boolean {
-    const requested: readonly ScmDiffSummaryOutputKind[] = input.outputs ?? ['summary'];
-    if (!output.outputs) return Boolean(output.summaryMarkdown) && requested.every((kind) => kind === 'summary');
-    return requested.every((kind) => output.outputs?.[kind]?.state === 'complete');
-}
-
 function buildGenerateRequest(params: GenerateScmDiffSummaryParams): ScmDiffSummaryGenerateInput {
     const settings = resolveScmDiffSummarySettings({ storedSettings: params.settings ?? {}, catalogProfiles: params.catalogProfiles ?? [], uiLocale: getPreferredLanguage() });
     const override = settings.modelOverride?.catalogId;
@@ -254,8 +214,7 @@ function buildGenerateRequest(params: GenerateScmDiffSummaryParams): ScmDiffSumm
         // A static picker target must not narrow its native sign-in evidence.
         ...(!followsAccountDefault ? { modelSelector: {
             ...(params.backendTarget ? { backendTargetKey: buildBackendTargetKeyV2(params.backendTarget) } : {}),
-            ...requestedSelector,
-            ...(settings.modelOverride?.modelSelector ?? (override?.startsWith('profile:') ? { profileId: override.slice('profile:'.length) } : override ? { backendTargetKey: override } : {})),
+            ...(requestedSelector ?? settings.modelOverride?.modelSelector ?? (override?.startsWith('profile:') ? { profileId: override.slice('profile:'.length) } : override ? { backendTargetKey: override } : {})),
         } } : {}),
         ...(params.intent === 'regenerate' ? { cachePolicy: { mode: 'bypass' } } : {}),
     };
@@ -273,9 +232,6 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
     const getExecutionRun = deps.getExecutionRun ?? sessionExecutionRunGet;
     const nowMs = deps.nowMs ?? Date.now;
     let state = createInitialScmDiffSummaryState();
-    let cacheState: ScmDiffSummaryCacheState = createScmDiffSummaryCacheState();
-    const selectorByRequestKey = new Map<string, Readonly<{ catalogId: string }>>();
-    const checkpointRefByRequestKey = new Map<string, string>();
     const prefetchByRequestKey = new Map<string, Promise<ScmDiffSummaryOperationResult>>();
     const listeners = new Set<() => void>();
     const hostListeners = new Map<string, Set<() => void>>();
@@ -322,15 +278,6 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
         };
     };
 
-    const applyCheckpointCleanupReceiptsFromTurnChangeSet = (turnChangeSet: TurnChangeSet | undefined): void => {
-        const receipts = turnChangeSet?.repositoryCheckpoint?.receipts ?? [];
-        for (const receipt of receipts) {
-            if (receipt.id !== 'checkpoint.cleanup_pruned') continue;
-            const pruned = pruneScmDiffSummaryCacheByCheckpointCleanupReceipt(cacheState, receipt);
-            cacheState = pruned.state;
-        }
-    };
-
     const captureComparison = async (params: CaptureScmComparisonParams): Promise<ScmComparisonCaptureResult> => {
         const current = () => !params.signal?.aborted && params.shouldContinue?.() !== false;
         const retired = (): ScmComparisonCaptureResult => ({ success: false,
@@ -343,36 +290,7 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
             shouldContinue: current });
         if (!current()) return retired();
         const parsed = ScmComparisonCaptureOutputSchema.safeParse(result);
-        if (parsed.success) {
-            const requestedSource = request.source.kind === 'turnCheckpoint' ? { ...request.source,
-                ...(request.turnId ? { turnId: request.turnId } : {}),
-                ...(request.checkpointReceiptId ? { checkpointReceiptId: request.checkpointReceiptId } : {}),
-                ...(request.turnEvidenceMode ? { evidenceMode: request.turnEvidenceMode } : {}) } : request.source;
-            const capture = parsed.data.success ? parsed.data : null;
-            const capturedSource = capture?.comparison.source;
-            const metadata = capture?.metadata;
-            // The capture owner retains top-level turn selectors in metadata;
-            // source kind/Session and inline selectors must still agree with it.
-            const metadataMatches = !capturedSource || !metadata ? true
-                : JSON.stringify(capturedSource) === JSON.stringify(metadata.source)
-                    && (capturedSource.kind !== 'turnCheckpoint'
-                        || ((!capturedSource.turnId || !metadata.turnId || capturedSource.turnId === metadata.turnId)
-                            && (!capturedSource.checkpointReceiptId || !metadata.checkpointReceiptId || capturedSource.checkpointReceiptId === metadata.checkpointReceiptId)
-                            && (!capturedSource.evidenceMode || !metadata.turnEvidenceMode || capturedSource.evidenceMode === metadata.turnEvidenceMode)));
-            const observedSource = capturedSource?.kind === 'turnCheckpoint' ? { ...capturedSource,
-                ...(metadata?.turnId ? { turnId: metadata.turnId } : {}),
-                ...(metadata?.checkpointReceiptId ? { checkpointReceiptId: metadata.checkpointReceiptId } : {}),
-                ...(metadata?.turnEvidenceMode ? { evidenceMode: metadata.turnEvidenceMode } : {}) } : capturedSource;
-            if (parsed.data.success && (parsed.data.comparison.repository.rootPath !== request.cwd
-                || (request.comparisonId && parsed.data.comparison.id !== request.comparisonId)
-                || !metadataMatches || !observedSource
-                || (requestedSource.kind === 'turnCheckpoint' && observedSource.kind === 'turnCheckpoint'
-                    && requestedSource.sessionId && requestedSource.sessionId !== observedSource.sessionId)
-                || !scmReviewComparisonMatchesSource(requestedSource, observedSource, parsed.data.comparison))) {
-                return { success: false, error: 'Captured comparison evidence does not match the requested checkout or source.', errorCode: 'DIFF_UNAVAILABLE' };
-            }
-            return parsed.data;
-        }
+        if (parsed.success) return parsed.data;
         const error = readOperationError(result);
         return { success: false, error: error?.error ?? 'Unsupported SCM comparison capture response', ...(error?.errorCode ? { errorCode: error.errorCode } : {}) };
     };
@@ -395,7 +313,7 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
     };
 
     const generateFromUserAction = async (params: GenerateScmDiffSummaryParams): Promise<ScmDiffSummaryOperationResult> => {
-        // Capture the effective language once for admission, publication and later cache reads.
+        // Capture the effective language once for admission and publication.
         params = { ...params, input: buildGenerateRequest(params) };
         const key = params.key ?? buildRequestKey(params);
         const current = () => !params.signal?.aborted && params.shouldContinue?.() !== false;
@@ -424,7 +342,6 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
             }), [key]);
             return { ok: false, key, error, errorCode, state, viewModel: selectScmDiffSummaryViewModel(state, key) };
         }
-        applyCheckpointCleanupReceiptsFromTurnChangeSet(params.turnChangeSet);
         const requestedAtMs = nowMs();
         setState(applyScmDiffSummaryEvent(state, {
             type: 'request_started', key,
@@ -440,7 +357,7 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
         const output = parsed.success ? parsed.data : null;
         if (!current()) {
             // The generator may have admitted a real Run before retirement. Its
-            // receipt stays truthful; this retired binding publishes no state/cache.
+            // receipt stays truthful; this retired binding publishes no state.
             if (output?.success) return { ok: true, key, resultId: output.resultId, runId: output.runId ?? null, state, viewModel: selectScmDiffSummaryViewModel(state, key) };
             const error = readOperationError(generated) ?? { ok: false, error: 'Unsupported diff-summary generate response' };
             return { ok: false, key, error: error.error, ...(error.errorCode ? { errorCode: error.errorCode } : {}), state,
@@ -470,18 +387,6 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
             };
         }
 
-        const selector = buildResolvedSelector(params);
-        selectorByRequestKey.set(key, selector);
-        const cacheKeyInput = output.success ? buildCacheKeyInput(params, output, selector) : null;
-        if (cacheKeyInput) {
-            const checkpointRef = readCheckpointRef(params);
-            if (checkpointRef) {
-                checkpointRefByRequestKey.set(key, checkpointRef);
-            } else {
-                checkpointRefByRequestKey.delete(key);
-            }
-        }
-
         setState(applyScmDiffSummaryEvent(state, {
             type: 'request_started',
             key,
@@ -494,11 +399,6 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
             requestedAtMs,
             intent,
         }), [key]);
-        if (cacheKeyInput && output.success && hasCompletedRequestedOutputs(output, params.input)) {
-            cacheState = putScmDiffSummaryCacheEntry(cacheState, {
-                keyInput: cacheKeyInput, checkpointRef: checkpointRefByRequestKey.get(key), entry: output,
-            });
-        }
         if (!output.success) {
             return { ok: false, key, resultId: output.resultId, error: output.error, errorCode: output.errorCode, state, viewModel: selectScmDiffSummaryViewModel(state, key) };
         }
@@ -565,7 +465,7 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
         const serverOptions = params.scope || params.signal
             ? { ...readServerOptions(params.serverId), ...(params.scope ? { scope: params.scope } : {}), ...(params.signal ? { signal: params.signal } : {}) }
             : readServerOptions(params.serverId);
-        const request: ExecutionRunGetRequest = { runId: params.runId, includeStructured: true,
+        const request: ExecutionRunGetRequest = { runId: params.runId, includeStructured: true, includeLatestToolResult: false,
             ...(params.waitForOutput ? { waitForOutput: params.waitForOutput } : {}),
             ...(params.waitForInputId ? { waitForInputId: params.waitForInputId } : {}) };
         const response = params.machineId !== undefined
@@ -608,17 +508,6 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
             progressMarkdown: params.progressMarkdown ?? null,
             observedAtMs: nowMs(),
         }), [params.key]);
-        const entry = state.entriesByKey[params.key];
-        const selector = selectorByRequestKey.get(params.key);
-        const cacheKeyInput = entry && selector && structuredOutput?.success
-            ? buildCacheKeyInput({ sessionId: entry.sessionId, machineId: entry.machineId, serverId: params.serverId, input: entry.input }, structuredOutput, selector) : null;
-        if (cacheKeyInput && structuredOutput?.success === true && entry && hasCompletedRequestedOutputs(structuredOutput, entry.input)) {
-            cacheState = putScmDiffSummaryCacheEntry(cacheState, {
-                keyInput: cacheKeyInput,
-                checkpointRef: checkpointRefByRequestKey.get(params.key),
-                entry: structuredOutput,
-            });
-        }
         return {
             ok: true,
             key: params.key,
@@ -626,12 +515,6 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
             state,
             viewModel: selectScmDiffSummaryViewModel(state, params.key),
         };
-    };
-
-    const applyCheckpointCleanupReceipt = (receipt: CheckpointCleanupReceiptLike): Readonly<{ prunedEntries: number }> => {
-        const pruned = pruneScmDiffSummaryCacheByCheckpointCleanupReceipt(cacheState, receipt);
-        cacheState = pruned.state;
-        return { prunedEntries: pruned.prunedEntries };
     };
 
     const retireScope = (scope: ServerAccountScope) => {
@@ -698,10 +581,12 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
             /** Inventory recency, so independent output readers cannot reorder saved results by load time. */
             savedAtMs?: number }>): string | null => {
             const output = params.result.output;
-            if (!output.success || !output.comparison) return null;
+            // A refused Start still owns its captured evidence and receipt. Restore it so
+            // the next explicit request uses regeneration rather than cached admission.
+            if (!output.comparison) return null;
             const scopeKey = serverAccountScopeKeySuffix(params.scope);
             const existing = Object.values(state.entriesByKey).find((entry) => entry.scopeKey === scopeKey
-                && entry.sessionId === (params.sessionId ?? null) && entry.machineId === params.machineId && entry.input.cwd === output.comparison?.repository.rootPath && (entry.savedResult?.resultId ?? (entry.latestOutput?.success ? entry.latestOutput.resultId : null)) === params.result.resultId);
+                && entry.sessionId === (params.sessionId ?? null) && entry.machineId === params.machineId && entry.input.cwd === output.comparison?.repository.rootPath && (entry.savedResult?.resultId ?? entry.latestOutput?.resultId) === params.result.resultId);
             const key = existing?.key ?? JSON.stringify([scopeKey, params.sessionId ?? null, params.machineId ?? null, output.comparison.repository.rootPath, 'saved', params.result.resultId]);
             let next = state;
             if (!existing) next = applyScmDiffSummaryEvent(next, { type: 'request_started', key, scopeKey,
@@ -719,17 +604,14 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
             const ids = new Set(resultIds);
             const removedKeys: string[] = [];
             const entries = Object.entries(state.entriesByKey).filter(([key, entry]) => {
-                const resultId = entry.savedResult?.resultId ?? (entry.latestOutput?.success ? entry.latestOutput.resultId : null);
+                const resultId = entry.savedResult?.resultId ?? entry.latestOutput?.resultId;
                 if (entry.scopeKey !== scopeKey || !resultId || !ids.has(resultId)) return true;
                 removedKeys.push(key);
-                selectorByRequestKey.delete(key);
-                checkpointRefByRequestKey.delete(key);
                 return false;
             });
             if (removedKeys.length > 0) setState({ ...state, entriesByKey: Object.fromEntries(entries) }, removedKeys);
         },
         retireScope,
-        applyCheckpointCleanupReceipt,
     } as const;
 }
 
@@ -744,7 +626,6 @@ export const loadSavedScmDiffSummaryResult = defaultOperations.loadSavedResult;
 export const deleteSavedScmDiffSummaryResults = defaultOperations.deleteSavedResults;
 export const retireScmDiffSummaryScope = defaultOperations.retireScope;
 export const prefetchScmDiffSummary = defaultOperations.prefetch;
-export const applyScmDiffSummaryCheckpointCleanupReceipt = defaultOperations.applyCheckpointCleanupReceipt;
 export const getScmDiffSummaryState = defaultOperations.getState;
 export const retainCapturedScmRead = defaultOperations.retainCapturedRead;
 export const retainCapturedScmFile = defaultOperations.retainCapturedFile;

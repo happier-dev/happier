@@ -1,8 +1,9 @@
 import type {
     BrowserRenderEngineKindV1,
-    BrowserSemanticAdapterKindV1,
+    BrowserSemanticAdapterKindV1} from '@happier-dev/protocol/browser/adapters/kinds';
+import type {
     BrowserViewTargetKindV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/browser/target/v1';
 
 /**
  * The structural half of "can this view be recorded by native view capture": the target, adapter and

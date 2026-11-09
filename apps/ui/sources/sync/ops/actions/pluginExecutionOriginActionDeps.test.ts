@@ -94,8 +94,8 @@ describe('answering-client plugin origin preferences', () => {
         const binding = normalizePluginUiDestinationBindingV1({ pluginId, destinationId: 'home', rendererId: 'home',
             container: 'appPage', target: { kind: 'app' } });
         if (!binding) throw new Error('Destination fixture missing');
-        const model = normalizePluginUiProjection({ v: 2, generation: 1, agentsById: {}, actionsById: {},
-             resourcesById: {}, settingsById: {}, diagnostics: [], installedPackagesById: {
+        const model = normalizePluginUiProjection({ v: 2, generation: 1, agentsById: {}, actionsById: {}, 
+            resourcesById: {}, settingsById: {}, diagnostics: [], installedPackagesById: {
                 [pluginId]: { id: pluginId, displayName: 'Source', version: '1.0.0', enabled: true,
                     source: { kind: 'localPath', locator: 'root' }, occurrenceId: 'occurrence',
                     executionOrigin: origin,
@@ -129,6 +129,9 @@ describe('answering-client plugin origin preferences', () => {
             return PluginExecutionOriginActionOutputSchemas[actionId].parse(execution.result);
         };
         try {
+            expect(await invokeRegistered('plugins.execution_origin.list', { pluginId, contextual: true })).toEqual({
+                status: 'unavailable', reason: { code: 'current_ui_context_unavailable', phase: 'selection', retryable: false },
+            });
             expect(await invokeRegistered('plugins.execution_origin.list', { pluginId })).toMatchObject({ status: 'available',
                 candidates: [{ origin, version: '1.0.0', selectable: true }] });
             const retainedAccountSettings = structuredClone(raw);

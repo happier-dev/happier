@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { PluginProjectionV2 } from '@happier-dev/protocol';
+import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { createPluginUiProjectedActionResolver } from '@/sync/domains/plugins/ui/projection';
 import { renderHook } from '@/dev/testkit';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
@@ -79,8 +79,6 @@ function createProjection(): PluginProjectionV2 {
                 available: true,
             },
         },
-
-
         resourcesById: {},
         settingsById: {},
         familiesById: {

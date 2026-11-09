@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { TRANSFER_RELAY_V2_SOCKET_EVENT } from '@happier-dev/protocol';
+import { TRANSFER_RELAY_V2_SOCKET_EVENT } from '@happier-dev/protocol/transfers/relay/v2/socketEvents';
 import type { Encryption } from '@/sync/encryption/encryption';
 import { createSocketIoBoundaryStub } from '@/dev/testkit/mocks/socketIo';
 

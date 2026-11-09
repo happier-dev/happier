@@ -1,7 +1,8 @@
 import type {
-    BrowserEventV1,
+    BrowserEventV1} from '@happier-dev/protocol/browser/events/v1';
+import type {
     BrowserRenderEngineKindV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/browser/adapters/kinds';
 
 /**
  * Render engines that paint the page IN-PROCESS (a sandboxed iframe, an RN `WebView`, or the

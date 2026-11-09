@@ -7,7 +7,7 @@ import type {
     PluginSessionHookStatusResponseV1,
     PluginSessionHookToggleResponseV1,
     PluginSessionHookUninstallResponseV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/external/hookManagementV1';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 

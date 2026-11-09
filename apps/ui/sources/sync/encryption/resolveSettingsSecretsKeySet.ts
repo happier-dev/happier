@@ -5,7 +5,7 @@ import {
 import { resolveDeviceLocalSettingsSecretsKey } from '@/auth/storage/deviceLocalSecretKey';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
-import type { SettingsSecretsKeySetV1 } from '@happier-dev/protocol';
+import type { SettingsSecretsKeySetV1 } from '@happier-dev/protocol/crypto/settingsSecretStringsV1';
 
 import { deriveSettingsSecretsKeySet } from './secretSettings';
 

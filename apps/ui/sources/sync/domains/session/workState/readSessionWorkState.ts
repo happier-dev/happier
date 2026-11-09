@@ -1,4 +1,6 @@
 import {
+    SessionWorkStateStatusReasonV1Schema,
+    SessionWorkStateStatusV1Schema,
     readSessionWorkStateV1FromMetadata,
     type SessionWorkStateItemV1,
     type SessionWorkStateV1,
@@ -13,15 +15,7 @@ import type {
 } from './sessionWorkStateTypes';
 import { recordSessionPayloadConsumptionTelemetry } from '../sessionPayloadConsumptionTelemetry';
 
-const VALID_STATUSES: ReadonlySet<string> = new Set([
-    'pending',
-    'active',
-    'paused',
-    'blocked',
-    'complete',
-    'cancelled',
-    'unknown',
-]);
+const VALID_STATUSES: ReadonlySet<string> = new Set(SessionWorkStateStatusV1Schema.options);
 
 function readString(value: unknown): string | null {
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
@@ -47,12 +41,8 @@ function readGoalCapabilities(value: unknown): SessionWorkStateGoalCapabilities 
 }
 
 function readStatusReason(value: unknown): SessionWorkStateStatusReason | null {
-    return value === 'blocked'
-        || value === 'usageLimited'
-        || value === 'budgetLimited'
-        || value === 'interrupted'
-        ? value
-        : null;
+    const parsed = SessionWorkStateStatusReasonV1Schema.safeParse(value);
+    return parsed.success ? parsed.data : null;
 }
 
 function toUiWorkStateItem(item: SessionWorkStateItemV1): SessionWorkStateItem {

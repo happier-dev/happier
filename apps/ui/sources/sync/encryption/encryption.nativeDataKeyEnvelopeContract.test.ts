@@ -4,6 +4,7 @@ import * as envelopes from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelop
 import { encodeBase64 } from '@/encryption/base64';
 
 import { Encryption } from './encryption';
+import { DataKeyOpeningCancelledError } from './dataKeyOpenings';
 import { createFakeCryptoWorker } from './nativeCryptoWorker/fakeCryptoWorker';
 import { resetNativeCryptoWorkerCapabilityCacheForTests } from './nativeCryptoWorker/nativeCryptoWorkerRouting';
 import { resetNativeCryptoWorkerQueueLifecycleForTests } from './nativeCryptoWorker/nativeCryptoWorkerQueue';
@@ -63,8 +64,9 @@ describe('Encryption fixed data-key envelope contract', () => {
             expect(await encryption.decryptEncryptionKeys([envelope!])).toEqual([dataKey]);
             expect(open).toHaveBeenCalledTimes(1);
             signal.abort();
-            expect(await encryption.decryptEncryptionKeys([envelope!], { signal: signal.signal })).toEqual([null]);
-            expect(await encryption.decryptEncryptionKeys([envelope!], { shouldContinue: () => false })).toEqual([null]);
+            // A stopped opening is cancellation, never a refusal (null).
+            await expect(encryption.decryptEncryptionKeys([envelope!], { signal: signal.signal })).rejects.toBeInstanceOf(DataKeyOpeningCancelledError);
+            await expect(encryption.decryptEncryptionKeys([envelope!], { shouldContinue: () => false })).rejects.toBeInstanceOf(DataKeyOpeningCancelledError);
             const other = await Encryption.create(new Uint8Array(32).fill(18));
             other.configureNativeCryptoWorker({ routing: { mode: 'off' } });
             expect(await other.decryptEncryptionKeys([envelope!])).toEqual([null]);

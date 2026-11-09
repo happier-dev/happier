@@ -5,7 +5,7 @@ import {
 import { openSessionFollowRuleContentV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleContentCodecV1';
 import type { OpenedSessionFollowRuleV1 } from '@happier-dev/protocol/sessions/follow/actions';
 import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
-import { classifyAccountStorageReadFailure, resolveAccountStorageContext } from '@/sync/encryption/accountStorageContext';
+import { classifyAccountStorageReadFailure, resolveAccountStorageContext, resolveAccountStorageContextForDisclosure } from '@/sync/encryption/accountStorageContext';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import { SESSION_FOLLOW_HTTP_PATHS_V1, SessionAutoFollowPreferencesResponseSchema } from '@happier-dev/protocol/sessions/follow/api';
 import type { SessionAutoFollowPreferencesV1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
@@ -101,7 +101,7 @@ async function acquireSessionFollowRules(serverId: string, signal: AbortSignal |
                 request: context.request, assertCurrent: context.assertCurrent, signal,
             }), readDefaults()]);
             context.assertCurrent();
-            const current = await resolveAccountStorageContext(context.credentials, { encryption, request: context.request, usage: 'fresh-authority' });
+            const current = await resolveAccountStorageContextForDisclosure(context.credentials, { encryption, request: context.request });
             context.assertCurrent();
             if (current.mode !== account.mode) return { status: 'unavailable', reason: 'account-mode-mismatch' };
             if (options?.rules?.status === 'ready' && (!includeDefaultPreferences || options.rules.defaultPreferences)) return options.rules;

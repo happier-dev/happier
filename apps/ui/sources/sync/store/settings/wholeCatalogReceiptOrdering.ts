@@ -1,17 +1,18 @@
 type CatalogRevision = number | 'absent';
 
-/** Whole-row CAS receipts replace one catalog, including its removed membership. */
+/** Whole-row reads and CAS receipts cannot replace membership acknowledged at a newer revision. */
 export function canPublishCatalogReceipt(input: Readonly<{
     current: boolean;
-    revision: number;
+    revision: CatalogRevision | undefined;
     retainedRevision?: CatalogRevision;
 }>): boolean {
-    return input.current && (typeof input.retainedRevision !== 'number' || input.revision >= input.retainedRevision);
+    return input.current && (typeof input.retainedRevision !== 'number'
+        || typeof input.revision === 'number' && input.revision >= input.retainedRevision);
 }
 
-/** Partial inventories establish revision evidence without establishing write authority. */
+/** Observed rows establish revision evidence even without readable content or write authority. */
 export function retainCatalogRevision(catalog: Readonly<{ status: string; revision?: CatalogRevision }>,
     previous?: CatalogRevision): CatalogRevision {
-    return (catalog.status === 'ready' || catalog.status === 'partial') && catalog.revision !== undefined
+    return (catalog.status === 'ready' || catalog.status === 'partial' || catalog.status === 'unavailable') && catalog.revision !== undefined
         ? catalog.revision : previous ?? 'absent';
 }

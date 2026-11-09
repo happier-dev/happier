@@ -1,4 +1,4 @@
-import type { BrowserAutomationActionCapabilityV1 } from '@happier-dev/protocol';
+import type { BrowserAutomationActionCapabilityV1 } from '@happier-dev/protocol/browser/automation/v1';
 import { describe, expect, it } from 'vitest';
 
 import { browserViewCanUseNativeViewCapture } from '../recording/reverseCaptureAvailability';

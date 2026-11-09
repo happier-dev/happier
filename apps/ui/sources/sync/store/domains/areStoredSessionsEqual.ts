@@ -30,20 +30,6 @@ export function areSessionValuesDeepEqual(previous: unknown, next: unknown): boo
     return areSessionValueEqual(previous, next);
 }
 
-/** Reuse unchanged nested values when a Session or row has another real change. */
-export function reuseEqualSessionObjectFields<T extends object>(previous: T | undefined, next: T): T {
-    if (!previous) return next;
-    let shared = next;
-    for (const key of Object.keys(next) as Array<keyof T>) {
-        const value = next[key];
-        if (value === null || typeof value !== 'object' || value === previous[key]) continue;
-        if (!areSessionValueEqual(previous[key], value)) continue;
-        if (shared === next) shared = { ...next };
-        shared[key] = previous[key];
-    }
-    return shared;
-}
-
 function areSessionValueEqual(previous: unknown, next: unknown): boolean {
     if (previous === next) return true;
     if (previous == null || next == null) return previous === next;
@@ -81,17 +67,9 @@ export function areStoredSessionsEqual(
     if (previous[SESSION_LIST_DOCUMENT_ADMISSION]?.openedMetadataVersion !== next[SESSION_LIST_DOCUMENT_ADMISSION]?.openedMetadataVersion) return false;
     if (previous[SESSION_LIST_DOCUMENT_ADMISSION]?.openedAgentStateVersion !== next[SESSION_LIST_DOCUMENT_ADMISSION]?.openedAgentStateVersion) return false;
     if (previous[SESSION_LIST_DOCUMENT_ADMISSION]?.observedMetadataVersion !== next[SESSION_LIST_DOCUMENT_ADMISSION]?.observedMetadataVersion) return false;
+    if (previous[SESSION_LIST_DOCUMENT_ADMISSION]?.observedMetadataLayoutVersion !== next[SESSION_LIST_DOCUMENT_ADMISSION]?.observedMetadataLayoutVersion) return false;
     if (previous[SESSION_LIST_DOCUMENT_ADMISSION]?.observedAgentStateVersion !== next[SESSION_LIST_DOCUMENT_ADMISSION]?.observedAgentStateVersion) return false;
     if ((previous[SESSION_OWNER_METADATA_PROJECTION] ?? null) !== (next[SESSION_OWNER_METADATA_PROJECTION] ?? null)) return false;
-
-    const activeAtMatches =
-        previous.activeAt === next.activeAt
-        || (
-            previous.active === true
-            && next.active === true
-            && previous.presence === 'online'
-            && next.presence === 'online'
-        );
 
     return previous.id === next.id
         && (previous.serverId ?? null) === (next.serverId ?? null)
@@ -102,7 +80,7 @@ export function areStoredSessionsEqual(
         && previous.updatedAt === next.updatedAt
         && (previous.meaningfulActivityAt ?? null) === (next.meaningfulActivityAt ?? null)
         && previous.active === next.active
-        && activeAtMatches
+        && previous.activeAt === next.activeAt
         && (previous.archivedAt ?? null) === (next.archivedAt ?? null)
         // Compared without a null coalesce: an unsupported projection and an
         // explicit "nobody is responsible" are different states.
@@ -111,6 +89,7 @@ export function areStoredSessionsEqual(
         && (previous.pendingVersion ?? null) === (next.pendingVersion ?? null)
         && (previous.pendingCount ?? null) === (next.pendingCount ?? null)
         && JSON.stringify(previous.pendingActivationAuthorization ?? null) === JSON.stringify(next.pendingActivationAuthorization ?? null)
+        && areSessionValueEqual(previous.pendingActivationFailureDetails ?? null, next.pendingActivationFailureDetails ?? null)
         && (previous.pendingBlockedCount ?? null) === (next.pendingBlockedCount ?? null)
         && (previous.lastViewedSessionSeq ?? null) === (next.lastViewedSessionSeq ?? null)
         && (previous.unreadSince ?? null) === (next.unreadSince ?? null)

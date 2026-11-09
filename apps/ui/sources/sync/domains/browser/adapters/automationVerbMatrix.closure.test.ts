@@ -4,13 +4,15 @@ import { join } from 'node:path';
 import {
     BrowserAutomationActionKindV1Schema,
     BrowserAutomationAdapterCapabilityKindV1Schema,
-    type BrowserAdapterCapabilitiesV1,
-    type BrowserAutomationActionCapabilityMapV1,
-    type BrowserAutomationAdapterCapabilityKindV1,
+    type BrowserAutomationActionCapabilityMapV1} from '@happier-dev/protocol/browser/automation/v1';
+import {
+    type BrowserAdapterCapabilitiesV1} from '@happier-dev/protocol/browser/adapters/v1';
+import {
     type BrowserRenderEngineKindV1,
-    type BrowserSemanticAdapterKindV1,
+    type BrowserSemanticAdapterKindV1} from '@happier-dev/protocol/browser/adapters/kinds';
+import {
     type BrowserViewTargetKindV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/browser/target/v1';
 import { describe, expect, it } from 'vitest';
 
 import { buildBrowserAdapterCapabilities } from './capabilities';

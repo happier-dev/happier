@@ -1,4 +1,5 @@
-import type { ActionId, ActionSettingsActionId } from '@happier-dev/protocol';
+import type { ActionId} from '@happier-dev/protocol/actions/actionIds';
+import type { ActionSettingsActionId } from '@happier-dev/protocol/actions/actionSettings';
 import { isActionEnabledByActionsSettings, normalizeActionsSettingsV1, type ActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 
@@ -6,34 +7,32 @@ import { isExecutionRunsFeatureAction } from '@/sync/domains/actions/isExecution
 import { resolveLocalFeaturePolicyEnabled } from '@/sync/domains/features/featureLocalPolicy';
 import { normalizeScmRemoteConfirmPolicy, shouldConfirmRemoteOperation } from '@/scm/settings/remoteConfirmationPolicy';
 import { storage } from '@/sync/domains/state/storage';
+import { settingsDefaults, type Settings } from './settings';
 
-// Settings writers replace changed policy objects; reconcileSettingsReferences preserves
-// unchanged ones. Share normalization across row/admission checks for that revision,
-// without retaining policies after their settings snapshots are released.
-const normalizedActionsSettingsByRevision = new WeakMap<object, ActionsSettingsV1>();
+export type ActionSettingsAccountSnapshot = Readonly<Partial<Settings>>;
+const defaultActionPolicy = normalizeActionsSettingsV1(undefined);
+type ActionSettingsState = Readonly<{ settings?: ActionSettingsAccountSnapshot | null }>;
 
-export function resolveActionsSettingsV1FromState(state: Readonly<{ settings?: unknown }>): ActionsSettingsV1 {
-    const raw = (state.settings as { actionsSettingsV1?: unknown } | null | undefined)?.actionsSettingsV1;
-    if (raw === null || typeof raw !== 'object') return normalizeActionsSettingsV1(raw);
-    const existing = normalizedActionsSettingsByRevision.get(raw);
-    if (existing) return existing;
-    const normalized = normalizeActionsSettingsV1(raw);
-    normalizedActionsSettingsByRevision.set(raw, normalized);
-    return normalized;
+/** Account ingress admits policy; render and invocation consumers retain that admitted value. */
+export function resolveActionsSettingsV1FromState(state: ActionSettingsState): ActionsSettingsV1 {
+    return state.settings?.actionsSettingsV1 ?? defaultActionPolicy;
 }
 
 export function isActionEnabledInState(
-    state: Readonly<{ settings?: unknown }>,
+    state: ActionSettingsState,
     actionId: ActionId,
     ctx?: Readonly<{ surface?: string | null; placement?: string | null }>,
 ): boolean {
-    const settingsState = ((state as any)?.settings ?? {}) as any;
+    const settingsState = {
+        experiments: state.settings?.experiments ?? settingsDefaults.experiments,
+        featureToggles: state.settings?.featureToggles ?? settingsDefaults.featureToggles,
+    };
     if (isExecutionRunsFeatureAction(actionId) && !resolveLocalFeaturePolicyEnabled('execution.runs', settingsState)) {
         return false;
     }
 
     const settings = resolveActionsSettingsV1FromState(state);
-    return isActionEnabledByActionsSettings(actionId, settings as any, ctx as any);
+    return isActionEnabledByActionsSettings(actionId, settings, ctx);
 }
 
 type ApprovalContext = Parameters<typeof isApprovalRequiredByActionsSettings>[2];
@@ -47,7 +46,7 @@ type ApprovalContext = Parameters<typeof isApprovalRequiredByActionsSettings>[2]
  */
 function scmRemotePreferenceAsks(
     actionId: ActionSettingsActionId,
-    accountSettings: Readonly<{ scmRemoteConfirmPolicy?: unknown; actionsSettingsV1?: unknown }> | null | undefined,
+    accountSettings: ActionSettingsAccountSnapshot | null | undefined,
     ctx: ApprovalContext,
 ): boolean {
     const kind = actionId === 'scm.remote.pull' ? 'pull' : actionId === 'scm.remote.push' ? 'push' : null;
@@ -64,25 +63,27 @@ function scmRemotePreferenceAsks(
  */
 export function isActionApprovalRequiredByAccountSettings(
     actionId: ActionSettingsActionId,
-    accountSettings: Readonly<{ scmRemoteConfirmPolicy?: unknown; actionsSettingsV1?: unknown }> | null | undefined,
+    accountSettings: ActionSettingsAccountSnapshot | null | undefined,
     ctx: ApprovalContext,
-    options?: Readonly<{ defaultSafety?: Parameters<typeof isApprovalRequiredByActionsSettings>[3]; defaultUiConfirmation?: boolean; contributedApprovalDefault?: boolean; input?: unknown }>,
+    options?: Readonly<{ defaultSafety?: Parameters<typeof isApprovalRequiredByActionsSettings>[3]; defaultUiConfirmation?: boolean; contributedApprovalDefault?: boolean; input?: unknown;
+      approvedOperation?: Parameters<typeof isApprovalRequiredByActionsSettings>[8]; approvalScope?: Parameters<typeof isApprovalRequiredByActionsSettings>[9] }>,
 ): boolean {
     return isApprovalRequiredByActionsSettings(
         actionId, resolveActionsSettingsV1FromState({ settings: accountSettings }), ctx,
         options?.defaultSafety, options?.contributedApprovalDefault, options?.input, options?.defaultUiConfirmation,
+        undefined, options?.approvedOperation, options?.approvalScope,
     ) || scmRemotePreferenceAsks(actionId, accountSettings, ctx);
 }
 
 /** The person's own Ask-first policy for one Action on one invoking surface. */
 export function isActionApprovalRequiredInState(
-    state: Readonly<{ settings?: unknown }>,
+    state: ActionSettingsState,
     actionId: ActionSettingsActionId,
     ctx: ApprovalContext,
     contributedApprovalDefault?: boolean,
 ): boolean {
     return isActionApprovalRequiredByAccountSettings(
-        actionId, (state as { settings?: Record<string, unknown> }).settings, ctx, { contributedApprovalDefault });
+        actionId, state.settings, ctx, { contributedApprovalDefault });
 }
 
 /** A scoped control reads the same captured Home settings as the UI Action host. */

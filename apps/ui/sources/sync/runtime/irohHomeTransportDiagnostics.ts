@@ -1,4 +1,4 @@
-import type { DoctorSnapshotHomeTransportDiagnostics } from '@happier-dev/protocol';
+import type { DoctorSnapshotHomeTransportDiagnostics } from '@happier-dev/protocol/diagnostics/doctorSnapshot';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 type DiagnosticsProducerIdentity = Readonly<{

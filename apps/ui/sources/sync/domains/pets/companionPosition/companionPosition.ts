@@ -1,4 +1,5 @@
 import { z } from 'zod/mini';
+import { createPersistentUiState } from '@/sync/domains/state/persistentUiState';
 
 export const PET_COMPANION_POSITION_SCHEMA_VERSION = 1;
 export const PET_COMPANION_POSITION_DEFAULT_NORMALIZED_X = 0.82;
@@ -138,4 +139,21 @@ export function createStoredPetCompanionPosition(params: Readonly<{
 export function parsePetCompanionPosition(value: unknown): PetCompanionStoredPosition {
     const parsed = PetCompanionStoredPositionSchema.safeParse(value);
     return parsed.success ? parsed.data : PET_COMPANION_POSITION_DEFAULT;
+}
+
+export const petCompanionPositionState = createPersistentUiState('pet-companion-position-v1', parsePetCompanionPosition);
+
+/** Hydration imports the old device setting before its carrier can be retired. */
+export function migratePetCompanionPositionFromSettings(input: unknown): unknown {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return input;
+    const stored = input as Record<string, unknown>;
+    if (!Object.hasOwn(stored, 'petsCompanionPosition')) return input;
+    // Strict admission preserves opaque source/destination bytes on refusal; a
+    // tolerant presentation default must never authorize deleting their source.
+    const position = PetCompanionStoredPositionSchema.parse(stored.petsCompanionPosition);
+    if (petCompanionPositionState.readStrict(position.surface, value => PetCompanionStoredPositionSchema.parse(value)) === undefined) {
+        petCompanionPositionState.set(position.surface, position);
+    }
+    const { petsCompanionPosition: _legacyPosition, ...retained } = stored;
+    return retained;
 }

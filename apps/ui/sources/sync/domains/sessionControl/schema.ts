@@ -1,12 +1,21 @@
 import { AgentModelOptionOverrideRuleReadSchema } from '@happier-dev/protocol/models/descriptor';
+import { NonBlankOpaqueIdentifierSchema } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import { readSessionModesMetadata, type SessionOwnerModeCatalogV2 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { z } from 'zod/mini';
 import { optional } from 'zod/mini';
 
+const NonBlankStringSchema = z.string().check(z.refine((value) => value.trim().length > 0));
+
 const SessionModelOptionChoiceSchema = z.object({
     value: z.union([z.string(), z.number(), z.boolean(), z.null()]),
-    name: z.string().check(z.trim(), z.minLength(1)),
-    description: z.optional(z.string().check(z.trim(), z.minLength(1))),
+    name: NonBlankStringSchema,
+    description: z.optional(z.string()),
+});
+
+const SessionConfigOptionSelectGroupSchema = z.object({
+    id: NonBlankStringSchema,
+    name: NonBlankStringSchema,
+    options: z.array(SessionModelOptionChoiceSchema),
 });
 
 /**
@@ -24,20 +33,22 @@ const SessionModelOptionChoiceSchema = z.object({
 export const SessionOptionOverrideRuleSchema = AgentModelOptionOverrideRuleReadSchema;
 
 const SessionModelOptionSchema = z.object({
-    id: z.string().check(z.trim(), z.minLength(1)),
-    name: z.string().check(z.trim(), z.minLength(1)),
-    description: z.optional(z.string().check(z.trim(), z.minLength(1))),
+    id: NonBlankStringSchema,
+    name: NonBlankStringSchema,
+    description: z.optional(z.string()),
+    category: z.optional(z.string()),
     type: z.string().check(z.trim(), z.minLength(1)),
     currentValue: z.union([z.string(), z.number(), z.boolean(), z.null()]),
     options: z._default(z.array(SessionModelOptionChoiceSchema), []),
+    groups: z.optional(z.array(SessionConfigOptionSelectGroupSchema)),
     overridesWhenOn: optional(SessionOptionOverrideRuleSchema),
 });
 
 const SessionModelSchema = z.object({
-    id: z.string().check(z.trim(), z.minLength(1)),
-    name: z.string().check(z.trim(), z.minLength(1)),
-    description: z.optional(z.string().check(z.trim(), z.minLength(1))),
-    extendedContextModelId: z.optional(z.string().check(z.trim(), z.minLength(1))),
+    id: NonBlankStringSchema,
+    name: NonBlankStringSchema,
+    description: z.optional(z.string()),
+    extendedContextModelId: z.optional(NonBlankOpaqueIdentifierSchema),
     modelOptions: z._default(z.array(SessionModelOptionSchema), []),
 });
 
@@ -49,25 +60,14 @@ const SessionModelsStateSchema = z.object({
     availableModels: z._default(z.array(SessionModelSchema), []),
 });
 
-const SessionConfigOptionSelectOptionSchema = z.object({
-    value: z.union([z.string(), z.number(), z.boolean(), z.null()]),
-    name: z.string().check(z.trim(), z.minLength(1)),
-    description: z.optional(z.string().check(z.trim(), z.minLength(1))),
-});
-
-const SessionConfigOptionSelectGroupSchema = z.object({
-    id: z.string().check(z.minLength(1)),
-    name: z.string().check(z.trim(), z.minLength(1)),
-    options: z.array(SessionConfigOptionSelectOptionSchema),
-});
-
 const SessionConfigOptionSchema = z.object({
     id: z.string().check(z.minLength(1)),
-    name: z.string().check(z.trim(), z.minLength(1)),
-    description: z.optional(z.string().check(z.trim(), z.minLength(1))),
+    name: NonBlankStringSchema,
+    description: z.optional(z.string()),
+    category: z.optional(z.string()),
     type: z.string().check(z.trim(), z.minLength(1)),
     currentValue: z.union([z.string(), z.number(), z.boolean(), z.null()]),
-    options: z.optional(z.array(SessionConfigOptionSelectOptionSchema)),
+    options: z.optional(z.array(SessionModelOptionChoiceSchema)),
     groups: z.optional(z.array(SessionConfigOptionSelectGroupSchema)),
     overridesWhenOn: optional(SessionOptionOverrideRuleSchema),
 });
@@ -76,6 +76,7 @@ const SessionConfigOptionsStateSchema = z.object({
     v: z.literal(1),
     agentId: z.string().check(z.trim(), z.minLength(1)),
     updatedAt: z.number(),
+    modelConfigOptionId: z.optional(NonBlankStringSchema),
     configOptions: z._default(z.array(SessionConfigOptionSchema), []),
 });
 

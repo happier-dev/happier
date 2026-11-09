@@ -80,10 +80,9 @@ export function handleRelationshipUpdatedSocketUpdate(params: {
     relationshipUpdate: any;
     applyRelationshipUpdate: (update: any) => void;
     invalidateFriends: () => void;
-    invalidateFriendRequests: () => void;
     invalidateFeed: () => void;
 }): void {
-    const { relationshipUpdate, applyRelationshipUpdate, invalidateFriends, invalidateFriendRequests, invalidateFeed } = params;
+    const { relationshipUpdate, applyRelationshipUpdate, invalidateFriends, invalidateFeed } = params;
 
     // Apply the relationship update to storage
     applyRelationshipUpdate({
@@ -98,7 +97,6 @@ export function handleRelationshipUpdatedSocketUpdate(params: {
 
     // Invalidate friends data to refresh with latest changes
     invalidateFriends();
-    invalidateFriendRequests();
     invalidateFeed();
 }
 

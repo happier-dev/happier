@@ -3,21 +3,24 @@ import {
     createSessionOwnerMetadataV1,
     projectSessionOwnerCompatibilityViewV1,
     projectSessionSharedMetadataV1,
-    createPlainSessionOwnerMetadataEnvelopeV1,
-    sealSessionOwnerMetadataEnvelopeV1,
-    projectLegacySessionAccessCapabilitiesV1,
-} from '@happier-dev/protocol';
-import { describe, expect, it, vi } from 'vitest';
+    createPlainSessionOwnerMetadataEnvelopeV1} from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { MetadataSchema } from '@happier-dev/session-core/state';
-import { createOperationAccountCurrentnessSource } from '@/sync/runtime/orchestration/serverScopedRpc/fetchSessionByIdWithServerScope';
+import {
+    sealSessionOwnerMetadataEnvelopeV1} from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
+import {
+    projectLegacySessionAccessCapabilitiesV1,
+} from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
+import { describe, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
 
 import { encodeBase64 } from '@/encryption/base64';
 import { isDataKeyAuthCredentials, type AuthCredentials } from '@/auth/storage/tokenStorage';
+import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { createDataKeyAccountEncryptionCurrentnessFixture, createLegacyAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 
 import { normalizeSessionAccessProjection } from './normalizeSessionAccessProjection';
+import { createOperationAccountCurrentnessSource } from '@/sync/runtime/orchestration/serverScopedRpc/fetchSessionByIdWithServerScope';
 
 import { readSessionLayout1OwnerMetadata, projectSessionLayout1OwnerMetadata } from './readSessionLayout1OwnerProjection';
 
@@ -142,12 +145,16 @@ describe('readSessionLayout1OwnerMetadata', () => {
             v: 1, workspace: { path: '/private' }, runtime: { modelOverrideV1: { v: 1, modelId: 'chosen', updatedAt: 10 } },
         }));
         const params = { access: normalizeSessionAccessProjection({ share: null }, { allowLegacy: true }),
-            credentials: { token: 'child-token' }, ownerMetadataEnvelope: plainOwner, composerOptionsInput: null };
+            credentials: { token: 'child-token' }, ownerMetadataEnvelope: plainOwner, composerOptionsInput: null,
+            composerOptionsGrant: API_TOKEN_FULL_GRANT_V1 };
         expect(readSessionLayout1OwnerMetadata({ ...params, accountMode: 'plain' })).toEqual({
             kind: 'composer', ownerMetadataView: null, composerOptionsInput: { modelOverrideV1: { v: 1, modelId: 'chosen', updatedAt: 10 } },
         });
         expect(readSessionLayout1OwnerMetadata({ ...params, accountMode: 'e2ee' })).toEqual({ kind: 'composer', ownerMetadataView: null, composerOptionsInput: null });
         expect(readSessionLayout1OwnerMetadata(params)).toEqual({ kind: 'composer', ownerMetadataView: null, composerOptionsInput: null });
+        expect(readSessionLayout1OwnerMetadata({ ...params, accountMode: 'plain', composerOptionsGrant: null })).toEqual({
+            kind: 'composer', ownerMetadataView: null, composerOptionsInput: {},
+        });
     });
     it('keeps the complete owner view unavailable when a frame supplies only composer input', () => {
         const composerOptionsInput = { modelOverrideV1: { v: 1 as const, modelId: 'model-a', updatedAt: 10 } };

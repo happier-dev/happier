@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApprovalRequestSchema } from '@happier-dev/protocol';
+import { ApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
@@ -16,6 +16,8 @@ import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/cre
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createExistingSessionDirectoryPreflightResult } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { AutomationDefinitionDetailSchema } from '@happier-dev/protocol/automations/automationApiV3';
 
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
@@ -143,11 +145,93 @@ describe('requester credential disclosure at the human Action front door', () =>
         else expect(result.errorCode).toBeTruthy();
     });
 
+    it.each(['workflow.run.start', 'workflow.trigger.add', 'workflow.trigger.update', 'session.trigger.add', 'session.trigger.update'] as const)(
+        'discloses requester retention before approving %s on a shared Machine', async actionId => {
+        const serverId = await harness.addHome({ name: 'Workflow requester Home', serverUrl: 'https://workflow-disclosure.test',
+            serverIdentityId: 'srv_workflow_disclosure', accountId: 'bob', currentAccount: true });
+        harness.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: {
+            actionsSettingsV1: { v: 1, actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } } },
+        } }, version: 1 } });
+        const custodian = { accountId: 'alice', displayName: 'Alice' };
+        const machine = { ...createPlainMachineRowFixture({ id: 'alice-machine', accountId: 'alice' }),
+            installationId: 'alice-installation',
+            installationPublicKey: encodeBase64(tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(9)).publicKey),
+            access: { custodian, role: 'use', resourceMode: 'plain', accessState: 'ready' } as const };
+        harness.answer(serverId, '/v1/machines', { body: [machine] });
+        harness.answer(serverId, '/v1/machines/alice-machine', { body: { machine } });
+        harness.answer(serverId, '/v1/machines/alice-machine/access', { body: {
+            machineId: 'alice-machine', custodian, access: machine.access,
+            canManage: false, grants: [], ownDirectGrant: true, ownAccessSources: [],
+        } });
+        harness.answer(serverId, '/v3/automations/workflow-trigger', { body: {
+            id: 'workflow-trigger', name: 'Workflow trigger', description: null, enabled: true,
+            targetType: null, existingSessionId: null, templateVersion: 1, lastRunAt: null, createdAt: 1, updatedAt: 1,
+            assignments: [{ machineId: 'alice-machine', enabled: true, priority: 0, updatedAt: 1 }],
+            triggers: [], templateCiphertext: 'opaque-retained-recipe',
+        } });
+        const definition = { version: 1, blocks: [{ kind: 'action', id: 'notice', actionId: 'notifications.notify_me',
+            input: { message: { kind: 'literal', value: 'Hello' } } }] };
+        const project = { machineId: 'alice-machine', directory: '/repo' };
+        const scheduledTrigger = { kind: 'schedule', enabled: true,
+            schedule: { kind: 'interval', everyMs: 60_000, scheduleExpr: null, timezone: null } };
+        if (actionId === 'session.trigger.update') {
+            // The real Account list owner returns its parsed payload directly.
+            // An edit without a new placement must disclose the retained one.
+            const row = AutomationDefinitionDetailSchema.parse({
+                id: 'workflow-trigger', name: 'Workflow trigger', description: null, enabled: true,
+                workflowDefinitionId: null, scopeSessionId: 'session-one',
+                targetType: null, existingSessionId: null, templateVersion: 1,
+                lastRunAt: null, createdAt: 1, updatedAt: 1,
+                assignments: [{ machineId: project.machineId, enabled: true, priority: 0, updatedAt: 1 }],
+                triggers: [{ ...scheduledTrigger, id: 'trigger-one', revision: 1,
+                    createdAt: 1, updatedAt: 1, nextRunAt: 2, triggerDefinitionEnvelope: null }],
+                executionRecipe: { v: 2, templateVersion: 1, triggerEvidence: null,
+                    workflow: { t: 'plain', v: { workspace: { directory: project.directory },
+                        executionTarget: { kind: 'detached_run' }, inlineDefinition: definition } } },
+            });
+            harness.answer(serverId, 'POST /v3/automations/query', { body: { automations: [row], nextCursor: null } });
+        }
+        const input = actionId === 'workflow.run.start' ? {
+            runId: '22222222-2222-4222-8222-222222222222', source: { kind: 'inline', definition },
+        } : actionId === 'workflow.trigger.add' ? {
+            target: { kind: 'inline', definition }, project, trigger: scheduledTrigger,
+        } : actionId === 'workflow.trigger.update' ? {
+            automationId: 'workflow-trigger', expectedRevision: 1, patch: { enabled: true },
+        } : actionId === 'session.trigger.add' ? {
+            sessionId: 'session-one', target: { kind: 'inline', definition }, project, trigger: scheduledTrigger,
+        } : { sessionId: 'session-one', triggerId: 'trigger-one', expectedRevision: 1, patch: { enabled: true } };
+        const controller = new AbortController();
+        const pending = createFrontDoorActionExecute(createDefaultActionExecutor())(actionId, input, {
+            surface: 'ui', serverId, actionRequestId: `disclosure-${actionId}`, signal: controller.signal,
+            externalActionTarget: { kind: 'machine', machineId: 'alice-machine' },
+        });
+        try {
+            const request = await waitForHomeGovernance(() => {
+                const row = harness.artifacts(serverId).list().find(row => {
+                    const body = harness.artifacts(serverId).readPlainBody(row.id);
+                    return body !== null && ApprovalRequestSchema.safeParse(JSON.parse(body)).success;
+                });
+                expect(row).toBeDefined();
+                return ApprovalRequestSchema.parse(JSON.parse(harness.artifacts(serverId).readPlainBody(row!.id) ?? 'null'));
+            });
+            expect(request).toMatchObject({ status: 'open', actionId, preview: { requesterCredentialDisclosure: {
+                disposition: 'ordinary_requester', accountId: 'bob', machineId: 'alice-machine', fullSignIn: true,
+            } } });
+            const { readApprovalPreviewSummary } = await import('@/components/approvals/actionApprovalPresentation');
+            const { t } = await import('@/text');
+            expect(readApprovalPreviewSummary(request.preview, request)).toContain(t('machineRequester.fullSignIn', {
+                machine: 'alice-machine', retention: actionId === 'workflow.run.start' ? 'run' : 'trigger',
+            }));
+            expect(machineDispatch).not.toHaveBeenCalled();
+        } finally { controller.abort(); await pending; }
+    });
+
     it.each([
         { surface: 'ui', response: 'accepted' },
         { surface: 'voice', response: 'accepted' },
         { surface: 'ui', response: 'withheld' },
         { surface: 'ui', response: 'ack-lost' },
+        { surface: 'ui', response: 'refused' },
     ] as const)('settles an ordinary foreign spawn through its original custody ($surface, $response)', async ({ surface, response }) => {
         const homeId = 'srv_requester_send';
         const serverId = await harness.addHome({ name: 'Original requester Home', serverUrl: 'https://requester-send.test',
@@ -183,6 +267,9 @@ describe('requester credential disclosure at the human Action front door', () =>
         } });
         let reachedRequesterSender = false;
         let requesterIssuedAt = 0;
+        const refusal = ActionExecuteFailureSchema.parse({ ok: false, errorCode: 'target_unavailable',
+            error: 'target_unavailable', effectAttempted: false,
+            details: { code: 'target_unavailable', reason: 'caller_depth_unavailable' } });
         harness.answer(serverId, '/v1/actions/session.spawn_new', { select: body => {
             const carried = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
             expect(openExternalActionRequesterAccountContextV1({ authorization: carried.executionAuthorization,
@@ -193,6 +280,8 @@ describe('requester credential disclosure at the human Action front door', () =>
             requesterIssuedAt = Date.now();
             if (response === 'withheld') return { respondAfter: new Promise<void>(() => {}) };
             if (response === 'ack-lost') return { status: 502 };
+            if (response === 'refused') return { body: { v: 1, actionId: 'session.spawn_new',
+                requestId: carried.envelope.requestId, execution: refusal } };
             return { body: { v: 1, actionId: 'session.spawn_new', requestId: carried.envelope.requestId,
                 execution: { ok: true, result: { type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted' } } } };
         } });
@@ -228,8 +317,8 @@ describe('requester credential disclosure at the human Action front door', () =>
         const outcome = result.ok && result.result && typeof result.result === 'object' && 'type' in result.result
             ? result.result.type : result.ok ? 'other_success' : result.errorCode;
         expect(requesterConsent, JSON.stringify({ ok: result.ok, outcome, reachedRequesterSender })).not.toHaveBeenCalled();
-        expect(reachedRequesterSender).toBe(true);
-        expect(result).toEqual({ ok: true, result: SessionSpawnNewResultV1Schema.parse({
+        expect(reachedRequesterSender, JSON.stringify(result)).toBe(true);
+        expect(result).toEqual(response === 'refused' ? refusal : { ok: true, result: SessionSpawnNewResultV1Schema.parse({
             type: 'pending', retryWithSameCreationKey: true, outcome: response === 'accepted' ? 'accepted' : 'unknown',
         }) });
         expect(machineDispatch.mock.calls.map(([request]) => request.method))

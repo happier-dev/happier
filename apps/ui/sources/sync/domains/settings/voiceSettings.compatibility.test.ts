@@ -54,6 +54,17 @@ describe('voice settings mixed-version persistence', () => {
         expect(settingsParse(persisted).voice.assistantLanguage).toBe('de');
     });
 
+    it('writes Voice only to the canonical root once the 0.2 carrier holds nothing it does not', () => {
+        // A 0.3-authored Account: the canonical root plus this writer's own marked duplicate.
+        const authored = normalizeVoiceSettingsServerDelta(settingsParse({ voiceSettingsV1: { assistantLanguage: 'en' } }), {});
+        const current = { ...authored, voice: { ...(authored as Record<string, unknown>).voice as object, happierVoiceSettingsV1: true } };
+        const parsed = settingsParse(current);
+        const persisted = normalizeVoiceSettingsServerDelta({ ...parsed, voice: { ...parsed.voice, assistantLanguage: 'de' } }, current);
+        expect(persisted).not.toHaveProperty('voice');
+        expect(settingsParse(persisted).voice.assistantLanguage).toBe('de');
+        expect(settingsParse(persisted).voiceSettingsV1.assistantLanguage).toBe('de');
+    });
+
     it('keeps qualified credential bindings only on the canonical Voice root', () => {
         const binding = {
             contribution: {
@@ -92,7 +103,6 @@ describe('voice settings mixed-version persistence', () => {
 
         const persisted = normalizeVoiceSettingsServerDelta(parsed) as Record<string, unknown>;
         const canonical = persisted.voiceSettingsV1 as Record<string, unknown>;
-        const predecessor = persisted.voice as Record<string, unknown>;
         expect(canonical.dictation).toMatchObject({
             sttBinding: 'explicit',
             language: 'de-CH',
@@ -101,7 +111,7 @@ describe('voice settings mixed-version persistence', () => {
             },
         });
         expect((canonical.dictation as { stt: unknown }).stt).not.toHaveProperty('openaiCompat');
-        expect(predecessor).not.toHaveProperty('dictation');
+        expect(persisted).not.toHaveProperty('voice');
 
         expect(settingsParse(persisted).voice.dictation).toMatchObject({
             sttBinding: 'explicit',

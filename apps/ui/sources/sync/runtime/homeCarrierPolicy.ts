@@ -4,13 +4,13 @@ import {
     drainRetainedHomeCarrierReleases,
     resolveHomeCarrierPreferredTransport,
     type HomeApplicationCarrierEligibility,
-    type HomeCarrierAcquisitionMode,
 } from '@happier-dev/cli-common/homeEnrollment';
-import { classifyIrohHomeCarrierFailure, IrohError } from '@happier-dev/iroh-native';
-import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol';
+import { classifyIrohHomeCarrierFailure, IrohError, IROH_HOME_TUNNEL_PROBE_FAILED_ERROR } from '@happier-dev/iroh-native';
+import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol/auth/accountDirectory';
 import { readRegisteredStorageState } from '@/sync/domains/state/storageStateReaderBridge';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { getSavedHomeConnectionSnapshot } from '@/sync/domains/server/serverProfiles';
 import {
     acquireBrowserIrohHomeCarrier,
     resolveBrowserIrohHomeCarrierEligibility,
@@ -19,6 +19,7 @@ import {
 } from '@/sync/runtime/browserIroh/homeCarrier/browserHomeCarrier';
 import { resolveBrowserIrohHostDecision } from '@/sync/runtime/browserIroh/hostEligibility';
 import { acquireIrohHomeRuntimeOrigin } from '@/sync/runtime/nativeIrohTunnels/runtime';
+import { probeIrohHomeTunnelOrigin } from '@/sync/runtime/nativeIrohTunnels/probe';
 import type {
     IrohHomeRuntimeOriginLease,
     IrohHomeTunnelAcquireInput,
@@ -35,7 +36,6 @@ export type AcquiredHomeCarrier =
     | Readonly<{ kind: 'fail_closed'; error: unknown; fallbackAllowed: boolean }>;
 
 export type HomeCarrierAcquisitionInput = Readonly<{
-    mode: HomeCarrierAcquisitionMode;
     applicationCarrierEligibility?: HomeApplicationCarrierEligibility;
     descriptor: HomeConnectionDescriptorV1;
     verification: IrohHomeTunnelVerification;
@@ -69,16 +69,32 @@ function browserRequestFor(input: HomeCarrierAcquisitionInput): BrowserIrohHomeC
 
 /** UI platform adapter for the one owner-neutral carrier selection/recovery policy. */
 export async function acquireEligibleHomeCarrier(input: HomeCarrierAcquisitionInput): Promise<AcquiredHomeCarrier> {
+    const selected = getSavedHomeConnectionSnapshot({ serverIdentityId: input.descriptor.homeServerIdentityId,
+        canonicalServerUrl: input.descriptor.canonicalServerUrl });
+    if (selected?.runtimeOrigin) return { kind: 'https', runtimeOrigin: selected.runtimeOrigin };
+    const browserHost = resolveBrowserIrohHostDecision();
+    const browser = browserHost.eligible || browserHost.reason === 'shared_worker_unsupported';
+    const preferredTransport = resolveHomeCarrierPreferredTransport(input.descriptor);
+    let verifiedApplicationOrigin: string | null = null;
+    const verifyApplicationOrigin = async (runtimeOrigin: string): Promise<void> => {
+        const result = await probeIrohHomeTunnelOrigin(runtimeOrigin, {
+            remoteHostId: input.descriptor.homeServerIdentityId,
+            homeServerIdentityId: input.descriptor.homeServerIdentityId,
+            canonicalServerUrl: input.descriptor.canonicalServerUrl,
+            verification: input.verification,
+        });
+        if (!result.ok) throw new Error(`${IROH_HOME_TUNNEL_PROBE_FAILED_ERROR}:${result.reason}`);
+        verifiedApplicationOrigin = runtimeOrigin;
+    };
     const result = await acquireHomeCarrierByPolicy<UiIrohCarrierValue>({
-        mode: input.mode,
         applicationCarrierEligibility: readHomeApplicationCarrierEligibility() === 'standard_only'
             ? 'standard_only'
             : input.applicationCarrierEligibility ?? 'automatic',
         descriptor: input.descriptor,
-        preferredTransport: resolveHomeCarrierPreferredTransport(input.descriptor),
+        preferredTransport,
         classifyFailure: classifyIrohHomeCarrierFailure,
+        ...(browser ? { probeApplicationOrigin: verifyApplicationOrigin } : {}),
         acquireIroh: async ({ endpoint }) => {
-            const browserHost = resolveBrowserIrohHostDecision();
             if (browserHost.eligible) {
                 const request = browserRequestFor(input);
                 const eligibility = resolveBrowserIrohHomeCarrierEligibility(request, browserHost);
@@ -114,6 +130,17 @@ export async function acquireEligibleHomeCarrier(input: HomeCarrierAcquisitionIn
         },
     });
 
+    // HTTPS is the same Home only once this origin proves it. A Home with no Iroh
+    // endpoint is an ordinary Standard Home and has no pinned identity to preserve.
+    if (result.kind === 'https' && preferredTransport === 'iroh' && result.runtimeOrigin !== verifiedApplicationOrigin) {
+        try {
+            await verifyApplicationOrigin(result.runtimeOrigin);
+        } catch (error) {
+            return classifyIrohHomeCarrierFailure(error).fallbackAllowed
+                ? { kind: 'unavailable', error }
+                : { kind: 'fail_closed', error, fallbackAllowed: false };
+        }
+    }
     if (result.kind !== 'iroh') return result;
     if (result.carrier.value.kind === 'browser') {
         const carrier = { ...result.carrier.value.carrier, release: result.release };

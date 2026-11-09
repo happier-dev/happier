@@ -218,7 +218,9 @@ export async function resolveScopedSessionEncryption(params: Readonly<{
   const cryptoContext = admittedSession ? await hydrateScopedSessionCryptoContext({
     sessionId, encryptionMode: admittedSession.encryptionMode, dataEncryptionKey: admittedSession.dataEncryptionKey,
     viewerRole: admittedSession.viewerRole, credentials: context.credentials,
-    decryptEncryptionKey: value => encryption.decryptEncryptionKey(value), isCurrent: admittedSession.isCurrent,
+    decryptEncryptionKey: value => encryption.decryptEncryptionKey(value, {
+      serverId: context.targetServerId, workClass: 'interactive',
+    }), isCurrent: admittedSession.isCurrent,
   }) : await resolveScopedSessionCryptoContext({
     serverId: context.targetServerId,
     serverUrl: context.targetServerUrl,
@@ -229,7 +231,9 @@ export async function resolveScopedSessionEncryption(params: Readonly<{
     sessionId,
     timeoutMs: context.timeoutMs,
     readTransport: context.readTransport,
-    decryptEncryptionKey: (value) => encryption.decryptEncryptionKey(value),
+    decryptEncryptionKey: (value) => encryption.decryptEncryptionKey(value, {
+      serverId: context.targetServerId, workClass: 'interactive',
+    }),
   });
   assertCurrent();
   const installed = await initializeScopedSessionReader({

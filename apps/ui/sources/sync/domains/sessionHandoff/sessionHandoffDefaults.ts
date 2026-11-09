@@ -18,7 +18,8 @@ export type SessionHandoffWorkspaceMode = 'none' | WorkspaceSyncModeV1;
 export const SESSION_HANDOFF_WORKSPACE_SYNC_MODE_OPTIONS = [
     {
         id: 'keep_synced',
-        titleKey: 'workspaceSync.mode.keepSynced',
+        // Chosen in a picker, the default carries its recommendation; an existing link's status names the mode only.
+        titleKey: 'workspaceSync.mode.keepSyncedRecommended',
         subtitleKey: 'settingsSession.handoff.workspaceMode.keepSyncedSubtitle',
     },
     {
@@ -143,11 +144,12 @@ export function buildWorkspaceContentPolicy(args: Readonly<{
     contentSelection?: 'git_worktree' | 'all_files';
     includeIgnoredMode: SessionHandoffDefaultsV1['includeIgnoredMode'];
     ignoredIncludeGlobs: readonly string[];
+    extraIgnorePatterns?: readonly string[];
 }>): WorkspaceContentPolicyV1 {
     const base: Omit<WorkspaceContentPolicyV1, 'policyDigest'> = {
         v: 1,
         selection: args.contentSelection ?? 'git_worktree',
-        extraIgnorePatterns: [],
+        extraIgnorePatterns: [...(args.extraIgnorePatterns ?? [])],
         extraIncludePatterns: args.includeIgnoredMode === 'include_selected'
             ? [...args.ignoredIncludeGlobs]
             : [],

@@ -1,22 +1,30 @@
-import type { SetSessionAttentionStandingResponse } from '@happier-dev/protocol';
+import type { SetSessionAttentionStandingResponse } from '@happier-dev/protocol/sessions/organization/standings';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { setSessionAttentionStanding as setSessionAttentionStandingApi } from '@/sync/api/session/sessionOrganizationApi';
 import { buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization';
 import { getStorage } from '@/sync/domains/state/storageStore';
+import { sessionOrganizationStoreFor } from './sessionOrganizationAccountStore';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 
 import { resolveSessionOrganizationMutationScope } from './sessionOrganizationMutationOwner';
+import { createFrontDoorActionExecute, requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { HappyError } from '@/utils/errors/errors';
+
+const executeAttentionAction = createFrontDoorActionExecute();
 
 export async function setSessionAttentionStanding(params: Readonly<{
     credentials: AuthCredentials;
     serverId: string;
     serverUrl?: string;
+    requestAtEndpoint?: (path: string, init?: RequestInit) => Promise<Response>;
+    assertCurrent?: () => void;
     sessionId: string;
     standing?: boolean | null;
     remindAt?: number | null;
 }>): Promise<SetSessionAttentionStandingResponse> {
-    const previousStanding = getStorage().getState().sessionOrganizationAttentionStandingsBySessionKey[
+    params.assertCurrent?.();
+    const previousStanding = sessionOrganizationStoreFor(params).sessionOrganizationAttentionStandingsBySessionKey[
         buildSessionOrganizationSessionKey(params.serverId, params.sessionId)
     ];
     const optimisticStanding = params.standing === null
@@ -28,18 +36,20 @@ export async function setSessionAttentionStanding(params: Readonly<{
                 : previousStanding == null
                     ? null
                     : { sessionId: params.sessionId, standing: previousStanding.standing, updatedAt: Date.now() };
-    const recordId = getStorage().getState().setSessionAttentionStandingOptimistic(params.serverId, params.sessionId, optimisticStanding);
+    const recordId = sessionOrganizationStoreFor(params).setSessionAttentionStandingOptimistic(params.serverId, params.sessionId, optimisticStanding);
     try {
         const response = await setSessionAttentionStandingApi({
             credentials: params.credentials,
             serverUrl: params.serverUrl,
+            requestAtEndpoint: params.requestAtEndpoint,
             sessionId: params.sessionId,
             request: params.standing !== undefined ? { standing: params.standing } : { remindAt: params.remindAt ?? null },
         });
+        params.assertCurrent?.();
         // Confirm this write's own key through the optimistic-record owner: a second blind
         // optimistic write would republish this response over a newer reminder change that is
         // still in flight for the same Session.
-        getStorage().getState().confirmSessionOrganizationOptimistic(
+        sessionOrganizationStoreFor(params).confirmSessionOrganizationOptimistic(
             recordId,
             'sessionOrganizationAttentionStandingsBySessionKey',
             buildSessionOrganizationSessionKey(params.serverId, params.sessionId),
@@ -60,12 +70,14 @@ async function sessionSetAttentionIntentWithServerScope(
     const requestedServerId = typeof opts?.serverId === 'string' ? opts.serverId.trim() : '';
     const serverId = requestedServerId || resolvePreferredServerIdForSessionId(sessionId) || '';
     try {
-        const resolved = await resolveSessionOrganizationMutationScope(serverId);
-        if (!resolved.ok) return { success: false, message: `Cannot update session reminder: ${resolved.reason}` };
-        await setSessionAttentionStanding({ ...resolved.scope, sessionId, ...intent });
+        const result = await executeAttentionAction('session.attention.set', { sessionId, ...intent }, {
+            surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId,
+        });
+        requireActionSuccess(result);
         return { success: true };
     } catch (error) {
-        return { success: false, message: error instanceof Error ? error.message : 'Unknown error' };
+        return { success: false, message: error instanceof Error ? error.message : 'Unknown error',
+            ...(error instanceof HappyError ? { code: error.code, details: error.details } : {}) };
     }
 }
 
@@ -80,6 +92,8 @@ export async function sessionClearAttentionReminderWithServerScope(sessionId: st
 export type SessionSetAttentionStandingResult = Readonly<{
     success: boolean;
     message?: string;
+    code?: string;
+    details?: unknown;
 }>;
 
 /**
@@ -95,23 +109,7 @@ export async function sessionSetAttentionStandingWithServerScope(
     standing: boolean,
     opts?: Readonly<{ serverId?: string | null }>,
 ): Promise<SessionSetAttentionStandingResult> {
-    const requestedServerId = typeof opts?.serverId === 'string' ? opts.serverId.trim() : '';
-    const scopeResult = await resolveSessionOrganizationMutationScope(
-        requestedServerId || resolvePreferredServerIdForSessionId(sessionId) || '',
-    );
-    if (!scopeResult.ok) {
-        return { success: false, message: `Cannot set session attention standing: ${scopeResult.reason}` };
-    }
-    try {
-        await setSessionAttentionStanding({
-            ...scopeResult.scope,
-            sessionId,
-            standing,
-        });
-        return { success: true };
-    } catch (error) {
-        return { success: false, message: error instanceof Error ? error.message : 'Unknown error' };
-    }
+    return sessionSetAttentionIntentWithServerScope(sessionId, { standing }, opts);
 }
 
 /**

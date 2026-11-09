@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
     LocalServicePublicExposureV1,
     LocalServicePublicPreviewSnapshotV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/local/services/public/v1';
 import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 
 import { selectLocalServicePublicPreviewRows } from './store';

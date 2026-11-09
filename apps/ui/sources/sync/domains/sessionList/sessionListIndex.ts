@@ -21,6 +21,8 @@ export type SessionListIndexItem =
         title: string;
         /** Current unique eligibility may differ from presented membership during a hold. */
         eligibleCount?: number;
+        /** Needs you also gathers the person's requests from outside this space (P6-R07 opt-in). */
+        fromEverywhere?: boolean;
         /** Admitted subject rollup before any local disclosure hides its members. */
         rollup?: CollectionGroupRollup;
         headerKind?: 'date' | 'server' | 'active' | 'inactive' | 'sessions' | 'project' | 'pinned' | 'loading' | 'folder' | 'attention' | 'working';
@@ -213,6 +215,7 @@ export function areSessionListIndexItemsEqual(
 
     return previous.title === next.title
         && previous.eligibleCount === next.eligibleCount
+        && previous.fromEverywhere === next.fromEverywhere
         && areSessionListGroupRollupsEqual(previous.rollup, next.rollup)
         && previous.headerKind === next.headerKind
         && previous.groupKey === next.groupKey
@@ -327,6 +330,7 @@ export function buildSessionListIndexFromViewData(
                 type: 'header',
                 title: item.title,
                 eligibleCount: item.eligibleCount,
+                ...(item.fromEverywhere ? { fromEverywhere: true } : {}),
                 headerKind: item.headerKind,
                 groupKey: item.groupKey,
                 presentationAnchorGroupKey: item.presentationAnchorGroupKey,

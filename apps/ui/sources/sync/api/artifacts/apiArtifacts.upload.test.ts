@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { encodeBase64 } from '@/encryption/base64';
 import { createArtifact } from './apiArtifacts';
 

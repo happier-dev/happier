@@ -25,10 +25,12 @@ import {
     subscribeMachineContributionRegistryProjectionInvalidation,
     type MachineContributionRegistryProjectionFailureReason,
 } from '@/sync/ops/machineContributionRegistryProjection';
+import { getMachineContributionRegistryProjectionAuthorityRevision } from '@/sync/ops/machineContributionRegistryProjectionRevision';
 import { daemonProjectionHasSections, loadDaemonMergedProjectionCacheEntry, readDaemonMergedProjectionRetryDelayMs,
     readObservedDaemonMergedProjectionCacheEntry, subscribeDaemonMergedProjectionSummary } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import {
-    useEndpointStatus,
+    useEndpointLastConnectedAt,
+    useEndpointOnlineVerdict,
     useSetting,
 } from '@/sync/domains/state/storage';
 import { useMachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
@@ -48,18 +50,12 @@ import {
     type ConnectedAccountDescriptorMachineProjection,
 } from '@/sync/domains/connectedServices/connectedAccountDescriptorProjection';
 
-import { CONNECTED_ACCOUNT_PROJECTION_SECTIONS, PLUGIN_UI_SECTIONS } from './projectionSections';
-export { PLUGIN_UI_SECTIONS, PLUGIN_SEARCH_SECTIONS } from './projectionSections';
-
 const CONNECTED_ACCOUNT_PROJECTION_TRANSPORT_ERROR = Object.freeze({
     kind: 'error' as const,
     reason: 'transport' as const,
 });
-// Setup reads credential descriptors and exactly one purpose declaration across
-// Resources, Actions and provisioners. It does not present plugin UI, browser
-// destinations or input widgets; those families must not delay this admission.
-const PLUGIN_UI_PURPOSE_SECTIONS = ['familiesById.connectedAccounts', 'resourcesById',
-    'actionsById', 'familiesById.machineProvisioners'] as const;
+import { CONNECTED_ACCOUNT_PROJECTION_SECTIONS, PLUGIN_UI_SECTIONS } from './projectionSections';
+export { PLUGIN_UI_SECTIONS, PLUGIN_SEARCH_SECTIONS } from './projectionSections';
 const CONNECTED_ACCOUNT_PROJECTION_UNSUPPORTED = Object.freeze({
     kind: 'error' as const,
     reason: 'unsupported' as const,
@@ -87,12 +83,15 @@ type LoadedProjectionState = Readonly<{
     accountLifetime: ActiveServerAccountScopeLifetime | null;
     authorityKey: string | null;
     failureReason?: MachineContributionRegistryProjectionFailureReason;
+    /** The projection authority revision this snapshot was confirmed under. */
+    authorityRevision?: number;
     /**
-     * A failed refresh never proves absence. When the describe for this
-     * authority failed over a snapshot this process already confirmed, that
+     * A failed refresh never proves absence. When a re-read under the same
+     * projection authority failed over a snapshot this process confirmed, that
      * snapshot stays admitted (and interactive while the machine is online)
      * under this key while retries continue. Only offline presence, a
-     * daemon-answered `unsupported`, or Account retirement withdraw it.
+     * daemon-answered `unsupported`, or Account retirement withdraw it. A
+     * failed answer to an authority change admits nothing (fail closed).
      */
     failedRefreshAuthorityKey?: string;
     /**
@@ -218,9 +217,9 @@ function isAccountLifetimeCurrent(
 
 /**
  * Canonical client owner for daemon-described plugin UI/browser projection
- * currentness. A reconnect or replaced daemon advances the machine's projection
- * revision (the one endpoint-identity signal), which starts a fresh request even when transport
- * timestamps and daemon versions do not change. A lapsed heartbeat that resumes on the same
+ * currentness. Registry changes, daemon replacement and explicit refresh advance
+ * the machine's projection revision. Socket reconnection reconciles those facts;
+ * it does not itself change the catalogue. A lapsed heartbeat that resumes on the same
  * endpoint is not a new endpoint: the confirmed projection is current again as soon as presence is.
  */
 export function usePluginUiProjectionCurrentness(params: Readonly<{
@@ -232,8 +231,13 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
     load?: boolean;
     /** Setup consumes the credential-use declarations, beyond ordinary UI presentation. */
     includeConnectedAccountPurposes?: boolean;
+    /** Stable presented demand; omitted for complete UI presentation. */
+    sections?: readonly string[];
 }>): PluginUiProjectionCurrentness {
-    const sections = params.includeConnectedAccountPurposes ? PLUGIN_UI_PURPOSE_SECTIONS : PLUGIN_UI_SECTIONS;
+    // Purpose setup consumes the daemon's dedicated admission answer, rather
+    // than waiting for a full presentation graph's section hydration.
+    const selection = params.includeConnectedAccountPurposes ? 'connectedAccountAdmission' as const : undefined;
+    const sections = selection ? undefined : params.sections ?? PLUGIN_UI_SECTIONS;
     // Local and remote Settings use the same language authority and narrow subscription.
     useSetting('preferredLanguage');
     const locale = getPreferredLanguage();
@@ -248,7 +252,11 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
     const targetKey = enabled && machineId
         ? pluginUiProjectionAdmissionTargetKey({ serverId, machineId })
         : null;
-    const { binding: routedAccountLifetime } = useServerCredentialAccountScopeBinding(targetKey ? serverId : null);
+    const { binding: routedAccountLifetime, resolution: routedAccountResolution } = useServerCredentialAccountScopeBinding(targetKey ? serverId : null);
+    // An unanswered credential read is no verdict about the Machine: it is
+    // still being established, and `unavailable` would be retracted by the very
+    // next answer, rebuilding every consumer of this Machine twice.
+    const accountResolving = Boolean(targetKey && serverId && routedAccountResolution.kind === 'resolving');
     // Explicit Homes borrow the existing credential owner, never the focused
     // Home's Account. Unqualified legacy readers retain their incumbent owner.
     const accountLifetime = targetKey
@@ -260,7 +268,8 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
     const target = React.useMemo(() => (
         targetKey && machineId ? { machineId, serverId } : null
     ), [machineId, serverId, targetKey]);
-    const endpointStatus = useEndpointStatus();
+    const endpointOnline = useEndpointOnlineVerdict();
+    const endpointLastConnectedAt = useEndpointLastConnectedAt();
     const machinePresence = useMachinePresenceSummary(serverId, machineId?.trim() ?? null);
     const appliedServerId = React.useSyncExternalStore(
         subscribeAppliedActiveServer,
@@ -277,7 +286,7 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
     );
     const online = Boolean(
         targetKey
-        && (!usesFocusedEndpoint || endpointStatus === 'online')
+        && (!usesFocusedEndpoint || endpointOnline)
         && machinePresence.reachability === 'reachable',
     );
     const subscribeProjectionInvalidation = React.useCallback((listener: () => void) => (
@@ -295,17 +304,33 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
         getProjectionInvalidationRevision,
         getProjectionInvalidationRevision,
     );
+    const getProjectionAuthorityRevision = React.useCallback(() => (
+        target && accountLifetimeCurrent
+            ? getMachineContributionRegistryProjectionAuthorityRevision(target)
+            : 0
+    ), [accountLifetime, accountLifetimeCurrent, target]);
+    const projectionAuthorityRevision = React.useSyncExternalStore(
+        subscribeProjectionInvalidation,
+        getProjectionAuthorityRevision,
+        getProjectionAuthorityRevision,
+    );
+    // Only an authority invalidation changes what admits this projection. A
+    // same-authority refresh re-reads (requestKey) while the last-good answer
+    // stays current; an equal answer is retained by the adoption below.
     const authorityKey = targetKey && online && accountLifetimeCurrent
         ? [
             targetKey,
             params.reloadRevision ?? 0,
-            projectionInvalidationRevision,
+            projectionAuthorityRevision,
             locale,
-            params.includeConnectedAccountPurposes === true ? 'purposes' : 'ui',
+            params.includeConnectedAccountPurposes === true ? 'purposes' : params.sections?.join(',') ?? 'ui',
         ].join(':')
         : null;
-    const currentAuthorityKeyRef = React.useRef(authorityKey);
-    currentAuthorityKeyRef.current = authorityKey;
+    // Each new connection re-reads what its gap may have missed; the admitted answer stays current meanwhile.
+    const requestKey = authorityKey === null ? null
+        : `${authorityKey}:${projectionInvalidationRevision}:${usesFocusedEndpoint ? endpointLastConnectedAt : 'routed'}`;
+    const currentRequestKeyRef = React.useRef(requestKey);
+    currentRequestKeyRef.current = requestKey;
     // A real reload/reconnect starts a fresh attempt; a newly mounted sibling
     // instead joins the shared owner's existing failure/recovery cadence.
     const lastRequestedAuthorityKeyRef = React.useRef<string | null>(null);
@@ -336,7 +361,7 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
             // own cache; an old callback may never clear it.
             if (currentAccountLifetimeRef.current !== accountLifetime) return;
             currentAccountLifetimeRef.current = null;
-            currentAuthorityKeyRef.current = null;
+            currentRequestKeyRef.current = null;
             // Capture may retire A while a sibling renders B. Fence authority
             // immediately, then publish React state after that render. A late
             // publication must not clear a successor's settled projection.
@@ -394,12 +419,12 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
         let retryTimer: ReturnType<typeof setTimeout> | null = null;
         let nextRetryEntry: Awaited<ReturnType<typeof loadDaemonMergedProjectionCacheEntry>> = null;
         let shareRetryCadence = lastRequestedAuthorityKeyRef.current === null
-            || lastRequestedAuthorityKeyRef.current === authorityKey;
-        lastRequestedAuthorityKeyRef.current = authorityKey;
+            || lastRequestedAuthorityKeyRef.current === requestKey;
+        lastRequestedAuthorityKeyRef.current = requestKey;
 
         const isRequestCurrent = (): boolean => (
             !cancelled
-            && currentAuthorityKeyRef.current === authorityKey
+            && currentRequestKeyRef.current === requestKey
             && currentAccountLifetimeRef.current === accountLifetime
             && isAccountLifetimeCurrent(accountLifetime)
         );
@@ -411,7 +436,8 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
                     || previous.accountLifetime !== accountLifetime
                     || (previous.connectedAccountProjection === CONNECTED_ACCOUNT_PROJECTION_TRANSPORT_ERROR
                         && previous.failureReason === failureReason)) return previous;
-                if (previous.phase === 'current' && previous.authorityKey !== null) {
+                if (previous.phase === 'current' && previous.authorityKey !== null
+                    && previous.authorityRevision === projectionAuthorityRevision) {
                     return previous.failedRefreshAuthorityKey === authorityKey
                         ? previous
                         : { ...previous, failedRefreshAuthorityKey: authorityKey };
@@ -420,7 +446,7 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
                 return { ...retained, failureReason, phase: retained.phase === 'current' ? 'current' : 'unavailable',
                     connectedAccountProjection: CONNECTED_ACCOUNT_PROJECTION_TRANSPORT_ERROR };
             });
-            if (params.load === false) return;
+            if (failureReason === 'aborted' || params.load === false) return;
             const delayMs = readDaemonMergedProjectionRetryDelayMs(nextRetryEntry);
             if (delayMs === null) return;
             retryTimer = setTimeout(() => {
@@ -434,9 +460,9 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
             nextRetryEntry = entry;
             shareRetryCadence = true;
             if (!entry || entry.kind === 'error') {
-                // Keep the last-known snapshot, but retry a current
-                // transient failure without letting it regain authority.
-                scheduleRetry(entry?.kind === 'error' ? entry.reason : 'error');
+                // Cancellation is not a transient transport failure. A fresh
+                // presented demand may try again, but this mount must not poll.
+                scheduleRetry(entry?.kind === 'error' ? entry.reason : 'aborted');
                 return;
             }
             if (entry.kind === 'unsupported') {
@@ -476,7 +502,7 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
                     && previous.pluginUiProjection === entry.inputs.pluginUiProjection
                     && previous.connectedAccountProjection === connectedAccountProjection) return previous;
                 return {
-                    targetKey, accountLifetime, authorityKey, phase: 'current',
+                    targetKey, accountLifetime, authorityKey, authorityRevision: projectionAuthorityRevision, phase: 'current',
                     connectedAccountProjection,
                     pluginUiProjection: entry.inputs.pluginUiProjection,
                     pluginBrowserProjection: resolvePluginBrowserProjectionState(previous.pluginBrowserProjection, projection),
@@ -489,10 +515,10 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
             // Observation has no TTL-driven acquisition: the canonical owner
             // still checks exact Account, locale and projection revision.
             const observe = () => {
-                const entry = readObservedDaemonMergedProjectionCacheEntry({ ...target, accountLifetime, sections: [] });
+                const entry = readObservedDaemonMergedProjectionCacheEntry({ ...target, accountLifetime, sections: [], selection });
                 if (entry) adoptProjection(entry);
             };
-            const unsubscribe = subscribeDaemonMergedProjectionSummary(target, observe);
+            const unsubscribe = subscribeDaemonMergedProjectionSummary({ ...target, selection }, observe);
             observe();
             return () => { cancelled = true; unsubscribe(); };
         }
@@ -502,7 +528,9 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
             // The one per-machine projection owner: every reader of this
             // machine shares its request and its projection revision.
             void loadDaemonMergedProjectionCacheEntry({
-                sections,
+                // A purpose selection names its own answer; it has no section narrowing.
+                sections: sections ?? 'complete',
+                selection,
                 machineId: target.machineId,
                 serverId: target.serverId,
                 accountLifetime,
@@ -521,7 +549,7 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
             abort.abort();
             if (retryTimer !== null) clearTimeout(retryTimer);
         };
-    }, [accountLifetime, authorityKey, params.load, platform, target, targetKey]);
+    }, [accountLifetime, authorityKey, requestKey, params.load, platform, sections, selection, target, targetKey]);
 
     const hasLoadedCurrentScope = Boolean(
         targetKey
@@ -530,7 +558,7 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
         && loadedProjection.accountLifetime === accountLifetime,
     );
     const phase: PluginUiProjectionPhase = !targetKey || !accountLifetimeCurrent
-        ? 'unavailable'
+        ? accountResolving ? 'establishing' : 'unavailable'
         : !hasLoadedCurrentScope
             ? 'establishing'
             : loadedProjection.phase === 'unavailable'

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type {
     QualifiedConnectedAccountProfileV4,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 
 import {
     resolveBuiltInConnectedAccountQuotaTransport,

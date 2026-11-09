@@ -1,4 +1,5 @@
-import type { BrowserViewTargetV1, LocalServiceLauncherSnapshotV1 } from '@happier-dev/protocol';
+import type { BrowserViewTargetV1} from '@happier-dev/protocol/browser/target/v1';
+import type { LocalServiceLauncherSnapshotV1 } from '@happier-dev/protocol/local/services/launcher/v1';
 import { describe, expect, it } from 'vitest';
 
 const previewTarget = {
@@ -16,14 +17,15 @@ const launcherSnapshot = {
     updatedAt: 1_000,
     targets: [{
         id: 'preview:preview_vite',
-        source: 'registered_preview',
+        source: 'inventory_entry',
+        sourceClass: { kind: 'inventory_entry', inventoryEntryId: 'entry_vite' },
         machineId: 'machine_1',
         sessionId: 'session_1',
         title: 'Vite app',
         subtitle: 'localhost:5173',
         confidence: 'high',
         state: 'available',
-        actions: ['open_preview'],
+        actions: ['register_preview'],
         browserTarget: previewTarget,
     }, {
         id: 'inventory:old',

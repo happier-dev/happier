@@ -41,7 +41,7 @@ export type ChangesCursorBlockedContext = Readonly<{
 }>;
 
 export type SnapshotBaseCursorFetchFailedContext = Readonly<{
-    trigger: 'missing-cursor' | 'cursor-gone' | 'forced-snapshot' | 'page-budget';
+    trigger: 'missing-cursor' | 'cursor-gone';
     fallbackCursor: string | null;
     error: string;
 }>;
@@ -76,8 +76,6 @@ export async function runSocketReconnectCatchUpViaChanges(params: {
     accountId: string | null;
     afterCursor: string | null;
     changesPageLimit: number;
-    maxChangesPagesPerResume?: number;
-    forceSnapshotRefresh: boolean;
     fetchChanges: FetchChangesFn;
     fetchCurrentCursor?: FetchCurrentChangesCursorFn;
     checkpointCursor?: (cursor: string, context: ChangesCursorCheckpointContext) => Promise<boolean> | boolean;
@@ -223,8 +221,6 @@ export async function runSocketReconnectCatchUpViaChanges(params: {
     };
 
     let afterCursor = params.afterCursor;
-    const maxPages = Math.max(1, Math.trunc(params.maxChangesPagesPerResume ?? 5));
-    let forceSnapshotRefresh = params.forceSnapshotRefresh;
     let snapshotCursorAwaitingFinalPersist: string | null = null;
     let blockedCheckpoint: { status: 'ok'; nextCursor: string; shouldPersistCursor: boolean } | null = null;
 
@@ -232,11 +228,12 @@ export async function runSocketReconnectCatchUpViaChanges(params: {
         const snapshot = await runSnapshotRepair(null, 'missing-cursor');
         if (snapshot.status === 'fallback') return snapshot;
         afterCursor = snapshot.cursor;
-        forceSnapshotRefresh = false;
         snapshotCursorAwaitingFinalPersist = snapshot.checkpointPersisted ? null : snapshot.cursor;
     }
 
-    for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
+    // The server bounds each page. Keep materializing changed units until the
+    // feed settles; inventory size is not a reason to replace it with a census.
+    while (true) {
         const result = await params.fetchChanges({
             credentials,
             afterCursor,
@@ -253,7 +250,6 @@ export async function runSocketReconnectCatchUpViaChanges(params: {
                 return snapshot;
             }
             afterCursor = snapshot.cursor;
-            forceSnapshotRefresh = false;
             snapshotCursorAwaitingFinalPersist = snapshot.checkpointPersisted ? null : snapshot.cursor;
             continue;
         }
@@ -265,17 +261,6 @@ export async function runSocketReconnectCatchUpViaChanges(params: {
         const { changes, nextCursor } = result;
         reportCursorContractAnomaly({ afterCursor, nextCursor, changes });
 
-        if (forceSnapshotRefresh) {
-            const snapshot = await runSnapshotRepair(nextCursor, 'forced-snapshot');
-            if (snapshot.status === 'fallback') {
-                return snapshot;
-            }
-            afterCursor = snapshot.cursor;
-            forceSnapshotRefresh = false;
-            snapshotCursorAwaitingFinalPersist = snapshot.checkpointPersisted ? null : snapshot.cursor;
-            continue;
-        }
-
         if (changes.length === 0) {
             return blockedCheckpoint ?? {
                 status: 'ok',
@@ -284,7 +269,9 @@ export async function runSocketReconnectCatchUpViaChanges(params: {
             };
         }
 
-        const planned = planSyncActionsFromChanges(changes, params.planContext);
+        const numericAfterCursor = parseNumericCursor(afterCursor);
+        const planned = planSyncActionsFromChanges(changes, { ...params.planContext,
+            ...(numericAfterCursor !== null ? { afterCursor: numericAfterCursor } : {}) });
         const applyResult = await params.applyPlanned(planned);
         const safeAdvanceCursor = normalizeApplySafeCursor(applyResult, nextCursor);
 
@@ -306,7 +293,7 @@ export async function runSocketReconnectCatchUpViaChanges(params: {
             if (changes.length < params.changesPageLimit) return blockedCheckpoint;
             // Keep the durable cursor before the first unmaterialized change, but
             // still read later pages so an unrelated failure cannot starve pins
-            // and other Account projections. The existing page budget owns repair.
+            // and other Account projections.
             afterCursor = nextCursor;
             continue;
         }
@@ -338,19 +325,4 @@ export async function runSocketReconnectCatchUpViaChanges(params: {
         afterCursor = nextCursor;
     }
 
-    if (blockedCheckpoint) {
-        // A known-domain snapshot can refresh later projections, but it cannot
-        // prove an earlier unsupported or failed change has been materialized.
-        await params.snapshotRefresh();
-        return blockedCheckpoint;
-    }
-    const snapshot = await runSnapshotRepair(afterCursor, 'page-budget');
-    if (snapshot.status === 'fallback') {
-        return snapshot;
-    }
-    return {
-        status: 'ok',
-        nextCursor: snapshot.cursor,
-        shouldPersistCursor: !snapshot.checkpointPersisted,
-    };
 }

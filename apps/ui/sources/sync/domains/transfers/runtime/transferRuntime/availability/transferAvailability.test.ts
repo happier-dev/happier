@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 
 describe('resolveTransferAvailability', () => {
     it('derives canonical direct-peer, server-relay, and machine-rpc route availability from server bits and route records', async () => {

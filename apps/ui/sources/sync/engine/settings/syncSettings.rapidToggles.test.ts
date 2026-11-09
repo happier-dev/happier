@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHomeGovernanceHarness, createAccountTokenForTests, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import type { Settings } from '@/sync/domains/settings/settings';
+import { ACCOUNT_SETTINGS_REMOTE_ALERT_POLICY_STATUS_HTTP_HEADER } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import { markAccountSettingsHeadUnverified } from './accountSettingsRawSnapshot';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { AccountSettingsV2UpdateRequestSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 
 const harness = createHomeGovernanceHarness();
@@ -12,6 +15,7 @@ const settingsOwner = await import('@/sync/domains/settings/settings');
 const settingsNormalizationOwner = await import('@/sync/domains/settings/accountSettingsNormalization');
 const { storage } = await import('@/sync/domains/state/storage');
 const { loadPendingAccountSettings, savePendingAccountSettings } = await import('@/sync/domains/state/accountSettingsPersistence');
+const { rememberOrdinaryNewSessionDraftId, readOrdinaryNewSessionDraftId } = await import('@/sync/domains/state/newSessionTargetUiState');
 
 const keys = [
     'transcriptMessageCopyActionEnabled', 'transcriptMessageForkActionEnabled',
@@ -66,6 +70,77 @@ describe('rapid Account settings intents', () => {
         expect(storage.getState().settings.keyboardShortcutsV2Enabled).toBe(false);
     });
 
+    it('reads the document once while the Home head stays at the version Sync already admitted', async () => {
+        const serverId = await harness.addHome({ name: 'Unchanged head', serverUrl: 'https://unchanged-head.example', accountId: 'owner' });
+        const scope = { serverId, accountId: 'owner' };
+        let raw: Record<string, unknown> = { analyticsOptOut: false };
+        let version = 5;
+        let documentReads = 0;
+        storage.setState({ settingsScope: scope, settingsVersion: null, settings: settingsParse({}) });
+        savePendingAccountSettings(scope, {});
+        harness.answer(serverId, '/v2/account/settings', { select: () => { documentReads++;
+            return { body: { content: { t: 'plain', v: raw }, version }, headers: { [ACCOUNT_SETTINGS_REMOTE_ALERT_POLICY_STATUS_HTTP_HEADER]: 'disabled' } }; } });
+        harness.answer(serverId, '/v1/account/encryption/currentness', { select: () => ({ body: createPlainAccountEncryptionCurrentnessFixture({ settingsVersion: version }) }) });
+        const sync = () => syncSettings({ credentials: { token: createAccountTokenForTests('owner', { currentAccount: true }) },
+            encryption: null, settingsScope: scope, pendingSettings: {}, getPendingSettings: () => ({}), clearPendingSettings: () => {} });
+        await sync();
+        expect(documentReads).toBe(1);
+        await sync();
+        await sync();
+        expect(documentReads).toBe(1);
+        // Another client moved the head: the refresh reads and applies it.
+        raw = { analyticsOptOut: true };
+        version = 6;
+        await sync();
+        expect(documentReads).toBe(2);
+        expect(storage.getState().settingsVersion).toBe(6);
+        expect(storage.getState().settings.analyticsOptOut).toBe(true);
+    });
+
+    it('reads the document at an unchanged head only while the remote-alert policy status is unknown', async () => {
+        const serverId = await harness.addHome({ name: 'Unknown status', serverUrl: 'https://unknown-status.example', accountId: 'owner' });
+        const scope = { serverId, accountId: 'owner' };
+        let documentReads = 0;
+        storage.setState({ settingsScope: scope, settingsVersion: null, settings: settingsParse({}), settingsRemoteAlertPolicyStatus: null });
+        savePendingAccountSettings(scope, {});
+        const currentStatus = { [ACCOUNT_SETTINGS_REMOTE_ALERT_POLICY_STATUS_HTTP_HEADER]: 'current' };
+        harness.answer(serverId, '/v2/account/settings', { select: () => { documentReads++;
+            return { body: { content: { t: 'plain', v: {} }, version: 5 }, ...(documentReads > 1 ? { headers: currentStatus } : {}) }; } });
+        harness.answer(serverId, '/v1/account/encryption/currentness', { select: () => ({ body: createPlainAccountEncryptionCurrentnessFixture({ settingsVersion: 5 }) }) });
+        const sync = () => syncSettings({ credentials: { token: createAccountTokenForTests('owner', { currentAccount: true }) },
+            encryption: null, settingsScope: scope, pendingSettings: {}, getPendingSettings: () => ({}), clearPendingSettings: () => {} });
+        await sync();
+        expect(storage.getState().settingsRemoteAlertPolicyStatus).toBeNull();
+        // The status is unknown at this version, so the consumer's exact-version re-read still reaches the Home.
+        await sync();
+        expect(documentReads).toBe(2);
+        expect(storage.getState().settingsRemoteAlertPolicyStatus).toBe('current');
+        // Status is a function of the policy binding and version: at the same head it cannot have moved.
+        await sync();
+        expect(documentReads).toBe(2);
+        expect(storage.getState().settingsRemoteAlertPolicyStatus).toBe('current');
+    });
+
+    it('confirms the head on the unchanged-head refresh after a socket gap', async () => {
+        const serverId = await harness.addHome({ name: 'Gap head', serverUrl: 'https://gap-head.example', accountId: 'owner' });
+        const scope = { serverId, accountId: 'owner' };
+        let version = 5;
+        let documentReads = 0;
+        storage.setState({ settingsScope: scope, settingsVersion: null, settings: settingsParse({}), settingsRemoteAlertPolicyStatus: null });
+        savePendingAccountSettings(scope, {});
+        harness.answer(serverId, '/v2/account/settings', { select: () => { documentReads++;
+            return { body: { content: { t: 'plain', v: {} }, version }, headers: { [ACCOUNT_SETTINGS_REMOTE_ALERT_POLICY_STATUS_HTTP_HEADER]: 'disabled' } }; } });
+        harness.answer(serverId, '/v1/account/encryption/currentness', { select: () => ({ body: createPlainAccountEncryptionCurrentnessFixture({ settingsVersion: version }) }) });
+        const sync = () => syncSettings({ credentials: { token: createAccountTokenForTests('owner', { currentAccount: true }) },
+            encryption: null, settingsScope: scope, pendingSettings: {}, getPendingSettings: () => ({}), clearPendingSettings: () => {} });
+        await sync();
+        markAccountSettingsHeadUnverified();
+        version = 6;
+        await sync();
+        expect(documentReads).toBe(2);
+        expect(storage.getState().settingsVersion).toBe(6);
+    });
+
     it('parses a fetched Settings baseline only once before publication', async () => {
         const serverId = await harness.addHome({ name: 'Settings', serverUrl: 'https://settings-perf.example', accountId: 'owner', currentAccount: true });
         const scope = { serverId, accountId: 'owner' };
@@ -76,8 +151,8 @@ describe('rapid Account settings intents', () => {
         try {
             await syncSettings({ credentials: { token: createAccountTokenForTests('owner', { currentAccount: true }) },
                 encryption: null, settingsScope: scope, pendingSettings: {}, clearPendingSettings: () => {} });
-            // Server + local-only normalization, then the canonical persistence parse.
-            expect(parse).toHaveBeenCalledTimes(3);
+            // Incoming Account normalization and persistence admission; local-only fields use their own parser.
+            expect(parse).toHaveBeenCalledTimes(2);
             expect(storage.getState().settings.analyticsOptOut).toBe(true);
             expect(storage.getState().settingsVersion).toBe(2);
         } finally {
@@ -85,7 +160,7 @@ describe('rapid Account settings intents', () => {
         }
     });
 
-    it('reads the Settings baseline while remote-alert projection is held and preserves a newer local edit', async () => {
+    it('holds local normalization until the Settings baseline settles and preserves a newer local edit', async () => {
         const serverId = await harness.addHome({ name: 'Bootstrap', serverUrl: 'https://bootstrap.example', accountId: 'owner', currentAccount: true });
         const scope = { serverId, accountId: 'owner' };
         const raw = { analyticsOptOut: true };
@@ -93,26 +168,25 @@ describe('rapid Account settings intents', () => {
         storage.setState({ settingsScope: scope, settingsVersion: 1, settings: settingsParse({}) });
         savePendingAccountSettings(scope, {});
         let release!: () => void;
-        const remoteProjection = new Promise<void>(resolve => { release = resolve; });
-        harness.answer(serverId, '/v1/push-tokens?projectionVersion=2', { status: 404, respondAfter: remoteProjection });
-        harness.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: raw }, version: 2 } });
+        const baselineRead = new Promise<void>(resolve => { release = resolve; });
+        harness.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: raw }, version: 2 }, respondAfter: baselineRead });
         const normalize = vi.spyOn(settingsNormalizationOwner, 'normalizeAccountSettingsForLocalStorage');
         const inFlight = syncSettings({ credentials: { token: createAccountTokenForTests('owner', { currentAccount: true }) },
-            encryption: null, settingsScope: scope, pendingSettings: {}, republishRemoteAlertPolicy: true,
+            encryption: null, settingsScope: scope, pendingSettings: {},
             clearPendingSettings: () => {} });
         try {
             await vi.waitFor(() => expect(harness.requestsFor('/v2/account/settings')).toHaveLength(1));
-            await vi.waitFor(() => expect(normalize).toHaveBeenCalledTimes(1));
+            expect(normalize).toHaveBeenCalledTimes(0);
             expect(storage.getState().settingsVersion).toBe(1);
-            storage.getState().applySettingsLocal({ newSessionOrdinaryEntryDraftId: newerLocalDraftId });
-            expect(storage.getState().settings.newSessionOrdinaryEntryDraftId).toBe(newerLocalDraftId);
+            rememberOrdinaryNewSessionDraftId(scope, newerLocalDraftId);
+            expect(readOrdinaryNewSessionDraftId(scope)).toBe(newerLocalDraftId);
         } finally {
             release();
             try { await inFlight; } finally { normalize.mockRestore(); }
         }
         expect(storage.getState().settings.analyticsOptOut).toBe(true);
         expect(storage.getState().settingsVersion).toBe(2);
-        expect(storage.getState().settings.newSessionOrdinaryEntryDraftId).toBe(newerLocalDraftId);
+        expect(readOrdinaryNewSessionDraftId(scope)).toBe(newerLocalDraftId);
     });
 
     it('retains seven new intents across an earlier acknowledgement and rebases their next flush on a CAS winner', async () => {

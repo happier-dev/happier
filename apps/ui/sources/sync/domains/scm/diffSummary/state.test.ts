@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ExecutionRunPublicState, ScmComparison, ScmDiffSummaryGenerateInput, ScmDiffSummaryGenerateSuccess } from '@happier-dev/protocol';
+import type { ExecutionRunPublicState} from '@happier-dev/protocol/execution/runs/responseSchemas';
+import type { ScmComparison} from '@happier-dev/protocol/scm/comparison';
+import type { ScmDiffSummaryGenerateInput, ScmDiffSummaryGenerateSuccess } from '@happier-dev/protocol/scm/diffSummary';
 import { buildScmComparisonSourceKey, ScmDiffSummaryResultSchema } from '@happier-dev/protocol/scm';
 
 import {
@@ -28,7 +30,6 @@ const finalSummary = {
         turnId: 'turn_1',
         checkpointReceiptId: 'receipt_1',
     },
-    truncation: { reason: 'diffBytes', droppedFiles: 2 },
     risks: ['Shared worktree attribution.'],
     testImpact: 'Run protocol tests.',
     suggestedPrBody: 'Summarizes checkpoint projection changes.',
@@ -129,6 +130,32 @@ describe('SCM diff summary state', () => {
         });
     });
 
+    it('presents a partial output that ended with a reason as an unfinished reading that keeps what was written', () => {
+        const value = { title: 'Partial', intro: '', stops: [], otherChangeRefs: ['change_1'] };
+        // The producer's sanitized reason is diagnostic text; only the typed presentation reaches the copy.
+        const unclassified = observe({ ...pending, outputs: { walkthrough: { state: 'partial', value, reason: 'The next analysis input exceeds the reported runtime capacity' } } });
+        expect(selectScmDiffSummaryViewModel(unclassified, 'progressive', 'walkthrough')).toMatchObject({
+            status: 'failed', isPartial: true, outputs: { walkthrough: { state: 'partial', value: { title: 'Partial' } } },
+            error: { reason: 'endedPartway', nextAction: 'retry', messageKey: 'walkthrough.notice.endedPartway' },
+        });
+        // A typed cause the producer retained names the cause instead.
+        const typed = observe({ ...pending, outputs: { walkthrough: { state: 'partial', value, reason: 'Provider lost', reasonCode: 'MODEL_UNAVAILABLE' } } });
+        expect(selectScmDiffSummaryViewModel(typed, 'progressive', 'walkthrough').error).toMatchObject({ reason: 'modelUnavailable', nextAction: 'chooseModel' });
+        // The producer's two capacity causes: the runtime's input limit is not the model's fault, a model's own window is.
+        const tooLarge = observe({ ...pending, outputs: { walkthrough: { state: 'partial', value, reason: 'capacity', reasonCode: 'provider_input_too_large' } } });
+        expect(selectScmDiffSummaryViewModel(tooLarge, 'progressive', 'walkthrough').error).toMatchObject({
+            reason: 'inputTooLarge', nextAction: 'narrowChange', messageKey: 'walkthrough.generationFailure.inputTooLarge' });
+        const window = observe({ ...pending, outputs: { walkthrough: { state: 'failed', reason: 'window', reasonCode: 'agent_context_window_exceeded' } } });
+        expect(selectScmDiffSummaryViewModel(window, 'progressive', 'walkthrough').error).toMatchObject({
+            reason: 'contextTooSmall', nextAction: 'chooseModel', messageKey: 'walkthrough.generationFailure.contextTooSmall' });
+        // A sibling output that completed is not relabelled by it.
+        const sibling = observe({ ...pending, requestedOutputs: ['walkthrough', 'commitPlan'], outputs: {
+            walkthrough: { state: 'partial', value, reason: 'Stopped' },
+            commitPlan: { state: 'complete', value: { groups: [], leftOutChangeRefs: ['change_1'] } },
+        } }, { ...input, outputs: ['walkthrough', 'commitPlan'] });
+        expect(selectScmDiffSummaryViewModel(sibling, 'progressive', 'commitPlan')).toMatchObject({ status: 'succeeded', error: null });
+    });
+
     it('retains the typed cancellation code from the strict saved-result reader', () => {
         const result = ScmDiffSummaryResultSchema.parse({ resultId: 'result_1', revision: 1, canUndo: false,
             output: { ...pending, revision: 1, outputs: { walkthrough: {
@@ -225,8 +252,8 @@ describe('SCM diff summary state', () => {
     });
 
     it('keeps last-known prose visible while the newly admitted comparison is pending', () => {
-        let state = applyScmDiffSummaryEvent(createInitialScmDiffSummaryState(), { type: 'cache_hit', key: 'summary-key', sessionId: 'session_1',
-            actionId: 'scm.diffSummary.generate', input, output: finalSummary, observedAtMs: 100 });
+        let state = applyScmDiffSummaryEvent(createInitialScmDiffSummaryState(), { type: 'request_started', key: 'summary-key', sessionId: 'session_1',
+            actionId: 'scm.diffSummary.generate', input, structuredOutput: finalSummary, runId: 'run_1', requestedAtMs: 100, intent: 'generate' });
         state = applyScmDiffSummaryEvent(state, { type: 'request_started', key: 'summary-key', sessionId: 'session_1',
             actionId: 'scm.diffSummary.generate', input, runId: 'run_2', structuredOutput: { ...pending, requestedOutputs: ['summary'], outputs: { summary: { state: 'pending' } } },
             requestedAtMs: 120, intent: 'regenerate' });
@@ -288,16 +315,18 @@ describe('SCM diff summary state', () => {
             type: 'run_snapshot',
             key: 'summary-key',
             run: { ...runningRun(), status: 'succeeded', finishedAtMs: 200 },
-            structuredOutput: finalSummary,
+            structuredOutput: { ...finalSummary, outputs: { summary: { state: 'partial', value: {
+                summaryMarkdown: finalSummary.summaryMarkdown, risks: finalSummary.risks,
+                testImpact: finalSummary.testImpact, suggestedPrBody: finalSummary.suggestedPrBody,
+            } } } },
             observedAtMs: 200,
         });
 
         expect(selectScmDiffSummaryViewModel(state, 'summary-key')).toMatchObject({
-            status: 'succeeded',
+            status: 'failed',
             executionRunId: 'run_1',
             summaryMarkdown: finalSummary.summaryMarkdown,
             isPartial: true,
-            truncation: finalSummary.truncation,
             risks: finalSummary.risks,
             testImpact: finalSummary.testImpact,
             suggestedPrBody: finalSummary.suggestedPrBody,
@@ -346,7 +375,6 @@ describe('SCM diff summary state', () => {
             summaryMarkdown: finalSummary.summaryMarkdown,
             isShowingLastKnownSummary: true,
             pendingIntent: 'regenerate',
-            retryAttempt: 0,
         });
     });
 
@@ -389,7 +417,6 @@ describe('SCM diff summary state', () => {
             summaryMarkdown: finalSummary.summaryMarkdown,
             isShowingLastKnownSummary: true,
             canRetry: true,
-            retryAttempt: 1,
             error: { message: 'Model unavailable', code: 'MODEL_UNAVAILABLE' },
         });
     });

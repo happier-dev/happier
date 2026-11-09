@@ -2,11 +2,18 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
     ACTION_OPERATION_RPC_METHODS_V1,
-    ACTION_OPERATION_RPC_METHODS_V2,
+    ACTION_OPERATION_RPC_METHODS_V2} from '@happier-dev/protocol/actions';
+import {
     type ActionOperationSnapshotV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/actions/operations/v1';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { ActionOperationGetV2RequestSchema } from '@happier-dev/protocol/actions/operations/v1';
+
+// These transport contracts supply their RPC boundary below; importing the
+// live connection graph would add unrelated runtime ownership to this slice.
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
+    machineRpcWithServerScope: vi.fn(),
+}));
 
 import {
     getActionOperation,
@@ -137,5 +144,19 @@ describe('action operation transport', () => {
             .rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND });
         await expect(getActionOperation({ machineId: 'machine-1', operationId: 'operation-1', rpc, waitForTerminal: true }))
             .rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND });
+    });
+
+    it('never downgrades a qualified request lookup into an unfiltered predecessor inventory', async () => {
+        const methods: string[] = [];
+        const rpc = createRpc(async ({ method }) => {
+            methods.push(method);
+            return method === ACTION_OPERATION_RPC_METHODS_V2.list
+                ? { error: 'Method not found', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND }
+                : { items: [accepted], nextCursor: null };
+        });
+        await expect(listActionOperations({ machineId: 'machine-1', rpc,
+            request: { requestIdentity: { actionId: 'session.spawn_new', requestId: 'click' } } }))
+            .rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND });
+        expect(methods).toEqual([ACTION_OPERATION_RPC_METHODS_V2.list]);
     });
 });

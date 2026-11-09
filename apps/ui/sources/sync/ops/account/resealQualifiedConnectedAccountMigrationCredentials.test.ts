@@ -1,11 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  ConnectedServiceCredentialRecordV1Schema,
+  AccountEncryptionMigrateConnectedServicesDirectiveSchema} from '@happier-dev/protocol/account/encryptionMigrate';
+import {
+  ConnectedServiceCredentialRecordV1Schema} from '@happier-dev/protocol/connect/connected-service-schemas';
+import {
   openQualifiedConnectedAccountContentEnvelope,
-  parseQualifiedConnectedAccountCredentialPlaintextV1,
-  projectQualifiedConnectedAccountCredentialPlaintextV1,
   sealQualifiedConnectedAccountContentEnvelope,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
+import {
+  parseQualifiedConnectedAccountCredentialPlaintextV1,
+  projectQualifiedConnectedAccountCredentialPlaintextV1} from '@happier-dev/protocol/connect/legacyConnectedServiceCompatibility';
 
 import {
   resealQualifiedConnectedAccountMigrationCredentials,
@@ -93,6 +97,7 @@ describe('resealQualifiedConnectedAccountMigrationCredentials', () => {
             configurationRevision: 'configuration-7',
             content: sourceContent,
             metadata,
+            health: { v: 1, status: 'connected', reconnectRequired: false },
           }),
           fetchConfiguration: async () => ({
             target: { kind: 'account', ref },
@@ -112,6 +117,9 @@ describe('resealQualifiedConnectedAccountMigrationCredentials', () => {
         authenticationModeId: 'api-key',
         metadata,
       });
+      expect(AccountEncryptionMigrateConnectedServicesDirectiveSchema.parse({
+        action: 'migrate', qualifiedCredentials: [migration],
+      }).action).toBe('migrate');
       const migratedPlaintext = toMode === 'plain'
         ? openQualifiedConnectedAccountContentEnvelope({
             kind: 'credential',

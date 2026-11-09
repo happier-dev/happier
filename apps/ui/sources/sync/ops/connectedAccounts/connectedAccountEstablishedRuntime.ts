@@ -77,7 +77,7 @@ export function createUiConnectedAccountEstablishedMaterializer(input: Readonly<
                             await fence();
                             const value = await invocation.context.credentials.get(key, options);
                             await fence();
-                            if (value !== null) register(value);
+                            dispatcher.registerEstablishedCredentialForRedaction(invocation, key, value, register);
                             return value;
                         } },
                     };

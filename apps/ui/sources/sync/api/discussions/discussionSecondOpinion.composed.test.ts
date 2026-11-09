@@ -3,7 +3,8 @@ import '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, answerDiscussionThreadForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
-import { createPlainSessionCurrentProjectionRecordFixture, createSessionFixture, createSessionViewerFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createSessionFixture, createSessionViewerFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createPlainSessionWithDisplayRecordFixture } from '@/dev/testkit/fixtures/sessionDisplayFixtures';
 import { createSessionMessagesFixture } from '@/dev/testkit/fixtures/transcriptFixtures';
 import { readDiscussionSecondOpinionSourceV1 } from '@happier-dev/protocol/actions/executor/discussionSecondOpinion';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
@@ -32,7 +33,7 @@ async function sourceHome() {
     const serverId = await homes.addHome({ name: 'Review', serverUrl: 'https://review.test', accountId: 'alice', currentAccount: true });
     const source = { kind: 'session' as const, message: { kind: 'session' as const,
         session: { serverId, sessionId: 'source-session' }, messageId: 'committed-answer' } };
-    const session = createPlainSessionCurrentProjectionRecordFixture({ id: 'source-session' });
+    const session = createPlainSessionWithDisplayRecordFixture({ id: 'source-session' });
     homes.answer(serverId, '/v2/sessions/source-session', { body: { session } });
     homes.answer(serverId, '/v2/sessions/source-session?accessProjectionVersion=1', { body: { session } });
     const messageRequests: URL[] = [];
@@ -62,7 +63,9 @@ it('previews the exact committed server answer independently of Voice privacy or
     expect(messageRequests).toHaveLength(1);
     expect(messageRequests[0]!.searchParams.get('messageId')).toBe(source.message.messageId);
     expect(messageRequests[0]!.searchParams.has('limit')).toBe(false);
-    expect(homes.requests.filter(row => row.input !== null && row.path !== '/v1/discussions/second-opinion/preview')).toEqual([]);
+    const writes = homes.requests.filter(row => row.input !== null && row.path !== '/v1/discussions/second-opinion/preview')
+        .map(row => ({ path: row.path, method: row.method }));
+    expect(writes, JSON.stringify(writes)).toEqual([]);
     const voice = await createDefaultActionExecutor().execute('session.transcript.get', { sessionId: 'source-session' },
         { surface: 'voice', serverId, expectedAccountId: 'alice' });
     expect(voice).toMatchObject({ ok: false, errorCode: 'recent_messages_disabled' });
@@ -81,7 +84,9 @@ it('previews one selected Session through the real default UI controller without
     expect(controller.getSnapshot()).toMatchObject({ working: false, submitted: false,
         preview: { status: 'preview', preview: selectedPreview, sourceText: 'The source answer.' },
         result: { outcome: { kind: 'succeeded' } } });
-    expect(homes.requests.filter(row => row.input !== null && row.path !== '/v1/discussions/second-opinion/preview')).toEqual([]);
+    const writes = homes.requests.filter(row => row.input !== null && row.path !== '/v1/discussions/second-opinion/preview')
+        .map(row => ({ path: row.path, method: row.method }));
+    expect(writes, JSON.stringify(writes)).toEqual([]);
 });
 
 it('retains explicit Require on a UI preview before disclosing the selected source', async () => {
@@ -236,7 +241,11 @@ it('retains the quote and separate create identity through an uncertain people-o
     expect(requests[0]).toMatchObject({ creationLocalId: retry.creationLocalId,
         anchor: { kind: 'session', sessionId: 'source-session', messageId: 'committed-answer' },
         firstMessage: { localId: retry.quoteLocalId, mentionedSessionIds: [],
-            content: { t: 'plain', v: { v: 1, parts: [{ t: 'text', text: 'The source answer.' }] } } } });
+            // The current controller retains both the source quote and the authored question.
+            // Their adjacent text parts follow discussionSecondOpinionController.discuss.
+            content: { t: 'plain', v: { v: 1, parts: [
+                { t: 'text', text: 'The source answer.' }, { t: 'text', text: 'What changes?' },
+            ] } } } });
 });
 
 it('requires explicit confirmation of a changed preview, then retries the one ordinary question with its retained identity', async () => {

@@ -1,4 +1,4 @@
-import type { ResolvedActionOption } from '@happier-dev/protocol';
+import type { ResolvedActionOption } from '@happier-dev/protocol/actions/actionCatalog';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 
 import {

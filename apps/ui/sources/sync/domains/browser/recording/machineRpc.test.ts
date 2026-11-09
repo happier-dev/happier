@@ -1,4 +1,4 @@
-import type { BrowserRecordingSessionV1 } from '@happier-dev/protocol';
+import type { BrowserRecordingSessionV1 } from '@happier-dev/protocol/browser/recording/v1';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 

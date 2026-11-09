@@ -5,7 +5,8 @@ import { WorkflowDefinitionV1Schema, type WorkflowBlock, type WorkflowStep } fro
 import { createWorkflowEditorDraft, resolveSelectionAfterRemoval, toggleWorkflowBlockCollapsed, EMPTY_WORKFLOW_EDITOR_VIEW_STATE, type WorkflowEditorDraft } from './workflowEditorDraft';
 import * as draftOwner from './workflowEditorDraft';
 import { materializeWorkflowStarterExample } from '@happier-dev/protocol/workflows/builtins/examples';
-import { WORKFLOW_STARTER_EXAMPLES_V1, AutomationTriggerDefinitionInputSchema } from '@happier-dev/protocol';
+import { WORKFLOW_STARTER_EXAMPLES_V1} from '@happier-dev/protocol/workflows/builtins/examples';
+import { AutomationTriggerDefinitionInputSchema } from '@happier-dev/protocol/automations/automationTriggerDefinition';
 import { validateWorkflowEditorDraft } from './workflowAuthoring';
 import { collectWorkflowBlockIds, createWorkflowBlock, findWorkflowBlock, findWorkflowBlockListRef, insertWorkflowBlock, moveWorkflowBlock, resolvePreviousResultInputForInsertion, removeWorkflowBlock, setWorkflowDefaultField, setWorkflowFinalOutput, setWorkflowStepExecutionField, setWorkflowStepText, setWorkflowStepTimeout, updateWorkflowBlock, walkWorkflowBlocks } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 

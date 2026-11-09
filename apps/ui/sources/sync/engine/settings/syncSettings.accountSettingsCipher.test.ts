@@ -1,307 +1,137 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import tweetnacl from 'tweetnacl';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import type { Encryption } from '@/sync/encryption/encryption';
+import { Encryption } from '@/sync/encryption/encryption';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
 import {
+    createDataKeyAccountEncryptionCurrentnessFixture,
+    createLegacyAccountEncryptionCurrentnessFixture,
+    createPlainAccountEncryptionCurrentnessFixture,
+} from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import {
     decryptSecretStringV1,
-    deriveAccountMachineKeyFromRecoverySecret,
     deriveSettingsSecretsKeyV1,
-    encryptSecretStringV1,
+    encryptSecretStringV1} from '@happier-dev/protocol/crypto/settingsSecretStringsV1';
+import {
+    deriveAccountMachineKeyFromRecoverySecret,
     openAccountScopedBlobCiphertext,
-    sealAccountScopedBlobCiphertext,
+    sealAccountScopedBlobCiphertext} from '@happier-dev/protocol/crypto/accountScopedCipher';
+import {
     type AccountSettingsStoredContentEnvelope,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/account/settings/accountSettingsStoredContentEnvelope';
 
 const mocks = vi.hoisted(() => {
     const serverFetch = vi.fn();
+    const currentnessFetch = vi.fn();
     const pushProjectionFetch = vi.fn();
     const runtimeFetchWithServerReachability = vi.fn();
-    const createServerFetchAtEndpoint = vi.fn((params: Readonly<{
-        endpointUrl: string;
-        credentials?: AuthCredentials | null;
-    }>) => async (path: string, init?: RequestInit) => {
-        if (path.startsWith('/v2/session-organization')) {
-            return await runtimeFetchWithServerReachability({
-                serverUrl: params.endpointUrl,
-                token: params.credentials?.token ?? '',
-                url: `${params.endpointUrl.replace(/\/+$/, '')}${path}`,
-                init,
-            });
-        }
-        return await serverFetch(path, init);
-    });
-    const settingsParse = vi.fn((value: unknown) => {
-        const record =
-            value && typeof value === 'object' && !Array.isArray(value)
-                ? (value as Record<string, unknown>)
-                : {};
-        return {
-            analyticsOptOut: false,
-            ...record,
-        };
-    });
-
     return {
-        createEncryptionFromAuthCredentials: vi.fn(),
         getRandomBytes: vi.fn((length: number) => new Uint8Array(length).fill(4)),
         serverFetch,
+        currentnessFetch,
         pushProjectionFetch,
-        createServerFetchAtEndpoint,
         runtimeFetchWithServerReachability,
-        applySettingsFn: vi.fn((base: Record<string, unknown>, delta: Record<string, unknown>) => ({
-            ...base,
-            ...delta,
-        })),
-        settingsParse,
-        persistenceValues: new Map<string, string>(),
-        persistenceSet: vi.fn(),
-        storageState: {
-            settings: {
-                analyticsOptOut: false,
-            } as Record<string, unknown>,
-            settingsVersion: 9,
-            applySettings: vi.fn(),
-            applySettingsForScope: vi.fn(),
-            applySettingsLocal: vi.fn(),
-        },
-        storageStoreState: {
-            setSessionOrganizationLoading: vi.fn(),
-            setSessionOrganizationError: vi.fn(),
-            applySessionOrganizationSnapshot: vi.fn(),
-            setSessionTagAssignmentsOptimistic: vi.fn(() => 'optimistic-tag-assignment'),
-            commitSessionOrganizationOptimistic: vi.fn(),
-            rollbackSessionOrganizationOptimistic: vi.fn(),
-        },
     };
 });
-
-vi.mock('@/track', () => ({
-    tracking: null,
-}));
-
-vi.mock('@/utils/errors/errors', () => ({
-    HappyError: class HappyError extends Error {
-        constructor(message: string) {
-            super(message);
-        }
-    },
-}));
-
-vi.mock('@/auth/encryption/createEncryptionFromAuthCredentials', () => ({
-    createEncryptionFromAuthCredentials: mocks.createEncryptionFromAuthCredentials,
-}));
-
-vi.mock('@/sync/domains/settings/settings', () => ({
-    applySettings: mocks.applySettingsFn,
-    // This engine test owns its Settings facade boundary; runtime-only
-    // projections are irrelevant to the encrypted CAS contract under test.
-    projectRuntimeAccountSettings: <T,>(settings: T): T => settings,
-    settingsDefaults: { analyticsOptOut: false },
-    settingsParse: mocks.settingsParse,
-}));
-
-vi.mock('@/sync/domains/settings/debugSettings', () => ({
-    summarizeSettings: () => ({}),
-    summarizeSettingsDelta: () => ({}),
-    dbgSettings: () => {},
-    isSettingsSyncDebugEnabled: () => false,
-}));
-
-vi.mock('@/sync/domains/server/serverRuntime', () => ({
-    getActiveServerSnapshot: () => ({
-        serverId: 'srv_identity',
-        serverUrl: 'http://127.0.0.1:3009',
-        generation: 1,
-    }),
-    getActiveServerHomeCarrier: () => null,
-}));
-
-vi.mock('@/sync/domains/server/serverProfiles', () => ({
-    getServerProfileById: (serverId: string) => ({
-        id: serverId,
-        serverIdentityId: serverId,
-        serverUrl: 'http://127.0.0.1:3009',
-        canonicalServerUrl: 'http://127.0.0.1:3009',
-    }),
-    getServerProfileLegacyServerIds: () => ['localhost-52753'],
-    resolveServerProfileScopeId: (profile: Readonly<{ serverIdentityId?: string; id: string }>) => (
-        profile.serverIdentityId ?? profile.id
-    ),
-}));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    storage: {
-        getState: () => mocks.storageState,
-    },
-});
-});
-
-vi.mock('@/sync/domains/state/persistence', () => ({
-    loadPendingSettings: () => ({}),
-    loadSettings: () => ({
-        settings: { ...mocks.storageState.settings },
-        version: mocks.storageState.settingsVersion,
-    }),
-    loadLocalSettings: () => ({}),
-    loadPurchases: () => ({}),
-    loadProfile: () => ({}),
-    loadThemePreference: () => 'adaptive',
-    loadSessionDrafts: () => ({}),
-    loadSessionReviewCommentsDrafts: () => ({}),
-    loadSessionActionDrafts: () => ({}),
-    loadNewSessionDraft: () => null,
-    loadSessionPermissionModes: () => ({}),
-    loadSessionPermissionModeUpdatedAts: () => ({}),
-    loadSessionLastViewed: () => ({}),
-    loadSessionModelModes: () => ({}),
-    loadSessionModelModeUpdatedAts: () => ({}),
-    loadWorkspaceReviewCommentsDrafts: () => ({}),
-    loadSessionMaterializedMaxSeqById: () => ({}),
-    loadChangesCursor: () => null,
-    loadLastChangesCursorByAccountId: () => ({}),
-    loadDeviceAnalyticsId: () => null,
-    saveSettings: vi.fn(),
-    saveLocalSettings: vi.fn(),
-    savePurchases: vi.fn(),
-    saveProfile: vi.fn(),
-    saveSessionDrafts: vi.fn(),
-    saveSessionReviewCommentsDrafts: vi.fn(),
-    saveWorkspaceReviewCommentsDrafts: vi.fn(),
-    saveSessionActionDrafts: vi.fn(),
-    saveNewSessionDraft: vi.fn(),
-    clearNewSessionDraft: vi.fn(),
-    saveSessionPermissionModes: vi.fn(),
-    saveSessionPermissionModeUpdatedAts: vi.fn(),
-    saveSessionLastViewed: vi.fn(),
-    saveSessionModelModes: vi.fn(),
-    saveSessionModelModeUpdatedAts: vi.fn(),
-    saveSessionMaterializedMaxSeqById: vi.fn(),
-    saveChangesCursor: vi.fn(),
-    saveLastChangesCursorByAccountId: vi.fn(),
-    savePendingSettings: vi.fn(),
-    saveDeviceAnalyticsId: vi.fn(),
-    clearPersistence: vi.fn(),
-}));
-
-vi.mock('@/sync/domains/state/persistenceStorage', () => ({
-    getPersistenceStorage: () => ({
-        getString: (key: string) => mocks.persistenceValues.get(key),
-        set: (key: string, value: string) => {
-            mocks.persistenceSet(key, value);
-            mocks.persistenceValues.set(key, value);
-        },
-        delete: (key: string) => {
-            mocks.persistenceValues.delete(key);
-        },
-        getAllKeys: () => [...mocks.persistenceValues.keys()],
-    }),
-}));
-
-vi.mock('@/sync/encryption/secretSettings', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/encryption/secretSettings')>();
-    return {
-        ...actual,
-        unsealSecretsDeep: (value: unknown) => value,
-    };
-});
-
-vi.mock('@/sync/http/client', () => ({
-    serverFetch: mocks.serverFetch,
-    createServerFetchAtEndpoint: mocks.createServerFetchAtEndpoint,
-}));
-
-vi.mock('@/sync/runtime/connectivity/serverReachabilityRuntimeFetch', () => ({
-    runtimeFetchWithServerReachability: mocks.runtimeFetchWithServerReachability,
-}));
-
-vi.mock('@/sync/domains/state/storageStore', () => ({
-    getStorage: () => ({
-        getState: () => mocks.storageStoreState,
-    }),
-}));
 
 vi.mock('@/platform/cryptoRandom', () => ({
     getRandomBytes: mocks.getRandomBytes,
 }));
 
-import { syncSettings } from './syncSettings';
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
+const { storage } = await import('@/sync/domains/state/storageStore');
+const { settingsParse } = await import('@/sync/domains/settings/settings');
+const { getPersistenceStorage, clearPersistenceStorage } = await import('@/sync/domains/state/persistenceStorage');
+const { loadAccountSettings } = await import('@/sync/domains/state/accountSettingsPersistence');
+const { setServerProfileIdentityForUrl } = await import('@/sync/domains/server/serverProfiles');
+const { syncSettings } = await import('./syncSettings');
 
+const TEST_MACHINE_KEY = new Uint8Array(32).fill(11);
+const TEST_PUBLIC_KEY = tweetnacl.box.keyPair.fromSecretKey(TEST_MACHINE_KEY).publicKey;
 const credentials: AuthCredentials = {
     token: 'token',
     encryption: {
-        publicKey: 'public',
-        machineKey: 'machine',
+        publicKey: Buffer.from(TEST_PUBLIC_KEY).toString('base64'),
+        machineKey: Buffer.from(TEST_MACHINE_KEY).toString('base64'),
     },
 };
 
-const TEST_MACHINE_KEY = new Uint8Array(32).fill(11);
+let accountCurrentness = createDataKeyAccountEncryptionCurrentnessFixture({ machineKey: TEST_MACHINE_KEY, publicKey: TEST_PUBLIC_KEY });
+const initialState = storage.getState();
+const persistence = getPersistenceStorage();
+const initialSettingsVersion = 0;
+
+async function createEncryption(machineKey: Uint8Array = TEST_MACHINE_KEY): Promise<Encryption> {
+    const encryption = await Encryption.createFromContentKeyPair({ publicKey: tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey, machineKey });
+    // Observe the retired raw-cipher route without replacing cryptographic behavior.
+    vi.spyOn(encryption, 'encryptRaw');
+    vi.spyOn(encryption, 'decryptRaw');
+    return encryption;
+}
+
+function importMarkers() {
+    return persistence.getAllKeys().filter(key => key.startsWith('session-organization:legacy-import:v1:'))
+        .map(key => [key, persistence.getString(key)]);
+}
+
+function persistedValues() {
+    return persistence.getAllKeys().sort().map(key => [key, persistence.getString(key)]);
+}
+
+async function activateIdentityScope() {
+    await setServerProfileIdentityForUrl('http://localhost:52753', 'srv_identity');
+    const scope = { serverId: 'srv_identity', accountId: 'account-a' };
+    storage.setState({ settingsScope: scope });
+    return scope;
+}
 
 describe('syncSettings account settings ciphertext', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
+        clearPersistenceStorage();
+        storage.setState({ ...initialState, settings: settingsParse({}), settingsVersion: initialSettingsVersion }, true);
+        installHomeGovernanceBoundaries(homes);
+        await homes.addHome({ name: 'Cipher Settings', serverUrl: 'http://localhost:52753', accountId: 'account-a', credentials });
         invalidateAccountEncryptionModeCache();
+        accountCurrentness = createDataKeyAccountEncryptionCurrentnessFixture({ machineKey: TEST_MACHINE_KEY, publicKey: TEST_PUBLIC_KEY });
         mocks.serverFetch.mockReset();
+        mocks.currentnessFetch.mockReset();
+        mocks.currentnessFetch.mockImplementation(async () => Response.json(accountCurrentness));
         mocks.pushProjectionFetch.mockReset();
         mocks.pushProjectionFetch.mockImplementation(async () => new Response(JSON.stringify({ tokens: [] })));
-        mocks.createServerFetchAtEndpoint.mockReset();
-        mocks.createServerFetchAtEndpoint.mockImplementation((params: Readonly<{
-            endpointUrl: string;
-            credentials?: AuthCredentials | null;
-        }>) => async (path: string, init?: RequestInit) => {
+        setRuntimeFetch(async (input, init) => {
+            const url = new URL(input instanceof Request ? input.url : String(input));
+            if (url.origin !== 'http://localhost:52753') throw new Error(`Unexpected test Home origin: ${url.origin}`);
+            const path = url.pathname + url.search;
+            if (path === '/v1/account/encryption/currentness') return await mocks.currentnessFetch(path, init);
             if (path === '/v1/push-tokens?projectionVersion=2') return await mocks.pushProjectionFetch(path, init);
             if (path.startsWith('/v2/session-organization')) {
                 return await mocks.runtimeFetchWithServerReachability({
-                    serverUrl: params.endpointUrl,
-                    token: params.credentials?.token ?? '',
-                    url: `${params.endpointUrl.replace(/\/+$/, '')}${path}`,
+                    url: url.href,
                     init,
                 });
             }
-            return await mocks.serverFetch(path, init);
+            const response = await mocks.serverFetch(path, init);
+            if (!(response instanceof Response)) throw new Error(`Missing HTTP fixture for ${init?.method ?? 'GET'} ${path}`);
+            return response;
         });
         mocks.runtimeFetchWithServerReachability.mockReset();
-        mocks.applySettingsFn.mockClear();
-        mocks.settingsParse.mockClear();
-        mocks.createEncryptionFromAuthCredentials.mockReset();
-        mocks.createEncryptionFromAuthCredentials.mockResolvedValue({
-            getContentPrivateKey: () => TEST_MACHINE_KEY,
-        });
         mocks.getRandomBytes.mockClear();
-        mocks.persistenceValues.clear();
-        mocks.persistenceSet.mockClear();
-        mocks.storageState = {
-            ...mocks.storageState,
-            settings: {
-                analyticsOptOut: false,
-                clientEncryptionRequirementLocalV1: 'follow_account',
-                clientEncryptionRequirementV1: 'follow_account',
-            },
-            settingsVersion: 9,
-        };
-        mocks.storageState.applySettings.mockReset();
-        mocks.storageState.applySettingsForScope.mockReset();
-        mocks.storageState.applySettingsLocal.mockReset();
-        mocks.storageStoreState.setSessionOrganizationLoading.mockReset();
-        mocks.storageStoreState.setSessionOrganizationError.mockReset();
-        mocks.storageStoreState.applySessionOrganizationSnapshot.mockReset();
-        mocks.storageStoreState.setSessionTagAssignmentsOptimistic.mockReset();
-        mocks.storageStoreState.setSessionTagAssignmentsOptimistic.mockReturnValue('optimistic-tag-assignment');
-        mocks.storageStoreState.commitSessionOrganizationOptimistic.mockReset();
-        mocks.storageStoreState.rollbackSessionOrganizationOptimistic.mockReset();
     });
 
+    afterEach(async () => { vi.restoreAllMocks(); await homes.reset(); });
+
     it('refuses plaintext Account settings when the trusted local client pin requires E2EE', async () => {
-        mocks.storageState.settings = {
+        accountCurrentness = createPlainAccountEncryptionCurrentnessFixture();
+        storage.setState({ settings: settingsParse({
             analyticsOptOut: false,
             clientEncryptionRequirementLocalV1: 'require_e2ee',
             clientEncryptionRequirementV1: 'follow_account',
-        };
+        }) });
         mocks.serverFetch.mockImplementation(async (path: string) => {
-            if (path === '/v1/account/encryption') {
-                return new Response(JSON.stringify({ mode: 'plain', updatedAt: 1 }));
-            }
             if (path === '/v2/account/settings') {
                 return new Response(JSON.stringify({
                     content: { t: 'plain', v: { analyticsOptOut: false } },
@@ -317,18 +147,18 @@ describe('syncSettings account settings ciphertext', () => {
             pendingSettings: {},
             clearPendingSettings: vi.fn(),
         })).rejects.toMatchObject({ code: 'CLIENT_E2EE_REQUIRED' });
-        expect(mocks.storageState.applySettings).not.toHaveBeenCalled();
-        expect(mocks.storageState.applySettingsForScope).not.toHaveBeenCalled();
+        expect(storage.getState().settingsVersion).toBe(initialSettingsVersion);
+        expect(storage.getState().settings.clientEncryptionRequirementLocalV1).toBe('require_e2ee');
     });
 
     it('rederives disclosed policy from every merged CAS winner after positive negotiation', async () => {
+        accountCurrentness = createPlainAccountEncryptionCurrentnessFixture();
         mocks.pushProjectionFetch.mockImplementation(async () => new Response(JSON.stringify({
             v: 2, accountRemoteAlerts: { settingsVersion: 4, status: 'stale' }, tokens: [],
         })));
         let posts = 0;
         const bodies: Array<{ remoteAlertPolicy?: { channels: { expo_push: { enabled: boolean } } }; expectedVersion: number }> = [];
         mocks.serverFetch.mockImplementation(async (path: string, init?: RequestInit) => {
-            if (path === '/v1/account/encryption') return new Response(JSON.stringify({ mode: 'plain', updatedAt: 0 }));
             if (path === '/v2/account/settings' && init?.method !== 'POST') return new Response(JSON.stringify({
                 content: { t: 'plain', v: { sessionRemoteAlertsEnabled: true } }, version: 4,
             }));
@@ -349,13 +179,13 @@ describe('syncSettings account settings ciphertext', () => {
         expect(bodies.map((body) => body.remoteAlertPolicy?.channels.expo_push.enabled)).toEqual([true, false]);
     });
 
-    it('republishes an opted-in stale remote-alert policy without an unrelated settings change', async () => {
+    it('does not promote an opted-in stale remote-alert policy into a Settings intent', async () => {
+        accountCurrentness = createPlainAccountEncryptionCurrentnessFixture();
         mocks.pushProjectionFetch.mockImplementation(async () => new Response(JSON.stringify({
             v: 2, accountRemoteAlerts: { settingsVersion: 3, status: 'stale' }, tokens: [],
         })));
         const posts: Array<{ expectedVersion: number; remoteAlertPolicy?: { channels: { expo_push: { enabled: boolean } } } }> = [];
         mocks.serverFetch.mockImplementation(async (path: string, init?: RequestInit) => {
-            if (path === '/v1/account/encryption') return new Response(JSON.stringify({ mode: 'plain', updatedAt: 0 }));
             if (path === '/v2/account/settings' && init?.method !== 'POST') return new Response(JSON.stringify({
                 content: { t: 'plain', v: { sessionRemoteAlertsEnabled: true } }, version: 4,
             }));
@@ -370,22 +200,19 @@ describe('syncSettings account settings ciphertext', () => {
             credentials: { token: 'token-only' },
             encryption: null,
             pendingSettings: {},
-            republishRemoteAlertPolicy: true,
             clearPendingSettings: vi.fn(),
         });
 
-        expect(posts).toHaveLength(1);
-        expect(posts[0]?.expectedVersion).toBe(4);
-        expect(posts[0]?.remoteAlertPolicy?.channels.expo_push.enabled).toBe(true);
+        expect(posts).toHaveLength(0);
     });
 
     it('does not rewrite settings when the remote-alert policy is already current', async () => {
+        accountCurrentness = createPlainAccountEncryptionCurrentnessFixture();
         mocks.pushProjectionFetch.mockImplementation(async () => new Response(JSON.stringify({
             v: 2, accountRemoteAlerts: { settingsVersion: 4, status: 'current' }, tokens: [],
         })));
         let settingsPosts = 0;
         mocks.serverFetch.mockImplementation(async (path: string, init?: RequestInit) => {
-            if (path === '/v1/account/encryption') return new Response(JSON.stringify({ mode: 'plain', updatedAt: 0 }));
             if (path === '/v2/account/settings' && init?.method !== 'POST') return new Response(JSON.stringify({
                 content: { t: 'plain', v: { sessionRemoteAlertsEnabled: true } }, version: 4,
             }));
@@ -400,7 +227,6 @@ describe('syncSettings account settings ciphertext', () => {
             credentials: { token: 'token-only' },
             encryption: null,
             pendingSettings: {},
-            republishRemoteAlertPolicy: true,
             clearPendingSettings: vi.fn(),
         });
 
@@ -408,12 +234,12 @@ describe('syncSettings account settings ciphertext', () => {
     });
 
     it('does not repeatedly publish a disabled projection for an opted-out account', async () => {
+        accountCurrentness = createPlainAccountEncryptionCurrentnessFixture();
         mocks.pushProjectionFetch.mockImplementation(async () => new Response(JSON.stringify({
             v: 2, accountRemoteAlerts: { settingsVersion: 4, status: 'disabled' }, tokens: [],
         })));
         let settingsPosts = 0;
         mocks.serverFetch.mockImplementation(async (path: string, init?: RequestInit) => {
-            if (path === '/v1/account/encryption') return new Response(JSON.stringify({ mode: 'plain', updatedAt: 0 }));
             if (path === '/v2/account/settings' && init?.method !== 'POST') return new Response(JSON.stringify({
                 content: { t: 'plain', v: { sessionRemoteAlertsEnabled: false } }, version: 4,
             }));
@@ -428,7 +254,6 @@ describe('syncSettings account settings ciphertext', () => {
             credentials: { token: 'token-only' },
             encryption: null,
             pendingSettings: {},
-            republishRemoteAlertPolicy: true,
             clearPendingSettings: vi.fn(),
         });
 
@@ -436,13 +261,10 @@ describe('syncSettings account settings ciphertext', () => {
     });
 
     it('fails closed instead of persisting plaintext-account settings locally without device secret custody', async () => {
+        accountCurrentness = createPlainAccountEncryptionCurrentnessFixture();
+        const settingsBefore = storage.getState().settings;
+        const persistedBefore = persistedValues();
         mocks.serverFetch
-            .mockResolvedValueOnce(
-                new Response(JSON.stringify({ mode: 'plain', updatedAt: Date.now() }), {
-                    status: 200,
-                    headers: { 'Content-Type': 'application/json' },
-                }),
-            )
             .mockResolvedValueOnce(
                 new Response(JSON.stringify({
                     content: {
@@ -480,19 +302,18 @@ describe('syncSettings account settings ciphertext', () => {
             message: 'Local settings secret key is unavailable',
         });
 
-        expect(mocks.storageState.applySettings).not.toHaveBeenCalled();
-        expect(mocks.serverFetch).toHaveBeenCalledTimes(2);
+        expect(storage.getState().settingsVersion).toBe(initialSettingsVersion);
+        expect(storage.getState().settings).toBe(settingsBefore);
+        expect(persistedValues()).toEqual(persistedBefore);
+        expect(mocks.serverFetch).toHaveBeenCalledTimes(1);
         expect(mocks.serverFetch.mock.calls.every(([, init]) => !init?.method || init.method === 'GET')).toBe(true);
     });
 
     it('does not retry a CAS write when the conflict winner cannot be normalized for local persistence', async () => {
+        accountCurrentness = createPlainAccountEncryptionCurrentnessFixture();
+        const settingsBefore = storage.getState().settings;
+        const persistedBefore = persistedValues();
         mocks.serverFetch
-            .mockResolvedValueOnce(
-                new Response(JSON.stringify({ mode: 'plain', updatedAt: Date.now() }), {
-                    status: 200,
-                    headers: { 'Content-Type': 'application/json' },
-                }),
-            )
             .mockResolvedValueOnce(
                 new Response(JSON.stringify({
                     content: { t: 'plain', v: { analyticsOptOut: false } },
@@ -549,10 +370,13 @@ describe('syncSettings account settings ciphertext', () => {
 
         const postCalls = mocks.serverFetch.mock.calls.filter(([, init]) => init?.method === 'POST');
         expect(postCalls).toHaveLength(1);
-        expect(mocks.storageState.applySettings).not.toHaveBeenCalled();
+        expect(storage.getState().settingsVersion).toBe(initialSettingsVersion);
+        expect(storage.getState().settings).toBe(settingsBefore);
+        expect(persistedValues()).toEqual(persistedBefore);
     });
 
     it('settles opposite one-shot mutations from the same version as one applied and one conflict without replay', async () => {
+        accountCurrentness = createPlainAccountEncryptionCurrentnessFixture();
         const firstMutation = vi.fn((raw: Readonly<Record<string, unknown>>) => ({
             settings: {
                 ...raw,
@@ -572,12 +396,6 @@ describe('syncSettings account settings ciphertext', () => {
             voiceSettingsV1: { selectedSource: 'none' },
         };
         mocks.serverFetch.mockImplementation(async (path: string, init?: RequestInit) => {
-            if (path === '/v1/account/encryption') {
-                return new Response(JSON.stringify({ mode: 'plain', updatedAt: Date.now() }), {
-                    status: 200,
-                    headers: { 'Content-Type': 'application/json' },
-                });
-            }
             if (path === '/v2/account/settings' && init?.method !== 'POST') {
                 return new Response(JSON.stringify({
                     content: { t: 'plain', v: serverRaw },
@@ -640,25 +458,18 @@ describe('syncSettings account settings ciphertext', () => {
             'applied',
             'conflict',
         ]);
-        expect(mocks.createServerFetchAtEndpoint).toHaveBeenCalledTimes(2);
         expect(firstMutation).toHaveBeenCalledOnce();
         expect(secondMutation).toHaveBeenCalledOnce();
         expect(mocks.serverFetch.mock.calls.filter((call) => call[1]?.method === 'POST')).toHaveLength(2);
-        expect(mocks.storageState.applySettings).toHaveBeenCalledWith(
-            expect.objectContaining({
-                voiceSettingsV1: expect.objectContaining({
-                    selectedSource: expect.stringMatching(/savedSecret|connectedAccount/u),
-                }),
-            }),
-            5,
-        );
+        expect(storage.getState().settingsVersion).toBe(5);
+        expect(serverRaw.voiceSettingsV1).toMatchObject({ selectedSource: expect.stringMatching(/savedSecret|connectedAccount/u) });
     });
 
     it('rebases independent field mutations after a concurrent Account Settings write', async () => {
+        accountCurrentness = createPlainAccountEncryptionCurrentnessFixture();
         let serverVersion = 4;
         let serverRaw: Record<string, unknown> = { analyticsOptOut: false, pluginEndpoint: 'https://initial.example.test' };
         mocks.serverFetch.mockImplementation(async (path: string, init?: RequestInit) => {
-            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: Date.now() });
             if (path === '/v2/account/settings' && init?.method !== 'POST') {
                 return Response.json({ content: { t: 'plain', v: serverRaw }, version: serverVersion });
             }
@@ -712,6 +523,7 @@ describe('syncSettings account settings ciphertext', () => {
     });
 
     it('reports a response-lost one-shot Account Settings write as outcomeUnknown after one safe readback without replaying', async () => {
+        accountCurrentness = createPlainAccountEncryptionCurrentnessFixture();
         let serverVersion = 4;
         let serverRaw: Record<string, unknown> = { analyticsOptOut: false };
         const mutate = vi.fn((raw: Readonly<Record<string, unknown>>) => ({
@@ -719,12 +531,6 @@ describe('syncSettings account settings ciphertext', () => {
             value: 'secret-write',
         }));
         mocks.serverFetch.mockImplementation(async (path: string, init?: RequestInit) => {
-            if (path === '/v1/account/encryption') {
-                return new Response(JSON.stringify({ mode: 'plain', updatedAt: Date.now() }), {
-                    status: 200,
-                    headers: { 'Content-Type': 'application/json' },
-                });
-            }
             if (path === '/v2/account/settings' && init?.method !== 'POST') {
                 return new Response(JSON.stringify({
                     content: { t: 'plain', v: serverRaw },
@@ -765,28 +571,23 @@ describe('syncSettings account settings ciphertext', () => {
             lastKnownSettingsVersion: 5,
             safeSnapshotVersion: 5,
         });
-        expect(mocks.createServerFetchAtEndpoint).toHaveBeenCalledOnce();
         expect(mutate).toHaveBeenCalledOnce();
         expect(mocks.serverFetch.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(1);
         expect(mocks.serverFetch.mock.calls.filter(([path, init]) => (
             path === '/v2/account/settings' && init?.method !== 'POST'
         ))).toHaveLength(2);
-        expect(mocks.storageState.applySettings).toHaveBeenCalledWith(
-            expect.objectContaining({ pluginEndpoint: 'https://possibly-applied.example.test' }),
-            5,
-        );
+        expect(storage.getState().settingsVersion).toBe(5);
+        expect(serverRaw.pluginEndpoint).toBe('https://possibly-applied.example.test');
     });
 
     it('lets one external transaction commit the canonically prepared Settings envelope', async () => {
+        accountCurrentness = createPlainAccountEncryptionCurrentnessFixture();
         const commitPrepared = vi.fn(async (prepared: Readonly<{
             content: AccountSettingsStoredContentEnvelope;
             expectedSettingsVersion: number;
             accountMode: 'plain' | 'e2ee';
         }>) => ({ status: 'applied' as const, settingsVersion: 8 }));
         mocks.serverFetch.mockImplementation(async (path: string, init?: RequestInit) => {
-            if (path === '/v1/account/encryption') {
-                return Response.json({ mode: 'plain', updatedAt: Date.now() });
-            }
             if (path === '/v2/account/settings' && init?.method !== 'POST') {
                 return Response.json({ content: { t: 'plain', v: { keep: true } }, version: 7 });
             }
@@ -812,16 +613,11 @@ describe('syncSettings account settings ciphertext', () => {
             accountMode: 'plain',
         });
         expect(mocks.serverFetch.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0);
-        expect(mocks.storageState.applySettings).toHaveBeenCalledWith(
-            expect.objectContaining({ keep: true, promoted: true }),
-            8,
-        );
+        expect(storage.getState().settingsVersion).toBe(8);
     });
 
     it('reapplies an immutable account-settings mutation after a CAS conflict', async () => {
-        const encryptionStub = {
-            getContentPrivateKey: () => TEST_MACHINE_KEY,
-        } as unknown as Encryption;
+        const encryptionStub = await createEncryption();
         const initialCiphertext = sealAccountScopedBlobCiphertext({
             kind: 'account_settings',
             material: { type: 'dataKey', machineKey: TEST_MACHINE_KEY },
@@ -848,9 +644,6 @@ describe('syncSettings account settings ciphertext', () => {
             randomBytes: mocks.getRandomBytes,
         });
         mocks.serverFetch
-            .mockResolvedValueOnce(new Response(JSON.stringify({ mode: 'e2ee', updatedAt: Date.now() }), {
-                status: 200, headers: { 'Content-Type': 'application/json' },
-            }))
             .mockResolvedValueOnce(new Response(JSON.stringify({
                 content: { t: 'encrypted', c: initialCiphertext }, version: 4,
             }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
@@ -874,7 +667,6 @@ describe('syncSettings account settings ciphertext', () => {
             },
         });
 
-        expect(mocks.createServerFetchAtEndpoint).toHaveBeenCalledOnce();
         const postBodies = mocks.serverFetch.mock.calls
             .filter((call) => call[1]?.method === 'POST')
             .map((call) => JSON.parse(String(call[1]?.body)) as { content: { c: string }; expectedVersion: number });
@@ -894,9 +686,7 @@ describe('syncSettings account settings ciphertext', () => {
     });
 
     it('preserves canonical Voice settings and diagnostics across a crash-recovered sparse delta and CAS retry', async () => {
-        const encryptionStub = {
-            getContentPrivateKey: () => TEST_MACHINE_KEY,
-        } as unknown as Encryption;
+        const encryptionStub = await createEncryption();
         const initialDiagnostics = {
             v: 1,
             enabled: true,
@@ -953,9 +743,6 @@ describe('syncSettings account settings ciphertext', () => {
             randomBytes: mocks.getRandomBytes,
         });
         mocks.serverFetch
-            .mockResolvedValueOnce(new Response(JSON.stringify({ mode: 'e2ee', updatedAt: Date.now() }), {
-                status: 200, headers: { 'Content-Type': 'application/json' },
-            }))
             .mockResolvedValueOnce(new Response(JSON.stringify({
                 content: { t: 'encrypted', c: initialCiphertext }, version: 4,
             }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
@@ -998,18 +785,12 @@ describe('syncSettings account settings ciphertext', () => {
             assistantLanguage: 'de',
             providers: canonicalVoice.providers,
         });
-        expect(committed[1]?.voice).toEqual(expect.objectContaining({ assistantLanguage: 'de' }));
-        expect(committed[1]?.voice).not.toHaveProperty('diagnostics');
+        // The carrier held nothing the canonical root does not, so this write retires it.
+        expect(committed[1]).not.toHaveProperty('voice');
     });
 
     it('POSTs settings as a canonical account_scoped_v1 ciphertext (no encryptRaw)', async () => {
-        const encryptionStub = {
-            getContentPrivateKey: () => TEST_MACHINE_KEY,
-            decryptRaw: vi.fn(async () => null),
-            encryptRaw: vi.fn(async () => {
-                throw new Error('encryptRaw should not be used for account settings');
-            }),
-        } as unknown as Encryption;
+        const encryptionStub = await createEncryption();
         const serverCiphertext = sealAccountScopedBlobCiphertext({
             kind: 'account_settings',
             material: { type: 'dataKey', machineKey: TEST_MACHINE_KEY },
@@ -1021,12 +802,6 @@ describe('syncSettings account settings ciphertext', () => {
         });
 
         mocks.serverFetch
-            .mockResolvedValueOnce(
-                new Response(JSON.stringify({ mode: 'e2ee', updatedAt: Date.now() }), {
-                    status: 200,
-                    headers: { 'Content-Type': 'application/json' },
-                }),
-            )
             .mockResolvedValueOnce(
                 new Response(JSON.stringify({ content: { t: 'encrypted', c: serverCiphertext }, version: 9 }), {
                     status: 200,
@@ -1043,20 +818,24 @@ describe('syncSettings account settings ciphertext', () => {
         await syncSettings({
             credentials,
             encryption: encryptionStub,
-            pendingSettings: { claudeLocalPermissionBridgeEnabled: true } as any,
+            pendingSettings: { crashReportsOptOut: true },
             clearPendingSettings: vi.fn(),
         });
 
         expect(mocks.serverFetch).toHaveBeenCalled();
-        const [url, init] = mocks.serverFetch.mock.calls[0];
-        expect(url).toBe('/v1/account/encryption');
+        const [url, init] = mocks.currentnessFetch.mock.calls[0];
+        expect(url).toBe('/v1/account/encryption/currentness');
         expect(init?.method).toBe('GET');
+        expect(mocks.currentnessFetch.mock.calls.map(([path]) => path)).toEqual([
+            '/v1/account/encryption/currentness',
+            '/v1/account/encryption/currentness',
+        ]);
 
-        const [url2, init2] = mocks.serverFetch.mock.calls[1];
+        const [url2, init2] = mocks.serverFetch.mock.calls[0];
         expect(url2).toBe('/v2/account/settings');
         expect(init2?.method ?? 'GET').toBe('GET');
 
-        const [url3, init3] = mocks.serverFetch.mock.calls[2];
+        const [url3, init3] = mocks.serverFetch.mock.calls[1];
         expect(url3).toBe('/v2/account/settings');
         expect(init3?.method).toBe('POST');
         expect(typeof init3?.body).toBe('string');
@@ -1074,7 +853,7 @@ describe('syncSettings account settings ciphertext', () => {
         expect(opened?.value).toEqual(
             expect.objectContaining({
                 analyticsOptOut: false,
-                claudeLocalPermissionBridgeEnabled: true,
+                crashReportsOptOut: true,
             }),
         );
 
@@ -1082,13 +861,7 @@ describe('syncSettings account settings ciphertext', () => {
     });
 
     it('preserves raw server fields not touched by a pending setting', async () => {
-        const encryptionStub = {
-            getContentPrivateKey: () => TEST_MACHINE_KEY,
-            decryptRaw: vi.fn(async () => null),
-            encryptRaw: vi.fn(async () => {
-                throw new Error('encryptRaw should not be used for account settings');
-            }),
-        } as unknown as Encryption;
+        const encryptionStub = await createEncryption();
         const serverCiphertext = sealAccountScopedBlobCiphertext({
             kind: 'account_settings',
             material: { type: 'dataKey', machineKey: TEST_MACHINE_KEY },
@@ -1101,12 +874,6 @@ describe('syncSettings account settings ciphertext', () => {
         });
 
         mocks.serverFetch
-            .mockResolvedValueOnce(
-                new Response(JSON.stringify({ mode: 'e2ee', updatedAt: Date.now() }), {
-                    status: 200,
-                    headers: { 'Content-Type': 'application/json' },
-                }),
-            )
             .mockResolvedValueOnce(
                 new Response(JSON.stringify({ content: { t: 'encrypted', c: serverCiphertext }, version: 15 }), {
                     status: 200,
@@ -1123,7 +890,7 @@ describe('syncSettings account settings ciphertext', () => {
         await syncSettings({
             credentials,
             encryption: encryptionStub,
-            pendingSettings: { claudeLocalPermissionBridgeEnabled: true } as any,
+            pendingSettings: { crashReportsOptOut: true },
             clearPendingSettings: vi.fn(),
         });
 
@@ -1140,19 +907,14 @@ describe('syncSettings account settings ciphertext', () => {
         expect(opened?.value).toEqual(expect.objectContaining({
             profiles: 'malformed-known-field',
             futureServerOnly: { keep: true },
-            claudeLocalPermissionBridgeEnabled: true,
+            crashReportsOptOut: true,
         }));
     });
 
     it('prefers protocol decryption for canonical ciphertext (no decryptRaw)', async () => {
-        const encryptionStub = {
-            getContentPrivateKey: () => TEST_MACHINE_KEY,
-            decryptRaw: vi.fn(async () => {
-                throw new Error('decryptRaw should not be used for canonical account_scoped_v1 ciphertext');
-            }),
-        } as unknown as Encryption;
+        const encryptionStub = await createEncryption();
 
-        const ciphertext = (await import('@happier-dev/protocol')).sealAccountScopedBlobCiphertext({
+        const ciphertext = (await import('@happier-dev/protocol/crypto/accountScopedCipher')).sealAccountScopedBlobCiphertext({
             kind: 'account_settings',
             material: { type: 'dataKey', machineKey: TEST_MACHINE_KEY },
             payload: { analyticsOptOut: true },
@@ -1160,12 +922,6 @@ describe('syncSettings account settings ciphertext', () => {
         });
 
         mocks.serverFetch
-            .mockResolvedValueOnce(
-                new Response(JSON.stringify({ mode: 'e2ee', updatedAt: Date.now() }), {
-                    status: 200,
-                    headers: { 'Content-Type': 'application/json' },
-                }),
-            )
             .mockResolvedValueOnce(
             new Response(JSON.stringify({ content: { t: 'encrypted', c: ciphertext }, version: 12 }), {
                 status: 200,
@@ -1181,29 +937,14 @@ describe('syncSettings account settings ciphertext', () => {
         });
 
         expect((encryptionStub.decryptRaw as unknown as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
-        expect(mocks.storageState.applySettings).toHaveBeenCalledWith(
-            expect.objectContaining({ analyticsOptOut: true }),
-            12,
-        );
+        expect(storage.getState().settings.analyticsOptOut).toBe(true);
+        expect(storage.getState().settingsVersion).toBe(12);
     });
 
     it('falls back to v1 settings POST when v2 settings is not supported (e2ee)', async () => {
-        const encryptionStub = {
-            getContentPrivateKey: () => TEST_MACHINE_KEY,
-            decryptRaw: vi.fn(async () => null),
-            encryptRaw: vi.fn(async () => {
-                throw new Error('encryptRaw should not be used for account settings');
-            }),
-        } as unknown as Encryption;
+        const encryptionStub = await createEncryption();
 
         mocks.serverFetch
-            // GET /v1/account/encryption
-            .mockResolvedValueOnce(
-                new Response(JSON.stringify({ mode: 'e2ee', updatedAt: Date.now() }), {
-                    status: 200,
-                    headers: { 'Content-Type': 'application/json' },
-                }),
-            )
             // GET /v2/account/settings -> 404 (old server)
             .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'not_found' }), { status: 404 }))
             // GET /v1/account/settings -> empty
@@ -1224,19 +965,18 @@ describe('syncSettings account settings ciphertext', () => {
         await syncSettings({
             credentials,
             encryption: encryptionStub,
-            pendingSettings: { claudeLocalPermissionBridgeEnabled: true } as any,
+            pendingSettings: { crashReportsOptOut: true },
             clearPendingSettings: vi.fn(),
         });
 
         const calls = mocks.serverFetch.mock.calls.map((call) => [call[0], call[1]?.method ?? 'GET']);
         expect(calls).toEqual([
-            ['/v1/account/encryption', 'GET'],
             ['/v2/account/settings', 'GET'],
             ['/v1/account/settings', 'GET'],
             ['/v1/account/settings', 'POST'],
         ]);
 
-        const [, initV1] = mocks.serverFetch.mock.calls[3];
+        const [, initV1] = mocks.serverFetch.mock.calls[2];
         expect(initV1?.method).toBe('POST');
         const body = JSON.parse(String(initV1?.body)) as { settings?: unknown; expectedVersion?: unknown };
         expect(typeof body.settings).toBe('string');
@@ -1244,12 +984,8 @@ describe('syncSettings account settings ciphertext', () => {
     });
 
     it('imports legacy session organization settings and strips them on a deliberate settings write', async () => {
-        const encryptionStub = {
-            getContentPrivateKey: () => TEST_MACHINE_KEY,
-            decryptRaw: vi.fn(async () => {
-                throw new Error('decryptRaw should not be used for canonical account settings ciphertext');
-            }),
-        } as unknown as Encryption;
+        await activateIdentityScope();
+        const encryptionStub = await createEncryption();
         const fetchedCiphertext = sealAccountScopedBlobCiphertext({
             kind: 'account_settings',
             material: { type: 'dataKey', machineKey: TEST_MACHINE_KEY },
@@ -1296,17 +1032,12 @@ describe('syncSettings account settings ciphertext', () => {
 
         mocks.serverFetch
             .mockResolvedValueOnce(
-                new Response(JSON.stringify({ mode: 'e2ee', updatedAt: Date.now() }), {
-                    status: 200,
-                    headers: { 'Content-Type': 'application/json' },
-                }),
-            )
-            .mockResolvedValueOnce(
                 new Response(JSON.stringify({ content: { t: 'encrypted', c: fetchedCiphertext }, version: 12 }), {
                     status: 200,
                     headers: { 'Content-Type': 'application/json' },
                 }),
-            );
+            )
+            .mockResolvedValueOnce(Response.json({ success: true, version: 13 }));
         mocks.runtimeFetchWithServerReachability
             .mockResolvedValueOnce(
                 new Response(JSON.stringify(emptySnapshot), {
@@ -1343,19 +1074,12 @@ describe('syncSettings account settings ciphertext', () => {
             clearPendingSettings: vi.fn(),
         });
 
-        expect(mocks.createServerFetchAtEndpoint).toHaveBeenCalledOnce();
-        expect(mocks.createServerFetchAtEndpoint).toHaveBeenCalledWith(expect.objectContaining({
-            serverId: 'srv_identity',
-            endpointUrl: 'http://127.0.0.1:3009',
-            credentials,
-        }));
         expect(mocks.serverFetch.mock.calls.map((call) => [call[0], call[1]?.method ?? 'GET'])).toEqual([
-            ['/v1/account/encryption', 'GET'],
             ['/v2/account/settings', 'GET'],
             ['/v2/account/settings', 'POST'],
         ]);
         expect(mocks.runtimeFetchWithServerReachability.mock.calls.map(([params]) => [
-            String(params.url).replace('http://127.0.0.1:3009', ''),
+            new URL(params.url).pathname + new URL(params.url).search,
             params.init?.method ?? 'GET',
         ])).toEqual([
             [
@@ -1432,21 +1156,12 @@ describe('syncSettings account settings ciphertext', () => {
                 display: expect.objectContaining({ t: 'encrypted' }),
             },
         ]);
-        expect(mocks.persistenceSet.mock.calls).toEqual([
+        expect(importMarkers()).toEqual([
             [expect.stringMatching(/^session-organization:legacy-import:v1:/), '1'],
         ]);
-        expect(mocks.storageStoreState.applySessionOrganizationSnapshot).toHaveBeenCalledWith(
-            'srv_identity',
-            emptySnapshot.snapshot,
-            expect.objectContaining({
-                includeFolders: true,
-                includeTags: true,
-                includeLabels: true,
-                includeAllTagAssignments: true,
-            }),
-        );
+        expect(storage.getState().sessionOrganizationSnapshotVersionByServerId.srv_identity).toBe(0);
 
-        const migrateBody = JSON.parse(String(mocks.serverFetch.mock.calls[2]?.[1]?.body)) as {
+        const migrateBody = JSON.parse(String(mocks.serverFetch.mock.calls[1]?.[1]?.body)) as {
             content?: { t?: unknown; c?: unknown };
             expectedVersion?: unknown;
         };
@@ -1465,29 +1180,19 @@ describe('syncSettings account settings ciphertext', () => {
         expect(postedSettings?.sessionFoldersV1).toBeUndefined();
         expect(postedSettings?.workspaceLabelsV1).toBeUndefined();
         expect(postedSettings?.serverSelectionGroups).toBeUndefined();
-        expect(mocks.storageState.applySettingsForScope).toHaveBeenLastCalledWith(
-            { serverId: 'srv_identity', accountId: 'account-a' },
-            expect.any(Object),
-            expect.any(Number),
-        );
-        const appliedSettings = mocks.storageState.applySettingsForScope.mock.calls[
-            mocks.storageState.applySettingsForScope.mock.calls.length - 1
-        ]?.[1] as Record<string, unknown>;
-        expect(appliedSettings.pinnedSessionKeysV1).toBeUndefined();
-        expect(appliedSettings.sessionTagsV1).toBeUndefined();
-        expect(appliedSettings.sessionListGroupOrderV1).toBeUndefined();
-        expect(appliedSettings.sessionWorkspaceOrderV1).toBeUndefined();
-        expect(appliedSettings.sessionFoldersV1).toBeUndefined();
-        expect(appliedSettings.workspaceLabelsV1).toBeUndefined();
+        expect(storage.getState().settingsScope).toEqual({ serverId: 'srv_identity', accountId: 'account-a' });
+        expect(storage.getState().settingsVersion).toBe(13);
+        const appliedSettings = loadAccountSettings({ serverId: 'srv_identity', accountId: 'account-a' }).settings;
+        expect(appliedSettings).not.toHaveProperty('pinnedSessionKeysV1');
+        expect(appliedSettings).not.toHaveProperty('sessionTagsV1');
+        expect(appliedSettings).not.toHaveProperty('sessionListGroupOrderV1');
+        expect(appliedSettings).not.toHaveProperty('sessionWorkspaceOrderV1');
+        expect(appliedSettings).not.toHaveProperty('sessionFoldersV1');
+        expect(appliedSettings).not.toHaveProperty('workspaceLabelsV1');
     });
 
     it('preserves other-server legacy organization settings while cleaning the imported scope', async () => {
-        const encryptionStub = {
-            getContentPrivateKey: () => TEST_MACHINE_KEY,
-            decryptRaw: vi.fn(async () => {
-                throw new Error('decryptRaw should not be used for canonical account settings ciphertext');
-            }),
-        } as unknown as Encryption;
+        const encryptionStub = await createEncryption();
         const fetchedCiphertext = sealAccountScopedBlobCiphertext({
             kind: 'account_settings',
             material: { type: 'dataKey', machineKey: TEST_MACHINE_KEY },
@@ -1561,12 +1266,6 @@ describe('syncSettings account settings ciphertext', () => {
 
         mocks.serverFetch
             .mockResolvedValueOnce(
-                new Response(JSON.stringify({ mode: 'e2ee', updatedAt: Date.now() }), {
-                    status: 200,
-                    headers: { 'Content-Type': 'application/json' },
-                }),
-            )
-            .mockResolvedValueOnce(
                 new Response(JSON.stringify({ content: { t: 'encrypted', c: fetchedCiphertext }, version: 41 }), {
                     status: 200,
                     headers: { 'Content-Type': 'application/json' },
@@ -1614,7 +1313,7 @@ describe('syncSettings account settings ciphertext', () => {
             clearPendingSettings: vi.fn(),
         });
 
-        const cleanupBody = JSON.parse(String(mocks.serverFetch.mock.calls[2]?.[1]?.body)) as {
+        const cleanupBody = JSON.parse(String(mocks.serverFetch.mock.calls[1]?.[1]?.body)) as {
             content?: { t?: unknown; c?: unknown };
         };
         const openedCleanup = openAccountScopedBlobCiphertext({
@@ -1661,12 +1360,11 @@ describe('syncSettings account settings ciphertext', () => {
     });
 
     it('applies an already-imported session organization snapshot before marking legacy settings consumed', async () => {
-        const encryptionStub = {
-            getContentPrivateKey: () => TEST_MACHINE_KEY,
-            decryptRaw: vi.fn(async () => {
-                throw new Error('decryptRaw should not be used for canonical account settings ciphertext');
-            }),
-        } as unknown as Encryption;
+        await activateIdentityScope();
+        // The Organization store admits only the credential this Home still holds.
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        expect(await TokenStorage.setCredentialsForServerUrl('http://localhost:52753', { serverId: 'srv_identity' }, credentials)).toBe(true);
+        const encryptionStub = await createEncryption();
         const fetchedCiphertext = sealAccountScopedBlobCiphertext({
             kind: 'account_settings',
             material: { type: 'dataKey', machineKey: TEST_MACHINE_KEY },
@@ -1696,12 +1394,6 @@ describe('syncSettings account settings ciphertext', () => {
 
         mocks.serverFetch
             .mockResolvedValueOnce(
-                new Response(JSON.stringify({ mode: 'e2ee', updatedAt: Date.now() }), {
-                    status: 200,
-                    headers: { 'Content-Type': 'application/json' },
-                }),
-            )
-            .mockResolvedValueOnce(
                 new Response(JSON.stringify({ content: { t: 'encrypted', c: fetchedCiphertext }, version: 51 }), {
                     status: 200,
                     headers: { 'Content-Type': 'application/json' },
@@ -1720,6 +1412,15 @@ describe('syncSettings account settings ciphertext', () => {
             }),
         );
 
+        const persist = persistence.set.bind(persistence);
+        const snapshotsAtImportMarker: Array<number | undefined> = [];
+        vi.spyOn(persistence, 'set').mockImplementation((key, value) => {
+            if (key.startsWith('session-organization:legacy-import:v1:')) {
+                snapshotsAtImportMarker.push(storage.getState().sessionOrganizationSnapshotVersionByServerId.srv_identity);
+            }
+            persist(key, value);
+        });
+
         await syncSettings({
             credentials,
             encryption: encryptionStub,
@@ -1729,7 +1430,7 @@ describe('syncSettings account settings ciphertext', () => {
         });
 
         expect(mocks.runtimeFetchWithServerReachability.mock.calls.map(([params]) => [
-            String(params.url).replace('http://127.0.0.1:3009', ''),
+            new URL(params.url).pathname + new URL(params.url).search,
             params.init?.method ?? 'GET',
         ])).toEqual([
             [
@@ -1737,28 +1438,16 @@ describe('syncSettings account settings ciphertext', () => {
                 'GET',
             ],
         ]);
-        expect(mocks.storageStoreState.applySessionOrganizationSnapshot).toHaveBeenCalledWith(
-            'srv_identity',
-            existingSnapshot,
-            expect.objectContaining({
-                includeFolders: true,
-                includeTags: true,
-                includeLabels: true,
-                includeAllTagAssignments: true,
-            }),
-        );
-        expect(mocks.persistenceSet.mock.calls).toEqual([
+        expect(storage.getState().sessionOrganizationSnapshotVersionByServerId.srv_identity).toBe(4);
+        expect(snapshotsAtImportMarker).toEqual([4]);
+        expect(Object.values(storage.getState().sessionOrganizationPinsBySessionKey)).toEqual(existingSnapshot.pins);
+        expect(importMarkers()).toEqual([
             [expect.stringMatching(/^session-organization:legacy-import:v1:/), '1'],
         ]);
     });
 
     it('does not rewrite payload-discovered aliases when the active scope is still host-derived', async () => {
-        const encryptionStub = {
-            getContentPrivateKey: () => TEST_MACHINE_KEY,
-            decryptRaw: vi.fn(async () => {
-                throw new Error('decryptRaw should not be used for canonical account settings ciphertext');
-            }),
-        } as unknown as Encryption;
+        const encryptionStub = await createEncryption();
         const fetchedCiphertext = sealAccountScopedBlobCiphertext({
             kind: 'account_settings',
             material: { type: 'dataKey', machineKey: TEST_MACHINE_KEY },
@@ -1772,12 +1461,6 @@ describe('syncSettings account settings ciphertext', () => {
         });
 
         mocks.serverFetch
-            .mockResolvedValueOnce(
-                new Response(JSON.stringify({ mode: 'e2ee', updatedAt: Date.now() }), {
-                    status: 200,
-                    headers: { 'Content-Type': 'application/json' },
-                }),
-            )
             .mockResolvedValueOnce(
                 new Response(JSON.stringify({ content: { t: 'encrypted', c: fetchedCiphertext }, version: 12 }), {
                     status: 200,
@@ -1800,24 +1483,17 @@ describe('syncSettings account settings ciphertext', () => {
         });
 
         expect(mocks.serverFetch.mock.calls.map((call) => [call[0], call[1]?.method ?? 'GET'])).toEqual([
-            ['/v1/account/encryption', 'GET'],
             ['/v2/account/settings', 'GET'],
         ]);
         expect(mocks.runtimeFetchWithServerReachability).not.toHaveBeenCalled();
-        expect(mocks.persistenceSet.mock.calls).toEqual([
+        expect(importMarkers()).toEqual([
             [expect.stringMatching(/^session-organization:legacy-import:v1:/), '1'],
         ]);
-        expect(mocks.storageState.applySettingsForScope).toHaveBeenLastCalledWith(
-            { serverId: 'localhost-52753', accountId: 'account-a' },
-            expect.any(Object),
-            12,
-        );
-        const appliedHostSettings = mocks.storageState.applySettingsForScope.mock.calls[
-            mocks.storageState.applySettingsForScope.mock.calls.length - 1
-        ]?.[1] as Record<string, unknown>;
-        expect(appliedHostSettings.sessionListGroupOrderV1).toEqual({
-            'server:192.168.1.115-52753:active:project:p2': ['192.168.1.115-52753:session-c'],
-        });
+        const appliedHost = loadAccountSettings({ serverId: 'localhost-52753', accountId: 'account-a' });
+        expect(appliedHost.version).toBe(12);
+        // Retired organization projections are never persisted locally. The
+        // untouched server baseline above remains their migration source.
+        expect(appliedHost.settings).not.toHaveProperty('sessionListGroupOrderV1');
     });
 
     it('migrates legacy-sealed saved secrets to canonical machine-key sealing on a deliberate settings write', async () => {
@@ -1828,14 +1504,10 @@ describe('syncSettings account settings ciphertext', () => {
         const legacyCredentials: AuthCredentials = {
             token: 'token',
             secret: Buffer.from(recoverySecret).toString('base64url'),
-        } as any;
+        };
 
-        const encryptionStub = {
-            getContentPrivateKey: () => machineKey,
-            decryptRaw: vi.fn(async () => {
-                throw new Error('decryptRaw should not be used for canonical account settings ciphertext');
-            }),
-        } as unknown as Encryption;
+        accountCurrentness = createLegacyAccountEncryptionCurrentnessFixture({ secret: recoverySecret });
+        const encryptionStub = await Encryption.create(recoverySecret);
 
         const legacyEncryptedSecret = encryptSecretStringV1(
             'sk-legacy',
@@ -1863,12 +1535,6 @@ describe('syncSettings account settings ciphertext', () => {
 
         mocks.serverFetch
             .mockResolvedValueOnce(
-                new Response(JSON.stringify({ mode: 'e2ee', updatedAt: Date.now() }), {
-                    status: 200,
-                    headers: { 'Content-Type': 'application/json' },
-                }),
-            )
-            .mockResolvedValueOnce(
                 new Response(JSON.stringify({ content: { t: 'encrypted', c: fetchedCiphertext }, version: 12 }), {
                     status: 200,
                     headers: { 'Content-Type': 'application/json' },
@@ -1890,11 +1556,11 @@ describe('syncSettings account settings ciphertext', () => {
             clearPendingSettings: vi.fn(),
         });
 
-        expect(mocks.serverFetch).toHaveBeenCalledTimes(3);
-        expect(mocks.serverFetch.mock.calls[2]?.[0]).toBe('/v2/account/settings');
-        expect(mocks.serverFetch.mock.calls[2]?.[1]?.method).toBe('POST');
+        expect(mocks.serverFetch).toHaveBeenCalledTimes(2);
+        expect(mocks.serverFetch.mock.calls[1]?.[0]).toBe('/v2/account/settings');
+        expect(mocks.serverFetch.mock.calls[1]?.[1]?.method).toBe('POST');
 
-        const migrateBody = JSON.parse(String(mocks.serverFetch.mock.calls[2]?.[1]?.body)) as {
+        const migrateBody = JSON.parse(String(mocks.serverFetch.mock.calls[1]?.[1]?.body)) as {
             content?: { t?: unknown; c?: unknown };
             expectedVersion?: unknown;
         };

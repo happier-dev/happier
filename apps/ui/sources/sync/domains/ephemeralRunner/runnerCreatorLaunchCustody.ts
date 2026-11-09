@@ -26,6 +26,7 @@ import { RunnerActivationCreateRequestV1Schema } from '@happier-dev/protocol/eph
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { SessionDraftAddressV1Schema } from '@happier-dev/protocol/drafts/sessionDrafts';
+import { SessionAttachmentHandleV1Schema, type SessionAttachmentHandleV1 } from '@happier-dev/protocol/transfers/sessions/sessionAttachmentHandleV1';
 import {
     TeamCredentialProviderModelSelectionV1Schema,
     type TeamCredentialProviderModelSelectionV1,
@@ -52,6 +53,7 @@ type StoredRunnerAttachmentUploadCheckpointV1 = Readonly<{
     path: string;
     sizeBytes: number;
     sha256: string;
+    attachmentHandle?: SessionAttachmentHandleV1;
 }>;
 
 export type RunnerCreatorAttachmentUploadCheckpoint = Readonly<{
@@ -61,6 +63,7 @@ export type RunnerCreatorAttachmentUploadCheckpoint = Readonly<{
     path: string;
     sizeBytes: number;
     sha256: string;
+    attachmentHandle?: SessionAttachmentHandleV1;
 }>;
 
 export type StoredAttachmentUploadCustodyV1 = Readonly<{
@@ -288,6 +291,8 @@ function parseAttachmentUploadCheckpoints(
             throw new Error('attachment checkpoint mismatch');
         }
         reviewedById.delete(reviewed.id);
+        const attachmentHandle = candidate.attachmentHandle === undefined
+            ? undefined : SessionAttachmentHandleV1Schema.parse(candidate.attachmentHandle);
         return {
             id: reviewed.id,
             name: reviewed.name,
@@ -295,6 +300,7 @@ function parseAttachmentUploadCheckpoints(
             path: candidate.path,
             sizeBytes: reviewed.sizeBytes,
             sha256: reviewed.sha256,
+            ...(attachmentHandle ? { attachmentHandle } : {}),
         } satisfies StoredRunnerAttachmentUploadCheckpointV1;
     });
     return checkpoints.length > 0 ? checkpoints : undefined;
@@ -696,6 +702,7 @@ export async function readRunnerCreatorAttachmentUploadCustody(
             path: checkpoint.path,
             sizeBytes: checkpoint.sizeBytes,
             sha256: checkpoint.sha256,
+            ...(checkpoint.attachmentHandle ? { attachmentHandle: checkpoint.attachmentHandle } : {}),
         }));
         return {
             attachmentMessageLocalId: upload.attachmentMessageLocalId,
@@ -737,18 +744,21 @@ export async function recordRunnerCreatorAttachmentUploadCheckpoint(input: Reado
             throw new Error('runner_attachment_checkpoint_mismatch');
         }
         const retained = attachmentUpload.verifiedUploads ?? [];
-        if (retained.some((existing) => existing.id === reviewed.id)) return;
+        const previous = retained.find(existing => existing.id === reviewed.id);
+        if (previous && previous.attachmentHandle?.sessionId === input.upload.attachmentHandle?.sessionId
+            && previous.attachmentHandle?.id === input.upload.attachmentHandle?.id) return;
         await writeAndVerify(input.scope, input.activationId, {
             ...stored,
             attachmentUpload: {
                 ...attachmentUpload,
-                verifiedUploads: [...retained, {
+                verifiedUploads: [...retained.filter(existing => existing.id !== reviewed.id), {
                     id: reviewed.id,
                     name: reviewed.name,
                     mimeType: reviewed.mimeType,
                     path: input.upload.path,
                     sizeBytes: reviewed.sizeBytes,
                     sha256: reviewed.sha256,
+                    ...(input.upload.attachmentHandle ? { attachmentHandle: input.upload.attachmentHandle } : {}),
                 }],
             },
         }, raw);

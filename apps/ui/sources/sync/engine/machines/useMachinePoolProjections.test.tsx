@@ -11,6 +11,7 @@ import { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, 
 import { getStorage, storage } from '@/sync/domains/state/storage';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { refreshMachinePools } from '@/sync/ops/machinePools';
 
 import { useMachinePoolProjections, type MachinePoolProjectionScope } from './useMachinePoolProjections';
 import { resetMachinePoolSyncRuntimeForTests } from './machinePoolSyncRuntime';
@@ -100,6 +101,31 @@ describe('useMachinePoolProjections', () => {
         resetMachinePoolSyncRuntimeForTests();
         vi.restoreAllMocks();
         vi.unstubAllGlobals();
+        vi.unstubAllEnvs();
+    });
+
+    it.each(['machines.pools', 'machines'])('settles Pools disabled by %s without hydrating despite enabled Home bits', async (featureId) => {
+        vi.stubEnv('EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY', featureId);
+        const scopes: MachinePoolProjectionScope[] = [{ serverId: boundary.serverId, machines: [] }];
+        const hook = await renderHook(() => useMachinePoolProjections(scopes));
+        try {
+            await vi.waitFor(() => expect(hook.getCurrent()[0]).toMatchObject({
+                featureStatus: 'disabled', featureEnabled: false, pools: [], ready: true,
+            }));
+            expect(boundary.requests).toEqual([]);
+        } finally { await hook.unmount(); }
+    });
+
+    it.each(['machines.pools', 'machines'])('refuses an explicit Pool Action when the build disables %s despite enabled Home bits', async (featureId) => {
+        vi.stubEnv('EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY', featureId);
+        await expect(refreshMachinePools(boundary.serverId)).rejects.toMatchObject({ errorCode: 'machine_pools_unavailable' });
+        expect(boundary.requests).toEqual([]);
+    });
+
+    it.each(['machines.pools', 'machines'])('skips a forced Pool invalidation when the build disables %s despite enabled Home bits', async (featureId) => {
+        vi.stubEnv('EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY', featureId);
+        await invalidateMachinePoolProjection(boundary.serverId, { forceFeatures: true });
+        expect(boundary.requests).toEqual([]);
     });
 
     it('settles a failed background hydration as Pool state without a developer error toast', async () => {
@@ -356,8 +382,9 @@ describe('useMachinePoolProjections', () => {
         await act(async () => {
             resolveReplacementList!(Response.json({ pools: [pool] }));
         });
-        await vi.waitFor(() => expect(storage.getState().machinePoolAccountIdByServerId[boundary.serverId]).toBe('account-b'));
-        expect(hook.getCurrent()[0]).toMatchObject({ pools: [pool], status: 'idle', ready: true });
+        await vi.waitFor(() => expect(hook.getCurrent()[0]).toMatchObject({
+            accountId: 'account-b', pools: [pool], status: 'idle', ready: true,
+        }));
         await hook.unmount();
         await TokenStorage.removeCredentialsForServerUrl(
             'https://machine-pool-projections.test',

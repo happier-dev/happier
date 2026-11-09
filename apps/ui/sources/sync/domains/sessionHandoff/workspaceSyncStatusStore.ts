@@ -1,4 +1,4 @@
-import type { WorkspaceSyncStatusV1 } from '@happier-dev/protocol';
+import type { WorkspaceSyncStatusV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 import { getWorkspaceSyncStatus, listWorkspaceSyncStatuses, watchWorkspaceSyncStatuses } from '@/sync/ops/workspaceSync';
@@ -229,6 +229,14 @@ export function setWorkspaceSyncStatus(scope: WorkspaceSyncStatusScope, status: 
     const entry = entryFor(scope);
     entry.admissionGeneration += 1;
     publish(entry, { phase: 'ready', status, error: null });
+}
+
+/** Settle unknown status after a refused command without replacing known engine state. */
+export function setWorkspaceSyncStatusError(scope: WorkspaceSyncStatusScope, error: unknown): void {
+    const entry = entryFor(scope);
+    if (entry.snapshot.status) return;
+    entry.admissionGeneration += 1;
+    publish(entry, { phase: 'error', status: entry.snapshot.status, error });
 }
 
 export function applyWorkspaceSyncStatusEvent(scope: WorkspaceSyncStatusScope, status: WorkspaceSyncStatusV1): void {

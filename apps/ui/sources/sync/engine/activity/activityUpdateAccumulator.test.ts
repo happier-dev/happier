@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ApiEphemeralActivityUpdate } from '@/sync/api/types/apiTypes';
 import { ActivityUpdateAccumulator } from "./activityUpdateAccumulator.js";
+import { createSessionRuntimeObservationSource } from '@/sync/domains/session/sessionRuntimeObservation';
 
 type CapturedTimeout = {
     handle: ReturnType<typeof setTimeout>;
@@ -45,6 +46,23 @@ function captureTimeoutCallbacks() {
 }
 
 describe('ActivityUpdateAccumulator Smart Debounce', () => {
+    it('does not admit a queued observation after its captured lifetime retires', () => {
+        const observations = createSessionRuntimeObservationSource();
+        const flush = vi.fn();
+        const accumulator = new ActivityUpdateAccumulator(flush, 500, observations);
+        const address = { serverId: 'home', sessionId: 'retired' };
+        let current = true;
+        accumulator.addUpdate({ type: 'activity', id: address.sessionId, active: true, thinking: false, activeAt: 1 },
+            { sourceServerId: address.serverId, shouldContinue: () => current });
+        expect(observations.read(address)?.activeAt).toBe(1);
+        accumulator.addUpdate({ type: 'activity', id: address.sessionId, active: true, thinking: false, activeAt: 2 },
+            { sourceServerId: address.serverId, shouldContinue: () => current });
+        current = false;
+        accumulator.reset();
+        accumulator.flush();
+        expect(observations.read(address)).toBeUndefined();
+        expect(flush).toHaveBeenCalledTimes(1);
+    });
     let mockFlushHandler: ReturnType<typeof vi.fn>;
     let accumulator: ActivityUpdateAccumulator;
     let timeoutCallbacks: CapturedTimeout[];
@@ -197,12 +215,12 @@ describe('ActivityUpdateAccumulator Smart Debounce', () => {
             expect(mockFlushHandler).toHaveBeenNthCalledWith(
                 1,
                 new Map([['session1', updateFromServerA]]),
-                { sourceServerId: 'server-a' },
+                { sourceServerId: 'server-a', recoveryCandidateSessionIds: new Set(['session1']) },
             );
             expect(mockFlushHandler).toHaveBeenNthCalledWith(
                 2,
                 new Map([['session1', updateFromServerB]]),
-                { sourceServerId: 'server-b' },
+                { sourceServerId: 'server-b', recoveryCandidateSessionIds: new Set(['session1']) },
             );
         });
     });

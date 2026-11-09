@@ -1,4 +1,4 @@
-import type { BrowserTargetSuggestionV1, BrowserViewTargetV1 } from "@happier-dev/protocol";
+import type { BrowserTargetSuggestionV1, BrowserViewTargetV1 } from "@happier-dev/protocol/browser/target/v1";
 
 import type { BrowserControlState } from "./control";
 

@@ -7,6 +7,17 @@ import {
 } from './capabilitiesProtocol';
 
 describe('capabilitiesProtocol', () => {
+    it('preserves valid protocol describe facts and drops only a malformed protocol leaf', () => {
+        const protocol = { version: 2, available: false, features: { detachedScope: true } };
+        expect(parseCapabilitiesDescribeResponse({ protocolVersion: 1, capabilities: [
+            { id: 'tool.executionRuns', kind: 'tool', protocol },
+            { id: 'tool.other', kind: 'tool', protocol: { ...protocol, available: 'true' } },
+        ], checklists: {} })).toEqual({ protocolVersion: 1, capabilities: [
+            { id: 'tool.executionRuns', kind: 'tool', protocol },
+            { id: 'tool.other', kind: 'tool' },
+        ], checklists: {} });
+    });
+
     it('parses describe responses and filters invalid descriptors and checklist entries', () => {
         const result = parseCapabilitiesDescribeResponse({
             protocolVersion: 1,

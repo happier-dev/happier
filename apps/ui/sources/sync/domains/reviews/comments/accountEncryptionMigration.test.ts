@@ -7,11 +7,13 @@ import {
     openReviewCommentSensitiveEnvelopeV1,
     sealReviewCommentEventSensitiveEnvelopeV1,
     sealReviewCommentSensitiveEnvelopeV1,
-    splitReviewCommentV1,
-    type AccountScopedCryptoMaterial,
+    splitReviewCommentV1} from '@happier-dev/protocol/reviews/comments/content';
+import {
+    type AccountScopedCryptoMaterial} from '@happier-dev/protocol/crypto/accountScopedCipher';
+import {
     type ReviewCommentEventV1,
     type ReviewCommentV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/reviews/comments/v1';
 
 import {
     buildReviewCommentAccountEncryptionMigrationDirective,

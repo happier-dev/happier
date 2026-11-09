@@ -1,6 +1,8 @@
 import 'fake-indexeddb/auto';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { AccountSettingsV2GetResponseSchema, CurrentCursorResponseSchema, FeaturesResponseSchema } from '@happier-dev/protocol';
+import { AccountSettingsV2GetResponseSchema} from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import { CurrentCursorResponseSchema} from '@happier-dev/protocol/changes';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { SessionCurrentProjectionRecordV1Schema } from '@happier-dev/protocol/sessions/listing/response';
 import { createPlainSessionOwnerMetadataEnvelopeV1, createSessionOwnerMetadataV1, projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
@@ -35,7 +37,7 @@ describe('ordinary Session refresh hydrates every personal pin surface', () => {
         connection = undefined;
     });
 
-    it.each(['retained', 'new', 'new-listed', 'batched', 'batched-reloaded', 'overtaken', 'list-only-newer', 'reloaded', 'reloaded-unavailable', 'reloaded-unrecognized', 'reloaded-removed'] as const)('hydrates %s pinned Bots alongside list and dual-surface pins', async membership => {
+    it.each(['retained', 'new', 'new-listed', 'unlisted-batch-unavailable', 'batched', 'batched-reloaded', 'overtaken', 'list-only-newer', 'reloaded', 'reloaded-unavailable', 'reloaded-unrecognized', 'reloaded-removed'] as const)('hydrates %s pinned Bots alongside list and dual-surface pins', async membership => {
         const pins = [
             { sessionId: 'list-only', sortKey: 'a', pinnedAt: 1, listPinned: true, railPinned: false },
             { sessionId: 'rail-only', sortKey: 'b', pinnedAt: 2, listPinned: false, railPinned: true },
@@ -69,9 +71,11 @@ describe('ordinary Session refresh hydrates every personal pin surface', () => {
                 capabilities: projectSessionAccessCapabilitiesV1({ owner: true, grants: [] }) },
         })]));
         const exactReads: string[] = [];
+        const ordinaryRecord = SessionCurrentProjectionRecordV1Schema.parse({ ...records.get('list-only'), id: 'ordinary' });
+        const nextPageRecord = SessionCurrentProjectionRecordV1Schema.parse({ ...ordinaryRecord, id: 'next-page' });
         const physicalBatches: string[][] = [];
         let ordinaryListReads = 0;
-        let fullReadsAvailable = membership !== 'new-listed';
+        let fullReadsAvailable = membership !== 'new-listed' && membership !== 'unlisted-batch-unavailable';
         const readSession = (path: string, method: string, body?: unknown): Response | undefined => {
             const sessionId = path.startsWith('/v2/sessions/') ? decodeURIComponent(path.slice('/v2/sessions/'.length)) : '';
             const record = records.get(sessionId);
@@ -125,6 +129,9 @@ describe('ordinary Session refresh hydrates every personal pin surface', () => {
                 const path = target.pathname;
                 if (path === '/v2/sessions/read-batch') {
                     physicalBatches.push(JSON.parse(String(init?.body)).sessionIds);
+                    if (membership === 'unlisted-batch-unavailable' && !fullReadsAvailable) {
+                        return Response.json({ error: 'unavailable' }, { status: 503 });
+                    }
                     return await sessionBoundary.handle({
                     home: membership, accountId: 'rail-account', url: target, path, method: init?.method ?? 'GET',
                     headers: new Headers(init?.headers), signal: init?.signal,
@@ -140,6 +147,13 @@ describe('ordinary Session refresh hydrates every personal pin surface', () => {
                 if (path === '/v2/session-organization') return Response.json(pinsAvailable ? snapshot : emptySnapshot);
                 if (path === '/v2/sessions/metadata-upgrades') return Response.json({ sessionIds: [] });
                 if (path === '/v2/sessions') ordinaryListReads += 1;
+                if (membership === 'new-listed' && path === '/v2/sessions') return Response.json({
+                    sessions: target.searchParams.has('cursor')
+                        ? [nextPageRecord]
+                        : [ordinaryRecord, ...[...records.values()].map(createCompactSessionListRowFixture)],
+                    nextCursor: target.searchParams.has('cursor') ? null : 'next-page',
+                    hasNext: !target.searchParams.has('cursor'),
+                });
                 if (path === '/v2/sessions' || path === '/v2/sessions/active') return Response.json({
                     sessions: membership === 'new-listed'
                         ? [...records.values()].map(createCompactSessionListRowFixture)
@@ -157,9 +171,24 @@ describe('ordinary Session refresh hydrates every personal pin surface', () => {
         // already has a last-known organization snapshot.
         pinsAvailable = true;
         const { sync } = await import('./sync');
-        if (membership === 'new-listed') {
-            await expect(sync.refreshSessions({ awaitSessionListHydration: true })).rejects.toBeInstanceOf(Error);
+        if (membership === 'unlisted-batch-unavailable') {
+            await expect(sync.refreshSessions({ awaitSessionListHydration: true })).resolves.toBeDefined();
+            expect(storage.getState().concurrentSessionListCacheByServerId[serverId].listObservation?.phase).toBe('ready');
             expect(storage.getState().sessions['rail-only']).toBeUndefined();
+            fullReadsAvailable = true;
+            await sync.refreshSessions({ awaitSessionListHydration: true });
+            for (const pin of pins) expect(storage.getState().sessions[pin.sessionId]).toMatchObject({ id: pin.sessionId });
+            return;
+        }
+        if (membership === 'new-listed') {
+            await expect(sync.refreshSessions({ awaitSessionListHydration: true })).resolves.toBeDefined();
+            expect(storage.getState().sessions['rail-only']).toBeUndefined();
+            expect(storage.getState().sessionListRowsByServerId[serverId].ordinary).toMatchObject({ id: 'ordinary' });
+            expect(storage.getState().sessionListRowsByServerId[serverId]['rail-only']).toMatchObject({ metadataUnavailable: true });
+            expect(sync.readOrdinarySessionListFrontier()).toMatchObject({ nextCursor: 'next-page', hasNext: true });
+            await sync.fetchMoreSessions();
+            expect(storage.getState().sessionListRowsByServerId[serverId]['next-page']).toMatchObject({ id: 'next-page' });
+            expect(storage.getState().concurrentSessionListCacheByServerId[serverId].listObservation?.phase).toBe('ready');
             fullReadsAvailable = true;
             await sync.refreshSessions({ awaitSessionListHydration: true });
             for (const pin of pins) expect(storage.getState().sessions[pin.sessionId]).toMatchObject({ id: pin.sessionId });
@@ -223,7 +252,7 @@ describe('ordinary Session refresh hydrates every personal pin surface', () => {
         }
         staleSnapshotAvailable = staleSnapshotAvailable || membership === 'overtaken' || membership === 'list-only-newer';
         if (membership === 'reloaded-unavailable' || membership === 'reloaded-unrecognized') {
-            await expect(sync.refreshSessions({ awaitSessionListHydration: true })).rejects.toBeInstanceOf(Error);
+            await expect(sync.refreshSessions({ awaitSessionListHydration: true })).resolves.toBeDefined();
             expect(storage.getState().sessions['rail-only']).toBeUndefined();
             expect(storage.getState().sessionListRowsByServerId[serverId]['rail-only']).toMatchObject({ seq: 14, metadataVersion: 2 });
             return;
@@ -238,7 +267,7 @@ describe('ordinary Session refresh hydrates every personal pin surface', () => {
             }]);
             expect(storage.getState().sessionListRowsByServerId[serverId]['rail-only']).toMatchObject({ seq: 14, metadataVersion: 2 });
             expect(storage.getState().sessions['rail-only']).toBeUndefined();
-            await expect(sync.refreshSessions({ awaitSessionListHydration: true })).rejects.toThrow('Required session hydration failed for rail-only');
+            await expect(sync.refreshSessions({ awaitSessionListHydration: true })).resolves.toBeDefined();
             expect(storage.getState().sessions['rail-only']).toBeUndefined();
             return;
         }

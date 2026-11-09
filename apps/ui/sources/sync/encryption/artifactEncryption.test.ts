@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import type { ArtifactHeader, ArtifactBody } from '../domains/artifacts/artifactTypes';
 import { ArtifactEncryption, projectArtifactHeaderForDisplay } from './artifactEncryption';
-import { buildRoleArtifactHeaderV1, frameSessionDataKeyBundleV0, sealAesGcmPayloadWebCrypto } from '@happier-dev/protocol';
+import { buildRoleArtifactHeaderV1} from '@happier-dev/protocol/prompts/roles/roleArtifactV1';
+import { frameSessionDataKeyBundleV0} from '@happier-dev/protocol/crypto/sessionDataKeyBundleV0';
+import { sealAesGcmPayloadWebCrypto } from '@happier-dev/protocol/crypto/sessionDataKeyBundleWebCrypto';
 import { encodeBase64 } from '@/encryption/base64';
 
 describe('ArtifactEncryption', () => {

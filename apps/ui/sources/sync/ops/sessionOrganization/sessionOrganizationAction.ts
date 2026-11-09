@@ -15,9 +15,10 @@ import { upsertSessionTag } from './upsertSessionTag';
 import { deleteSessionFolder } from './deleteSessionFolder';
 import { deleteSessionTag } from './deleteSessionTag';
 import { setSessionFolderAssignment } from './setSessionFolderAssignment';
+import { setSessionTagAssignments } from './setSessionTagAssignments';
 
 export function isSessionOrganizationResourceAction(actionId: HomeDomainActionIdV1): boolean {
-    return isSessionSectionActionIdV1(actionId) || ACTION_ID_FAMILIES_V1.session_organization_resources.some(id => id === actionId);
+    return actionId === 'session.tags.set' || isSessionSectionActionIdV1(actionId) || ACTION_ID_FAMILIES_V1.session_organization_resources.some(id => id === actionId);
 }
 
 function projectDisplay<T extends Readonly<{ display: SessionOrganizationContentEnvelope | null; displayState: SessionOrganizationDisplayState }>>(row: T) {
@@ -77,6 +78,11 @@ export function createSessionOrganizationResourceAction(account: LazyActionAccou
         }
         let result: unknown;
         switch (actionId) {
+            case 'session.tags.set': {
+                const request = getActionSpec(actionId).inputSchema.parse(input) as { sessionId: string } & import('@happier-dev/protocol/sessions/organization/mutations').MutateSessionTagAssignmentsRequest;
+                result = await setSessionTagAssignments({ ...params, ...request });
+                break;
+            }
             case 'session.tags.create': case 'session.tags.rename':
                 result = { tag: projectDisplay(await upsertSessionTag({ ...params,
                     request: CreateOrUpdateSessionOrganizationTagRequestSchema.parse(input) })) }; break;

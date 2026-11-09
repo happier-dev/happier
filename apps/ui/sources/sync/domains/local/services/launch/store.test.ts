@@ -1,4 +1,4 @@
-import type { LocalServiceLauncherSnapshotV1 } from '@happier-dev/protocol';
+import type { LocalServiceLauncherSnapshotV1 } from '@happier-dev/protocol/local/services/launcher/v1';
 import { describe, expect, it } from 'vitest';
 
 const snapshot = {
@@ -30,35 +30,30 @@ const snapshot = {
 } satisfies LocalServiceLauncherSnapshotV1;
 
 describe('local service launcher UI store', () => {
-    it('publishes only changed failure and stale facts while preserving receipt ordering', async () => {
+    it('publishes only changed refresh failures and retains last-known targets while preserving receipt ordering', async () => {
         const { applyLocalServiceLauncherSnapshot, createLocalServiceLauncherState, failLocalServiceLauncherRefresh,
             readLocalServiceLauncherSnapshotTime } = await import('./store');
         const loaded = applyLocalServiceLauncherSnapshot(createLocalServiceLauncherState(), snapshot);
         applyLocalServiceLauncherSnapshot(loaded, { ...snapshot, updatedAt: 2_000 });
-        for (const stale of [undefined, true] as const) {
-            const input = { machineId: snapshot.machineId, sessionId: snapshot.sessionId, reasonCode: 'request_failed', stale };
-            let state = loaded;
-            let publications = 0;
-            for (let index = 0; index < 75; index++) {
-                const next = failLocalServiceLauncherRefresh(state, input);
-                if (next !== state) publications++;
-                state = next;
-            }
-            expect(publications).toBe(1);
-            expect(readLocalServiceLauncherSnapshotTime(state)).toBe(2_000);
-            expect(applyLocalServiceLauncherSnapshot(state, { ...snapshot, updatedAt: 1_500, targets: [] })).toBe(state);
-            const changed = failLocalServiceLauncherRefresh(state, { ...input, reasonCode: 'method_not_available' });
-            expect(changed).not.toBe(state);
-            expect(changed.targetsById).toBe(state.targetsById);
-            const recovered = applyLocalServiceLauncherSnapshot(changed, { ...snapshot, updatedAt: 3_000 });
-            expect(recovered).not.toBe(changed);
-            expect(recovered.refreshStatus).toBe('idle');
-            expect(recovered.targetsById.get(snapshot.targets[0].id)?.state).toBe('available');
+        const input = { machineId: snapshot.machineId, sessionId: snapshot.sessionId, reasonCode: 'request_failed' };
+        let state = loaded;
+        let publications = 0;
+        for (let index = 0; index < 75; index++) {
+            const next = failLocalServiceLauncherRefresh(state, input);
+            if (next !== state) publications++;
+            state = next;
         }
-        const failed = failLocalServiceLauncherRefresh(loaded, { machineId: snapshot.machineId, reasonCode: 'request_failed' });
-        const stale = failLocalServiceLauncherRefresh(failed, { machineId: snapshot.machineId, reasonCode: 'request_failed', stale: true });
-        expect(stale).not.toBe(failed);
-        expect(stale.targetsById.get(snapshot.targets[0].id)).toMatchObject({ state: 'stale', actions: [] });
+        expect(publications).toBe(1);
+        expect(state.targetsById).toBe(loaded.targetsById);
+        expect(readLocalServiceLauncherSnapshotTime(state)).toBe(2_000);
+        expect(applyLocalServiceLauncherSnapshot(state, { ...snapshot, updatedAt: 1_500, targets: [] })).toBe(state);
+        const changed = failLocalServiceLauncherRefresh(state, { ...input, reasonCode: 'method_not_available' });
+        expect(changed).not.toBe(state);
+        expect(changed.targetsById).toBe(state.targetsById);
+        const recovered = applyLocalServiceLauncherSnapshot(changed, { ...snapshot, updatedAt: 3_000 });
+        expect(recovered).not.toBe(changed);
+        expect(recovered.refreshStatus).toBe('idle');
+        expect(recovered.targetsById.get(snapshot.targets[0].id)?.state).toBe('available');
     });
     it('projects one row when a declaration and its observed binding resolve to the same target', async () => {
         const { applyLocalServiceLauncherSnapshot, createLocalServiceLauncherState, selectLocalServiceLaunchTargets } = await import('./store');
@@ -81,7 +76,7 @@ describe('local service launcher UI store', () => {
         // A no-change receipt still orders delayed replies, without publishing a new row state.
         expect(applyLocalServiceLauncherSnapshot(tick, { ...snapshot, updatedAt: 1_500, targets: [] })).toBe(tick);
         const failed = failLocalServiceLauncherRefresh(applyLocalServiceLauncherRefreshStarted(tick, { machineId: snapshot.machineId }),
-            { machineId: snapshot.machineId, reasonCode: 'request_failed', stale: true });
+            { machineId: snapshot.machineId, reasonCode: 'request_failed' });
         expect(snapshotFromLocalServiceLauncherState(failed)?.updatedAt).toBe(2_000);
         expect(applyLocalServiceLauncherSnapshot(failed, { ...snapshot, updatedAt: 1_500, targets: [] })).toBe(failed);
         expect(tick.targetIds).toBe(loaded.targetIds);

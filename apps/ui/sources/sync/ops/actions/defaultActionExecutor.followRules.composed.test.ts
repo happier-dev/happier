@@ -1,9 +1,12 @@
+import { createSessionListSourceFixture } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createPlainSessionByIdResponseFixture, createPlainSessionCurrentProjectionRecordFixture, createSessionAccessFixture, createSessionFixture, createSessionViewerFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { normalizeSessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
-import { SessionListQueryResponseV1Schema } from '@happier-dev/protocol/sessions/listing/response';
+import { SessionListQueryV1Schema } from '@happier-dev/protocol/sessions/listing/query';
+import { RoleActionInputSchemasV1, RoleActionOutputSchemasV1 } from '@happier-dev/protocol/prompts/roles/roleActionsV1';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { resolveSessionFollowActionRequest } from '@happier-dev/protocol/sessions/follow/actionTransport';
 import { DiscussionParticipantsListResponseV1Schema } from '@happier-dev/protocol/discussions/participants';
@@ -43,7 +46,7 @@ it('resolves rule Session followers through the captured own-Account census and 
         follows: [], sources: [{ sourceSessionId: 'source', destinationSessionId: 'direct-receiver', relation: 'follower',
             policy: { preset: 'quiet' }, deliveryState: 'eligible', hasPendingUpdates: false }], rules: [], coverage: 'complete', peopleCount: 3,
     } });
-    homes.answer(serverId, '/v2/sessions/query', { body: SessionListQueryResponseV1Schema.parse({
+    homes.answer(serverId, '/v2/sessions/query', { body: createSessionListSourceFixture({
         sessions: [{ ...createPlainSessionCurrentProjectionRecordFixture({ id: 'source' }), viewer: createSessionViewerFixture() }],
         hasNext: false, nextCursor: null, attentionHasNext: false, attentionNextCursor: null,
     }) });
@@ -114,7 +117,7 @@ it('previews unloaded manager and worker targets without executing an Action, an
     homes.answer(serverId, '/v2/sessions/source', { body: createPlainSessionByIdResponseFixture(source) });
     const worker = { ...createPlainSessionCurrentProjectionRecordFixture({ id: 'unloaded-worker',
         manager: { sessionId: 'source' } }), viewer: createSessionViewerFixture() };
-    homes.answer(serverId, '/v2/sessions/query', { body: SessionListQueryResponseV1Schema.parse({
+    homes.answer(serverId, '/v2/sessions/query', { body: createSessionListSourceFixture({
         sessions: [worker], hasNext: false, nextCursor: null, attentionHasNext: false, attentionNextCursor: null,
     }) });
     const executor = createDefaultActionExecutor();
@@ -127,7 +130,7 @@ it('previews unloaded manager and worker targets without executing an Action, an
         coverage: 'complete', addresses: [{ serverId, sessionId: 'unloaded-worker' }], error: null,
     });
     // A missing continuation cannot be advertised as either all workers or no workers.
-    homes.answer(serverId, '/v2/sessions/query', { body: SessionListQueryResponseV1Schema.parse({
+    homes.answer(serverId, '/v2/sessions/query', { body: createSessionListSourceFixture({
         sessions: [worker], hasNext: true, nextCursor: null, attentionHasNext: false, attentionNextCursor: null,
     }) });
     expect(await executor.previewSessionTargets({ selector: 'workers' }, context)).toMatchObject({
@@ -138,5 +141,68 @@ it('previews unloaded manager and worker targets without executing an Action, an
         coverage: 'unavailable', addresses: [], error: 'session_target_unavailable',
     });
     expect(homes.requests.slice(requestsBefore).filter(request => request.input !== null
-        && request.path.split('?')[0] !== '/v2/sessions/query').map(request => request.path)).toEqual([]);
+        && !['/v2/sessions/query', '/v2/sessions/read-batch', '/v1/account/project-rows/list']
+            .includes(request.path.split('?')[0]!)).map(request => request.path)).toEqual([]);
+});
+
+it('resolves role and Notes selectors through the captured Home and exact Session RPC adapter', async () => {
+    const serverUrl = 'https://role-targets.test';
+    const serverId = await homes.addHome({ name: 'Role targets', serverUrl, accountId: 'alice', currentAccount: true });
+    const outgoing: Array<{ method: string; input: unknown; serverUrl: string | undefined }> = [];
+    restored = await restoreServerAccountForTest({ serverUrl, accountId: 'alice',
+        credentials: { token: createAccountTokenForTests('alice', { currentAccount: true }) },
+        request: createSessionReadBatchFetchBoundary(homes.request),
+        configureSocket: (socket, targetServerUrl) => {
+            configureConnectedServerSocketBoundary(socket);
+            socket.timeout = vi.fn<typeof socket.timeout>(() => socket);
+            socket.emitWithAck = vi.fn<typeof socket.emitWithAck>(async (event, payload) => {
+                if (event !== SOCKET_RPC_EVENTS.CALL) return { v: 1, ok: true, admittedSessionIds: [] };
+                if (!payload || typeof payload !== 'object' || !('method' in payload)
+                    || typeof payload.method !== 'string' || !('params' in payload)) throw new Error('Malformed Session RPC');
+                const actionId = payload.method.endsWith(':session.role.set') ? 'session.role.set'
+                    : payload.method.endsWith(':session.notes.set') ? 'session.notes.set' : null;
+                if (!actionId) throw new Error('Unexpected Session RPC');
+                const input = RoleActionInputSchemasV1[actionId].parse(payload.params);
+                outgoing.push({ method: payload.method, input, serverUrl: targetServerUrl });
+                return { ok: true, result: RoleActionOutputSchemasV1[actionId].parse({ updated: true }) };
+            });
+        } });
+    await vi.waitFor(() => expect(getStorage().getState().isDataReady).toBe(true));
+    getStorage().setState({ sessions: {}, sessionListRowsByServerId: {}, ordinarySessionListMembershipByServerId: {} });
+    for (const session of [
+        createSessionFixture({ id: 'source', serverId, encryptionMode: 'plain', manager: { sessionId: 'manager' } }),
+        createSessionFixture({ id: 'manager', serverId, encryptionMode: 'plain', active: true }),
+        createSessionFixture({ id: 'worker', serverId, encryptionMode: 'plain', active: true, manager: { sessionId: 'source' } }),
+    ]) homes.answer(serverId, `/v2/sessions/${session.id}`, { body: createPlainSessionByIdResponseFixture(session) });
+    let workers = ['worker'];
+    const queries: Array<{ underSessionId?: string }> = [];
+    homes.answer(serverId, '/v2/sessions/query', { select: raw => {
+        const query = SessionListQueryV1Schema.parse(raw);
+        queries.push(query);
+        return { body: createSessionListSourceFixture({
+            sessions: query.underSessionId === 'source' ? workers.map(id => ({
+                ...createPlainSessionCurrentProjectionRecordFixture({ id, manager: { sessionId: 'source' } }),
+                viewer: createSessionViewerFixture(),
+            })) : [],
+            hasNext: false, nextCursor: null, attentionHasNext: false, attentionNextCursor: null,
+        }) };
+    } });
+    const executor = createDefaultActionExecutor();
+    const context = { surface: 'ui' as const, serverId, defaultSessionId: 'source', expectedAccountId: 'alice' };
+    expect(await executor.execute('session.role.set', { sessionId: { selector: 'manager' }, roleId: 'builder' }, context))
+        .toEqual({ ok: true, result: { updated: true } });
+    expect(await executor.execute('session.notes.set', { sessionId: { selector: 'workers' }, notes: 'Verify before reporting.' }, context))
+        .toEqual({ ok: true, result: { updated: true } });
+    expect(outgoing).toEqual([
+        { method: 'manager:session.role.set', input: { sessionId: 'manager', roleId: 'builder' }, serverUrl },
+        { method: 'worker:session.notes.set', input: { sessionId: 'worker', notes: 'Verify before reporting.' }, serverUrl },
+    ]);
+    expect(queries.some(query => query.underSessionId === 'source')).toBe(true);
+    for (const selected of [[], ['worker', 'other-worker']]) {
+        workers = selected;
+        expect(await executor.execute('session.notes.set', { sessionId: { selector: 'workers' }, notes: 'Choose exactly one.' }, context))
+            .toMatchObject({ ok: false, errorCode: 'session_target_cardinality_mismatch',
+                details: { expected: 'one', actualCount: workers.length } });
+    }
+    expect(outgoing).toHaveLength(2);
 });

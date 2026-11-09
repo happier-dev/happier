@@ -1,4 +1,4 @@
-import { SessionMessageV1Schema } from '@happier-dev/protocol';
+import { SessionMessageV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 import { describe, expect, it } from 'vitest'
 
 

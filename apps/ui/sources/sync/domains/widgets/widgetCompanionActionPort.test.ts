@@ -4,6 +4,24 @@ import { CurrentSessionPresentationActionInputV1Schema } from '@happier-dev/prot
 import { createWidgetCompanionActionPortV1 } from './widgetCompanionActionPort';
 
 describe('Companion widget Action adapter', () => {
+    it('deduplicates simultaneous personal adds without revealing or expanding a hidden collapsed Companion', async () => {
+        const instance = { v: 1 as const, id: 'happier.triage:session-pull-request', definition: { kind: 'installed' as const,
+            surface: { pluginId: 'happier.triage', localId: 'session-pull-request' } }, bindings: {} };
+        let preference = normalizeSessionCompanionPreference({ v: 1, visible: false, collapsed: true, density: 'compact', edge: 'trailing', items: [] });
+        const surface = { serverId: 'home', accountId: 'viewer', owner: { kind: 'companion' as const, sessionId: 'session' } };
+        const port = createWidgetCompanionActionPortV1({
+            lifetime: { scope: surface, isCurrent: () => true, onRetire: () => ({ dispose() {} }) },
+            readPreference: () => preference,
+            applyPresentation: async (_surface, intent) => {
+                if (intent.kind !== 'companion.item.add') throw new Error('Add must not issue a presentation reveal');
+                preference = addSessionCompanionItem(preference, intent.item, intent.index);
+                return { ok: true, result: { status: 'applied' } };
+            },
+        });
+        const results = await Promise.all([port.apply(surface, { kind: 'add', instance }, {}), port.apply(surface, { kind: 'add', instance }, {})]);
+        expect(results).toMatchObject([{ ok: true, result: { instance } }, { ok: true, result: { instance } }]);
+        expect(preference).toMatchObject({ visible: false, collapsed: true, items: [{ kind: 'instance', instance }] });
+    });
     it('persists guest egress through the current Companion owner, not the public presentation Action', async () => {
         const instance = { v: 1 as const, id: 'copy', definition: { kind: 'builtin' as const, id: 'session_summary' }, bindings: {} };
         let preference = normalizeSessionCompanionPreference({ v: 1, visible: true, collapsed: false, density: 'compact', edge: 'trailing', items: [{ kind: 'instance', instance }] });

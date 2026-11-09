@@ -2,9 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import {
     AgentModelOptionOverrideRuleSchema,
-    AgentModelOptionSchema,
+    AgentModelOptionSchema} from '@happier-dev/protocol/models/descriptor';
+import {
     createSessionOwnerMetadataV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 
 import { MetadataSchema, type Metadata } from '@happier-dev/session-core/state';
 import { computeSessionConfigOptionControls,
@@ -14,6 +15,7 @@ import { computeSessionConfigOptionControls,
     resolveSessionConfigOptionOverridesFromMetadata,
 } from './configOptionsControl';
 import { parseSessionModelsState } from './schema';
+import { resolveExtendedContextModelIdForToggle } from '@/sync/domains/models/extendedContextModelControl';
 
 function createMetadata(overrides: Partial<Metadata> = {}): Metadata {
     return {
@@ -24,6 +26,71 @@ function createMetadata(overrides: Partial<Metadata> = {}): Metadata {
 }
 
 describe('computeSessionConfigOptionControls', () => {
+    it('retains the native extended model identity from Session metadata through toggle selection', () => {
+        const extendedContextModelId = ' native/model[1m] ';
+        const metadata = MetadataSchema.parse(JSON.stringify({ path: '/tmp', host: 'h', sessionModelsV1: {
+            v: 1, agentId: 'claude', updatedAt: 1, currentModelId: 'native/model',
+            availableModels: [{ id: 'native/model', name: 'Native model', extendedContextModelId }],
+        } }));
+        const catalog = parseSessionModelsState(metadata.sessionModelsV1);
+        const model = catalog?.availableModels[0];
+        expect(model?.extendedContextModelId).toBe(extendedContextModelId);
+        expect(resolveExtendedContextModelIdForToggle({ enabled: true, model: model ? {
+            value: model.id, label: model.name, description: '', extendedContextModelId: model.extendedContextModelId,
+        } : null })).toBe(extendedContextModelId);
+    });
+    it('never rebinds an advertised model-scoped control as standalone when another model is selected', () => {
+        const effort = { id: ' thought ', name: 'Thinking', type: 'select', currentValue: 'auto', options: [{ value: 'auto', name: 'Auto' }] };
+        const provider = { id: 'provider', name: 'Provider', category: 'model', type: 'select', currentValue: 'native', options: [{ value: 'native', name: 'Native' }] };
+        const modelDescriptors = [{ modelOptions: [effort] }, { modelOptions: [] }];
+        const input = { providerId: 'external', configOptions: [provider, effort], modelDescriptors };
+        expect(computeSessionConfigOptionControlsForProvider(input)?.map((control) => control.option.id)).toEqual(['provider']);
+        expect(computeSessionConfigOptionControlsFromOverride({ ...input, agentId: 'external' })?.map((control) => control.option.id)).toEqual(['provider']);
+        const metadata = createMetadata({
+            sessionConfigOptionsV1: { v: 1, agentId: 'external', updatedAt: 1, configOptions: [provider, effort] },
+            sessionModelsV1: { v: 1, agentId: 'external', updatedAt: 1, currentModelId: 'observed', availableModels: [
+                { id: 'observed', name: 'Observed', modelOptions: [effort] }, { id: 'desired', name: 'Desired' },
+            ] },
+        });
+        expect(computeSessionConfigOptionControls({ agentId: 'external', metadata })?.map((control) => control.option.id)).toEqual(['provider']);
+        expect(computeSessionConfigOptionControlsForProvider({ providerId: 'external', configOptions: [provider, effort] })?.map((control) => control.option.id)).toEqual(['provider', ' thought ']);
+    });
+    it('keeps empty and whitespace scalar choices opaque', () => {
+        const configOptions = [{
+            id: 'format', name: 'Format', type: 'select', currentValue: '',
+            options: [{ value: '', name: 'Default' }, { value: ' ', name: 'Space' }],
+        }];
+        expect(normalizeAcpConfigOptionsArray(configOptions)).toEqual(configOptions);
+        expect(computeSessionConfigOptionControlsForProvider({
+            providerId: 'external', configOptions, overrides: { format: { value: ' ' } },
+        })).toEqual([{ option: configOptions[0], requestedValue: ' ', effectiveValue: ' ', isPending: true }]);
+    });
+
+    it('hides only the producer-resolved opaque model selector and keeps other model-adjacent settings', () => {
+        const configOptions = ['provider', ' engine-choice ', 'model', 'fast'].map((id) => ({
+            id, name: id, category: 'model', type: 'select', currentValue: 'a', options: [{ value: 'a', name: 'A' }],
+        }));
+        const metadata = createMetadata({
+            sessionConfigOptionsV1: { v: 1, agentId: 'external', updatedAt: 1, modelConfigOptionId: ' engine-choice ', configOptions },
+            sessionModelsV1: { v: 1, agentId: 'external', updatedAt: 1, currentModelId: 'a', availableModels: [{ id: 'a', name: 'A' }] },
+        });
+        expect(computeSessionConfigOptionControls({ agentId: 'external', metadata })?.map((control) => control.option.id))
+            .toEqual(['provider', 'model', 'fast']);
+    });
+
+    it('carries canonical category and grouped choices with their flattened selection index', () => {
+        const groups = [{ id: ' codex ', name: ' Codex subscription ', options: [{ value: ' model-a ', name: ' Model A ', description: ' Native model ' }] }];
+        const configOptions = [{
+            id: ' provider ', name: ' Provider ', description: ' Native provider ', category: 'model', type: 'select', currentValue: ' model-a ',
+            options: groups.flatMap((group) => group.options), groups,
+        }];
+        const normalized = normalizeAcpConfigOptionsArray(configOptions);
+        expect(normalized).toEqual(configOptions);
+        expect(computeSessionConfigOptionControlsForProvider({ providerId: 'external', configOptions: normalized })).toEqual([
+            { option: configOptions[0], effectiveValue: ' model-a ', isPending: false },
+        ]);
+    });
+
     it('returns null when ACP config options are missing', () => {
         expect(computeSessionConfigOptionControls({ agentId: 'opencode', metadata: null })).toBeNull();
         expect(computeSessionConfigOptionControls({ agentId: 'opencode', metadata: createMetadata() })).toBeNull();
@@ -326,6 +393,7 @@ describe('computeSessionConfigOptionControls', () => {
                 v: 1,
                 agentId: 'opencode',
                 updatedAt: 1,
+                modelConfigOptionId: 'models',
                 configOptions: [
                     { id: 'mode', name: 'Mode', type: 'select', currentValue: 'build', options: [{ value: 'build', name: 'Build' }] },
                     { id: 'models', name: 'Model', type: 'select', currentValue: 'm1', options: [{ value: 'm1', name: 'Model 1' }] },
@@ -338,7 +406,7 @@ describe('computeSessionConfigOptionControls', () => {
         expect(res?.map((control) => control.option.id)).toEqual(['telemetry']);
     });
 
-    it('drops malformed options and ignores blank override values', () => {
+    it('drops malformed options and preserves opaque whitespace override values', () => {
         const metadata = createMetadata({
             sessionConfigOptionsV1: {
                 v: 1,
@@ -362,8 +430,8 @@ describe('computeSessionConfigOptionControls', () => {
         expect(res).toHaveLength(1);
         expect(res?.[0]).toMatchObject({
             option: { id: 'good', currentValue: 'enabled' },
-            effectiveValue: 'enabled',
-            isPending: false,
+            effectiveValue: '   ',
+            isPending: true,
         });
     });
 
@@ -684,10 +752,12 @@ describe('overridesWhenOn survives the real publication boundaries', () => {
             .toBe('claude-opus-5[1m]');
     });
 
-    it('drives the forced display through controls built from the parsed metadata', () => {
+    it('drives the forced display through model-scoped controls built from the parsed metadata', () => {
         const metadata = MetadataSchema.parse(JSON.stringify(PUBLISHED_METADATA));
 
-        const controls = computeSessionConfigOptionControls({ agentId: 'claude', metadata });
+        const options = metadata.sessionModelsV1?.availableModels[0]?.modelOptions;
+        const controls = computeSessionConfigOptionControlsFromOverride({ agentId: 'claude', configOptions: options,
+            overrides: resolveSessionConfigOptionOverridesFromMetadata({ metadata, configOptions: options ?? [] }) });
         expect(controls?.find((control) => control.option.id === 'ultracode')?.option.overridesWhenOn)
             .toEqual(OVERRIDE_RULE);
         const effort = controls?.find((control) => control.option.id === 'reasoning_effort');
@@ -803,5 +873,40 @@ describe('the override rule has one validator on the free-form option paths', ()
             .toBeUndefined();
         expect(controls?.find((control) => control.option.id === 'reasoning_effort')?.disabled)
             .toBeUndefined();
+    });
+});
+
+describe('model-category controls beside a replaced model selector', () => {
+    const fxLikeOptions = [
+        { id: 'provider', name: 'Provider', category: 'model', type: 'select', currentValue: 'codex',
+            options: [{ value: 'codex', name: 'Codex subscription' }, { value: 'grok', name: 'Grok subscription' }] },
+        { id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: 'gpt-6.1-sol',
+            options: [{ value: 'gpt-6.1-sol', name: 'gpt-6.1-sol' }] },
+        { id: 'effort', name: 'Reasoning Effort', category: 'thought_level', type: 'select', currentValue: 'auto',
+            options: [{ value: 'auto', name: 'default' }, { value: 'high', name: 'high' }] },
+        { id: 'fast', name: 'Fast Mode', category: 'model', type: 'select', currentValue: 'false',
+            options: [{ value: 'false', name: 'off' }, { value: 'true', name: 'on' }] },
+    ] as const;
+
+    it('keeps the native array order and says which side of the hidden selector each model-category control sits on', () => {
+        const controls = computeSessionConfigOptionControlsForProvider({
+            providerId: 'fx',
+            configOptions: fxLikeOptions,
+            hideModelOption: true,
+            modelConfigOptionId: 'model',
+        });
+        expect(controls?.map((control) => control.option.id)).toEqual(['provider', 'effort', 'fast']);
+        expect(controls?.map((control) => control.modelPlacement)).toEqual(['before', undefined, 'after']);
+    });
+
+    it('adds no placement while the selector itself is still a control', () => {
+        const controls = computeSessionConfigOptionControlsForProvider({
+            providerId: 'fx',
+            configOptions: fxLikeOptions,
+            hideModelOption: false,
+            modelConfigOptionId: 'model',
+        });
+        expect(controls?.map((control) => control.option.id)).toEqual(['provider', 'model', 'effort', 'fast']);
+        expect(controls?.every((control) => control.modelPlacement === undefined)).toBe(true);
     });
 });

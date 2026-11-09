@@ -281,7 +281,7 @@ describe('Iroh Home tunnel lifecycle runtime', () => {
                 return jsonResponse(200, { ok: true });
             }
             if (url === 'http://127.0.0.1:45901/v1/features') {
-                // The final identity proof must run before any publication exists.
+                // The identity proof must run before any publication exists.
                 publishedAtFeatures = profiles.getActiveServerSnapshot().runtimeOrigin !== undefined;
                 return jsonResponse(200, identityFeaturesPayload(HOME_IDENTITY_A));
             }
@@ -301,8 +301,8 @@ describe('Iroh Home tunnel lifecycle runtime', () => {
 
         expect(events[0]).toBe('native:start');
         expect(events).not.toContain('probe:health');
-        expect(events.indexOf('probe:auth-ping')).toBeGreaterThan(events.indexOf('native:start'));
-        expect(events.indexOf('probe:features')).toBeGreaterThan(events.indexOf('probe:auth-ping'));
+        expect(events.indexOf('probe:features')).toBeGreaterThan(events.indexOf('native:start'));
+        expect(events.indexOf('probe:auth-ping')).toBeGreaterThan(events.indexOf('probe:features'));
         expect(publishedAtFeatures).toBe(false);
 
         const snapshot = profiles.getActiveServerSnapshot();
@@ -399,12 +399,14 @@ describe('Iroh Home tunnel lifecycle runtime', () => {
             port: 45921,
             respond: (pathname: string) => pathname === '/v1/auth/ping'
                 ? jsonResponse(403, { error: 'forbidden' })
-                : jsonResponse(200, { ok: true }),
+                : jsonResponse(200, identityFeaturesPayload(HOME_IDENTITY_A)),
         },
         {
             reason: 'health-unavailable',
             port: 45931,
-            respond: () => jsonResponse(503, { error: 'unavailable' }),
+            respond: (pathname: string) => pathname === '/v1/features'
+                ? jsonResponse(200, identityFeaturesPayload(HOME_IDENTITY_A))
+                : jsonResponse(503, { error: 'unavailable' }),
         },
     ])('releases the native lease and never publishes when the readiness probe fails with $reason', async ({ reason, port, respond }) => {
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = randomScope();

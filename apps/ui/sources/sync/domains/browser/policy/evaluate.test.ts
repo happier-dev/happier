@@ -1,4 +1,6 @@
-import type { BrowserProfileV1, BrowserViewTargetV1, FeatureDecision } from '@happier-dev/protocol';
+import type { BrowserProfileV1} from '@happier-dev/protocol/browser/profile/v1';
+import type { BrowserViewTargetV1} from '@happier-dev/protocol/browser/target/v1';
+import type { FeatureDecision } from '@happier-dev/protocol/features/decision';
 import { describe, expect, it } from 'vitest';
 
 async function loadPolicyModule() {
@@ -71,6 +73,14 @@ const simulatorPreviewTarget = {
 } satisfies BrowserViewTargetV1;
 
 describe('evaluateBrowserTargetPolicy', () => {
+    it('binds plugin storage independently of feature admission without publishing permission mirrors', async () => {
+        const mod = await import('./evaluate');
+        expect(mod.resolveBrowserTargetProfileUnavailableReason({ target: hostedPluginTarget, profile: pluginProfile })).toBeNull();
+        expect(mod.resolveBrowserTargetProfileUnavailableReason({ target: hostedPluginTarget, profile: sessionProfile }))
+            .toBe('hosted_plugin_profile_mismatch');
+        expect(mod.evaluateBrowserTargetPolicy({ target: localPreviewTarget, profile: sessionProfile,
+            browserFeatureDecision: enabledBrowserDecision })).not.toHaveProperty('permissions');
+    });
     it('admits a streamed browser under the enabled browser and usable profile policy', async () => {
         const { evaluateBrowserTargetPolicy } = await import('./evaluate');
         expect(evaluateBrowserTargetPolicy({
@@ -133,7 +143,7 @@ describe('evaluateBrowserTargetPolicy', () => {
         })).toMatchObject({
             state: 'unavailable',
             reasonCode: 'profile_unusable',
-            disabledReasons: ['external_url_profile_not_isolated'],
+            disabledReasons: ['profile_unusable'],
         });
 
         expect(mod.evaluateBrowserTargetPolicy({
@@ -161,11 +171,6 @@ describe('evaluateBrowserTargetPolicy', () => {
             browserFeatureDecision: enabledBrowserDecision,
         })).toMatchObject({
             state: 'allowed',
-            permissions: {
-                downloads: 'deny',
-                uploads: 'deny',
-                popups: 'deny',
-            },
         });
     });
 

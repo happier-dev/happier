@@ -2,7 +2,7 @@ import { createServer } from 'node:http';
 import { Server } from 'socket.io';
 import { afterEach, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
-import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { AgentConfigOptionsProbeObservationSchema, AgentSessionModesProbeObservationSchema } from '@happier-dev/protocol/capabilities';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ConnectedServiceBindingsV1Schema } from '@happier-dev/protocol/connect/connected-service-bindings';

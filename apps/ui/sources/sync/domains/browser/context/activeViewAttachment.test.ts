@@ -138,3 +138,4 @@ describe('attachActiveBrowserPageReference', () => {
         });
     });
 });
+

@@ -1,7 +1,7 @@
 import tweetnacl from 'tweetnacl';
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { computeAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
-import type { AccountDirectoryMeResponseV1 } from '@happier-dev/protocol';
+import type { AccountDirectoryMeResponseV1 } from '@happier-dev/protocol/auth/accountDirectory';
 import { createHomeCredentialDestinationDigestV1, type AccountDirectoryHomeEntryV1 } from '@happier-dev/protocol/auth/accountDirectory';
 import type { AuthEntryProjectionV1 } from '@happier-dev/protocol/auth/entry';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';

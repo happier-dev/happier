@@ -2,7 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 import { createAccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
-import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol';
+import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 
 const pushAccessMocks = vi.hoisted(() => ({

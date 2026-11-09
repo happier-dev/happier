@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { MachineLiveStreamFrameV1 } from '@happier-dev/protocol';
+import type { MachineLiveStreamFrameV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 
 function frame(sequence: number): MachineLiveStreamFrameV1 {
     return {

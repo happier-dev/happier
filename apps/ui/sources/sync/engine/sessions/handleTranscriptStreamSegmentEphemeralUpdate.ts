@@ -46,15 +46,8 @@ async function applyTranscriptStreamSegmentEphemeralUpdate(
         return;
     }
 
-    // Deltas can only be chained onto known, in-sync assembly state. Check before decrypting so
-    // undecodable deltas cost nothing; the next full-snapshot checkpoint resyncs the segment.
-    if (isDelta && !params.assembler.isTranscriptStreamSegmentAssemblyReady(sessionId, update.message.localId)) {
-        if (telemetryFields) {
-            syncPerformanceTelemetry.count('sync.sessions.socket.transcriptStreamSegmentDelta.droppedUnchained', telemetryFields);
-        }
-        return;
-    }
-
+    // Every delta is read: one that does not chain is buffered and rejoins the segment from its
+    // durable revision (see session-core transcriptStreamSegmentAssembly).
     const expectsEncryptedMessages = session.encryptionMode !== 'plain';
     const encryption = expectsEncryptedMessages ? getSessionEncryption(sessionId) : null;
     if (!encryption && expectsEncryptedMessages) {

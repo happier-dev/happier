@@ -128,3 +128,44 @@ describe('workspace directory Git ignore metadata', () => {
         expect(await mod.listWorkspaceRepositoryDirectoryEntries({ scope: SCOPE_A, directoryPath: 'legacy' })).toMatchObject({ ok: true, gitIgnoreAvailable: false, entries: [{ name: 'node_modules' }] });
     });
 });
+
+describe('workspace directory cache across an Account change on one Home', () => {
+    const scope = { serverId: 'account-change-tree', machineId: 'shared-machine', rootPath: '/repo' } as const;
+    const location = { serverUrl: 'https://account-change-tree', serverId: scope.serverId };
+    const response = (name: string) => ({ ok: true, path: '/repo', truncated: false, entries: [{ name, path: `/repo/${name}`, type: 'file' }] });
+
+    async function signIn(accountId: string) {
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const { createAccountTokenForTests } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+        expect(await TokenStorage.setCredentialsForServerUrl(location.serverUrl, { serverId: location.serverId },
+            { token: createAccountTokenForTests(accountId) })).toBe(true);
+    }
+
+    it('withdraws the previous Account tree, wakes mounted trees, and retains no read still in flight', async () => {
+        const { tryBuildWorkspaceCacheKey } = await import('@/sync/domains/workspaces/workspaceScope');
+        const { getCachedWorkspaceRepositoryDirectoryEntries, listWorkspaceRepositoryDirectoryEntries, warmWorkspaceRepositoryDirectoryCache } = await import('./workspaceRepositoryDirectory');
+        const { subscribeWorkspaceRepositoryDirectoryRevision } = await import('./workspaceRepositoryDirectoryRevision');
+        const workspaceCacheKey = tryBuildWorkspaceCacheKey(scope)!;
+        await signIn('tree-account-a');
+        machineFilesystemListDirectoryMock.mockReset();
+        machineFilesystemListDirectoryMock.mockResolvedValueOnce(response('a-private.txt'));
+        await listWorkspaceRepositoryDirectoryEntries({ scope, directoryPath: '' });
+        expect(getCachedWorkspaceRepositoryDirectoryEntries({ workspaceCacheKey, directoryPath: '' })?.[0]?.name).toBe('a-private.txt');
+
+        const woken = vi.fn();
+        const stop = subscribeWorkspaceRepositoryDirectoryRevision(workspaceCacheKey, woken);
+        let settleHeld = (_value: unknown) => {};
+        machineFilesystemListDirectoryMock.mockImplementationOnce(() => new Promise(resolve => { settleHeld = resolve; }));
+        const held = warmWorkspaceRepositoryDirectoryCache({ scope, directoryPath: 'src' });
+        await vi.waitFor(() => expect(machineFilesystemListDirectoryMock).toHaveBeenCalledTimes(2));
+
+        await signIn('tree-account-b');
+        expect(getCachedWorkspaceRepositoryDirectoryEntries({ workspaceCacheKey, directoryPath: '' })).toBeNull();
+        expect(woken).toHaveBeenCalled();
+
+        settleHeld(response('a-private-held.txt'));
+        await held;
+        expect(getCachedWorkspaceRepositoryDirectoryEntries({ workspaceCacheKey, directoryPath: 'src' })).toBeNull();
+        stop();
+    });
+});

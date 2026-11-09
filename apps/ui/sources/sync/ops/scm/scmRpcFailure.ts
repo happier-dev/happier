@@ -1,7 +1,7 @@
 import { createScmOperationUnknownOutcome, SCM_OPERATION_ERROR_CODES, ScmOperationErrorCodeSchema, ScmOperationOutcomeSchema, ScmCommitPublicationSchema, ScmCommitHookContentChangesSchema, type ScmOperationErrorCode, type ScmOperationOutcome, type ScmOperationReconciliation } from '@happier-dev/protocol/scm';
 import { getScmRpcSideEffectClass } from '@happier-dev/protocol/actions/scmGitActionSpecs';
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError, isRpcSessionMachineControlUnavailableError, readRpcErrorCode, type RpcErrorCarrier } from '@happier-dev/protocol/rpcErrors';
-import { RPC_ERROR_MESSAGES, RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { isTransientConnectivityError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 import { isMachineRpcTimeoutError } from '@/sync/runtime/orchestration/serverScopedRpc/machineRpcTimeoutError';
 import { log } from '@/log';
@@ -22,7 +22,7 @@ export type ScmRpcFailure = Readonly<{
     /** Local diagnostic identity; never use as display copy or include request content. */
     diagnosticDetail?: string;
     outcome?: ScmOperationOutcome;
-    /** UI Action admission is not a Git failure or an uncertain dispatched command. */
+    /** Action/RPC admission is not a Git failure or an uncertain dispatched command. */
     actionErrorCode?: string;
     /**
      * The person declined the Action's in-place confirmation: nothing ran and nothing failed. Presenters
@@ -98,6 +98,11 @@ export function scmFallbackError(error: unknown, context: ScmRpcFailureContext):
     }
     if (error && typeof error === 'object') {
         const code = readRpcErrorCode(error);
+        if (isRead && (code === RPC_ERROR_CODES.FORBIDDEN || code === RPC_ERROR_CODES.TEAM_AUTHENTICATION_REQUIRED
+            || code === RPC_ERROR_CODES.TEAM_AUTHENTICATION_UNAVAILABLE)) {
+            return finish({ success: false, error: SCM_READ_FAILURE_MESSAGE,
+                errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE, actionErrorCode: code });
+        }
         const rpcError: RpcErrorCarrier = {
             rpcErrorCode: code,
             message: typeof (error as { message?: unknown }).message === 'string' ? (error as { message: string }).message : undefined,

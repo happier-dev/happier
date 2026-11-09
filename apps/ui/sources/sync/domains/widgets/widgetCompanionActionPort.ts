@@ -1,4 +1,5 @@
-import type { ActionExecuteResult, ActionExecutorContext } from '@happier-dev/protocol';
+import type { ActionExecuteResult} from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { CurrentSessionPresentationIntentV1 } from '@happier-dev/protocol/sessions';
 import type { WidgetActionSurfacePortV1, WidgetMoveCaptureV1, WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 import { setWidgetInputBindingsV1, resetWidgetInputBindingsV1 } from '@happier-dev/protocol/widgets';

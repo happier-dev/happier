@@ -1,4 +1,4 @@
-import type { BrowserProfileV1 } from '@happier-dev/protocol';
+import type { BrowserProfileV1 } from '@happier-dev/protocol/browser/profile/v1';
 
 /**
  * Canonical identity of the host-local in-app browser profile. The in-app browser engines

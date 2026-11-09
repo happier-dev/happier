@@ -27,7 +27,7 @@ import { createSettingsDeclarationAction } from './settingsDeclarationAction';
 import { createSettingsOwnerActionExecutor } from './settingsOwnerActionExecutor';
 import { teamSummaryFixture, teamPolicyFixture } from '@/dev/testkit/fixtures/teamFixtures';
 import type { TeamIdentityConnectionV1 } from '@happier-dev/protocol/teams';
-import type { TeamRestrictedAuthenticationPolicyV1 } from '@happier-dev/protocol';
+import type { TeamRestrictedAuthenticationPolicyV1 } from '@happier-dev/protocol/auth/entry';
 
 const key = 'HAPPIER_API_CORS_MAX_AGE_SECONDS';
 const anchor = `homeAdministration.serverSettings.${key}`;

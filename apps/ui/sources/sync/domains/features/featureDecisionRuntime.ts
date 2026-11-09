@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { applyFeatureDependencies, evaluateFeatureDecisionBase } from '@happier-dev/protocol/features/featureDecisionEngine';
 import { createFeatureDecision, type FeatureDecision, type FeatureDecisionScope } from '@happier-dev/protocol/features/decision';
-import { featureRequiresServerSnapshot, getFeatureDependencies, isFeatureServerRepresented, type FeatureId } from '@happier-dev/protocol/features/catalog';
+import { featureRequiresServerSnapshot, getCanonicalFeatureId, getFeatureDependencies, isFeatureServerRepresented, type FeatureId } from '@happier-dev/protocol/features/catalog';
 import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
@@ -47,7 +47,6 @@ export function useServerFeaturesRuntimeSnapshot(options?: Readonly<{ enabled?: 
         let requestToken = 0;
         let requestGeneration = 0;
         let lastRequestedServerId = '\u0000';
-        let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
         const loadForServerId = async (serverId: string | undefined, generation: number) => {
             const token = requestToken + 1;
@@ -58,16 +57,6 @@ export function useServerFeaturesRuntimeSnapshot(options?: Readonly<{ enabled?: 
             });
             if (!cancelled && token === requestToken && generation === requestGeneration) {
                 setSnapshot(next);
-                const retryDelayMs = getServerFeaturesSnapshotRetryDelayMs({ serverId, snapshot: next });
-                if (retryDelayMs !== null && !retryTimer) {
-                    retryTimer = setTimeout(() => {
-                        if (cancelled || generation !== requestGeneration) return;
-                        retryTimer = null;
-                        fireAndForget(loadForServerId(serverId, generation), {
-                            tag: 'useServerFeaturesRuntimeSnapshot.retryTransientError',
-                        });
-                    }, retryDelayMs);
-                }
             }
         };
 
@@ -75,10 +64,6 @@ export function useServerFeaturesRuntimeSnapshot(options?: Readonly<{ enabled?: 
             const normalizedServerId = typeof serverId === 'string' ? serverId.trim() : '';
             const nextKey = normalizedServerId || '(active)';
             if (nextKey === lastRequestedServerId) return;
-            if (retryTimer) {
-                clearTimeout(retryTimer);
-                retryTimer = null;
-            }
             lastRequestedServerId = nextKey;
             requestGeneration += 1;
             fireAndForget(loadForServerId(normalizedServerId || undefined, requestGeneration), { tag });
@@ -100,22 +85,6 @@ export function useServerFeaturesRuntimeSnapshot(options?: Readonly<{ enabled?: 
                 serverId ? { serverId } : undefined,
             );
             setSnapshot(cached ?? LOADING_SERVER_FEATURES_SNAPSHOT);
-            if (cached && !retryTimer) {
-                const retryDelayMs = getServerFeaturesSnapshotRetryDelayMs({
-                    serverId: serverId || undefined,
-                    snapshot: cached,
-                });
-                if (retryDelayMs !== null) {
-                    const generation = requestGeneration;
-                    retryTimer = setTimeout(() => {
-                        if (cancelled || generation !== requestGeneration) return;
-                        retryTimer = null;
-                        fireAndForget(loadForServerId(serverId || undefined, generation), {
-                            tag: 'useServerFeaturesRuntimeSnapshot.retryPublishedTransientError',
-                        });
-                    }, retryDelayMs);
-                }
-            }
         });
 
         const initialActive = getActiveServerSnapshot();
@@ -133,7 +102,6 @@ export function useServerFeaturesRuntimeSnapshot(options?: Readonly<{ enabled?: 
         return () => {
             cancelled = true;
             observer.abort();
-            if (retryTimer) clearTimeout(retryTimer);
             unsubscribe();
             unsubscribeSnapshot();
         };
@@ -164,23 +132,10 @@ export function useServerFeaturesSnapshotForServerId(
         let cancelled = false;
         const observer = new AbortController();
         let requestToken = 0;
-        let retryTimer: ReturnType<typeof setTimeout> | null = null;
         const unsubscribeSnapshot = subscribeServerFeaturesSnapshot(() => {
             if (cancelled || !serverId) return;
             const cached = getCachedServerFeaturesSnapshot({ serverId });
             setSnapshot(cached ?? LOADING_SERVER_FEATURES_SNAPSHOT);
-            if (cached && !retryTimer) {
-                const retryDelayMs = getServerFeaturesSnapshotRetryDelayMs({ serverId, snapshot: cached });
-                if (retryDelayMs !== null) {
-                    retryTimer = setTimeout(() => {
-                        if (cancelled) return;
-                        retryTimer = null;
-                        fireAndForget(load(serverId), {
-                            tag: 'useServerFeaturesSnapshotForServerId.retryPublishedTransientError',
-                        });
-                    }, retryDelayMs);
-                }
-            }
         });
 
         const load = async (serverId: string) => {
@@ -189,16 +144,6 @@ export function useServerFeaturesSnapshotForServerId(
             const next = await getServerFeaturesSnapshot({ serverId, signal: observer.signal });
             if (!cancelled && token === requestToken) {
                 setSnapshot(next);
-                const retryDelayMs = getServerFeaturesSnapshotRetryDelayMs({ serverId, snapshot: next });
-                if (retryDelayMs !== null && !retryTimer) {
-                    retryTimer = setTimeout(() => {
-                        if (cancelled) return;
-                        retryTimer = null;
-                        fireAndForget(load(serverId), {
-                            tag: 'useServerFeaturesSnapshotForServerId.retryTransientError',
-                        });
-                    }, retryDelayMs);
-                }
             }
         };
 
@@ -207,7 +152,6 @@ export function useServerFeaturesSnapshotForServerId(
             return () => {
                 cancelled = true;
                 observer.abort();
-                if (retryTimer) clearTimeout(retryTimer);
                 unsubscribeSnapshot();
             };
         }
@@ -219,7 +163,6 @@ export function useServerFeaturesSnapshotForServerId(
         return () => {
             cancelled = true;
             observer.abort();
-            if (retryTimer) clearTimeout(retryTimer);
             unsubscribeSnapshot();
         };
     }, [enabled, serverId]);
@@ -312,7 +255,6 @@ export function useServerFeaturesMainSelectionSnapshot(
         let cancelled = false;
         const observer = new AbortController();
         let requestToken = 0;
-        let retryTimer: ReturnType<typeof setTimeout> | null = null;
         const unsubscribeSnapshot = subscribeServerFeaturesSnapshot(() => {
             if (cancelled) return;
             const snapshotsByServerId: Record<string, ServerFeaturesSnapshot> = {};
@@ -327,7 +269,6 @@ export function useServerFeaturesMainSelectionSnapshot(
         const cleanup = () => {
             cancelled = true;
             observer.abort();
-            if (retryTimer) clearTimeout(retryTimer);
             unsubscribeSnapshot();
         };
 
@@ -346,19 +287,6 @@ export function useServerFeaturesMainSelectionSnapshot(
                 snapshotsByServerId[id] = snapshot;
             }
             publishState({ status: 'ready', serverIds, snapshotsByServerId });
-            const retryDelayMs = results.reduce<number | null>((current, [serverId, snapshot]) => {
-                const next = getServerFeaturesSnapshotRetryDelayMs({ serverId, snapshot });
-                if (next === null) return current;
-                return current === null ? next : Math.min(current, next);
-            }, null);
-            if (retryDelayMs !== null) {
-                retryTimer = setTimeout(() => {
-                    if (cancelled) return;
-                    fireAndForget(load(serverIds), {
-                        tag: 'useServerFeaturesMainSelectionSnapshot.retryTransientError',
-                    });
-                }, retryDelayMs);
-            }
         };
 
         // Recompute state from cache on any selection change.
@@ -397,6 +325,7 @@ export function resolveRuntimeFeatureDecisionFromSnapshot(params: {
     scope?: FeatureDecisionScope;
 }): FeatureDecision | null {
     const scope: FeatureDecisionScope = params.scope ?? { scopeKind: 'runtime' };
+    const featureId = getCanonicalFeatureId(params.featureId);
 
     const memo = new Map<FeatureId, FeatureDecision | null>();
 
@@ -509,11 +438,11 @@ export function resolveRuntimeFeatureDecisionFromSnapshot(params: {
     };
 
     // Shortcut: if neither this feature nor its dependency closure needs server probes, do not defer on loading snapshots.
-    if (params.snapshot.status === 'loading' && featureRequiresServerSnapshot(params.featureId) !== true) {
-        return resolveDecision(params.featureId);
+    if (params.snapshot.status === 'loading' && featureRequiresServerSnapshot(featureId) !== true) {
+        return resolveDecision(featureId);
     }
 
-    return resolveDecision(params.featureId);
+    return resolveDecision(featureId);
 }
 
 export function resolveMainSelectionFeatureDecision(params: {
@@ -522,13 +451,14 @@ export function resolveMainSelectionFeatureDecision(params: {
     snapshot: ServerFeaturesMainSelectionSnapshot;
 }): FeatureDecision | null {
     const scope: FeatureDecisionScope = { scopeKind: 'main_selection' };
+    const featureId = getCanonicalFeatureId(params.featureId);
 
-    const buildPolicy = getFeatureBuildPolicyDecision(params.featureId);
-    const localPolicyEnabled = resolveLocalFeaturePolicyEnabled(params.featureId, params.settings);
+    const buildPolicy = getFeatureBuildPolicyDecision(featureId);
+    const localPolicyEnabled = resolveLocalFeaturePolicyEnabled(featureId, params.settings);
 
     // Global policy gates apply before any server probing/aggregation.
     const global = evaluateFeatureDecision({
-        featureId: params.featureId,
+        featureId,
         scope,
         supportsClient: true,
         buildPolicy,
@@ -540,7 +470,7 @@ export function resolveMainSelectionFeatureDecision(params: {
         return global;
     }
 
-    const requiresServerSnapshot = featureRequiresServerSnapshot(params.featureId);
+    const requiresServerSnapshot = featureRequiresServerSnapshot(featureId);
 
     if (!requiresServerSnapshot) {
         const memo = new Map<FeatureId, FeatureDecision>();
@@ -575,7 +505,7 @@ export function resolveMainSelectionFeatureDecision(params: {
             return withDependencies;
         };
 
-        return resolveDecision(params.featureId);
+        return resolveDecision(featureId);
     }
 
     if (params.snapshot.status === 'loading') {
@@ -640,7 +570,7 @@ export function resolveMainSelectionFeatureDecision(params: {
             return withDependencies;
         };
 
-        return resolveDecision(params.featureId);
+        return resolveDecision(featureId);
     };
 
     const enabledServers: string[] = [];
@@ -684,7 +614,7 @@ export function resolveMainSelectionFeatureDecision(params: {
 
     if (erroredServers.length > 0) {
         return createFeatureDecision({
-            featureId: params.featureId,
+            featureId,
             state: 'unknown',
             blockedBy: 'server',
             blockerCode: 'probe_failed',
@@ -707,7 +637,7 @@ export function resolveMainSelectionFeatureDecision(params: {
 
     if (hasMixedServerOutcomes) {
         return createFeatureDecision({
-            featureId: params.featureId,
+            featureId,
             state: 'unsupported',
             blockedBy: 'scope',
             blockerCode: 'mixed_scope_support',
@@ -726,7 +656,7 @@ export function resolveMainSelectionFeatureDecision(params: {
         const reason = Array.from(new Set(unsupportedReasons));
         const blockerCode = reason.length === 1 && reason[0] === 'endpoint_missing' ? 'endpoint_missing' : 'misconfigured';
         return createFeatureDecision({
-            featureId: params.featureId,
+            featureId,
             state: 'unsupported',
             blockedBy: 'server',
             blockerCode,
@@ -738,7 +668,7 @@ export function resolveMainSelectionFeatureDecision(params: {
 
     if (hasDisabled) {
         return createFeatureDecision({
-            featureId: params.featureId,
+            featureId,
             state: 'disabled',
             blockedBy: 'server',
             blockerCode: 'feature_disabled',
@@ -749,7 +679,7 @@ export function resolveMainSelectionFeatureDecision(params: {
     }
 
     return createFeatureDecision({
-        featureId: params.featureId,
+        featureId,
         state: 'enabled',
         blockedBy: null,
         blockerCode: 'none',

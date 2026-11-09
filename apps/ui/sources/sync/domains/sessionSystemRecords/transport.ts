@@ -1,13 +1,17 @@
 import { SESSION_SYSTEM_RECORDS_PROTOCOL_HTTP_HEADER, SESSION_SYSTEM_RECORDS_PROTOCOL_V1_HTTP_HEADER_VALUE, readSessionSystemRecordErrorCodeV1, SessionSystemRecordStoredPageResponseSchema, SessionSystemRecordStoredReadResponseSchema, type SessionSystemRecordListQuery, type SessionSystemRecordStored, type SessionSystemRecordStoredPageResponse } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordRoutes';
 import type { SessionSystemRecordAddress } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordAddress';
 import { SessionSystemRecordCountResponseSchema, type SessionSystemRecordCountResponse } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordRoutes';
+import { projectSessionBoardAdapterFailureV1, type SessionBoardSimpleFailureCodeV1 } from '@happier-dev/protocol/sessions/board/actions';
+import { log } from '@/log';
+import { isExplicitlyRetryableError, isTransientConnectivityError, RetryableServerResponseError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import type { EnsureSessionVisibleForRouteResult } from '@/sync/domains/session/sessionRouteHydrationState';
 
 export type SessionSystemRecordFetchResult<T> =
     | Readonly<{ status: 'ok'; value: T }>
-    | Readonly<{ status: 'not_found' | 'forbidden' | 'feature_disabled' | 'protocol_unavailable' | 'offline' | 'invalid_response' }>
+    | Readonly<{ status: Exclude<SessionBoardSimpleFailureCodeV1, 'server_error'> | 'feature_disabled' }>
     | Readonly<{ status: 'server_error'; retryable: boolean }>;
 export type SessionSystemRecordTransportOptions = Readonly<{
     scope: ServerAccountScope;
@@ -17,9 +21,41 @@ export type SessionSystemRecordTransportOptions = Readonly<{
 export type HostSessionSystemRecordAddress = Extract<SessionSystemRecordAddress, { owner: 'host' }>;
 export type HostSessionSystemRecordListQuery = Omit<Extract<SessionSystemRecordListQuery, { owner: 'host' }>, 'owner' | 'limit'> & { limit?: number };
 
+/** Pending/superseded Session material is not a malformed transport response. */
+export function projectSessionSystemRecordHydrationFailure(
+    result: Exclude<EnsureSessionVisibleForRouteResult, { kind: 'available' }>,
+): Exclude<SessionSystemRecordFetchResult<never>, { status: 'ok' }> {
+    if (result.kind === 'missing') return { status: result.cause === 'not_found' ? 'not_found' : 'forbidden' };
+    const fallback = result.kind === 'awaiting_push' ? 'server_error'
+        : result.cause === 'decrypting' ? 'encryption_material_unavailable'
+            : result.cause === 'network' || result.cause === 'server_unavailable' ? 'offline' : 'server_error';
+    const failure = projectSessionSystemRecordFetchFailure({ code: result.errorCode, retryable: true }, fallback);
+    // Closed lifecycle facts only: this distinguishes cold hydration failures without logging content.
+    log.log(`Session System Record hydration failed: kind=${result.kind} cause=${result.kind === 'retryable_failure' ? result.cause : 'superseded'} code=${failure.status}`);
+    return failure;
+}
+
+/** Read exceptions carry the existing closed adapter code, never exception content. */
+export function projectSessionSystemRecordFetchFailure(
+    error: unknown,
+    fallback: SessionBoardSimpleFailureCodeV1 = !(error instanceof RetryableServerResponseError) && isTransientConnectivityError(error) ? 'offline' : 'server_error',
+): Exclude<SessionSystemRecordFetchResult<never>, { status: 'ok' }> {
+    const failure = projectSessionBoardAdapterFailureV1(error, fallback, 'session.board.get');
+    // The adapter projector emits only simple codes or this operation's feature refusal;
+    // mutation recovery and update-required envelopes are never produced by exceptions.
+    const status = failure.errorCode as SessionBoardSimpleFailureCodeV1 | 'feature_disabled';
+    log.log(`Session System Record read failed: code=${status}`);
+    return status === 'server_error' ? {
+        status,
+        retryable: isExplicitlyRetryableError(error)
+            || (error !== null && typeof error === 'object' && 'retryable' in error && error.retryable === true),
+    } : { status };
+}
+
 export async function readSessionSystemRecordResponse(response: Response): Promise<SessionSystemRecordFetchResult<unknown>> {
     let value: unknown;
-    try { value = await response.json(); } catch { return { status: 'invalid_response' }; }
+    try { value = await response.json(); }
+    catch (error) { return projectSessionSystemRecordFetchFailure(error, error instanceof SyntaxError ? 'invalid_response' : undefined); }
     if (response.ok) return { status: 'ok', value };
     const code = readSessionSystemRecordErrorCodeV1(value);
     if (code === null) return { status: 'invalid_response' };
@@ -42,9 +78,7 @@ export function createSessionSystemRecordTransport(options: SessionSystemRecordT
                 `/v2/sessions/${encodeURIComponent(session.sessionId)}/system-records${suffix}?${query}`,
                 { method: 'GET', signal, headers: { [SESSION_SYSTEM_RECORDS_PROTOCOL_HTTP_HEADER]: SESSION_SYSTEM_RECORDS_PROTOCOL_V1_HTTP_HEADER_VALUE } },
             ));
-        // A thrown request is a read that did not complete, not evidence the Home is unreachable;
-        // the repository decides what it means for retained records.
-        } catch { return { status: 'offline' } as const; }
+        } catch (error) { return projectSessionSystemRecordFetchFailure(error); }
     }
     return {
         async countBoardItems(session: SessionAddress, signal?: AbortSignal): Promise<SessionSystemRecordFetchResult<SessionSystemRecordCountResponse>> {
@@ -53,8 +87,8 @@ export function createSessionSystemRecordTransport(options: SessionSystemRecordT
             const parsed = SessionSystemRecordCountResponseSchema.safeParse(result.value);
             return parsed.success ? { status: 'ok', value: parsed.data } : { status: 'invalid_response' };
         },
-        async read(session: SessionAddress, address: HostSessionSystemRecordAddress): Promise<SessionSystemRecordFetchResult<SessionSystemRecordStored>> {
-            const result = await request(session, '/record', address);
+        async read(session: SessionAddress, address: HostSessionSystemRecordAddress, signal?: AbortSignal): Promise<SessionSystemRecordFetchResult<SessionSystemRecordStored>> {
+            const result = await request(session, '/record', address, signal);
             if (result.status !== 'ok') return result;
             const parsed = SessionSystemRecordStoredReadResponseSchema.safeParse(result.value);
             if (!parsed.success) return { status: 'invalid_response' };
@@ -63,8 +97,8 @@ export function createSessionSystemRecordTransport(options: SessionSystemRecordT
             if (record.address.owner !== 'host' || record.address.namespace !== address.namespace || record.address.kind !== address.kind || record.address.localId !== address.localId) return { status: 'invalid_response' };
             return { status: 'ok', value: record };
         },
-        async list(session: SessionAddress, query: HostSessionSystemRecordListQuery): Promise<SessionSystemRecordFetchResult<SessionSystemRecordStoredPageResponse>> {
-            const result = await request(session, '', { owner: 'host', namespace: query.namespace, kind: query.kind, localId: query.localId, limit: query.limit, cursor: query.cursor });
+        async list(session: SessionAddress, query: HostSessionSystemRecordListQuery, signal?: AbortSignal): Promise<SessionSystemRecordFetchResult<SessionSystemRecordStoredPageResponse>> {
+            const result = await request(session, '', { owner: 'host', namespace: query.namespace, kind: query.kind, localId: query.localId, limit: query.limit, cursor: query.cursor }, signal);
             if (result.status !== 'ok') return result;
             const parsed = SessionSystemRecordStoredPageResponseSchema.safeParse(result.value);
             if (!parsed.success) return { status: 'invalid_response' };

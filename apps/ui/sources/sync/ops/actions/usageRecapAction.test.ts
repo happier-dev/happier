@@ -206,6 +206,24 @@ describe('recap export through the real captured UI Account Action', () => {
     expect(await createDefaultActionExecutor().execute('usage.recap.compose', input, caller))
       .toMatchObject({ ok: false, errorCode: 'action_account_scope_changed' });
   });
+  it.each([
+    { name: 'default all-time', query: {} },
+    { name: 'start-only', query: { period: { startMs: 100 } } },
+  ])('delivers private recap for an open $name period using admitted accounting bounds', async ({ query }) => {
+    const caller = await context(false, request => request.path === '/v2/usage/query'
+      ? Response.json({ ...accounting,
+        insights: { activeDays: 1, longestStreakDays: 1, sessionsUsed: 1, messagesUsed: 1, modelsTried: 1, favoriteModelChangeCount: 0 },
+        coverage: { status: 'partial', reasons: [], sources: [], missingDimensions: [], ranked: [],
+          range: { startMs: 100, endMs: 900, complete: false } } }) : undefined);
+    // Rasterization and the OS clipboard are boundaries; the Action, Resource and composition stay real.
+    const executor = createDefaultActionExecutor({ usageRecapRender: async () => ({ kind: 'rendered', base64: 'iVBORw==' }) });
+    const delivered = await executor.execute('usage.recap.private.deliver', { query, sourceSelection: 'whole_usage',
+      style: 'daybreak', format: 'square', selectedFields: ['tokens', 'activeDays'], intent: 'copy' }, caller);
+    expect(delivered, JSON.stringify(delivered))
+      .toMatchObject({ ok: true, result: { kind: 'delivered', compose: { kind: 'composed',
+        period: { startMs: 100, endMs: 900 }, facts: { tokens: { total: 12 }, activeDays: 1 } } } });
+    expect(clipboard.image.mock.calls).toEqual([['iVBORw==']]);
+  });
   it('delivers admitted rendered facts through the real clipboard port and refuses a retired capture', async () => {
     const caller = await context();
     const executor = createDefaultActionExecutor({ usageRecapRender: async () => ({ kind: 'rendered', base64: 'iVBORw==' }) });

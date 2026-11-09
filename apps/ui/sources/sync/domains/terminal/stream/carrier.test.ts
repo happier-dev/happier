@@ -185,13 +185,16 @@ describe('machine RPC terminal stream carrier', () => {
             nextCursor: 8,
         }));
 
-        expect(machineTerminalStreamReadBytesMock).toHaveBeenCalledTimes(3);
+        expect(machineTerminalStreamReadBytesMock).toHaveBeenCalledTimes(4);
+        expect(machineTerminalStreamReadBytesMock.mock.calls[0]?.[1]).toHaveProperty('holdForOutput', true);
+        expect(machineTerminalStreamReadBytesMock.mock.calls[1]?.[1]).not.toHaveProperty('holdForOutput');
         expect(machineTerminalStreamReadBytesMock.mock.calls[0]?.[1]).toEqual(expect.objectContaining({
             terminalId: 'term-1',
             controlCursor: 0,
         }));
-        expect(machineTerminalStreamReadBytesMock.mock.calls[1]?.[1]).not.toHaveProperty('controlCursor');
+        expect(machineTerminalStreamReadBytesMock.mock.calls[1]?.[1]).toHaveProperty('controlCursor', 0);
         expect(machineTerminalStreamReadBytesMock.mock.calls[2]?.[1]).not.toHaveProperty('controlCursor');
+        expect(machineTerminalStreamReadBytesMock.mock.calls[3]?.[1]).not.toHaveProperty('controlCursor');
         expect(machineTerminalStreamReadMock).not.toHaveBeenCalled();
     });
 

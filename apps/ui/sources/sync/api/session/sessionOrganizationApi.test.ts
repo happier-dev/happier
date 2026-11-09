@@ -39,16 +39,49 @@ function organizationSnapshotResponse() {
 }
 
 describe('sessionOrganizationApi', () => {
+    it('deletes a label through its captured Account endpoint', async () => {
+        const { deleteSessionOrganizationLabel } = await import('./sessionOrganizationApi');
+        mocks.runtimeFetchWithServerReachability.mockResolvedValue(jsonResponse({ error: 'wrong-account-endpoint' }, 409));
+        const request = { labelKind: 'workspace' as const, scopeKey: 'workspace' };
+        await expect(deleteSessionOrganizationLabel({ credentials, serverUrl: 'https://other.example', request,
+            requestAtEndpoint: async (path, init) => {
+                expect(path).toBe('/v2/session-organization/labels');
+                expect(init?.method).toBe('DELETE');
+                return jsonResponse({ ...request, archived: true });
+            },
+        })).resolves.toEqual({ ...request, archived: true });
+    });
+    it('writes and clears session appearances at the captured Account endpoint and requests them explicitly', async () => {
+        const { setSessionAppearance, fetchSessionOrganizationSnapshot } = await import('./sessionOrganizationApi');
+        const display = { t: 'plain' as const, v: { color: { kind: 'accent', key: 'green' } } };
+        const requestAtEndpoint = vi.fn(async (path: string, init?: RequestInit) => {
+            if (init?.method === 'PUT') {
+                expect(path).toBe('/v2/session-organization/appearances/session%2Fone');
+                const body = JSON.parse(String(init.body));
+                return jsonResponse({ appearance: body.display ? { sessionId: 'session/one', display: body.display, updatedAt: 8 } : null });
+            }
+            expect(new URL(path, 'https://home.example').searchParams.get('includeSessionAppearances')).toBe('true');
+            return jsonResponse({ snapshot: { ...organizationSnapshotResponse().snapshot, sessionAppearances: [] } });
+        });
+        await expect(setSessionAppearance({ credentials, requestAtEndpoint, sessionId: 'session/one', request: { display } }))
+            .resolves.toEqual({ appearance: { sessionId: 'session/one', display, updatedAt: 8 } });
+        await expect(setSessionAppearance({ credentials, requestAtEndpoint, sessionId: 'session/one', request: { display: null } }))
+            .resolves.toEqual({ appearance: null });
+        await fetchSessionOrganizationSnapshot({ credentials, requestAtEndpoint, request: { includeSessionAppearances: true } });
+        expect(mocks.serverFetch).not.toHaveBeenCalled();
+        expect(mocks.runtimeFetchWithServerReachability).not.toHaveBeenCalled();
+    });
     beforeEach(() => {
         mocks.serverFetch.mockReset();
         mocks.runtimeFetchWithServerReachability.mockReset();
     });
 
     it('preserves only strict scope refusals before decoding organization mutation results', async () => {
-        const { setSessionPin, setSessionAttentionStanding, setSessionFolderAssignment, setSessionTagAssignments } = await import('./sessionOrganizationApi');
+        const { setSessionPin, setSessionAppearance, setSessionAttentionStanding, setSessionFolderAssignment, setSessionTagAssignments } = await import('./sessionOrganizationApi');
         const requestAtEndpoint = async () => jsonResponse({ error: 'credential_scope_denied' }, 403);
         for (const operation of [
             () => setSessionPin({ credentials, sessionId: 'same', request: { pinned: false }, requestAtEndpoint }),
+            () => setSessionAppearance({ credentials, sessionId: 'same', request: { display: null }, requestAtEndpoint }),
             () => setSessionFolderAssignment({ credentials, sessionId: 'same', request: { folderId: null }, requestAtEndpoint }),
         ]) {
             await expect(operation()).rejects.toMatchObject({ code: 'credential_scope_denied', status: 403 });

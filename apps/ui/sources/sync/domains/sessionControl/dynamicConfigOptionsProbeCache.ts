@@ -1,5 +1,5 @@
 import { normalizeAcpConfigOptionsArray, type AcpConfigOption } from '@/sync/domains/sessionControl/configOptionsControl';
-import type { ProbedResourceSnapshot } from '@happier-dev/protocol';
+import type { ProbedResourceSnapshot } from '@happier-dev/protocol/common/probedResourceCache';
 
 import { createPersistentProbedResourceCache, ProbedResourceError, type ProbedResourceFailure } from '@/sync/runtime/probedResources/createPersistentProbedResourceCache';
 
@@ -9,6 +9,7 @@ export type DynamicConfigOptionsProbeCacheEntry = ProbedResourceFailure & (
         updatedAt: number;
         expiresAt: number;
         value: readonly AcpConfigOption[];
+        modelConfigOptionId?: string;
         unavailable?: boolean;
     }>
     | Readonly<{ kind: 'error'; updatedAt: number; expiresAt: number }>);
@@ -27,12 +28,19 @@ const transientUnavailableByKey = new Map<string, Readonly<{
     value: readonly AcpConfigOption[];
 }>>();
 
-function normalizePersistedConfigOptions(input: unknown): readonly AcpConfigOption[] | null {
-    const normalized = normalizeAcpConfigOptionsArray(input);
-    return normalized ?? null;
+type ConfigOptionsCatalog = Readonly<{ configOptions: readonly AcpConfigOption[]; modelConfigOptionId?: string }>;
+
+function normalizePersistedConfigOptions(input: unknown): ConfigOptionsCatalog | null {
+    // Existing persisted entries were bare arrays and carry no selector identity.
+    const record = input && typeof input === 'object' && !Array.isArray(input) ? input as Record<string, unknown> : null;
+    const configOptions = normalizeAcpConfigOptionsArray(record ? record.configOptions : input);
+    if (!configOptions) return null;
+    const modelConfigOptionId = typeof record?.modelConfigOptionId === 'string' && record.modelConfigOptionId.trim()
+        ? record.modelConfigOptionId : undefined;
+    return { configOptions, ...(modelConfigOptionId === undefined ? {} : { modelConfigOptionId }) };
 }
 
-const persistedCache = createPersistentProbedResourceCache<readonly AcpConfigOption[]>({
+const persistedCache = createPersistentProbedResourceCache<ConfigOptionsCatalog>({
     cacheId: 'dynamic-config-options-probe-cache',
     persistKey: PERSIST_KEY,
     persistVersion: PERSIST_VERSION,
@@ -42,6 +50,7 @@ const persistedCache = createPersistentProbedResourceCache<readonly AcpConfigOpt
     errorCooldownMs: DYNAMIC_CONFIG_OPTIONS_PROBE_ERROR_BACKOFF_MS,
     normalizePersistedValue: normalizePersistedConfigOptions,
     deleteOnPersistVersionMismatch: true,
+    onAccountRetired: () => transientUnavailableByKey.clear(),
 });
 
 export function resetDynamicConfigOptionsProbeCacheForTests(): void {
@@ -68,14 +77,15 @@ function readTransientUnavailable(key: string, nowMs = Date.now()): DynamicConfi
 export function readDynamicConfigOptionsProbeCache(key: string): DynamicConfigOptionsProbeCacheEntry | null {
     const transientUnavailable = readTransientUnavailable(key);
     if (transientUnavailable) return transientUnavailable;
-    const snap: ProbedResourceSnapshot<readonly AcpConfigOption[]> = persistedCache.getSnapshot(key);
+    const snap: ProbedResourceSnapshot<ConfigOptionsCatalog> = persistedCache.getSnapshot(key);
     const failure = snap.error instanceof ProbedResourceError ? snap.error.failure : undefined;
     if (snap.dataUpdatedAt !== null && snap.data) {
         return {
             kind: 'success',
             updatedAt: snap.dataUpdatedAt,
             expiresAt: snap.dataUpdatedAt + DYNAMIC_CONFIG_OPTIONS_PROBE_SUCCESS_TTL_MS,
-            value: snap.data,
+            value: snap.data.configOptions,
+            ...(snap.data.modelConfigOptionId === undefined ? {} : { modelConfigOptionId: snap.data.modelConfigOptionId }),
             ...failure,
         };
     }
@@ -94,9 +104,10 @@ export function writeDynamicConfigOptionsProbeCacheSuccess(
     key: string,
     value: readonly AcpConfigOption[],
     nowMs = Date.now(),
+    modelConfigOptionId?: string,
 ): void {
     transientUnavailableByKey.delete(key);
-    persistedCache.writeSuccess(key, value, nowMs);
+    persistedCache.writeSuccess(key, { configOptions: value, ...(modelConfigOptionId === undefined ? {} : { modelConfigOptionId }) }, nowMs);
 }
 
 export function writeDynamicConfigOptionsProbeCacheError(key: string, nowMs = Date.now(), failure?: ProbedResourceFailure): void {

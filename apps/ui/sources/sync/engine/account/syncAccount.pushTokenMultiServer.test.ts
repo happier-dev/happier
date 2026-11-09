@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PermissionStatus } from 'expo-modules-core';
-import { DEFAULT_ATTENTION_DELIVERY_POLICY_V1 } from '@happier-dev/protocol';
+import { DEFAULT_ATTENTION_DELIVERY_POLICY_V1 } from '@happier-dev/protocol/account/settings/attentionDeliveryPolicy';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
@@ -600,7 +600,7 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
         const secretBytes = new Uint8Array(32).fill(19);
         const { encodeBase64 } = await import('@/encryption/base64');
         const { Encryption } = await import('@/sync/encryption/encryption');
-        const { sealAccountScopedBlobCiphertext } = await import('@happier-dev/protocol');
+        const { sealAccountScopedBlobCiphertext} = await import('@happier-dev/protocol/crypto/accountScopedCipher');
         const homeBEncryption = await Encryption.create(secretBytes);
         const homeBSettingsCiphertext = sealAccountScopedBlobCiphertext({
             kind: 'account_settings',

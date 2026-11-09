@@ -1,19 +1,26 @@
 import { describe, expect, it } from 'vitest';
 import {
-    AutomationV3RunDetailSchema,
-    convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
+    AutomationV3RunDetailSchema} from '@happier-dev/protocol/automations/automationApiV3';
+import {
+    convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1} from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
+import {
     createAccountScopedCryptoMaterialSnapshotV1,
-    createCanonicalJsonSigningInput,
-    deriveAutomationOccurrenceKeyV1,
+    sealAccountScopedBlobCiphertext} from '@happier-dev/protocol/crypto/accountScopedCipher';
+import {
+    createCanonicalJsonSigningInput} from '@happier-dev/protocol/crypto/canonicalJson';
+import {
+    deriveAutomationOccurrenceKeyV1} from '@happier-dev/protocol/automations/automationOccurrenceV1';
+import {
     AutomationRunTriggerEvidenceV1Schema,
     materializeAutomationRunPromptV1,
     materializeAutomationRunExecutionRecipeV1,
-    sealAccountScopedBlobCiphertext,
-    sealAutomationRunFailureDetailStoredEnvelopeV1,
-    sealAutomationRunResultStoredEnvelopeV1,
     parseAutomationRunExecutionRecipeV1,
     serializeAutomationRunExecutionRecipeV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
+import {
+    sealAutomationRunFailureDetailStoredEnvelopeV1} from '@happier-dev/protocol/automations/automationRunFailureDetailStoredContent';
+import {
+    sealAutomationRunResultStoredEnvelopeV1} from '@happier-dev/protocol/automations/automationReplyHandoffStoredContent';
 
 import { encodeBase64 } from '@/encryption/base64';
 import {

@@ -18,7 +18,7 @@ describe('machineDisplayWarmCacheAdapters', () => {
         expect(changed).not.toBe(entry);
         expect(buildMachineDisplayRenderableFromCacheEntry(changed).metadata?.arch).toBe('arm64');
     });
-    it.each(['recipient_key_pending', 'recipient_access_refused'] as const)(
+    it.each(['recipient_key_pending', 'recipient_access_refused', 'content_unpublished', 'custodian_only', 'daemon_upgrade_required'] as const)(
         'roundtrips the current %s lock through persisted machine display state', (reason) => {
             const entry = buildMachineDisplayCacheEntryFromRenderable({
                 id: 'recipient-machine', updatedAt: 20, active: true, activeAt: 10,

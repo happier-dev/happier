@@ -87,8 +87,12 @@ storage.setState = (partial: StorageState | Partial<StorageState> | ((state: Sto
             state.settings, state.savedSecretReferenceSettings);
         const snapshot = savedSecretReferenceSettings === incomingSnapshot.savedSecretReferenceSettings ? incomingSnapshot
             : { ...incomingSnapshot, savedSecretReferenceSettings };
-        const sessionRelationsByServerId = publishSessionRelations(state, snapshot);
-        return sessionRelationsByServerId === snapshot.sessionRelationsByServerId ? snapshot : { ...snapshot, sessionRelationsByServerId };
+        // Full snapshot writers do not carry reducer deltas; replacing their transcript map is the natural invalidation.
+        const sessionMessageToolVersion = state.sessionMessageToolVersion + (snapshot.sessionMessages !== state.sessionMessages ? 1 : 0);
+        const next = snapshot.sessionMessageToolVersion === sessionMessageToolVersion ? snapshot
+            : { ...snapshot, sessionMessageToolVersion };
+        const sessionRelationsByServerId = publishSessionRelations(state, next);
+        return sessionRelationsByServerId === next.sessionRelationsByServerId ? next : { ...next, sessionRelationsByServerId };
     }, true);
 };
 

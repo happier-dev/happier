@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { ActionOperationSnapshotV1Schema, type ActionOperationSnapshotV1 } from '@happier-dev/protocol';
+import { ActionOperationSnapshotV1Schema, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { getActionOperation, type ActionOperationRpc } from '@/sync/ops/actionOperations';
 
 import { createActionOperationStore } from './actionOperationStore';
@@ -48,6 +48,75 @@ describe('consumeActionOperationSnapshotPush', () => {
         });
         expect([...store.getSnapshot().operationsByKey.values()]).toEqual([{ serverId: 'home-1', snapshot: reboot }]);
         expect([...store.getSnapshot().machineObservationByKey.values()]).toEqual(['unavailable']);
+    });
+    it('does not let abandoned read cleanup discard a replacement observer\'s pending revision', async () => {
+        const store = createActionOperationStore();
+        let oldCurrent = true;
+        let reads = 0;
+        const pending: Array<(response: Awaited<ReturnType<typeof readSnapshot>>) => void> = [];
+        // Genuine Machine transport only; retain the qualified response parser.
+        const rpc = (async () => { reads++; return await new Promise<Awaited<ReturnType<typeof readSnapshot>>>(resolve => pending.push(resolve)); }) as ActionOperationRpc;
+        const consume = (shouldContinue: () => boolean) => consumeActionOperationSnapshotPush({
+            update: { type: 'action-operation-updated', machineId: 'machine-1', content: { t: 'plain', v: snapshot } },
+            accountEncryptionMode: 'plain', accountId: 'account-1', sourceServerId: 'home-1', store, shouldContinue,
+            readSnapshot: operationId => getActionOperation({ machineId: 'machine-1', serverId: 'home-1',
+                accountId: 'account-1', requireCurrentDomainFacts: true, operationId, rpc }),
+        });
+        const abandoned = consume(() => oldCurrent);
+        oldCurrent = false;
+        const replacement = consume(() => true);
+        pending[1]!({ kind: 'not_found' });
+        await replacement;
+        const current = consume(() => true);
+        pending[0]!({ kind: 'found', operation: snapshot });
+        await abandoned;
+        const joined = consume(() => true);
+        const beforeReplies = reads;
+        pending[2]!({ kind: 'found', operation: snapshot });
+        pending[3]?.({ kind: 'found', operation: snapshot });
+        await Promise.all([current, joined]);
+        expect(beforeReplies).toBe(3);
+        expect([...store.getSnapshot().operationsByKey.values()]).toEqual([{ serverId: 'home-1', snapshot }]);
+    });
+    it('joins concurrent notifications of one new revision while a newer revision retains its own fresh read', async () => {
+        const store = createActionOperationStore();
+        const pending: Array<(response: Awaited<ReturnType<typeof readSnapshot>>) => void> = [];
+        const read = vi.fn(() => new Promise<Awaited<ReturnType<typeof readSnapshot>>>(resolve => pending.push(resolve)));
+        const consume = (pushed: ActionOperationSnapshotV1) => consumeActionOperationSnapshotPush({
+            update: { type: 'action-operation-updated', machineId: 'machine-1', content: { t: 'plain', v: pushed } },
+            accountEncryptionMode: 'plain', accountId: 'account-1', sourceServerId: 'home-1', store, readSnapshot: read,
+        });
+        const requests = Array.from({ length: 20 }, () => consume(snapshot));
+        expect(read).toHaveBeenCalledTimes(1);
+        const newer: ActionOperationSnapshotV1 = { ...snapshot, revision: 3, state: 'succeeded', settledAt: 4, result: { sessionId: 'created' } };
+        requests.push(consume(newer));
+        expect(read).toHaveBeenCalledTimes(2);
+        pending[1]!({ kind: 'found', operation: newer });
+        pending[0]!({ kind: 'found', operation: snapshot });
+        await Promise.all(requests);
+        expect([...store.getSnapshot().operationsByKey.values()]).toEqual([{ serverId: 'home-1', snapshot: newer }]);
+    });
+    it('does not re-admit unchanged pushed revisions and admits one changed revision exactly once', async () => {
+        const store = createActionOperationStore();
+        store.mergeSnapshots({ serverId: 'home-1', snapshots: [snapshot] });
+        let current = snapshot;
+        let reads = 0;
+        // The external generic RPC transport returns this owner's parsed response.
+        const rpc = (async () => { reads++; return { kind: 'found', operation: current }; }) as ActionOperationRpc;
+        const onSnapshot = vi.fn();
+        const consume = (pushed: ActionOperationSnapshotV1) => consumeActionOperationSnapshotPush({
+            update: { type: 'action-operation-updated', machineId: 'machine-1', content: { t: 'plain', v: pushed } },
+            accountEncryptionMode: 'plain', accountId: 'account-1', sourceServerId: 'home-1', store, onSnapshot,
+            readSnapshot: operationId => getActionOperation({ machineId: 'machine-1', serverId: 'home-1',
+                accountId: 'account-1', requireCurrentDomainFacts: true, operationId, rpc }),
+        });
+        for (let i = 0; i < 100; i++) await consume({ ...snapshot });
+        expect(reads).toBe(0);
+        current = { ...snapshot, revision: 3, state: 'succeeded', settledAt: 4, result: { sessionId: 'created' } };
+        await consume(current);
+        expect(reads).toBe(1);
+        expect([...store.getSnapshot().operationsByKey.values()]).toEqual([{ serverId: 'home-1', snapshot: current }]);
+        expect(onSnapshot).toHaveBeenCalledWith({ serverId: 'home-1', snapshot: current });
     });
     it('does not present an older recovery result after a newer owner observation has arrived', async () => {
         const store = createActionOperationStore();

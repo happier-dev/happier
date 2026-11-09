@@ -1,5 +1,5 @@
-import type { BrowserRenderEngineKindV1 } from '@happier-dev/protocol';
-import { BrowserRenderEngineKindV1Schema } from '@happier-dev/protocol';
+import type { BrowserRenderEngineKindV1 } from '@happier-dev/protocol/browser/adapters/kinds';
+import { BrowserRenderEngineKindV1Schema } from '@happier-dev/protocol/browser/adapters/kinds';
 import { describe, expect, it } from 'vitest';
 
 import {

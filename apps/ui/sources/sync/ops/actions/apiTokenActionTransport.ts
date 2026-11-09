@@ -5,7 +5,11 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions/execut
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { ServerFetch } from '@/sync/http/client';
 import { safeParse, type core } from 'zod/mini';
-export type ApiTokenActionTransport = Readonly<{ request: ServerFetch; target?: ExternalActionTargetV1 }>;
+export type ApiTokenActionTransport = Readonly<{
+    request: ServerFetch;
+    target?: ExternalActionTargetV1;
+    onActionAcknowledged?: (actionId: ActionId, result: unknown) => void;
+}>;
 export async function executeApiTokenAction(transport: ApiTokenActionTransport, actionId: ActionId, input: unknown, context?: ActionExecutorContext): Promise<ActionExecuteResult> {
     const refused = (code: string): ActionExecuteFailure => ({ ok: false, errorCode: code, error: code });
     const publicId = PublicActionIdSchema.safeParse(actionId);
@@ -30,13 +34,17 @@ export async function executeApiTokenAction(transport: ApiTokenActionTransport, 
     try { raw = await response.json(); } catch { return refused('invalid_action_output'); }
     if (!response.ok) {
         const failure = ExternalActionHttpErrorSchema.safeParse(raw);
+        // This V1 transport issues no request id; do not adopt a correlated error
+        // for an invocation it did not send.
         if (!failure.success || ('requestId' in failure.data && failure.data.requestId !== undefined)) {
             return refused('invalid_action_output');
         }
         if ('code' in failure.data && failure.data.code === 'target_unavailable'
-            && 'diagnostic' in failure.data && failure.data.diagnostic !== undefined) {
-            return { ...refused(failure.data.code), details: 'managedAdmission' in failure.data ? failure.data : failure.data.diagnostic };
+            && 'diagnostic' in failure.data && failure.data.diagnostic !== undefined && !('managedAdmission' in failure.data)) {
+            return { ...refused(failure.data.code), details: failure.data.diagnostic };
         }
+        return { ...refused('code' in failure.data ? failure.data.code : failure.data.error),
+            ...('diagnostic' in failure.data ? { details: failure.data } : {}) };
     }
     const parsed = parseExternalActionResponseEnvelopeV1(raw);
     if (!parsed || parsed.actionId !== actionId || parsed.requestId !== undefined) return refused('invalid_action_output');
@@ -44,5 +52,7 @@ export async function executeApiTokenAction(transport: ApiTokenActionTransport, 
     // This generic transport returns unknown; each Action's schema still validates its payload.
     const outputSchema: core.$ZodType<unknown> = PUBLIC_ACTION_OUTPUT_SCHEMAS[publicId.data];
     const output = safeParse(outputSchema, parsed.execution.result);
+    context?.signal?.throwIfAborted();
+    if (output.success) transport.onActionAcknowledged?.(actionId, output.data);
     return output.success ? { ok: true, result: output.data } : refused('invalid_action_output');
 }

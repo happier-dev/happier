@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   ConnectedServiceQuotaSnapshotV1Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/connected-service-schemas';
 import { sealLegacyConnectedServiceQuotaSnapshotFixtureCiphertext } from '@happier-dev/protocol/testing/accountScopedCipherFixtures';
 
 import { encodeBase64 } from '@/encryption/base64';

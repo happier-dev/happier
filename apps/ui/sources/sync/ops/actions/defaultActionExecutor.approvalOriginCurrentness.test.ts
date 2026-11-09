@@ -14,8 +14,8 @@ vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => ({
 
 import {
     isApprovalExecutionOriginCurrentForAccountContext,
-    requiresExactDaemonApprovalReplay,
 } from './defaultActionExecutor';
+import { resolveApprovalExecutor } from '@happier-dev/protocol/approvals/approvalRequestV1';
 
 describe('approval execution-origin Account currentness', () => {
     it('accepts an immutable creator profile through the deciding profile for the same stable Home', () => {
@@ -76,8 +76,8 @@ describe('approval execution-origin Account currentness', () => {
         })).toBe(false);
     });
 
-    it('routes trusted-plugin approvals through the exact daemon that owns plugin generation currentness', () => {
-        expect(requiresExactDaemonApprovalReplay({
+    it('routes a trusted-plugin Account approval to the approving app', () => {
+        expect(resolveApprovalExecutor({
             v: 2,
             status: 'approved',
             createdAtMs: 1,
@@ -109,6 +109,6 @@ describe('approval execution-origin Account currentness', () => {
             actionArgs: { sessionId: 'session-1', title: 'Reviewed title' },
             summary: 'Set title',
             decision: { kind: 'approve', decidedAtMs: 2 },
-        })).toBe(true);
+        })).toEqual({ kind: 'app', placement: 'account' });
     });
 });

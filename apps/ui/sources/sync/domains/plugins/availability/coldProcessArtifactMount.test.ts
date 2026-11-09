@@ -28,6 +28,14 @@ import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/acti
 import type { PluginReactNativeBundleCacheIdentity } from '@/sync/domains/plugins/ui/reactNativeRuntime';
 
 import { createPluginAccountAvailabilityReader, type PluginAccountAvailabilitySnapshot } from './reader';
+import { PluginPortableReleaseManifestV1Schema } from '@happier-dev/protocol/plugins/availability';
+import { projectPluginPortableUiDeclarationsV1 } from '@happier-dev/protocol/plugins/contributions/ui';
+import { installBundledPluginUiDeclarationsForTests } from '@/dev/testkit/mocks/bundledPluginUiAssets';
+const { resolveBundledPluginUiRendererArtifact } = await import('./bundledPluginUiRendererArtifact');
+const { readPluginUiDaemonProjectionSelection, readPluginUiGeneratedArtifactGraph,
+    readPluginUiReactNativeBundleCacheIdentity } = await import('../ui/artifactAdoption');
+import { PluginMachineExecutionOriginV1Schema } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { createBundledPluginUiAppExactArtifactSourceFromInventory } from './bundledAppExactArtifactSource';
 const { createPluginReactNativeArtifactAvailabilityProducer } = await import('./reactNativeArtifactAvailability');
 
 const scope = { serverId: 'server-a', accountId: 'account-a' } as const;
@@ -210,6 +218,68 @@ function fixture(input: Readonly<{
 }
 
 describe('browser Artifact byte reuse across reload and Resume', () => {
+    it('reselects current app bytes after reload despite a retained daemon selection and persistent old bytes', async () => {
+        const oldBytes = new TextEncoder().encode('// retained renderer');
+        const newBytes = new TextEncoder().encode('// current renderer');
+        const old = fixture({ platform: 'web', entryBytes: oldBytes });
+        const current = fixture({ platform: 'web', entryBytes: newBytes });
+        const pluginId = old.cacheIdentity.pluginId;
+        const contributionId = old.cacheIdentity.contributionId;
+        const manifest = PluginPortableReleaseManifestV1Schema.parse({ schemaVersion: 2, id: pluginId,
+            version: '1.2.3', displayName: 'Fixture', runtime: { apiVersion: 1 }, contributes: { ui: {
+                renderers: [{ id: contributionId, kind: 'reactNative', artifact: old.cacheIdentity.artifactId }],
+            } } });
+        const entries = (graph: typeof old.artifactGraph) => projectPluginPortableUiDeclarationsV1(manifest, [graph]);
+        const entryId = `reactNativeBundle:${pluginId}:${contributionId}`;
+        // The renderer selection survives a process, independently of the
+        // content-addressed byte record. A materialization ref has no custody.
+        const retained = { ...entries(old.artifactGraph)[entryId], artifactSelectionOwner: 'daemonProjection',
+            occurrenceId: 'retained-session-selection' };
+        const origin = PluginMachineExecutionOriginV1Schema.parse(old.origin);
+        const browserStore = createBrowserPluginUiPersistentArtifactStore(createDurableCacheStorage());
+        const persistentIdentity = { ...old.cacheIdentity, accountScope: scope };
+        await browserStore.write({ persistentIdentity, bytes: oldBytes, entryRelativePath: old.artifactGraph.entry,
+            files: [{ ...old.artifactGraph.files[0]!, bytes: oldBytes }] });
+        const restore = installBundledPluginUiDeclarationsForTests([{ pluginId, pluginVersion: manifest.version,
+            packageName: '@happier-dev/plugins-fixture', displayName: 'Fixture', normalizedManifest: manifest,
+            entriesById: entries(current.artifactGraph), artifactGraphs: [current.artifactGraph] }]);
+        try {
+            const reader = createPluginAccountAvailabilityReader({ scope,
+                snapshot: { availabilityCursor: 8, intentReads: [], materializations: [], snapshots: [] },
+                hostBundledUi: [{ pluginId, pluginVersion: manifest.version, packageName: '@happier-dev/plugins-fixture',
+                    displayName: 'Fixture', normalizedManifest: manifest, entriesById: entries(current.artifactGraph),
+                    artifactGraphs: [current.artifactGraph] }],
+            });
+            const accountProjection = reader.readAccountUiProjection();
+            const selected = resolveBundledPluginUiRendererArtifact(retained,
+                { accountProjection, selectedProjection: accountProjection });
+            const artifactGraph = readPluginUiGeneratedArtifactGraph(selected)!;
+            const runtime = selected?.runtime as Readonly<{ cacheIdentity?: unknown }>;
+            const cacheIdentity = readPluginUiReactNativeBundleCacheIdentity(runtime.cacheIdentity, {
+                pluginId, contributionId, artifactId: artifactGraph.artifactId, platform: 'web',
+            })!;
+            const cache = createPluginReactNativeBundleCache({ persistentStore:
+                adaptPluginUiPersistentArtifactStoreForReactNativeBundleCache(browserStore) });
+            const producer = createPluginReactNativeArtifactAvailabilityProducer({ getCache: () => cache,
+                appExact: createBundledPluginUiAppExactArtifactSourceFromInventory({ inventory: [{ pluginId,
+                    releaseVersion: manifest.version, artifactId: current.artifactGraph.artifactId, tier: 'reactNative',
+                    digest: current.artifactGraph.digest, files: [{ relativePath: current.artifactGraph.entry, asset: 1 }] }],
+                    readBundledAssetBytes: async () => newBytes }),
+                fetchDaemonArtifactBytes: async () => { throw new Error('No daemon is needed for app bytes'); },
+            });
+            const daemonProjectionSelection = readPluginUiDaemonProjectionSelection(selected);
+            const result = await producer.acquire({ reader, executionOrigin: origin, artifactGraph, cacheIdentity,
+                accountLifetime, isCurrent: () => true,
+                ...(daemonProjectionSelection ? { daemonProjectionSelection: { ...daemonProjectionSelection, isCurrent: () => true } } : {}),
+            });
+            expect(result.kind).toBe('available');
+            expect(cache.readInstalledArtifact(current.cacheIdentity, scope)?.bytes).toEqual(newBytes);
+            // Selecting the current graph neither aliases nor deletes old bytes.
+            expect((await browserStore.read(persistentIdentity))?.bytes).toEqual(oldBytes);
+            if (result.kind === 'available') result.dispose();
+        } finally { restore(); }
+    });
+
     it('transfers a multi-MiB digest once while retained and reads it again after device custody is emptied', async () => {
         const entryBytes = new TextEncoder().encode(`// ${'x'.repeat(3 * 1024 * 1024)}\n`);
         const current = fixture({ platform: 'web', entryBytes });

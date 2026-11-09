@@ -3,6 +3,7 @@ import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
 import { useServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import type { SessionSystemRecordObservationBase, SessionSystemRecordUnavailableReason } from './observation';
+import { projectSessionSystemRecordFetchFailure } from './transport';
 
 type BoardCountInput = Readonly<{ serverId: string | null; sessionId: string; enabled: boolean }>;
 type BoardCountRuntime = Pick<SessionSystemRecordObservationBase, 'repository' | 'isCurrent' | 'readCapabilities'>;
@@ -72,7 +73,10 @@ export function useSessionSystemRecordBinding<Binding extends { status: 'ready' 
     const resolution = useServerCredentialAccountScopeResolution(address?.serverId);
     const lifetime = React.useMemo(() => ({ address, resolution, observe: input.observe }), [address, resolution, input.observe]);
     const sync = getSyncSingleton();
-    const retained = address && input.read ? sync.readSessionSystemRecordObservation(address) : null;
+    // The exact Session's retained, current record authority (held by any record reader already on
+    // screen) starts an observation without hydrating the Session again; `read` only adds last-known
+    // content. Re-hydrating here could fail transiently and leave a just-demanded observer dead.
+    const retained = address ? sync.readSessionSystemRecordObservation(address) : null;
     const retainedAllowed = retained && (resolution.kind === 'resolving'
         || (resolution.kind === 'bound' && resolution.scope.accountId === retained.repository.scope.accountId));
     const retainedBinding = retainedAllowed ? input.read?.(retained) : null;
@@ -102,28 +106,18 @@ export function useSessionSystemRecordBinding<Binding extends { status: 'ready' 
             if (!capabilities?.readTranscript) { publish({ status: 'unavailable', reason: 'forbidden' }); return; }
             unsubscribe = input.observe({
                 session: address, repository: runtime.repository,
-                authority: { contentContext: runtime.readContentContext(), capabilities },
                 readCapabilities, readContentContext: runtime.readContentContext,
                 isCurrent: () => !stopped && runtime.isCurrent(),
-                renewAuthority: async () => {
-                    const renewed = await sync.withSessionSystemRecordRuntime(address, async current => {
-                        if (current.repository !== runtime.repository || current.scope.accountId !== runtime.scope.accountId) return null;
-                        const currentCapabilities = current.readSession()?.access?.capabilities ?? null;
-                        return currentCapabilities ? { contentContext: current.readContentContext(), capabilities: currentCapabilities } : null;
-                    }, { forceSessionRefresh: true });
-                    if (renewed.status !== 'ok') return renewed;
-                    return renewed.value ? { status: 'ok', value: renewed.value } : { status: 'forbidden' };
-                },
-                onChange: binding => publish(binding, runtime.isCurrent, () => runtime.repository.invalidate(address)),
+                onChange: binding => publish(binding, runtime.isCurrent, () => runtime.repository.invalidate(address, undefined, { force: true })),
             });
         };
         if (retainedAllowed && retained) start(retained);
         else void sync.withSessionSystemRecordRuntime(address, async runtime => start({
             scope: runtime.scope, repository: runtime.repository, readCapabilities: () => runtime.readSession()?.access?.capabilities ?? null,
             readContentContext: runtime.readContentContext, isCurrent: runtime.isCurrent,
-        })).then(result => {
+        }), { forceSessionRefresh: retry > 0, fresh: retry > 0 }).then(result => {
             if (result.status !== 'ok') publish({ status: 'unavailable', reason: result.status });
-        }).catch(() => publish({ status: 'unavailable', reason: 'offline' }));
+        }).catch(error => publish({ status: 'unavailable', reason: projectSessionSystemRecordFetchFailure(error).status }));
         return () => { stopped = true; unsubscribe?.(); };
     // The retained wrapper is selected by address/lifetime, not by its object identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps

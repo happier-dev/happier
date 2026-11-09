@@ -3,6 +3,7 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { kvList, type KvItem } from '@/sync/api/account/apiKv';
 import type { ServerFetch } from '@/sync/http/client';
 import { assertAccountEncryptionMigrationScopeCurrent, type AccountEncryptionMigrationScope } from '@/sync/domains/settings/scope/accountSettingsScope';
+import { AccountEncryptionMigrateTodosInventoryResponseSchema, type AccountEncryptionMigrateTodosInventoryResponse } from '@happier-dev/protocol/account/encryptionMigrate';
 
 export class AccountEncryptionMigrationKvInventoryUnavailableError extends Error {
     readonly code = 'account_encryption_migration_kv_inventory_unavailable';
@@ -14,7 +15,25 @@ export async function fetchAccountEncryptionMigrationKvInventory(params: Readonl
     credentials: AuthCredentials;
     request: ServerFetch;
     scope: AccountEncryptionMigrationScope;
-}>): Promise<readonly KvItem[]> {
+}>): Promise<readonly AccountEncryptionMigrateTodosInventoryResponse['items'][number][]> {
+    if (params.namespace === 'todo') {
+        assertAccountEncryptionMigrationScopeCurrent(params.scope);
+        const response = await params.request('/v1/account/encryption/migrate/todos/inventory', {
+            method: 'GET', headers: { Authorization: `Bearer ${params.credentials.token}` },
+        });
+        assertAccountEncryptionMigrationScopeCurrent(params.scope);
+        if (!response.ok) throw new AccountEncryptionMigrationKvInventoryUnavailableError();
+        const inventory = AccountEncryptionMigrateTodosInventoryResponseSchema.parse(await response.json());
+        assertAccountEncryptionMigrationScopeCurrent(params.scope);
+        const seen = new Set<string>();
+        for (const item of inventory.items) {
+            if (classifyAccountJsonKvKey(item.key) !== 'todo' || seen.has(item.key)
+                || (item.resource && (item.key === 'todo.index' || item.resource.ownerAccountId !== params.scope.scope.accountId
+                    || item.resource.access !== 'owner'))) throw new AccountEncryptionMigrationKvInventoryUnavailableError();
+            seen.add(item.key);
+        }
+        return inventory.items;
+    }
     const items: KvItem[] = [];
     const seen = new Set<string>();
     let afterKey: string | undefined;

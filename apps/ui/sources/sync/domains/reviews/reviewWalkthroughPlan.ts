@@ -1,5 +1,6 @@
 import { resolveReviewNarratorPolicy } from '@happier-dev/protocol/reviews/reviewEngines';
 import type { MachineAgent } from '@/agents/machineAgents/machineAgentTypes';
+import type { MachineAgentsSnapshot } from '@/agents/machineAgents/machineAgentInventoryStore';
 import { isMachineAgentReady } from '@/agents/machineAgents/resolveMachineAgentState';
 
 /**
@@ -13,12 +14,16 @@ export type ReviewWalkthroughEngine = Readonly<{
     launchModelId?: string | null;
     enabled: boolean;
     structuredNarration: boolean;
-    /** The canonical Machine inventory's Account-default credential readiness; null while unknown. */
+    /** A matching Machine agent's credential readiness; null when the inventory has no matching agent. */
     machineAgent?: MachineAgent | null;
+    machineInventoryStatus?: MachineAgentsSnapshot['status'];
 }>;
 
 export function isReviewWalkthroughEngineAvailable(engine: ReviewWalkthroughEngine): boolean {
-    return engine.enabled && (engine.machineAgent === undefined || isMachineAgentReady(engine.machineAgent));
+    if (!engine.enabled) return false;
+    if (engine.machineAgent) return isMachineAgentReady(engine.machineAgent);
+    // A settled inventory has no agent row for review-only engines. Their review inventory owns availability.
+    return engine.machineInventoryStatus === undefined || engine.machineInventoryStatus === 'ready';
 }
 
 export type ReviewWalkthroughNarrator = Readonly<{

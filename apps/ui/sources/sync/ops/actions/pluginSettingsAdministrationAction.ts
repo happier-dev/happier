@@ -218,8 +218,9 @@ export function createUiPluginSettingsAdministrationAction(
             if (selected.serverIdentityId !== account.serverIdentityId) return null;
             target = { ...selected, serverId: account.serverId };
             const { loadDaemonMergedProjectionInputs } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
+            // Settings groups and package occurrence only.
             const projection = await loadDaemonMergedProjectionInputs({ machineId: selected.machineId, serverId: account.serverId,
-                accountLifetime: account.accountLifetime, signal: request.context.signal });
+                accountLifetime: account.accountLifetime, signal: request.context.signal, sections: ['settingsById'] });
             assertCurrent();
             if (!projection) return null;
             groups = projection.pluginProjectionById[input.pluginId]?.editableSettingsGroups ?? [];
@@ -233,7 +234,7 @@ export function createUiPluginSettingsAdministrationAction(
             const { readCurrentAppShellPluginUiExecutionOriginCandidates } = await import('@/components/appShell/plugins/committedPluginUiProjection');
             const { resolveFreshPluginMachineExecutionOrigin } = await import('@/sync/domains/machines/administration/usePluginExecutionOriginSelection');
             const { readCurrentPluginMachineExecutionTargetPreference } = await import('@/sync/domains/machines/administration/selectionPreferences');
-            const { arePluginMachineExecutionOriginsEqual } = await import('@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1');
+            const { arePluginMachineExecutionOriginsEqual, getPluginMachineExecutionOriginRef } = await import('@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1');
             const readSelected = () => resolveFreshPluginMachineExecutionOrigin({ pluginId: input.pluginId,
                 origin: null, storedTarget: readCurrentPluginMachineExecutionTargetPreference(input.pluginId),
                 reader, classifyRelease: reader.classifyRelease,
@@ -251,8 +252,8 @@ export function createUiPluginSettingsAdministrationAction(
                         throw new Error('plugin_settings_target_not_current');
                 };
                 const { loadDaemonMergedProjectionInputs } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
-                const projection = await loadDaemonMergedProjectionInputs({ machineId: source.origin.sourceRef.machineId,
-                    serverId: source.serverId, accountLifetime: account.accountLifetime });
+                const projection = await loadDaemonMergedProjectionInputs({ machineId: getPluginMachineExecutionOriginRef(source.origin).machineId,
+                    serverId: source.serverId, accountLifetime: account.accountLifetime, sections: ['settingsById'] });
                 assertCurrent();
                 const declaration = projection?.pluginProjectionById[input.pluginId];
                 if (!declaration?.installedPackage?.executionOrigin || declaration.occurrenceId !== source.occurrenceId

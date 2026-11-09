@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import { encodeBase64 } from '@/encryption/base64';
 import { decodeHex } from '@/encryption/hex';
-import { CRYPTO_GOLDEN_VECTORS, parseSerializedJsonValue } from '@happier-dev/protocol';
+import { CRYPTO_GOLDEN_VECTORS} from '@happier-dev/protocol/crypto/cryptoGoldenVectors';
+import { parseSerializedJsonValue } from '@happier-dev/protocol/crypto/serializedJsonValue';
 
 import { UI_CRYPTO_GOLDEN_VECTORS } from './cryptoGoldenVectors';
 import { createFakeCryptoWorker } from './fakeCryptoWorker';

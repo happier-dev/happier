@@ -29,7 +29,6 @@ function mockSettingsDomainPersistence(): void {
         loadSessionModelModes: vi.fn(() => ({})),
         loadSessionPermissionModeUpdatedAts: vi.fn(() => ({})),
         loadSessionPermissionModes: vi.fn(() => ({})),
-        loadSessionActionDrafts: vi.fn(() => ({})),
         loadSessionReviewCommentsDrafts: vi.fn(() => ({})),
         loadWorkspaceReviewCommentsDrafts: vi.fn(() => ({})),
         saveSessionDrafts: vi.fn(),
@@ -38,7 +37,6 @@ function mockSettingsDomainPersistence(): void {
         saveSessionModelModes: vi.fn(),
         saveSessionPermissionModeUpdatedAts: vi.fn(),
         saveSessionPermissionModes: vi.fn(),
-        saveSessionActionDrafts: vi.fn(),
         saveSessionReviewCommentsDrafts: vi.fn(),
         saveWorkspaceReviewCommentsDrafts: vi.fn(),
     }));

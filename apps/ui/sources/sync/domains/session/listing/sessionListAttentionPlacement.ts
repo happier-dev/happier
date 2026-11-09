@@ -116,6 +116,25 @@ type SessionListPlacementProjection = Readonly<{
     liveWorking: boolean;
 }>;
 
+export type SessionListRowWorkStatus = Readonly<{
+    facts: ReturnType<typeof readSessionWorkStatusFacts>;
+    status: WorkStatusPresentation;
+}>;
+
+// The store keeps an unchanged row's identity, so a list projection after one row write derives
+// only that row's status again. The row and the list clock are the whole input.
+const rowWorkStatusByRow = new WeakMap<SessionListRenderableSession, Readonly<{ nowMs: number; value: SessionListRowWorkStatus }>>();
+
+/** A list row's work-status facts and tone at the list clock: one derivation per row and clock. */
+export function readSessionListRowWorkStatus(row: SessionListRenderableSession, nowMs: number): SessionListRowWorkStatus {
+    const retained = rowWorkStatusByRow.get(row);
+    if (retained?.nowMs === nowMs) return retained.value;
+    const facts = readSessionWorkStatusFacts(row, nowMs);
+    const value = { facts, status: resolveWorkStatusTone({ kind: 'session', facts }) };
+    rowWorkStatusByRow.set(row, { nowMs, value });
+    return value;
+}
+
 function projectSessionListPlacement(params: Readonly<{
     session: SessionListRenderableSession;
     sessionKey: string;
@@ -123,10 +142,7 @@ function projectSessionListPlacement(params: Readonly<{
     nowMs: number;
     backgroundWorkAttentionMode?: SessionListBackgroundWorkAttentionMode;
 }>): SessionListPlacementProjection {
-    const status = resolveWorkStatusTone({
-        kind: 'session',
-        facts: readSessionWorkStatusFacts(params.session, params.nowMs),
-    });
+    const { status } = readSessionListRowWorkStatus(params.session, params.nowMs);
     const liveWorking = status.bucket === 'working';
     const standingSource = params.standingPolicy
         ? resolveSessionAttentionStandingSource(params.standingPolicy, params.sessionKey, params.nowMs)
@@ -145,6 +161,21 @@ function projectSessionListPlacement(params: Readonly<{
         standingSource,
         liveWorking,
     };
+}
+
+/**
+ * The per-row facts global placement reads: the row's earned attention reason, its standing source,
+ * whether it is live working, and whether a retained working row may stay in the band.
+ */
+export function readSessionListRowPlacementFacts(params: Readonly<{
+    session: SessionListRenderableSession;
+    sessionKey: string;
+    standingPolicy?: SessionAttentionStandingPolicy;
+    nowMs: number;
+}>): readonly unknown[] {
+    const projection = projectSessionListPlacement(params);
+    return [projection.attentionReason, projection.standingSource, projection.liveWorking,
+        isRetainableWorkingSession(params.session, params.nowMs)];
 }
 
 function resolveWorkingRetentionAnchor(session: SessionListRenderableSession): number | null {
@@ -435,6 +466,8 @@ export function buildSessionListGlobalPlacements(params: Readonly<{
                     headerKind: 'attention',
                     groupKey: ATTENTION_PLACEMENT_GROUP_KEY_V1,
                     eligibleCount: attentionCandidates.length,
+                    // The space's include-everywhere choice is the supplied set itself, present even while empty.
+                    ...(params.supplementalNeedsYouSessionKeys ? { fromEverywhere: true } : {}),
                 },
                 ...presentedAttention,
             ]

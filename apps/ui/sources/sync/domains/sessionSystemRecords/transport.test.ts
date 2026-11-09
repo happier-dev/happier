@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { buildWorkflowRunSystemRecordLocalId } from '@happier-dev/protocol';
-import { createSessionSystemRecordTransport } from './transport';
+import { buildWorkflowRunSystemRecordLocalId } from '@happier-dev/protocol/sessions/system/records/activity/activitySystemRecordKinds';
+import { createSessionSystemRecordTransport, projectSessionSystemRecordHydrationFailure } from './transport';
 import {
     readLegacyWorkflowSystemRecord,
     selectWorkflowSystemRecordQuery,
 } from './compatibility/legacyHostTransport';
 import { makeSessionWorkflowRunSnapshot } from '@/dev/testkit';
 import { openWorkflowRunSystemRecord } from '@/sync/domains/sessionActivity/sessionWorkflowActivityRecords';
+import { RetryableServerResponseError, NonRetryableServerResponseError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 
 const session = { serverId: 'home-a', sessionId: 'same-session' };
 const address = {
@@ -18,6 +19,48 @@ const address = {
 const scope = { serverId: 'home-a', accountId: 'alice' };
 
 describe('strict host System Record transport', () => {
+    it('distinguishes superseded and decrypting Session material from actual malformed responses and denial', () => {
+        const sessionId = session.sessionId;
+        expect(projectSessionSystemRecordHydrationFailure({ kind: 'awaiting_push', sessionId, errorCode: 'stale_response' }))
+            .toEqual({ status: 'server_error', retryable: true });
+        expect(projectSessionSystemRecordHydrationFailure({ kind: 'retryable_failure', sessionId, cause: 'decrypting' }))
+            .toEqual({ status: 'encryption_material_unavailable' });
+        expect(projectSessionSystemRecordHydrationFailure({ kind: 'retryable_failure', sessionId, cause: 'unknown', errorCode: 'invalid_response' }))
+            .toEqual({ status: 'invalid_response' });
+        expect(projectSessionSystemRecordHydrationFailure({ kind: 'retryable_failure', sessionId, cause: 'server_unavailable', errorCode: 'network_error' }))
+            .toEqual({ status: 'offline' });
+        expect(projectSessionSystemRecordHydrationFailure({ kind: 'missing', sessionId, cause: 'forbidden' }))
+            .toEqual({ status: 'forbidden' });
+        expect(projectSessionSystemRecordHydrationFailure({ kind: 'missing', sessionId, cause: 'not_found' }))
+            .toEqual({ status: 'not_found' });
+    });
+
+    it('keeps typed body-stream failures and treats only actual schema failures as invalid responses', async () => {
+        const transport = createSessionSystemRecordTransport({ scope, request: async () => new Response(new ReadableStream({
+            start(controller) { controller.error(Object.assign(new Error('private body detail'), { code: 'forbidden' })); },
+        })) });
+        expect(await transport.read(session, address)).toEqual({ status: 'forbidden' });
+        const unknown = createSessionSystemRecordTransport({ scope, request: async () => { throw new Error('private unexpected detail'); } });
+        expect(await unknown.read(session, address)).toEqual({ status: 'server_error', retryable: false });
+        for (const [error, retryable] of [
+            [new RetryableServerResponseError(503, 'private server detail'), true],
+            [new NonRetryableServerResponseError(503, 'private server detail'), false],
+            [Object.assign(new Error('private server detail'), { code: 'server_error', retryable: true }), true],
+        ] as const) {
+            const refused = createSessionSystemRecordTransport({ scope, request: async () => { throw error; } });
+            expect(await refused.read(session, address)).toEqual({ status: 'server_error', retryable });
+        }
+        const malformed = createSessionSystemRecordTransport({ scope, request: async () => new Response('not json') });
+        expect(await malformed.read(session, address)).toEqual({ status: 'invalid_response' });
+    });
+
+    it('does not classify an already-consumed response body as an offline Home', async () => {
+        const response = Response.json({ record: null });
+        await response.json();
+        const transport = createSessionSystemRecordTransport({ scope, request: async () => response });
+        expect(await transport.read(session, address)).toEqual({ status: 'server_error', retryable: false });
+    });
+
     it('selects legacy only when strict capability is absent and fails closed for unsupported versions', () => {
         expect(selectWorkflowSystemRecordQuery({ localId: address.localId, protocolVersions: null })).toEqual({
             status: 'ready',
@@ -106,7 +149,7 @@ describe('strict host System Record transport', () => {
         expect(await transport.read(session, address)).toEqual({ status: 'protocol_unavailable' });
         response = new Response(JSON.stringify({ error: 'route missing' }), { status: 404 });
         expect(await transport.read(session, address)).toEqual({ status: 'invalid_response' });
-        const offline = createSessionSystemRecordTransport({ scope, request: async () => { throw new TypeError('network unavailable'); } });
+        const offline = createSessionSystemRecordTransport({ scope, request: async () => { throw new TypeError('Failed to fetch'); } });
         expect(await offline.read(session, address)).toEqual({ status: 'offline' });
     });
 

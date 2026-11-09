@@ -4,16 +4,19 @@ import {
     resetScopedMachineTransportCacheForTests,
     resolveScopedMachineTransport,
 } from './serverScopedRpcPool';
-import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
+import { createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import tweetnacl from 'tweetnacl';
 import { Encryption } from '@/sync/encryption/encryption';
 import { createFakeCryptoWorker } from '@/sync/encryption/nativeCryptoWorker/fakeCryptoWorker';
 import { createDeferred } from '@/dev/testkit';
 import {
     computeRunnerMachineContentKeyFingerprintV1,
-    encodeBase64,
     signRunnerMachineContentKeyBindingV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/ephemeralRunner/machineContentKeyBinding';
+import {
+    encodeBase64} from '@happier-dev/protocol/crypto/base64';
 
 function readAuthorizationHeader(headers: RequestInit['headers']): string {
     if (!headers) return '';
@@ -29,6 +32,71 @@ function readAuthorizationHeader(headers: RequestInit['headers']): string {
 }
 
 describe('resolveScopedMachineTransport', () => {
+    it('opens each distinct Machine key once for 821 concurrent demanded transports and admits a rotated key', async () => {
+        const encryption = await Encryption.create(new Uint8Array(32).fill(71));
+        const worker = createFakeCryptoWorker();
+        const entered = createDeferred<void>();
+        const release = createDeferred<void>();
+        let opens = 0;
+        encryption.configureNativeCryptoWorker({ worker: { ...worker,
+            decryptDataKeyEnvelopeV1: async request => {
+                opens += request.items.length;
+                entered.resolve();
+                await release.promise;
+                return worker.decryptDataKeyEnvelopeV1(request);
+            },
+        }, routing: { mode: 'require', minPayloadBytes: 0 } });
+        const keys = [72, 73, 74].map(value => new Uint8Array(32).fill(value));
+        const envelopes = await Promise.all(keys.map(async key => encodeBase64(await encryption.encryptEncryptionKey(key))));
+        let reads = 0;
+        vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+            if (!new URL(url).pathname.startsWith('/v1/machines/')) return Response.json({});
+            reads += 1;
+            const id = new URL(url).pathname.split('/').at(-1)!;
+            return Response.json({ machine: { id, dataEncryptionKey: envelopes[Number(id.at(-1))],
+                metadataVersion: 1, daemonStateVersion: 1 } });
+        }));
+        const controllers = Array.from({ length: 821 }, () => new AbortController());
+        let logicalOpens = 0;
+        const read = (index: number) => resolveScopedMachineTransport({
+            serverId: 'dek-count-home', serverUrl: 'https://dek-count.example.test', token: 'dek-count-token',
+            machineId: `dek-machine-${index % keys.length}`, encryption, expectedAccountMode: 'e2ee',
+            signal: controllers[index]!.signal,
+            decryptEncryptionKey: value => {
+                logicalOpens += 1;
+                return encryption.decryptEncryptionKey(value, { signal: controllers[index]!.signal, workClass: 'interactive' });
+            },
+        });
+        const pending = controllers.map((_, index) => read(index));
+        try {
+            await entered.promise;
+            await vi.waitFor(() => expect(logicalOpens).toBe(821));
+            release.resolve();
+            const results = await Promise.all(pending);
+            expect(results.every((result, index) => result?.mode === 'e2ee'
+                && result.dataKey?.every((byte, position) => byte === keys[index % keys.length]![position]))).toBe(true);
+            expect(reads).toBe(3);
+            expect(opens).toBe(3);
+            // Later independent demand retains fresh row admission without reopening unchanged material.
+            expect((await read(0))?.mode).toBe('e2ee');
+            expect(reads).toBe(4);
+            expect(opens).toBe(3);
+            const rotatedKey = new Uint8Array(32).fill(75);
+            envelopes[0] = encodeBase64(await encryption.encryptEncryptionKey(rotatedKey));
+            const rotated = await read(0);
+            expect(rotated?.mode === 'e2ee' && rotated.dataKey?.every((byte, index) => byte === rotatedKey[index])).toBe(true);
+            expect(opens).toBe(4);
+            // The existing generation boundary must discard completed pure work as well.
+            encryption.configureNativeCryptoWorker({ scope: { accountId: 'local', serverId: null, generation: 1 } });
+            expect((await read(0))?.mode).toBe('e2ee');
+            expect(opens).toBe(5);
+        } finally {
+            release.resolve();
+            controllers.forEach(controller => controller.abort());
+            await Promise.allSettled(pending);
+            encryption.retireAccountMaterial();
+        }
+    });
     it('keeps unchanged Machine evidence current when unrelated Machines are read', async () => {
         let originalKey: string = MACHINE_PLAIN_DATA_KEY_MARKER;
         vi.stubGlobal('fetch', vi.fn(async (url: string) => Response.json({ machine: {
@@ -135,7 +203,21 @@ describe('resolveScopedMachineTransport', () => {
             token: 'token', machineId: 'machine', homeCarrier };
         await expect(resolveScopedMachineTransport(input)).rejects.toMatchObject({ status: 503, kind: 'server' });
         status = 404;
-        await expect(resolveScopedMachineTransport(input)).resolves.toBeNull();
+        await expect(resolveScopedMachineTransport(input)).rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN });
+    });
+    it('preserves the opaque selected-Machine access refusal without attempting a key opening', async () => {
+        const encryption = await Encryption.create(new Uint8Array(32).fill(19));
+        await encryption.initializeMachines(new Map([['foreign-machine', null]]));
+        expect(encryption.getMachineEncryption('foreign-machine')).not.toBeNull();
+        const decryptEncryptionKey = vi.fn(async () => new Uint8Array(32));
+        await expect(resolveScopedMachineTransport({
+            serverId: 'refused-home', serverUrl: 'https://refused.example.test', token: 'requester-token', machineId: 'foreign-machine',
+            encryption, decryptEncryptionKey,
+            readTransport: { key: 'refused-home-read', read: async (_path, init, _options, consume) =>
+                consume(createMachineReadBatchResponseFixture(init?.body, () => null)) },
+        })).rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN });
+        expect(decryptEncryptionKey).not.toHaveBeenCalled();
+        expect(encryption.getMachineEncryption('foreign-machine')).toBeNull();
     });
     it('shares a pending authenticated row across independently constructed RPC deadlines and refreshes after settlement', async () => {
         const entered = createDeferred<void>();
@@ -278,6 +360,21 @@ describe('resolveScopedMachineTransport', () => {
         release.resolve();
         expect(await pending).toBeNull();
         expect(encryption.getMachineEncryption('machine-1')).toBeNull();
+    });
+    it('refuses a Home-reported plain row for an own-Account Machine while this device holds active E2EE custody', async () => {
+        const access = (accountId: string) => ({ custodian: { accountId, displayName: '' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' });
+        let custodian = 'viewer';
+        vi.stubGlobal('fetch', vi.fn(async () => Response.json({ machine: {
+            id: 'machine-1', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, access: access(custodian),
+        } })));
+        const scope = { serverId: 'secondary-home', serverUrl: 'https://secondary-home.example.test', token: 'token-1',
+            machineId: 'machine-1', accountId: 'viewer' };
+        // Downgrade pin (admitMachineRowPlainMode): own-Account row + active custody never resolves plain.
+        expect(await resolveScopedMachineTransport({ ...scope, accountE2eeCustody: 'active' })).toBeNull();
+        // Owner-positive controls: a plain Account and another custodian's plain Machine stay reachable.
+        expect(await resolveScopedMachineTransport({ ...scope, accountE2eeCustody: 'absent' })).toMatchObject({ mode: 'plain' });
+        custodian = 'other-account';
+        expect(await resolveScopedMachineTransport({ ...scope, accountE2eeCustody: 'active' })).toMatchObject({ mode: 'plain' });
     });
     it('refreshes a scoped row across distinct crypto instances and retires its old request context', async () => {
         const firstEncryption = await Encryption.create(new Uint8Array(32).fill(17));
@@ -433,7 +530,7 @@ describe('resolveScopedMachineTransport', () => {
         });
         vi.stubGlobal('fetch', vi.fn(async (url: string) => {
             if (url.endsWith('/health') || url.endsWith('/v1/auth/ping')) {
-                return Response.json({});
+                return { ok: true, status: 200, json: async () => ({}) };
             }
             return {
                 ok: true,
@@ -608,7 +705,9 @@ describe('resolveScopedMachineTransport', () => {
         expect(new Headers(carried[0]?.init.headers).get('Authorization')).toBe(`Bearer ${token}`);
     });
 
-    it('refreshes each Machine row while reusing its unchanged opened key', async () => {
+    // Row-path contract: secondary Homes and unprojected Machines (absent, Runner). The bound
+    // active Home reads no row (serverScopedMachineRpc.projection.composed.test.ts).
+    it('refreshes each secondary-Home Machine row while reusing its unchanged opened key', async () => {
         const encryption = await Encryption.create(new Uint8Array(32).fill(17));
         const dataKey = new Uint8Array(32).fill(23);
         const envelope = encodeBase64(await encryption.encryptEncryptionKey(dataKey), 'base64');
@@ -750,7 +849,7 @@ describe('resolveScopedMachineTransport', () => {
     it('passes an abort signal to fetch for timeout enforcement', async () => {
         const fetchSpy = vi.fn(async (_url: string, init?: RequestInit) => {
             if (String(_url).endsWith('/health') || String(_url).endsWith('/v1/auth/ping')) {
-                return { ok: true, status: 200, json: async () => ({}) };
+                return Response.json({});
             }
             if (String(_url).includes('/v1/machines')) {
                 expect(init && 'signal' in init).toBe(true);

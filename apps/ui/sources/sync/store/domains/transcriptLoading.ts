@@ -1,6 +1,6 @@
 import type { StoreGet, StoreSet } from './_shared';
 import type { SessionMessagesTailBoundary } from '@/sync/runtime/sessionMessagesTailDiscontinuity';
-import type { ExternalSessionsRpcErrorCode } from '@happier-dev/protocol';
+import type { ExternalSessionsRpcErrorCode } from '@happier-dev/protocol/sessions/external/rpcErrorCodes';
 
 import type { ExternalSessionTranscriptUnavailableReason } from '@/sync/runtime/external/externalSessionTranscriptAuthority';
 

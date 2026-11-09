@@ -376,7 +376,7 @@ describe('buildAccountEncryptionMigrateToE2eeRequest', () => {
     );
   });
 
-  it('includes the released legacy Voice adapter projection in encrypted full-settings migrations', async () => {
+  it('keeps a Voice credential sealed in its Saved Secret, with Voice only on the canonical root', async () => {
     const credentials = createLegacyCredentials();
     const material = resolveAccountScopedCryptoMaterialFromCredentials(credentials);
     const recoverySecret = Buffer.from(credentials.secret, 'base64url');
@@ -449,28 +449,17 @@ describe('buildAccountEncryptionMigrateToE2eeRequest', () => {
     expect(openedSettings).not.toBeNull();
     if (!openedSettings) throw new Error('expected opened settings');
     assertObject(openedSettings.value, 'opened settings');
-    assertObject(openedSettings.value.voice, 'legacy voice projection');
-    assertObject(openedSettings.value.voice.adapters, 'legacy voice adapters');
-    assertObject(
-      openedSettings.value.voice.adapters.realtime_elevenlabs,
-      'legacy ElevenLabs adapter',
-    );
-    assertObject(
-      openedSettings.value.voice.adapters.realtime_elevenlabs.byo,
-      'legacy ElevenLabs BYO settings',
-    );
-
+    expect(openedSettings.value).not.toHaveProperty('voice');
     expect(openedSettings.value.voiceSettingsV1).toEqual(
       expect.objectContaining({
         providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       }),
     );
-    expect(openedSettings.value.voice.adapters.realtime_elevenlabs.byo.apiKey).toHaveProperty(
-      'encryptedValue',
-    );
-    expect(openedSettings.value.voice.adapters.realtime_elevenlabs.byo.apiKey).not.toHaveProperty(
-      'value',
-    );
+    expect(openedSettings.value.secrets).toEqual([expect.objectContaining({
+      id: 'voice-elevenlabs-secret',
+      encryptedValue: expect.objectContaining({ encryptedValue: expect.anything() }),
+    })]);
+    expect(JSON.stringify(openedSettings.value)).not.toContain('xi_migration_key');
   });
 
   it('migrates plaintext connected service credentials and automations to encrypted envelopes', async () => {

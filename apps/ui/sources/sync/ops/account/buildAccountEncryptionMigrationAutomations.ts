@@ -6,7 +6,7 @@ import { createAccountScopedCryptoMaterialSnapshotV1, deriveAutomationTriggerEvi
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import { openAutomationTemplateStoredV1, openAutomationTemplateStoredForMigrationV1 } from '@happier-dev/protocol/automations/automationTemplateStoredV1';
 import { parseAutomationStoredDefinitionExecutionRecipeV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
-import { parseAutomationStoredWorkflowDefinitionRecipeV2 } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
+import { parseAutomationObservationOnlyDefinitionV1, parseAutomationStoredWorkflowDefinitionRecipeV2 } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
 import { parseAutomationRunResultStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationReplyHandoffStoredContent';
 import type { AccountScopedBlobKind } from '@happier-dev/protocol/crypto/accountScopedCipherEnvelope';
 import type { AvailableAutomationAccountEncryptionV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
@@ -48,6 +48,7 @@ export function isAccountEncryptionMigrationAutomationContentPlain(
 export function readAccountEncryptionMigrationPlainAutomationTarget(
     templateCiphertext: string,
 ): Readonly<{ existingSessionId: string | null }> | null {
+    if (parseAutomationObservationOnlyDefinitionV1(templateCiphertext)) return { existingSessionId: null };
     const definition = parseAutomationStoredDefinitionExecutionRecipeV1(templateCiphertext);
     if (definition.kind === 'available') return definition.recipe.template.t === 'plain'
         ? { existingSessionId: definition.recipe.target.kind === 'existingSession' ? definition.recipe.target.sessionId : null }
@@ -66,6 +67,8 @@ export async function convertAccountEncryptionMigrationTemplate(params: Readonly
     historicalMaterial?: AccountScopedCryptoMaterial;
     resolveSession?: MigrationTemplateSessionResolver;
 }>): Promise<string> {
+    const observationOnly = parseAutomationObservationOnlyDefinitionV1(params.templateCiphertext);
+    if (observationOnly) return JSON.stringify({ ...observationOnly, templateVersion: observationOnly.templateVersion + 1 });
     const envelope = tryDecodeAutomationTemplateEnvelope(params.templateCiphertext);
     if (!envelope) throw new Error(`Invalid automation template envelope (${params.id})`);
     if (params.toMode === 'e2ee' && envelope.kind === AUTOMATION_TEMPLATE_ENVELOPE_KIND) return params.templateCiphertext;

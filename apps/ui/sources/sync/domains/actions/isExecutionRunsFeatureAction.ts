@@ -1,4 +1,4 @@
-import type { ActionId } from '@happier-dev/protocol';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 
 export function isExecutionRunsFeatureAction(actionId: ActionId): boolean {
     return actionId === 'review.start'

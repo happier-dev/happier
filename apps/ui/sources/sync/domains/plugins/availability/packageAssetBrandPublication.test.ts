@@ -21,11 +21,14 @@ let homeId: string;
 
 import {
     PluginProjectionV2Schema,
-    DaemonPluginUiResourceReadResponseSchema,
-    PluginManifestV2Schema,
-    createAccountScopedCryptoMaterialSnapshotV1,
+    DaemonPluginUiResourceReadResponseSchema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import {
+    PluginManifestV2Schema} from '@happier-dev/protocol/plugins/manifest/v2';
+import {
+    createAccountScopedCryptoMaterialSnapshotV1} from '@happier-dev/protocol/crypto/accountScopedCipher';
+import {
     convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import {
     createPackageAssetArchiveV1,
     PluginAccountAvailabilityIntentReadResponseV1Schema,

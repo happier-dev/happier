@@ -1,11 +1,10 @@
 import * as React from 'react';
-import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
 import { shallow } from 'zustand/shallow';
 import type { MachineKind } from '@happier-dev/protocol/machines/machineKind';
 import type { MachinePoolViewV1 } from '@happier-dev/protocol/machines/pools/v1';
 
 import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
-import { useServerFeaturesMainSelectionSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
+import { resolveRuntimeFeatureDecisionFromSnapshot, useServerFeaturesMainSelectionSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import {
     useServerCredentialAccountScopeResolutions,
@@ -50,7 +49,7 @@ export type MachinePoolProjection = Readonly<{
     accountId: string | null;
     /** Current feature-discovery state; consumers render loading/error without inventing a fetcher. */
     featureStatus: MachinePoolFeatureStatus;
-    /** The Home's own `machines.pools` decision; a missing or malformed bit is disabled. */
+    /** The canonical Pool decision, including this build and the Home's support. */
     featureEnabled: boolean;
     /** Last known Pool rows, retained across refresh. Empty while the feature is off. */
     pools: readonly MachinePoolViewV1[];
@@ -121,7 +120,9 @@ export function useMachinePoolProjections(
             : snapshot.status === 'error'
                 ? 'error'
                 : snapshot.status === 'ready'
-                    ? readServerEnabledBit(snapshot.features, 'machines.pools') === true ? 'enabled' : 'disabled'
+                    ? resolveRuntimeFeatureDecisionFromSnapshot({
+                        featureId: 'machines.pools', settings: storage.getState().settings, snapshot,
+                    })?.state === 'enabled' ? 'enabled' : 'disabled'
                     : 'disabled';
         const featureEnabled = featureStatus === 'enabled';
         const featureKnownDisabled = featureStatus === 'disabled';
@@ -129,7 +130,7 @@ export function useMachinePoolProjections(
         // evidence that a real list arrived.
         const cached = poolListByServerId[scopeId];
         const hydrated = Array.isArray(cached);
-        const storedStatus = poolListStatusByServerId[scopeId] ?? 'idle';
+        const storedStatus = poolListStatusByServerId[scopeId] ?? 'loading';
         const accountScope = accountScopes.get(scopeId);
         const cachedAccountId = poolAccountIdByServerId[scopeId];
         const cachedAccountIsCurrent = accountScope?.kind === 'signed_out'

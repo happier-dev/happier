@@ -1,4 +1,6 @@
-import { ExternalSessionCandidateDeleteRequestSchema, ExternalSessionLinkEnsureRequestSchema, ExternalSessionsCandidatesListRequestSchema } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
+import { ExternalSessionBackgroundFollowActionInputV1Schema, ExternalSessionCandidateDeleteRequestSchema, ExternalSessionLinkEnsureRequestSchema, ExternalSessionsCandidatesListRequestSchema } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import {
@@ -17,6 +19,7 @@ import {
     machineExternalSessionOperationResume,
     machineExternalSessionOperationRetry,
     machineExternalSessionOperationDiscard,
+    machineExternalSessionFollowPolicySet,
 } from '@/sync/ops/machineExternalSessions';
 import { storage } from '@/sync/domains/state/storage';
 import { resolveSessionAddressFromLocalState } from '@/sync/domains/session/resolveSessionAddressFromLocalState';
@@ -38,11 +41,33 @@ function readExternalActionOwnerMetadata(sessionId: string, serverId?: string | 
 }
 
 /** Host-side Browse controls retain the exact existing Machine RPC/compatibility owner. */
-export const executeExternalSessionBrowseAction: NonNullable<ActionExecutorDeps['hostExternalSessionAction']> = async ({ actionId, input, context, signal }) => {
+export const executeExternalSessionBrowseAction = async (
+    { actionId, input, context, signal }: Parameters<NonNullable<ActionExecutorDeps['hostExternalSessionAction']>>[0],
+    isFollowIntentCurrent?: () => boolean,
+): Promise<ActionExecuteResult> => {
     const options = { serverId: context.serverId,
         ...(context.expectedAccountId ? { accountId: context.expectedAccountId } : {}),
         ...(signal ? { signal } : {}) };
     switch (actionId) {
+        case 'sessions.external.backgroundFollow.set': {
+            const parsed = ExternalSessionBackgroundFollowActionInputV1Schema.parse(input);
+            const owner = readExternalActionOwnerMetadata(parsed.sessionId, context.serverId);
+            const link = readExternalSessionLink(owner?.metadata);
+            if (!link) return { ok: false, errorCode: 'session_machine_target_unavailable', error: 'Session owner Machine is unavailable' };
+            // This private UI precondition carries the exact link captured by
+            // the user's toggle across asynchronous approval/admission.
+            if (isFollowIntentCurrent?.() === false) {
+                return { ok: false, errorCode: 'external_session_follow_intent_stale', error: 'external_session_follow_intent_stale' };
+            }
+            const response = await machineExternalSessionFollowPolicySet({ ...parsed, machineId: link.machineId,
+                agentId: link.agentId, remoteSessionId: link.remoteSessionId, source: link.source },
+                { ...options, serverId: owner?.serverId });
+            const result = await getActionSpec(actionId).surfaceBindings!.plugin!.projectOutput!(response, {
+                actionId, surface: 'rpc', caller: { kind: 'host' }, input: parsed,
+                ...(signal ? { signal } : {}),
+            });
+            return { ok: true, result };
+        }
         case 'sessions.external.candidates.list': {
             try {
                 return { ok: true, result: await machineExternalSessionsCandidatesList(ExternalSessionsCandidatesListRequestSchema.parse(input), options) };

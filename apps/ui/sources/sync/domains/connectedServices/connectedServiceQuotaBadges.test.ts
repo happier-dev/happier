@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ConnectedServiceQuotaMeterV1, ConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol';
+import type { ConnectedServiceQuotaMeterV1, ConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { parseClaudeSubscriptionUsageMeters } from '@happier-dev/plugins-claude/agent/auth/services/quota/subscriptionFetcher';
 
 import { buildSummaryMeters, computeConnectedServiceQuotaSummaryBadges, selectConnectedServiceQuotaSummaryMeters } from './connectedServiceQuotaBadges';

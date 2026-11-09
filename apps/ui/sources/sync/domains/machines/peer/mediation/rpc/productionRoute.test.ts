@@ -1,18 +1,22 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     FeaturesResponseSchema,
+    type FeaturesResponse} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import {
     PeerLoopbackEndpointCandidateV1Schema,
-    PEER_MEDIATION_RECEIPTS,
-    type FeaturesResponse,
-    type PeerLoopbackEndpointCandidateV1,
+    type PeerLoopbackEndpointCandidateV1} from '@happier-dev/protocol/machines/peer/mediation/loopbackEndpointV1';
+import {
+    PEER_MEDIATION_RECEIPTS} from '@happier-dev/protocol/machines/peer/mediation/receipts';
+import {
     type PeerMachineRpcDirectRequestV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/machines/peer/mediation/rpc/directV2';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
 import { readRpcRequestDisposition } from '@happier-dev/sync-client';
 import { clearMachineRequestReachabilityForTest } from '@/sync/domains/machines/reachability/machineReachability';
 import { getSystemTasksRunner } from '@/components/systemTasks/systemTasksRuntime';
 import { publishLocalDaemonStatus } from '@/components/settings/machines/localControl/localDaemonSharedState';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
 const getReadyServerFeaturesSpy = vi.hoisted(() => vi.fn());
 const TOKEN_A = 'header.eyJzdWIiOiJhY2NvdW50LTEifQ.signature';
@@ -124,6 +128,8 @@ async function importProductionRoute() {
 }
 
 describe('production peer mediation machine RPC route adapter', () => {
+    afterEach(() => resetRuntimeFetch());
+
     beforeEach(() => {
         clearMachineRequestReachabilityForTest();
         getReadyServerFeaturesSpy.mockReset();
@@ -134,6 +140,8 @@ describe('production peer mediation machine RPC route adapter', () => {
         vi.unstubAllGlobals();
         // Desktop host is the OS boundary; status publication and locality logic stay real.
         vi.stubGlobal('__TAURI_INTERNALS__', { invoke: vi.fn() });
+        // Keep the desktop identity real while replacing its native HTTP boundary.
+        setRuntimeFetch((input, init) => fetch(input, init));
         publishLocalDaemonStatus(getSystemTasksRunner(), {
             machineId: 'machine_1', daemonAccountId: 'account-1',
             daemonServerUrl: 'https://server-a.example.test',
@@ -485,13 +493,10 @@ describe('production peer mediation machine RPC route adapter', () => {
             rpcErrorCode: 'MACHINE_RPC_INVALID_RESPONSE', schemaIssues: [{ code: 'invalid_type', path: [] }] },
         { status: 200, contentType: 'application/json', body: JSON.stringify({
             v: 2, ok: true, receipt: PEER_MEDIATION_RECEIPTS.rpcDirectCallSucceeded,
-            requestId: 'request_1', method: RPC_METHODS.DAEMON_MEMORY_STATUS, routeKind: 'loopback_direct',
-            result: { secret: 'private-body' }, commandReceipt: {
-                v: 1, issuer: 'daemon', issuedAtMs: 2000, requestHash: `sha256:${'a'.repeat(64)}`,
-                replayKey: 'request_1', resultHash: 'private-body',
-            },
+            requestId: 7, method: RPC_METHODS.DAEMON_MEMORY_STATUS, routeKind: 'loopback_direct',
+            result: { secret: 'private-body' },
         }), bodyWasJson: true, rpcErrorCode: 'MACHINE_RPC_INVALID_RESPONSE',
-            schemaIssues: [{ code: 'invalid_format', path: ['commandReceipt', 'resultHash'] }] },
+            schemaIssues: [{ code: 'invalid_type', path: ['requestId'] }] },
         { status: 502, contentType: 'text/html', body: '<html>Bad Gateway: private-body</html>',
             bodyWasJson: false, rpcErrorCode: RPC_ERROR_CODES.OUTCOME_UNKNOWN, schemaIssues: [] },
         { status: 504, contentType: 'application/json', body: '{"error":"private-body"}',

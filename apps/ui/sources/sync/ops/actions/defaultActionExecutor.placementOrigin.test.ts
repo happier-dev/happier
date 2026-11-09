@@ -1,13 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import {
-    CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
+    CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION} from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
+import {
     MACHINE_PLAIN_DATA_KEY_MARKER,
-    encodePlainMachineStoredContent,
+    encodePlainMachineStoredContent} from '@happier-dev/protocol/machines/machineStoredContent';
+import {
     type MachinePoolSelectionOriginV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/machines/pools/v1';
 import { SOCKET_RPC_EVENTS, type SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { projectSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { createExistingSessionDirectoryPreflightResult } from '@/dev/testkit/fixtures/sessionFixtures';
 import { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 import { getStorage } from '@/sync/domains/state/storage';
@@ -74,9 +77,9 @@ function buildSpawnInput(serverId: string) {
         windowsTerminalWindowName: null, runtimeDescriptorV1: null, acpSessionModeId: null,
         sessionConfigOptionOverrides: null, automation: null,
     });
-    return buildSessionSpawnNewInputV2FromAuthoringDraft({
+    return projectSessionSpawnNewActionInputV2(buildSessionSpawnNewInputV2FromAuthoringDraft({
         draft, creationKey: 'creation-a', permissionMode: 'default', configurationUpdatedAtMs: 1, initialMessage: 'Hello',
-    });
+    }));
 }
 
 describe('Session spawn first-dispatch placement origin', () => {

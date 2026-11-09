@@ -117,7 +117,25 @@ describe('createSessionListRenderableProjectionPatchCoalescer', () => {
         expect(storage.getState().sessionListRowsByServerId[homeB.serverId][homeB.sessionId].updatedAt).toBe(3);
     });
 
-
+    it('does not erase a queued carrier clock before the canonical owner sees a newer presence row', () => {
+        seed(address, { activeAt: 100, updatedAt: 100, presence: 'online' });
+        const queue = coalescer<SessionListRenderablePatchFields>((_current, payload) => payload);
+        queue.enqueue(address, { activeAt: 120, updatedAt: 120 }, { deferLeadingPatch: true });
+        sessionRuntimeObservations.observe(address, { active: false, activeAt: 123, presence: 123 });
+        storage.getState().applyServerScopedSessionListRowPatches(address.serverId,
+            [{ sessionId: address.sessionId, patch: { active: false, activeAt: 123, presence: 123 } }]);
+        sessionRuntimeObservations.observe(address, { active: true, activeAt: 124, presence: 'online' });
+        storage.getState().applyServerScopedSessionListRowPatches(address.serverId,
+            [{ sessionId: address.sessionId, patch: { active: true, activeAt: 124, presence: 'online' } }]);
+        const previous = storage.getState();
+        const notifications = countStoreNotifications(storage);
+        try {
+            queue.flushAll();
+            expect(notifications.read()).toEqual([]);
+            expect(storage.getState()).toBe(previous);
+            expect(sessionRuntimeObservations.read(address)).toMatchObject({ activeAt: 124, presence: 'online', fullPublicationUpdatedAt: 120 });
+        } finally { notifications.stop(); }
+    });
 
     it('rechecks operation lifetime before building or applying a queued projection', () => {
         const original = seed();

@@ -19,11 +19,13 @@ const UI_SESSION_STATE_CAPABILITIES: SessionStateCapabilitiesV1 = {
         voicePreference: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
         templateDraftRef: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
         templateInstance: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
+        approvalProfileId: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
     },
     display: {
         statusReason: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
         title: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
         bot: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
+        botFace: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
     },
     view: {
         transcriptToolCalls: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
@@ -39,7 +41,6 @@ export function createUiSessionStateEngine(params: Readonly<{
 	    updateSessionMetadataWithRetry: (
 	        sessionId: string,
 	        updater: UiSessionStateMetadataUpdater,
-	        opts?: Readonly<{ maxAttempts?: number }>,
 	    ) => Promise<unknown>;
 	    metadataPreprocess?: UiSessionStateMetadataPreprocess;
 	    metadataPostprocess?: UiSessionStateMetadataPostprocess;
@@ -84,17 +85,15 @@ export async function writeUiSessionStateField<F extends SessionStateFieldId>(pa
     sessionId: string;
     fieldId: F;
     value: SessionStateFieldWriteValue<F>;
+    metadataReason: string;
     expectedMetadataRevision?: number;
     expectedValue?: SessionStateFieldValue<F> | null;
-    metadataReason: string;
 	    updateSessionMetadataWithRetry: (
 	        sessionId: string,
 	        updater: UiSessionStateMetadataUpdater,
-	        opts?: Readonly<{ maxAttempts?: number }>,
 	    ) => Promise<unknown>;
 	    metadataPreprocess?: UiSessionStateMetadataPreprocess;
 	    metadataPostprocess?: UiSessionStateMetadataPostprocess;
-    maxAttempts?: number;
 }>): Promise<UiSessionStateWriteResult> {
 	    const engine = createUiSessionStateEngine({
 	        updateSessionMetadataWithRetry: params.updateSessionMetadataWithRetry,
@@ -110,7 +109,6 @@ export async function writeUiSessionStateField<F extends SessionStateFieldId>(pa
         metadataReason: params.metadataReason,
         expectedMetadataRevision: params.expectedMetadataRevision,
         expectedValue: params.expectedValue,
-        ...(typeof params.maxAttempts === 'number' ? { maxAttempts: params.maxAttempts } : {}),
         mirrorToProvider: false,
     });
 }

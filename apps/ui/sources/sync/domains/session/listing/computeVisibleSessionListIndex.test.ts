@@ -12,9 +12,83 @@ import { filterCollapsedSessionListItems } from '@/components/sessions/shell/fil
 import { buildVisibleSessionNavigationEntries } from '@/sync/domains/session/navigation/sessionNavigationOrder';
 import { buildSessionListIndexNodeId } from '@/sync/domains/sessionList/sessionListIndex';
 import { resolveVisibleSessionListIndexSummary } from './sessionListIndexPresentation';
+import { readRecordingHiddenSessionKeys } from './recordingPrivacy';
 import { buildSessionOrganizationProjection } from '@/sync/domains/session/organization/projection';
 import { buildSessionOrganizationListViewStateForServers } from '@/sync/domains/session/organization/viewState';
 import { buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization/keys';
+
+describe('recording tag privacy', () => {
+    it('excludes matching Home-local tags before pins and attention, then restores them when recording stops', () => {
+        const source: SessionListIndexItem[] = [
+            { type: 'session', serverId: 's1', sessionId: 'private' },
+            { type: 'session', serverId: 's1', sessionId: 'ordinary' },
+            { type: 'session', serverId: 's2', sessionId: 'private' },
+        ];
+        const inputs = {
+            source, attentionSource: source, previousPresentedIndex: source,
+            includeNeedsYouEverywhere: true, attentionInteractionHeld: true,
+            sessionListAttentionPlacementV1: 'both' as const,
+            hideInactiveSessions: false, pinnedSessionKeysV1: ['s1:private'], sessionListGroupOrderV1: {},
+            presentation: { enabled: false, presentation: 'grouped' as const },
+            resolveSessionRow: makeResolver({
+                's1:private': makeSessionRow('private', { active: true,
+                    viewer: createSessionViewerFixture({ attention: {
+                        needsAttention: true, reasons: ['permission_required'], primary: 'permission_required', presentation: 'full',
+                    } }),
+                }),
+                's1:ordinary': makeSessionRow('ordinary'), 's2:private': makeSessionRow('private'),
+            }),
+            sessionTagIdsBySessionKey: {
+                '["s1","private"]': ['secret'], '["s1","ordinary"]': ['public'], '["s2","private"]': ['secret'],
+            },
+        };
+        const ids = (items: readonly SessionListIndexItem[] | null) => items?.flatMap(item =>
+            item.type === 'session' ? [`${item.serverId}:${item.sessionId}`] : []);
+        const before = computeVisibleSessionListProjection(inputs);
+        expect(ids(before.items)).toContain('s1:private');
+        const organizationState = {
+            schemaVersionByServerId: {}, snapshotVersionByServerId: {}, pinsBySessionKey: {}, foldersByFolderKey: {},
+            folderAssignmentsBySessionKey: {}, tagsByTagKey: {}, attentionStandingsBySessionKey: {},
+            appearancesBySessionKey: {}, sessionAppearancesSupportedByServerId: {}, orderEntriesByScopeKey: {}, labelsByLabelKey: {},
+            tagAssignmentsBySessionKey: {
+                [buildSessionOrganizationSessionKey('s1', 'private')]: { sessionId: 'private', tagIds: ['secret'] },
+                [buildSessionOrganizationSessionKey('s1', 'ordinary')]: { sessionId: 'ordinary', tagIds: ['public'] },
+                [buildSessionOrganizationSessionKey('s2', 'private')]: { sessionId: 'private', tagIds: ['secret'] },
+            },
+        };
+        const organization = buildSessionOrganizationListViewStateForServers({
+            serverIds: ['s1', 's2'], projectionsByServerId: {
+                s1: buildSessionOrganizationProjection(organizationState, 's1'),
+                s2: buildSessionOrganizationProjection(organizationState, 's2'),
+            },
+        });
+        const recordingHiddenSessionKeys = readRecordingHiddenSessionKeys(true, { s1: ['secret'] }, organization);
+        const during = computeVisibleSessionListProjection({ ...inputs,
+            recordingHiddenSessionKeys, previousMembership: before.membership });
+        expect(ids(during.items)).not.toContain('s1:private');
+        expect(ids(during.items)).toEqual(expect.arrayContaining(['s1:ordinary', 's2:private']));
+        expect(during.filterResult.matchedCount).toBe(2);
+        const stopped = computeVisibleSessionListProjection({ ...inputs, previousMembership: during.membership });
+        expect(ids(stopped.items)).toContain('s1:private');
+    });
+
+    it('keeps source and row identities and never reads tag assignments without an explicit active preference', () => {
+        const source: SessionListIndexItem[] = [{ type: 'session', serverId: 's1', sessionId: 'ordinary' }];
+        const assignments = { get sessionTagIdsBySessionKey() { throw new Error('inactive privacy read organization'); },
+            orderItemAddressByItemKey: {} };
+        const inactive = readRecordingHiddenSessionKeys(false, { s1: ['secret'] }, assignments);
+        expect(inactive.size).toBe(0);
+        expect(readRecordingHiddenSessionKeys(true, {}, assignments)).toBe(inactive);
+        const project = (recordingHiddenSessionKeys?: ReadonlySet<string>) => computeVisibleSessionListProjection({ source,
+            recordingHiddenSessionKeys, resolveSessionRow: () => makeSessionRow('ordinary'),
+            hideInactiveSessions: false, pinnedSessionKeysV1: [], sessionListGroupOrderV1: {},
+            presentation: { enabled: false, presentation: 'grouped' },
+        });
+        const before = project();
+        const after = project(inactive);
+        expect(after.items?.[0]).toBe(before.items?.[0]);
+    });
+});
 
 function folderOrderKey(folderId: string): string {
     return buildSessionListFolderOrderItemKey({ serverId: 's1', folderId })!;

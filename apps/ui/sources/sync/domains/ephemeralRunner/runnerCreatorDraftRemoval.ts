@@ -1,4 +1,4 @@
-import { createStoredReadSchema } from '@happier-dev/protocol';
+import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { TemporaryComputerActivationRefV1Schema } from '@happier-dev/protocol/sessions/authoring/fieldCatalog';
 import type { SessionDraftDocumentV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
 

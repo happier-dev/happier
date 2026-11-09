@@ -197,6 +197,8 @@ export type SessionListFetchResult = Readonly<{
      */
     metadataUpgradeRequiredCount?: number;
     membershipUnavailableReason?: SessionListQueryResponseV1['membershipUnavailableReason'];
+    /** Client selection could not decide at least one hydrated summary's membership. */
+    selectionUnavailable?: boolean;
 }>;
 type CurrentSessionListRenderableLookup = (sessionId: string) => SessionListRenderableSession | null | undefined;
 type HydratedSessionApplyBatcherStats = Readonly<{

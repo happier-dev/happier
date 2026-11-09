@@ -386,7 +386,7 @@ describe('buildAccountEncryptionMigrateToPlainRequest', () => {
     expect(request.sessionDrafts).toBeUndefined();
   });
 
-  it('includes the released legacy Voice adapter projection in plain full-settings migrations', async () => {
+  it('moves a Voice credential to Plain through its Saved Secret, with Voice only on the canonical root', async () => {
     const credentials = createLegacyCredentials();
     const recoverySecret = Buffer.from(credentials.secret, 'base64url');
     const settingsSecretsKey = deriveSettingsSecretsKeyV1(
@@ -453,26 +453,16 @@ describe('buildAccountEncryptionMigrateToPlainRequest', () => {
       throw new Error('expected plain settings content');
     }
     assertObject(request.settingsContent.v, 'plain settings');
-    assertObject(request.settingsContent.v.voice, 'legacy voice projection');
-    assertObject(request.settingsContent.v.voice.adapters, 'legacy voice adapters');
-    assertObject(
-      request.settingsContent.v.voice.adapters.realtime_elevenlabs,
-      'legacy ElevenLabs adapter',
-    );
-    assertObject(
-      request.settingsContent.v.voice.adapters.realtime_elevenlabs.byo,
-      'legacy ElevenLabs BYO settings',
-    );
-
+    expect(request.settingsContent.v).not.toHaveProperty('voice');
     expect(request.settingsContent.v.voiceSettingsV1).toEqual(
       expect.objectContaining({
         providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       }),
     );
-    expect(request.settingsContent.v.voice.adapters.realtime_elevenlabs.byo.apiKey).toEqual({
-      _isSecretValue: true,
-      value: 'xi_migration_key',
-    });
+    expect(request.settingsContent.v.secrets).toEqual([expect.objectContaining({
+      id: 'voice-elevenlabs-secret',
+      encryptedValue: { _isSecretValue: true, value: 'xi_migration_key' },
+    })]);
   });
 
   it('migrates connected service credentials and plaintext-safe automation templates to plain envelopes', async () => {

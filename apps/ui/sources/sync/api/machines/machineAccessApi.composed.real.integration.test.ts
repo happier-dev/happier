@@ -1,8 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import nacl from 'tweetnacl';
 import { randomUUID } from 'node:crypto';
-import { createActionExecutor, getActionSpec, type ActionExecutorDeps, type ApprovalRequest,
-    ApprovalRequestSchema, buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol';
+import { createActionExecutor} from '@happier-dev/protocol/actions/actionExecutor';
+import { getActionSpec} from '@happier-dev/protocol/actions/actionSpecs';
+import { type ActionExecutorDeps} from '@happier-dev/protocol/actions/executor/types';
+import { type ApprovalRequest,
+    ApprovalRequestSchema} from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';

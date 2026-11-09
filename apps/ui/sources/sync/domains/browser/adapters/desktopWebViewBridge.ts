@@ -1,10 +1,9 @@
 import { BrowserCookieApplyV1Schema, BrowserProfileLoginsImportResultV1Schema, type BrowserProfileLoginsImportResultV1 } from '@happier-dev/protocol/browser/profile/v1';
-import type { NativeHardwareKeyboardEventLike } from '@/keyboard/runtime';
-import { parseBrowserGuestKeyboardEvent } from './guestKeyboard';
-
 import { readCanonicalPaddedBase64DecodedLength } from '@happier-dev/protocol/crypto/base64';
 
 import { invokeDesktopHost, isDesktopHost, listenDesktopHostEvent } from '@/utils/platform/desktopHost';
+import type { NativeHardwareKeyboardEventLike } from '@/keyboard/runtime';
+import { parseBrowserGuestKeyboardEvent } from './guestKeyboard';
 
 import {
     desktopWebViewAvailabilitySupportsBrowsing,
@@ -71,6 +70,8 @@ export type DesktopBrowserOpenViewRequest = Readonly<{
     viewId: string;
     profileId: string;
     url: string;
+    /** Only preview documents consume the proxy's reserved transport-failure response fact. */
+    localPreview?: boolean;
     /**
      * Canonical injected browser-diagnostics collector script. When provided, the native host runs
      * it as a document-start initialization script and attaches a Wry `ipc_handler` that buffers the
@@ -578,7 +579,19 @@ function unavailableDesktopBrowserCaptureSnapshotResultForAvailability(
     };
 }
 
+/** The shell publishes this platform fact before the renderer can admit a Browser view. */
+export function readDesktopWebViewLaunchAvailability(): DesktopWebViewNativeAvailability | null {
+    if (!isDesktopHost()) return null;
+    const payload = (globalThis as Record<string, unknown>).__HAPPIER_DESKTOP_BROWSER_AVAILABILITY__
+        ?? (typeof window !== 'undefined'
+            ? (window as unknown as Record<string, unknown>).__HAPPIER_DESKTOP_BROWSER_AVAILABILITY__
+            : undefined);
+    return payload === undefined ? null : normalizeDesktopWebViewNativeAvailability(payload);
+}
+
 export async function readDesktopWebViewNativeAvailability(): Promise<DesktopWebViewNativeAvailability> {
+    const launchAvailability = readDesktopWebViewLaunchAvailability();
+    if (launchAvailability) return launchAvailability;
     if (!isDesktopHost()) {
         return unavailableDesktopWebViewNativeAvailability('tauri_host_unavailable');
     }

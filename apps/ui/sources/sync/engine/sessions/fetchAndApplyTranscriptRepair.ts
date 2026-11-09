@@ -1,5 +1,6 @@
 import { buildSessionMessagesPath } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 import { repairSessionMessagesTargets } from '@happier-dev/sync-client';
+import { isSessionMessageRevisionHeld } from '@happier-dev/session-core/transcript';
 import { runSessionMessagesPagePipeline } from './sessionMessagesPagePipeline';
 
 type PagePipelineParams = Parameters<typeof runSessionMessagesPagePipeline>[0];
@@ -39,12 +40,11 @@ export async function fetchAndApplyTranscriptRepair(params: Omit<
         onPage: (messages, targetIds) => {
             // The pipeline commits revisions only after application. Already-current
             // targets also settle even when normalization was skipped by dedupe.
-            const received = params.sessionReceivedMessages.get(params.sessionId);
             const resolvedMessageIds = new Set<string>();
             for (const message of messages) {
                 if (!targetIds.has(message.id)) continue;
-                const revision = received?.get(message.id);
-                if (revision !== undefined && revision >= (message.updatedAt ?? message.createdAt)) {
+                if (isSessionMessageRevisionHeld(params.sessionReceivedMessages, params.sessionId, message.id,
+                    message.updatedAt ?? message.createdAt)) {
                     resolvedMessageIds.add(message.id);
                 }
             }

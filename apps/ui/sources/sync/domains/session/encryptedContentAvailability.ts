@@ -1,5 +1,5 @@
 import type { SessionDataKeyHydrationState } from '@/sync/encryption/sessionDataKeyHydration';
-import type { AccountRecipientEnvelopeReadiness } from '@happier-dev/protocol';
+import type { AccountRecipientEnvelopeReadiness } from '@happier-dev/protocol/account/encryptionMode';
 
 export const SESSION_CONTENT_AVAILABILITIES = [
     'ready',

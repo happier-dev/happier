@@ -147,7 +147,9 @@ export function createSessionHumanPresenceStore() {
                     ));
                     const previousView = home.observations.get(key);
                     const next: SessionHumanPresenceView = { status: 'live', viewers, observedAt: snapshot.observedAt };
-                    if (JSON.stringify(previousView) === JSON.stringify(next)) return;
+                    // The observation clock alone is no change: a heartbeat with the same viewers keeps the view.
+                    if (previousView?.status === next.status
+                        && JSON.stringify(previousView.viewers) === JSON.stringify(next.viewers)) return;
                     notifyChanged(serverId, () => home.observations.set(key, next));
                 },
                 dispose() {

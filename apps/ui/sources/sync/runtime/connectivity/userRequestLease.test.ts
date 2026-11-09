@@ -20,6 +20,46 @@ describe('user request lease owner', () => {
         expect(owner.hasActiveLease()).toBe(false);
     });
 
+    it('lets only requests in flight when routine teardown was deferred extend it', () => {
+        const owner = createUserRequestLeaseOwner();
+        const releaseUserRequest = owner.acquire();
+        const teardown = vi.fn();
+        expect(owner.deferRoutineTeardown(teardown)).toBe(true);
+
+        // A hidden page keeps issuing overlapping background requests; each is
+        // issued before the previous one settles, so the lease set never empties.
+        let releasePrevious = owner.acquire();
+        for (let index = 1; index < 20; index += 1) {
+            const releaseNext = owner.acquire();
+            releasePrevious();
+            releasePrevious = releaseNext;
+        }
+        expect(teardown).not.toHaveBeenCalled();
+
+        releaseUserRequest();
+        expect(teardown).toHaveBeenCalledOnce();
+
+        releasePrevious();
+        expect(teardown).toHaveBeenCalledOnce();
+    });
+
+    it('keeps the first deferral boundary when routine backgrounding is reported twice', () => {
+        const owner = createUserRequestLeaseOwner();
+        const releaseUserRequest = owner.acquire();
+        const firstTeardown = vi.fn();
+        const secondTeardown = vi.fn();
+        owner.deferRoutineTeardown(firstTeardown);
+        const releaseLaterRequest = owner.acquire();
+
+        expect(owner.deferRoutineTeardown(secondTeardown)).toBe(true);
+        releaseUserRequest();
+
+        expect(firstTeardown).not.toHaveBeenCalled();
+        expect(secondTeardown).toHaveBeenCalledOnce();
+        releaseLaterRequest();
+        expect(secondTeardown).toHaveBeenCalledOnce();
+    });
+
     it('cancels deferred hidden teardown when visibility returns', () => {
         const owner = createUserRequestLeaseOwner();
         const release = owner.acquire();

@@ -2,6 +2,7 @@ import { NOTIFICATION_CHANNELS_ACCOUNT_KV_KEY_V1 } from '@happier-dev/protocol/a
 import { serverAccountScopeKeySuffix, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { readNotificationChannelCatalogProjection } from '@/sync/api/account/apiNotificationChannelCatalog';
 import { createScopedSnapshotLoader, type ScopedLoadTarget } from '@/sync/engine/scope/scopedSnapshotLoader';
+import { subscribeAccountCatalogInvalidation } from './accountCatalogInvalidation';
 import { applyNotificationChannelCatalogSnapshot, beginNotificationChannelCatalogLoad, getNotificationChannelCatalogSnapshot,
     invalidateNotificationChannelCatalogsForServer } from '@/sync/store/settings/notificationChannelCatalogSnapshot';
 
@@ -9,6 +10,7 @@ type Target = ScopedLoadTarget & Readonly<{ scope: ServerAccountScope }>;
 const targetFor = (scope: ServerAccountScope): Target => ({ key: `notification-channels:${serverAccountScopeKeySuffix(scope)}`, serverId: scope.serverId, scope });
 const publicationGuards = new Map<string, () => void>();
 const loader = createScopedSnapshotLoader<Target>({
+    subscribeRetainedInvalidation: subscribeAccountCatalogInvalidation,
     load: async ({ key, scope }, context) => {
         const guard = publicationGuards.get(key);
         try { guard?.(); } catch { return; }

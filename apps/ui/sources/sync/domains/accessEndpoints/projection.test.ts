@@ -1,3 +1,4 @@
+import { createBuiltinRelayAccessSelection as relaySelection } from '@happier-dev/cli-common/relayAccess/catalog';
 import { describe, expect, it } from 'vitest';
 
 type Endpoint = Readonly<{
@@ -203,11 +204,11 @@ describe('AccessEndpoint projection', () => {
             clientContext: 'hosted-https-web',
             relayAccess: [
                 {
-                    config: { providerId: 'lan', url: 'http://192.168.1.44:3005' },
+                    config: relaySelection('lan', { url: 'http://192.168.1.44:3005' }),
                     status: { state: 'enabled', shareUrl: 'http://192.168.1.44:3005/' },
                 },
                 {
-                    config: { providerId: 'tailscaleFunnel' },
+                    config: relaySelection('tailscaleFunnel'),
                     status: {
                         state: 'needs_auth',
                         shareUrl: 'https://funnel.tailnet.ts.net',
@@ -215,7 +216,7 @@ describe('AccessEndpoint projection', () => {
                     },
                 },
                 {
-                    config: { providerId: 'cloudflareNamed', hostname: 'team.example.test', token: 'secret' },
+                    config: relaySelection('cloudflareNamed', { hostname: 'team.example.test' }, [{ purpose: 'tunnel.manage', credentialRef: { kind: 'connectedAccount', account: { service: { pluginId: 'happier.deploy.cloudflare', localId: 'cloudflare' }, accountId: 'projection-account' } } }]),
                     status: {
                         state: 'error',
                         shareUrl: 'https://team.example.test',
@@ -253,18 +254,18 @@ describe('AccessEndpoint projection', () => {
             clientContext: 'hosted-https-web',
             relayAccess: [
                 {
-                    config: { providerId: 'tailscaleServe' },
+                    config: relaySelection('tailscaleServe'),
                     status: {
                         state: 'enabled',
                         details: { reason: 'tailscale_not_installed' },
                     },
                 },
                 {
-                    config: { providerId: 'cloudflareNamed', hostname: 'fallback.example.test', token: 'secret' },
+                    config: relaySelection('cloudflareNamed', { hostname: 'fallback.example.test' }, [{ purpose: 'tunnel.manage', credentialRef: { kind: 'connectedAccount', account: { service: { pluginId: 'happier.deploy.cloudflare', localId: 'cloudflare' }, accountId: 'projection-account' } } }]),
                     status: { state: 'enabled' },
                 },
                 {
-                    config: { providerId: 'lan', url: 'lan.example.test' },
+                    config: relaySelection('lan', { url: 'lan.example.test' }),
                     status: { state: 'enabled', shareUrl: 'lan.example.test' },
                 },
             ],
@@ -468,7 +469,7 @@ describe('AccessEndpoint projection', () => {
                 serverUrl: 'http://127.0.0.1:3005',
             }],
             relayAccess: [{
-                config: { providerId: 'cloudflareNamed', hostname: 'team.example.test', token: 'secret' },
+                config: relaySelection('cloudflareNamed', { hostname: 'team.example.test' }, [{ purpose: 'tunnel.manage', credentialRef: { kind: 'connectedAccount', account: { service: { pluginId: 'happier.deploy.cloudflare', localId: 'cloudflare' }, accountId: 'projection-account' } } }]),
                 status: { state: 'enabled', shareUrl: 'https://team.example.test' },
             }],
         });

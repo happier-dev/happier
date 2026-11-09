@@ -28,7 +28,7 @@ export function workspacePathToFileSearchItem(path: string): FileSearchItem {
     return { fullPath: path, fileName: path.slice(separator + 1), filePath: separator < 0 ? '' : path.slice(0, separator + 1), fileType: 'file' };
 }
 
-export function selectRecentWorkspaceFiles(paths: readonly string[], existingPaths: readonly string[] | null, matchingPaths?: ReadonlySet<string>): string[] {
-    const existing = existingPaths === null ? null : new Set(existingPaths);
+export function selectRecentWorkspaceFiles(paths: readonly string[], existingPaths: readonly string[] | ReadonlySet<string> | null, matchingPaths?: ReadonlySet<string>): string[] {
+    const existing = existingPaths === null ? null : 'has' in existingPaths ? existingPaths : new Set(existingPaths);
     return paths.filter(path => (existing === null || existing.has(path)) && (!matchingPaths || matchingPaths.has(path)));
 }

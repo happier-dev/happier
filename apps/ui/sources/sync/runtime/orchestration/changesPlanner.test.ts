@@ -375,10 +375,15 @@ describe('planSyncActionsFromChanges', () => {
             const planned = planSyncActionsFromChanges([buildChange({ cursor: 1, kind: 'account', entityId: 'self', hint })]);
             expect(plannedChangesAffectSessionListQuery(planned)).toBe(true);
             expect(planned.invalidate.savedSecretResources).toBe(true);
+            expect(planned.machineResourcesAffect).toBe(true);
+            expect(planned.managedMachineInventoryAffect).toBe(true);
         }
         const settings = planSyncActionsFromChanges([buildChange({ cursor: 2, kind: 'account', entityId: 'self', hint: { settingsVersion: 8 } })]);
         expect(plannedChangesAffectSessionListQuery(settings)).toBe(false);
         expect(settings.invalidate.savedSecretResources).toBe(false);
+        expect(settings.invalidate.settings).toBe(true);
+        expect(settings.machineResourcesAffect).toBe(false);
+        expect(settings.managedMachineInventoryAffect).toBe(false);
     });
 
     it('publishes the canonical Workflow definition query relevance for unrelated changes and recovery', async () => {

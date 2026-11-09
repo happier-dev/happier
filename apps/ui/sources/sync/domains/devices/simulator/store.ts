@@ -1,9 +1,11 @@
 import type {
-    MachineLiveStreamControlLeaseV1,
-    MachineLiveStreamFrameV1,
+    MachineLiveStreamControlLeaseV1} from '@happier-dev/protocol/machines/peer/mediation/stream/controlV1';
+import type {
+    MachineLiveStreamFrameV1} from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
+import type {
     SimulatorSidebandKindV1,
     SimulatorSidebandMessageV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/devices/simulator/sidebandV1';
 
 export type SimulatorPreviewState = Readonly<{
     phase: 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'error' | 'stopped';

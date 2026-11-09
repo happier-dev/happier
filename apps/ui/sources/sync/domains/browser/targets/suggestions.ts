@@ -270,8 +270,8 @@ export function selectRunningServiceForEndedPreview(
 }
 
 /**
- * The running Service preview a typed localhost address names. In a Session, `localhost:PORT` is the
- * Session Machine's port, and a registered preview of that port opens through its preview route.
+ * The running Service a typed localhost address names. Preview registration is an Open effect,
+ * so a declared Service can be selected before it has a Browser target.
  */
 export function selectLaunchpadServiceRowForAddress(
     rows: readonly BrowserLaunchpadRow[],
@@ -280,8 +280,9 @@ export function selectLaunchpadServiceRowForAddress(
     const port = readBrowserLoopbackAddressPort(url);
     if (!port) return null;
     return rows.find((row) => row.section === 'running' && row.disabledReason === null
-        && row.target?.kind === 'localServicePreview'
-        && readBrowserLoopbackAddressPort(row.serviceRow?.target.endpointUrl ?? row.target.display?.addressLabel) === port) ?? null;
+        && (row.serviceRow?.primaryAction?.kind === 'open' || row.target?.kind === 'localServicePreview')
+        && readBrowserLoopbackAddressPort(row.serviceRow?.target.endpointUrl
+            ?? (row.target?.kind === 'localServicePreview' ? row.target.display?.addressLabel : undefined)) === port) ?? null;
 }
 
 /** Same identity match for current Services facts, including a failed replacement occurrence. */

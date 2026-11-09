@@ -9,10 +9,13 @@ import { initializeRealAppRuntimeForTests } from '@/dev/testkit/harness/realAppR
 import { configureConnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { storage } from '@/sync/domains/state/storageStore';
 import { captureSessionFullPublicationBaseline } from '@/sync/domains/session/sessionRuntimeObservation';
+import { sortSessionListRenderableSessionsNewestUpdatedFirstIfNeeded } from '@/sync/domains/session/listing/sessionListRenderableSorting';
 import type { StorageState } from '@/sync/store/types';
 import { createSessionsDomain } from './sessions';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { projectManager } from '@/sync/runtime/orchestration/projectManager';
+import { snapshotToScmStatus } from '@/scm/scmRepositoryService';
+import { projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import * as reachableTargets from '@/sync/domains/session/resolveSessionReachableMachineId';
 import * as warmCachePersistence from '@/sync/domains/state/warmCachePersistence';
 import * as warmCacheAdaptersModule from '@/sync/domains/state/warmCacheAdapters';
@@ -180,7 +183,10 @@ describe('sessions domain: unchanged writes', () => {
     it.each(['replace', 'merge', 'reconcile'] as const)('reuses equal nested row data through %s publication', (mode) => {
         const { domain, get } = createHarness();
         const serverId = getActiveServerSnapshot().serverId;
-        const row = buildSessionListRenderableFromSession(currentSession({ id: 's1', metadata: { machineId: 'm1', path: '/repo', host: 'pub.test' } }));
+        const row = buildSessionListRenderableFromSession(currentSession({ id: 's1', active: true,
+            metadata: { machineId: 'm1', path: '/repo', host: 'pub.test' },
+            agentState: { requests: { pending: { kind: 'permission', tool: 'Bash', arguments: {}, createdAt: 1, turnId: 'turn-a' } } },
+        }));
         domain.applyServerScopedSessionListRows(serverId, [row], { source: 'ordinary', mode: 'replace' });
         const previousRows = get().sessionListRowsByServerId[serverId];
         const previous = previousRows.s1;
@@ -191,6 +197,8 @@ describe('sessions domain: unchanged writes', () => {
         else domain.applyServerScopedSessionListRows(serverId, [next], { source: 'ordinary', mode: 'replace' });
         expect(get().sessionListRowsByServerId[serverId].s1.seq).toBe(next.seq);
         expect(get().sessionListRowsByServerId[serverId].s1.metadata).toBe(previous.metadata);
+        expect(previous.currentRequestRef).toEqual({ kind: 'permission', requestId: 'pending', turnId: 'turn-a' });
+        expect(get().sessionListRowsByServerId[serverId].s1.currentRequestRef).toBe(previous.currentRequestRef);
         const retainedState = get();
         const replay = structuredClone(next);
         if (mode === 'merge') domain.mergeSessionListRowsForServerScope(serverId, [replay]);
@@ -262,34 +270,10 @@ describe('sessions domain: unchanged writes', () => {
         expect(getSetCalls()).toBe(notifications + 2);
     });
 
-    it('retains equal action drafts without notifying and publishes actual input/status changes', () => {
-        const { domain, get, getSetCalls } = createHarness();
-        const scope = { serverId: 'home', accountId: 'account_a' };
-        const address = { serverId: 'home', sessionId: 's1' };
-        const created = domain.createSessionActionDraft(scope, address, { actionId: 'review.start', input: { base: { kind: 'none' } } });
-        const settled = get();
-        const notifications = getSetCalls();
-        domain.updateSessionActionDraftInput(scope, address, created.id, { base: { kind: 'none' } });
-        domain.setSessionActionDraftStatus(scope, address, created.id, 'editing', null);
-        expect(get()).toBe(settled);
-        expect(getSetCalls()).toBe(notifications);
-        domain.updateSessionActionDraftInput(scope, address, created.id, { instructions: 'review this' });
-        domain.setSessionActionDraftStatus(scope, address, created.id, 'running');
-        expect(getSetCalls()).toBe(notifications + 2);
-        domain.clearSessionLocalStateScope();
-        const beforeHydration = getSetCalls();
-        domain.updateSessionActionDraftInput(scope, address, created.id, { instructions: 'review this' });
-        expect(Object.values(get().sessionActionDraftsByAddressKey).flat().some((draft) => draft.id === created.id)).toBe(true);
-        expect(getSetCalls()).toBe(beforeHydration + 1);
-        const hydrated = get();
-        domain.updateSessionActionDraftInput(scope, address, created.id, { instructions: 'review this' });
-        expect(get()).toBe(hydrated);
-    });
 
     it('publishes only real workspace SCM selection and operation changes', () => {
         const { domain, get, getSetCalls } = createHarness();
         const scope = { serverId: 'home', machineId: 'm1', rootPath: '/repo' };
-        domain.markWorkspaceScmTouchedPaths(scope, ['a.ts'], 10);
         domain.markWorkspaceScmCommitSelectionPaths(scope, ['a.ts'], 10);
         domain.upsertWorkspaceScmCommitSelectionPatch(scope, { path: 'a.ts', patch: 'patch' }, 10);
         const started = domain.beginWorkspaceScmOperation(scope, 'commit');
@@ -297,11 +281,9 @@ describe('sessions domain: unchanged writes', () => {
         domain.updateWorkspaceScmOperationProgress(scope, started.operation.id, 'running');
         const settled = get();
         const notifications = getSetCalls();
-        domain.markWorkspaceScmTouchedPaths(scope, ['a.ts'], 10);
-        domain.markWorkspaceScmTouchedPaths(scope, []);
+        domain.markWorkspaceScmCommitSelectionPaths(scope, []);
         domain.markWorkspaceScmCommitSelectionPaths(scope, ['a.ts'], 10);
         domain.upsertWorkspaceScmCommitSelectionPatch(scope, { path: 'a.ts', patch: 'patch' }, 10);
-        domain.pruneWorkspaceScmTouchedPaths(scope, new Set(['a.ts']));
         domain.pruneWorkspaceScmCommitSelectionPaths(scope, new Set(['a.ts']));
         domain.pruneWorkspaceScmCommitSelectionPatches(scope, new Set(['a.ts']));
         domain.unmarkWorkspaceScmCommitSelectionPaths(scope, ['missing']);
@@ -310,7 +292,7 @@ describe('sessions domain: unchanged writes', () => {
         domain.updateWorkspaceScmOperationProgress(scope, started.operation.id, 'running');
         expect(get()).toBe(settled);
         expect(getSetCalls()).toBe(notifications);
-        domain.markWorkspaceScmTouchedPaths(scope, ['a.ts'], 11);
+        domain.markWorkspaceScmCommitSelectionPaths(scope, ['b.ts'], 11);
         domain.pruneWorkspaceScmCommitSelectionPaths(scope, new Set());
         domain.pruneWorkspaceScmCommitSelectionPatches(scope, new Set());
         domain.finishWorkspaceScmOperation(scope, started.operation.id);
@@ -399,16 +381,40 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
         domain.applyServerScopedSessionListRows(canonicalId, [buildSessionListRenderableFromSession({ ...session, updatedAt: 2 })], { source: 'ordinary', mode: 'replace' });
         const baseline = get().sessionListRowsByServerId[canonicalId];
         const refreshed = { ...session, updatedAt: 43 };
-        const row = buildSessionListRenderableFromSession(refreshed);
+        const apply = (next: Session) => {
+            const capturedRows = get().sessionListRowsByServerId[canonicalId];
+            const row = buildSessionListRenderableFromSession(next);
+            if (mode === 'hydration') domain.applySessions([next]);
+            else if (mode === 'merge') domain.mergeSessionListRowsForServerScope(remote.id, [row]);
+            else domain.reconcileSessionListRowsForServerScope(remote.id, [row], capturedRows,
+                captureSessionFullPublicationBaseline(canonicalId, Object.keys(capturedRows)));
+        };
+        apply(refreshed);
 
-        if (mode === 'hydration') domain.applySessions([refreshed]);
-        else if (mode === 'merge') domain.mergeSessionListRowsForServerScope(remote.id, [row]);
-        else domain.reconcileSessionListRowsForServerScope(remote.id, [row], baseline,
-            captureSessionFullPublicationBaseline(canonicalId, Object.keys(baseline)));
-
-        expect(readSessionListRowForServerId(get().sessionListRowsByServerId, canonicalId, session.id)?.updatedAt).toBe(43);
+        const admitted = readSessionListRowForServerId(get().sessionListRowsByServerId, canonicalId, session.id);
+        expect(admitted).toBeDefined();
+        if (!admitted) throw new Error('Expected the promoted Home row');
+        // First hydration acquires content. Row-only receipts retain it while the
+        // exact-Home raw witness, not meaningful list recency, advances.
+        if (mode === 'hydration') expect(admitted.updatedAt).toBe(43);
+        else {
+            expect(admitted).toBe(baseline[session.id]);
+            expect(admitted.updatedAt).toBe(2);
+            expect(captureSessionFullPublicationBaseline(canonicalId, [session.id])).toEqual({ [session.id]: 43 });
+        }
+        const other = buildSessionListRenderableFromSession(currentSession({ id: 'meaningfully-newer', meaningfulActivityAt: 20 }));
+        expect(sortSessionListRenderableSessionsNewestUpdatedFirstIfNeeded([admitted, other]).map(row => row.id))
+            .toEqual([other.id, session.id]);
         expect(get().sessionListRowsByServerId[remote.id]).toBeUndefined();
         expect(get().ordinarySessionListMembershipByServerId[canonicalId]).toContain(session.id);
+
+        apply({ ...refreshed, updatedAt: 44, meaningfulActivityAt: 44 });
+        const changed = readSessionListRowForServerId(get().sessionListRowsByServerId, canonicalId, session.id);
+        expect(changed).not.toBe(admitted);
+        expect(changed).toMatchObject({ updatedAt: 44, meaningfulActivityAt: 44 });
+        if (!changed) throw new Error('Expected the real meaningful-activity change');
+        expect(sortSessionListRenderableSessionsNewestUpdatedFirstIfNeeded([other, changed]).map(row => row.id))
+            .toEqual([session.id, other.id]);
     });
 
     it('clears every retained row and membership alias of a promoted Home without reviving a fallback', async () => {
@@ -528,6 +534,69 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
 
         expect(domain.getSessionProjectScmSnapshot('s1')).toBe(snapshot);
         expect(projectManager.getProjectForSession('s1')?.sessionIds).toEqual(['s1']);
+    });
+
+    it('keeps managed Session project lookup empty while its physical workspace remains addressable', () => {
+        const session = currentSession({ id: 'managed', metadata: {
+            machineId: 'm1', host: 'h', path: '/private/chat', sessionDirectoryV1: { v: 1, kind: 'managed' },
+        } });
+        const { domain, get, set, getSetCalls } = createHarness({ sessions: { managed: session } });
+
+        expect(domain.getProjectForSession(session.id)).toBeNull();
+        const scope = { serverId: session.serverId!, machineId: 'm1', rootPath: '/private/chat' };
+        domain.markWorkspaceScmCommitSelectionPaths(scope, ['notes.md'], 10);
+        expect(domain.getWorkspaceScmCommitSelectionPaths(scope)).toEqual(['notes.md']);
+        expect(domain.getProjectForSession(session.id, scope.serverId)).toBeNull();
+
+        const snapshot: ScmWorkingSnapshot = {
+            projectKey: 'runtime-only', fetchedAt: 1, repo: { isRepo: true, rootPath: scope.rootPath },
+            branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
+            hasConflicts: false, entries: [], totals: { includedFiles: 0, pendingFiles: 0, untrackedFiles: 0,
+                includedAdded: 0, includedRemoved: 0, pendingAdded: 0, pendingRemoved: 0 },
+        };
+        const status = snapshotToScmStatus(snapshot);
+        domain.publishSessionProjectScmSnapshots([{ sessionId: session.id, snapshot, status }]);
+        expect(get().sessionScmStatus[session.id]).toEqual(status);
+        expect(domain.getSessionProjectScmSnapshot(session.id)).toBe(snapshot);
+        expect(domain.getSessionProjectScmSnapshot(session.id, scope.serverId)).toBe(snapshot);
+        const freshStatus = { ...status, branch: 'feature', lastUpdatedAt: 3 };
+        domain.applyScmStatus(session.id, freshStatus);
+        expect(domain.getSessionProjectScmStatus(session.id, scope.serverId)).toEqual(freshStatus);
+        domain.applyScmStatus(session.id, status);
+        const notifications = getSetCalls();
+        domain.publishSessionProjectScmSnapshots([{ sessionId: session.id, snapshot: { ...snapshot, fetchedAt: 2 }, status }]);
+        expect(getSetCalls()).toBe(notifications);
+        expect(domain.getSessionProjectScmSnapshot(session.id)).toBe(snapshot);
+        domain.markSessionProjectScmCommitSelectionPaths(session.id, ['notes.md']);
+        expect(domain.getSessionProjectScmCommitSelectionPaths(session.id, scope.serverId)).toEqual(['notes.md']);
+        domain.clearSessionProjectScmCommitSelectionPaths(session.id, scope.serverId);
+        expect(domain.getSessionProjectScmCommitSelectionPaths(session.id)).toEqual([]);
+        domain.appendSessionProjectScmOperation(session.id, { operation: 'commit', status: 'success', timestamp: 1 });
+        expect(domain.getSessionProjectScmOperationLog(session.id, scope.serverId)[0]?.sessionId).toBe(session.id);
+        const operation = domain.beginSessionProjectScmOperation(session.id, 'commit');
+        expect(operation.started).toBe(true);
+        if (!operation.started) return;
+        expect(operation.operation.sessionId).toBe(session.id);
+        expect(domain.getSessionProjectScmInFlightOperation(session.id, scope.serverId)?.id).toBe(operation.operation.id);
+        expect(domain.finishSessionProjectScmOperation(session.id, operation.operation.id, scope.serverId)).toBe(true);
+        expect(domain.getProjectForSession(session.id)).toBeNull();
+        expect(projectManager.getProjectForSession(session.id)).toBeNull();
+        expect(projectManager.getProjectForWorkspace(scope)?.sessionIds).toEqual([]);
+
+        const sharedOnlyRow = buildSessionListRenderableFromSession(currentSession({
+            id: session.id, metadataLayoutVersion: 1, ownerMetadataView: null, accessLevel: 'view',
+            // Layout-1 wire metadata is shared; this legacy Session fixture field names the owner type.
+            metadata: projectSessionSharedMetadataV1({ metadata: session.metadata }) as unknown as Session['metadata'],
+        }));
+        expect(sharedOnlyRow.metadata).not.toBeNull();
+        expect(sharedOnlyRow.metadata?.path).toBe('');
+        set({
+            sessions: { managed: { ...session, metadataLayoutVersion: 1, ownerMetadataView: session.metadata } },
+            sessionListRowsByServerId: { [scope.serverId]: { managed: sharedOnlyRow } },
+        });
+        expect(domain.getSessionProjectScmSnapshot(session.id, scope.serverId)).toBe(snapshot);
+        expect(domain.getProjectForSession(session.id, scope.serverId)).toBeNull();
+        expect(domain.getSessionProjectScmSnapshot(session.id, 'another-home')).toBeNull();
     });
 
     it('does not notify storage when SCM snapshot refreshes only change fetchedAt', async () => {
@@ -926,6 +995,8 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
         ]);
 
         const nextIndex = get().sessionListIndexByServerId['srv_active'];
+        expect(get().sessions.s1?.meaningfulActivityAt).toBe(300);
+        expect(readSessionListRowForServerId(get().sessionListRowsByServerId, 'srv_active', 's1')?.meaningfulActivityAt).toBe(300);
         expect(nextIndex).not.toBe(initialIndex);
         expect(readSessionListIndexSessionIds(nextIndex)).toEqual(['s1', 's2']);
     });
@@ -1259,7 +1330,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
         expect(get().sessions['s1']).toBe(initialSession);
     });
 
-    it('keeps store collection references stable for active session heartbeat updates', async () => {
+    it('publishes an admitted activeAt-only observation without rebuilding its stable list ordering', async () => {
 
         observeSessionListWarmCacheWrites();
 
@@ -1308,10 +1379,10 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
             } as any),
         ]);
 
-        expect(get().sessions.s1).toBe(initialSession);
-        expect(get().sessions.s1?.activeAt).toBe(1);
-        expect(get().sessions).toBe(initialSessions);
-        expect((get().sessionListRowsByServerId['srv_active'] ?? {})).toBe(initialRenderables);
+        expect(get().sessions.s1).not.toBe(initialSession);
+        expect(get().sessions.s1?.activeAt).toBe(2);
+        expect(get().sessions).not.toBe(initialSessions);
+        expect((get().sessionListRowsByServerId['srv_active'] ?? {})).not.toBe(initialRenderables);
         expect(get().sessionListIndexByServerId['srv_active']).toBe(initialIndex);
     });
 
@@ -2879,6 +2950,42 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
         expect(get().sessionListIndexByServerId['srv_active']).toBe(initialIndex);
     });
 
+    it.each(['snapshot', 'patch'] as const)('does not invalidate the warm cache for repeated heartbeat-only observations (%s)', async source => {
+        const { syncPerformanceTelemetry } = await import('@/sync/runtime/syncPerformanceTelemetry');
+        vi.useFakeTimers();
+        observeSessionListWarmCacheWrites();
+        const { get, domain } = createHarness();
+        const initial = currentSession({ id: 'idle-heartbeat', active: true, activeAt: 1 });
+        applyOrdinarySnapshot(domain, [initial]);
+        const settings = get().settings;
+        warmCacheWrites.mockClear();
+        syncPerformanceTelemetry.configure({ enabled: true });
+        syncPerformanceTelemetry.reset();
+        try {
+            for (let activeAt = 2; activeAt <= 21; activeAt++) {
+                if (source === 'snapshot') domain.applySessions([{ ...initial, activeAt }]);
+                else domain.applyServerScopedSessionListRowPatches('srv_active', [{ sessionId: initial.id, patch: { activeAt } }]);
+            }
+            await vi.advanceTimersByTimeAsync(1_000);
+            expect(get().settings).toBe(settings);
+            expect(get().sessionListRowsByServerId.srv_active?.[initial.id]?.activeAt).toBe(21);
+            expect(syncPerformanceTelemetry.snapshot().events.filter(event => event.name.includes('.warmCache'))).toEqual([]);
+            expect(warmCacheWrites).toHaveBeenCalledTimes(0);
+
+            // A real persisted display change must still reach the cache's storage boundary.
+            if (source === 'snapshot') domain.applySessions([{ ...initial, activeAt: 22, active: false }]);
+            else domain.applyServerScopedSessionListRowPatches('srv_active', [{ sessionId: initial.id,
+                patch: { activeAt: 22, active: false } }]);
+            await vi.advanceTimersByTimeAsync(1_000);
+            expect(warmCacheWrites).toHaveBeenCalledTimes(1);
+            expect(warmCacheWrites.mock.calls[0]?.[2][initial.id]).toMatchObject({ active: false, activeAt: 22 });
+        } finally {
+            syncPerformanceTelemetry.configure({ enabled: false });
+            vi.clearAllTimers();
+            vi.useRealTimers();
+        }
+    });
+
     it('does not rewrite the warm cache for thinking-only applySessions updates', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(1_700_000_000_000);
@@ -3363,6 +3470,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
             changedSessionIds: ['s1'],
             removedSessionIds: [],
             rebuiltSessionListIndex: true,
+            ordinaryMembershipChanges: [],
         });
 
         const firstDelta = get().sessionListRenderableDelta;
@@ -3390,6 +3498,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
             changedSessionIds: ['s1'],
             removedSessionIds: [],
             rebuiltSessionListIndex: false,
+            ordinaryMembershipChanges: [],
         });
         expect(get().sessionListRenderableDelta).not.toBe(firstDelta);
     });

@@ -48,6 +48,11 @@ describe('Browser download file handoff', () => {
                     name: download.name, offset: event.offset, dataBase64: encodeBase64(bytes.slice(event.offset, event.offset + event.byteLength)),
                     eof: event.offset + event.byteLength >= bytes.length }) }),
         } });
+        // A retained host can mirror the same view while its stream is suspended.
+        const releaseHidden = registerBrowserRuntimeControlAdapter({ browserSessionId: 'browser', control: {
+            accountLifetime: { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) },
+            readState: () => state, applyDispatchResult() {},
+        } });
         try {
             const actions = createActionExecutor(createActionExecutorBoundaryFixture({
                 saveClientBrowserDownload: args => saveBrowserDownload(args, scope),
@@ -59,7 +64,7 @@ describe('Browser download file handoff', () => {
             expect(await saveBrowserDownload({ reference, fileName: 'binary.dat' }, { ...scope, accountId: 'other' }))
                 .toMatchObject({ ok: false, errorCode: 'browser_download_unavailable' });
             expect(written).toHaveLength(1);
-        } finally { release(); }
+        } finally { releaseHidden(); release(); }
     });
 
     it('refuses unfinished downloads, preserves range failures and cleans partial files on cancellation', async () => {

@@ -6,11 +6,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionListQueryV1 } from '@happier-dev/protocol/sessions/listing/query';
 
 import { createSessionListQuerySourceHarness, waitForSessionListQueryState, type SessionListQuerySourceHarness } from '@/dev/testkit/harness/sessionListQuerySourceHarness';
-import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createPlainSessionCurrentProjectionRecordFixture, createSessionFixture, createSessionOwnerViewerFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { storage } from '@/sync/domains/state/storageStore';
 import { buildSessionListRenderableFromSession } from './sessionListRenderable';
 import { useSessionListQueryHomeStates, useSessionListQuerySourceState, type SessionListQuerySourceState } from './useSessionListQuerySourceState';
+import { useSessionListHomeObservations } from '@/sync/store/hooks';
+import type { SessionListHomeObservation } from './sessionListHomeObservation';
+import { invalidateSessionListQueryHome, retireSessionListQueryAddress } from './sessionListQueryInvalidation';
+import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { planSyncActionsFromChanges, plannedChangesAffectSessionListQuery } from '@/sync/runtime/orchestration/changesPlanner';
 
 vi.mock('socket.io-client', async (importOriginal) => (
     await import('@/dev/testkit/harness/serverAccountConnectionHarness')
@@ -49,6 +55,37 @@ async function writeMetadata(serverId: string, sessionId: string, version: numbe
 }
 
 describe('session list query source: subscription locality', () => {
+    it('does no index renders for 20 Machine heartbeat and daemon publications but observes a display change', async () => {
+        const serverId = boundary.serverIds[0]!;
+        let machine = createMachineFixture({ id: 'index-machine', active: true,
+            metadata: { ...createMachineFixture().metadata!, host: 'first-host', homeDir: '/home/example' },
+            daemonState: { contributionRegistryProjectionRevision: 1 } });
+        storage.getState().applyMachines([machine], false, { sourceServerId: serverId });
+        const homes = [{ serverId, query: QUERY }];
+        let renders = 0;
+        const state: { current: SessionListQuerySourceState | null } = { current: null };
+        function Host() {
+            state.current = useSessionListQuerySourceState({ enabled: true, homes });
+            renders += 1;
+            return null;
+        }
+        const screen = await mount(<Host />);
+        try {
+            await waitForSessionListQueryState(() => expect(state.current?.statesByServerId[serverId]?.phase).toBe('ready'));
+            const settled = renders;
+            for (let index = 0; index < 20; index++) {
+                machine = { ...machine, seq: machine.seq + 1, updatedAt: machine.updatedAt + 1,
+                    activeAt: machine.activeAt + 1, daemonStateVersion: machine.daemonStateVersion + 1,
+                    daemonState: { contributionRegistryProjectionRevision: index + 2 } };
+                await act(async () => storage.getState().applyMachines([machine], false, { sourceServerId: serverId }));
+            }
+            expect(renders - settled).toBe(0);
+            machine = { ...machine, metadataVersion: machine.metadataVersion + 1,
+                metadata: { ...machine.metadata!, host: 'renamed-host' } };
+            await act(async () => storage.getState().applyMachines([machine], false, { sourceServerId: serverId }));
+            expect(renders - settled).toBe(1);
+        } finally { await screen.unmount(); }
+    });
     it('does no index renders when a Session row write leaves every Home index unchanged', async () => {
         // The list pane subscriber redrew on every message and agent-state write on the Account.
         const serverId = boundary.serverIds[0]!;
@@ -75,6 +112,173 @@ describe('session list query source: subscription locality', () => {
             expect(state.current).toBe(settled.result);
         } finally { await screen.unmount(); }
     });
+    it('advances a cold read-to-end consumer during finite known-row Home changes instead of repeating page one', async () => {
+        const serverId = boundary.focusedHome();
+        const ids = Array.from({ length: 1_000 }, (_, index) => `cold-corpus-${index}`);
+        const rows = ids.map(id => {
+            const session = createSessionFixture({ id, active: true, activeAt: Date.now() });
+            return { ...createPlainSessionCurrentProjectionRecordFixture({ id, active: true, activeAt: session.activeAt }),
+                viewer: createSessionOwnerViewerFixture(session) };
+        });
+        storage.getState().applyServerScopedSessionListRows(serverId, [
+            buildSessionListRenderableFromSession(createSessionFixture({ id: ids[0]!, metadataVersion: 1 })),
+        ], { source: 'ordinary', mode: 'append' });
+        const requests: Array<{ cursor: string | null; answer: ReturnType<typeof createDeferred<void>> }> = [];
+        let releaseImmediately = false;
+        boundary.http.answer(serverId, '/v2/sessions/query', { select(input) {
+            const cursor = input && typeof input === 'object' && 'cursor' in input && typeof input.cursor === 'string'
+                ? input.cursor : null;
+            const answer = createDeferred<void>();
+            requests.push({ cursor, answer });
+            if (releaseImmediately) answer.resolve();
+            const offset = cursor === null ? 0 : Number(cursor);
+            return { body: { sessions: rows.slice(offset, offset + 500),
+                nextCursor: offset === 0 ? '500' : null, hasNext: offset === 0,
+                attentionNextCursor: null, attentionHasNext: false }, respondAfter: answer.promise };
+        } });
+        // A tag selection is not decided by row facts, so known-row wakes still re-read
+        // it (row-decided selections are placed in place instead; sessionListRowPlacement.test.ts).
+        const homes = [{ serverId, query: { ...QUERY, includeAttention: false, limit: 500, tagIds: ['tag-a'] }, readMode: 'complete' as const }];
+        const state: { current: ReturnType<typeof useSessionListQueryHomeStates> | null } = { current: null };
+        function Host() {
+            state.current = useSessionListQueryHomeStates({ enabled: true, homes });
+            return null;
+        }
+        const screen = await mount(<Host />);
+        try {
+            await waitForSessionListQueryState(() => expect(requests).toHaveLength(1));
+            for (let index = 0; index < 3; index++) {
+                await writeMetadata(serverId, ids[0]!, index + 2);
+                const plan = planSyncActionsFromChanges([{ cursor: index + 1, kind: 'session', entityId: ids[0]!,
+                    changedAt: index + 1, hint: { lastMessageSeq: index + 1, lastMessageId: `message-${index}` } }],
+                { isSessionListMember: id => ids.includes(id) });
+                await act(async () => {
+                    publishHomeAccountChange(serverId, plan.sessionRowRefreshIds, {
+                        changeKinds: ['session'], sessionListQueryAffects: plannedChangesAffectSessionListQuery(plan),
+                    });
+                    requests[index]!.answer.resolve();
+                });
+                await waitForSessionListQueryState(() => expect(requests).toHaveLength(index + 2));
+            }
+            const cursorsDuringChanges = requests.map(request => request.cursor);
+            // Finite changes do recover when the Home stops waking; this separates starvation
+            // under arrivals from a permanently stuck controller or broken continuation fixture.
+            releaseImmediately = true;
+            await act(async () => { for (const request of requests) request.answer.resolve(); });
+            await waitForSessionListQueryState(() => expect(state.current?.coverageComplete).toBe(true));
+            expect(state.current?.statesByServerId[serverId]?.addresses).toHaveLength(1_000);
+            expect(storage.getState().sessionListRowsByServerId[serverId]?.[ids[0]!]!.metadata?.name).toBe('Name 4');
+            expect(cursorsDuringChanges.slice(0, 2), `physical query cursors during three known-row wakes: ${JSON.stringify(cursorsDuringChanges)}`)
+                .toEqual([null, '500']);
+        } finally {
+            releaseImmediately = true;
+            for (const request of requests) request.answer.resolve();
+            await screen.unmount();
+        }
+    });
+
+    it('keeps a never-successful query failed while its ordinary success fallback advances', async () => {
+        const serverId = boundary.serverIds[0]!;
+        const homes = [{ serverId, query: QUERY }];
+        let queryRequests = 0;
+        // A rejected query is local to this corpus. Only transport loss or a
+        // Home-wide readiness verdict establishes that the Home is offline.
+        boundary.http.answer(serverId, '/v2/sessions/query', { select() {
+            queryRequests += 1;
+            return { body: {}, status: 400 };
+        } });
+        let observation: SessionListHomeObservation | null | undefined;
+        function Host() {
+            const query = useSessionListQueryHomeStates({ enabled: true, homes });
+            observation = useSessionListHomeObservations(query.statesByServerId)[serverId];
+            return null;
+        }
+        const screen = await mount(<Host />);
+        try {
+            const initial = storage.getState().concurrentSessionListCacheByServerId[serverId]?.listObservation;
+            await waitForSessionListQueryState(() => {
+                expect(observation?.phase).toBe('error');
+                expect(observation?.lastSuccessAt).toBe(initial?.lastSuccessAt ?? null);
+            });
+            const failedPhase = observation?.phase;
+            const requests = queryRequests;
+            expect(requests).toBeGreaterThan(0);
+            const lastSuccessAt = (initial?.lastSuccessAt ?? 0) + 1_000;
+            await act(async () => storage.setState(state => ({
+                concurrentSessionListCacheByServerId: {
+                    ...state.concurrentSessionListCacheByServerId,
+                    [serverId]: { ...state.concurrentSessionListCacheByServerId[serverId],
+                        serverName: state.concurrentSessionListCacheByServerId[serverId]?.serverName ?? null,
+                        listObservation: { phase: 'ready', lastSuccessAt } },
+                },
+            })));
+            expect(observation).toEqual({ phase: failedPhase, lastSuccessAt });
+            expect(queryRequests, 'observing ordinary freshness must not retry the failed query').toBe(requests);
+        } finally { await screen.unmount(); }
+    });
+
+    it('keeps unaffected Home rows settled across corpus arrivals and another Home failure, while its own failure and recovery stay current', async () => {
+        const [serverId, otherHome] = boundary.serverIds;
+        const homes = boundary.serverIds.map(serverId => ({ serverId, query: QUERY }));
+        const ids = Array.from({ length: 100 }, (_, index) => `corpus-${index}`);
+        for (const home of boundary.serverIds) boundary.setRows(home, ids);
+        let renders = 0;
+        let commits = 0;
+        let observation: SessionListHomeObservation | null | undefined;
+        const state: { current: ReturnType<typeof useSessionListQueryHomeStates> | null } = { current: null };
+        const Row = React.memo(function Row(props: { observation: SessionListHomeObservation | null | undefined }) {
+            renders += 1;
+            React.useLayoutEffect(() => { commits += 1; });
+            observation = props.observation;
+            return null;
+        });
+        function Host() {
+            state.current = useSessionListQueryHomeStates({ enabled: true, homes });
+            const observations = useSessionListHomeObservations(state.current.statesByServerId);
+            return <Row observation={observations[serverId!]} />;
+        }
+        const screen = await mount(<Host />);
+        try {
+            await waitForSessionListQueryState(() => {
+                for (const home of boundary.serverIds) expect(state.current?.statesByServerId[home]?.phase).toBe('ready');
+            });
+            const settled = { renders, commits, observation };
+            for (let index = 0; index < 20; index++) {
+                await act(async () => retireSessionListQueryAddress(serverId!, ids[index]!));
+                await act(async () => storage.getState().applyServerScopedSessionListRows(otherHome!, [
+                    buildSessionListRenderableFromSession(createSessionFixture({ id: `arrival-${index}` })),
+                ], { source: 'ordinary', mode: 'append' }));
+            }
+            expect(renders - settled.renders, '20 unrelated arrivals and corpus retirements render no unchanged Home row').toBe(0);
+            expect(commits - settled.commits, '20 unrelated arrivals and corpus retirements commit no unchanged Home row').toBe(0);
+            boundary.failQueries(otherHome!, 'all');
+            await act(async () => { await invalidateSessionListQueryHome(otherHome!); });
+            expect(renders - settled.renders, 'another Home failure must not render this row').toBe(0);
+            expect(commits - settled.commits, 'another Home failure must not commit this row').toBe(0);
+            const beforeOtherChange = { renders, commits, observation };
+            await act(async () => retireSessionListQueryAddress(otherHome!, ids[50]!));
+            expect({ renders, commits, observation }).toEqual(beforeOtherChange);
+            expect(beforeOtherChange.observation?.phase).toBe('ready');
+            expect(settled.observation?.lastSuccessAt).toBeTypeOf('number');
+            boundary.failQueries(serverId!, 'all');
+            await act(async () => { await invalidateSessionListQueryHome(serverId!); });
+            // failQueries returns HTTP 503 without restart/retry hints: this
+            // attempt failed, but it does not establish Home-wide unavailability.
+            expect(observation?.phase).toBe('error');
+            expect(state.current?.statesByServerId[serverId!]).toMatchObject({
+                phase: 'error', failureReason: 'response',
+                addresses: expect.arrayContaining([{ serverId, sessionId: ids[50] }]),
+            });
+            expect(observation?.lastSuccessAt).toBe(beforeOtherChange.observation?.lastSuccessAt);
+            expect(renders).toBeGreaterThan(settled.renders);
+            expect(commits).toBeGreaterThan(settled.commits);
+            boundary.failQueries(serverId!, null);
+            await act(async () => { await state.current?.refresh(); });
+            // Observe the successful retry through the owner's pushed render.
+            await waitForSessionListQueryState(() => expect(observation?.phase).toBe('ready'));
+        } finally { await screen.unmount(); }
+    });
+
     it('does not re-render a disabled source (the home and summary paths) when session rows or Machines change', async () => {
         const serverId = boundary.serverIds[0]!;
         const row = buildSessionListRenderableFromSession(createSessionFixture({ id: 'idle-row', metadataVersion: 1 }));

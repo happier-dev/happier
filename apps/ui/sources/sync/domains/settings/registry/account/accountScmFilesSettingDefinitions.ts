@@ -109,6 +109,7 @@ export const ACCOUNT_SCM_FILES_SETTING_ANALYTICS = defineAccountSettingAnalytics
     scmGitPaneLayout: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
     scmChangedFilesLayout: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
     scmPullRequestPlacement: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+    scmResourceOpenLocation: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
     filesDiffFoldingEnabled: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
     filesDiffFoldingContextThreshold: { trackCurrentState: true, trackChanges: true, valueKind: 'bucket', privacy: 'bucketed', identityScope: 'person', serializeCurrent: serializeCountBucket(12, 24) },
     filesDiffFoldingContextRadius: { trackCurrentState: true, trackChanges: true, valueKind: 'bucket', privacy: 'bucketed', identityScope: 'person', serializeCurrent: serializeCountBucket(3, 6) },
@@ -125,6 +126,9 @@ export const ACCOUNT_SCM_FILES_SETTING_ANALYTICS = defineAccountSettingAnalytics
     filesImagePreviewCacheMaxTotalBytes: { trackCurrentState: true, trackChanges: true, valueKind: 'bucket', privacy: 'bucketed', identityScope: 'person', serializeCurrent: serializeBytesBucket(96 * 1024 * 1024, 128 * 1024 * 1024) },
     filesImagePreviewMaxBytes: { trackCurrentState: true, trackChanges: true, valueKind: 'bucket', privacy: 'bucketed', identityScope: 'person', serializeCurrent: serializeBytesBucket(16 * 1024 * 1024, 32 * 1024 * 1024) },
     filesEditorAutoSave: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
+    filesEditorFormatOnSave: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
+    filesEditorInlayHints: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+    filesEditorSemanticHighlighting: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
     markdownDefaultEditMode: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
     filesMarkdownRichEditorMaxBytes: {
         trackCurrentState: true,

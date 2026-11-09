@@ -82,6 +82,7 @@ describe('persistSessionTranscriptMessage', () => {
 
         const storedBody = storedBodies.at(-1);
         if (!storedBody) throw new Error('Expected a stored request body');
+        expect(storedBody.usageTimingV1).toEqual({ v: 1, minMs: null, maxMs: null });
         expect(storedBody).not.toHaveProperty('transcriptOnly');
         const storedContent = storedBody.content;
         const decrypted = await readStoredSessionMessage({
@@ -123,6 +124,7 @@ describe('persistSessionTranscriptMessage', () => {
                 ciphertext: 'ciphertext',
                 localId: 'voice-realtime:attempt:agent:turn',
                 messageRole: 'agent',
+                usageTimingV1: { v: 1, minMs: null, maxMs: null },
             });
             expect(body).not.toHaveProperty('content');
             return new Response(JSON.stringify({

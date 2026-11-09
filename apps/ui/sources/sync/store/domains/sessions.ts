@@ -96,6 +96,7 @@ import {
 import {
     doesActiveSessionListIndexProjectionNeedRepair,
     doesActiveSessionListProjectionNeedRepair,
+    buildNextSessionListRenderableDelta,
     finalizeSessionListIndexUpdate,
     finalizeSessionListRenderablePublication,
     saveWarmSessionCacheForState,
@@ -809,6 +810,14 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
         });
     };
 
+    const singleSessionDelta = (state: SessionsDomain & SessionsDomainDependencies, sessionId: string, changedRows = false) =>
+        buildNextSessionListRenderableDelta({
+            previous: state.sessionListRenderableDelta,
+            changedSessionIds: changedRows ? [sessionId] : [],
+            hydratedSessionIds: [sessionId], removedSessionIds: [],
+            rebuiltSessionListIndex: false, ordinaryMembershipChanges: [],
+        });
+
     const updateSessionResumingAt = (sessionId: string, resumingAt: number | null): void => {
         set((state) => {
             const session = state.sessions[sessionId];
@@ -844,6 +853,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             return {
                 ...state,
                 sessions: { ...state.sessions, [sessionId]: nextSession },
+                sessionListRenderableDelta: singleSessionDelta(state, sessionId, nextRowsByServerId !== state.sessionListRowsByServerId),
                 sessionListRowsByServerId: nextRowsByServerId,
                 sessionListBotRowsByServerId: publishSessionListBotSelection(
                     state.sessionListRowsByServerId, nextRowsByServerId, state.sessionListBotRowsByServerId, [sessionId],
@@ -2686,6 +2696,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     return {
                         ...s,
                         sessions: next,
+                        sessionListRenderableDelta: singleSessionDelta(s, sessionId),
                     };
                 });
             });
@@ -2693,6 +2704,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             return {
                 ...state,
                 sessions: nextSessions,
+                sessionListRenderableDelta: singleSessionDelta(state, sessionId),
             };
         }),
         clearSessionOptimisticThinking: (sessionId: string) => set((state) => {
@@ -2713,6 +2725,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             return {
                 ...state,
                 sessions: nextSessions,
+                sessionListRenderableDelta: singleSessionDelta(state, sessionId),
             };
         }),
         markSessionResuming: (sessionId: string) => {
@@ -2752,6 +2765,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             return {
                 ...state,
                 sessions: nextSessions,
+                sessionListRenderableDelta: singleSessionDelta(state, sessionId),
             };
         }),
         applySessionTerminalLifecycle: (sessionId: string, turnCompletedAt: number | null) => {
@@ -2790,6 +2804,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     ...state,
                     sessions: nextSessions,
                     projectAuthoringSessions: updateProjectAuthoringSessionInputs(state.projectAuthoringSessions, sessionId, nextSession),
+                    sessionListRenderableDelta: singleSessionDelta(state, sessionId),
                 };
             });
         },
@@ -2814,6 +2829,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             return {
                 ...state,
                 sessions: sessionChanged ? { ...state.sessions, [sessionId]: { ...session, responsibleAccountId, ...applySummary } } : state.sessions,
+                sessionListRenderableDelta: singleSessionDelta(state, sessionId, Boolean(rowChanged)),
                 sessionListRowsByServerId: nextRows,
                 sessionListBotRowsByServerId: publishSessionListBotSelection(
                     state.sessionListRowsByServerId, nextRows, state.sessionListBotRowsByServerId, [sessionId],
@@ -2854,7 +2870,8 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             // No need to rebuild session-list index since permission mode doesn't affect list grouping/presentation.
             return {
                 ...state,
-                sessions: updatedSessions
+                sessions: updatedSessions,
+                sessionListRenderableDelta: singleSessionDelta(state, sessionId),
             };
         }),
 	        updateSessionModelMode: (sessionId: string, mode: SessionModelMode, context?: SessionModelOptionsContext) => set((state) => {
@@ -2899,7 +2916,8 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             // No need to rebuild session-list index since model mode doesn't affect list grouping/presentation.
             return {
                 ...state,
-                sessions: updatedSessions
+                sessions: updatedSessions,
+                sessionListRenderableDelta: singleSessionDelta(state, sessionId),
             };
         }),
         // Project management methods

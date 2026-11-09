@@ -5,6 +5,7 @@ import { CRYPTO_GOLDEN_VECTORS } from '@happier-dev/protocol/crypto/cryptoGolden
 import * as dataKeyEnvelope from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import { Encryption } from '../encryption';
+import { DataKeyOpeningCancelledError } from '../dataKeyOpenings';
 import { createNativeCryptoWorker } from './nativeCryptoWorker.web';
 import { runNativeCryptoWorkerQueuedBatch } from './nativeCryptoWorkerQueue';
 import { NATIVE_CRYPTO_WORKER_PROBE_FAILURE_REASON } from './types';
@@ -451,7 +452,7 @@ describe('web crypto worker through Encryption', () => {
         encryption.configureNativeCryptoWorker({ scope: { accountId: 'local', serverId: null, generation: 1 } });
         if (failWorker) TestWorker.failure = new Error('Retired scope Worker failed');
         await TestWorker.instances[0]!.pendingReplies.shift()!();
-        await expect(pending).resolves.toBeNull();
+        await expect(pending).rejects.toBeInstanceOf(DataKeyOpeningCancelledError);
         TestWorker.failure = null;
         TestWorker.hold = false;
         await expect(encryption.decryptEncryptionKey(envelope)).resolves.toEqual(key);
@@ -484,14 +485,14 @@ describe('web crypto worker through Encryption', () => {
         const cancelled = encryption.decryptEncryptionKey(cancelledEnvelope, { accountId: 'second', signal: controller.signal });
         await vi.advanceTimersByTimeAsync(0);
         controller.abort();
-        await expect(cancelled).resolves.toBeNull();
+        await expect(cancelled).rejects.toBeInstanceOf(DataKeyOpeningCancelledError);
         expect(TestWorker.instances).toHaveLength(1);
         expect(TestWorker.instances[0]!.terminated).toBe(false);
         await TestWorker.instances[0]!.pendingReplies.shift()!();
         await expect(first).resolves.toEqual(firstKey);
     });
 
-    it('replaces an actively cancelled Worker while preserving another scope and ignoring the old response', async () => {
+    it('replaces a scope-retired Worker while preserving another scope and ignoring the old response', async () => {
         const encryption = await Encryption.create(new Uint8Array(32).fill(31));
         const cancelledKey = new Uint8Array(32).fill(32);
         const nextKey = new Uint8Array(32).fill(33);
@@ -507,7 +508,10 @@ describe('web crypto worker through Encryption', () => {
         const next = encryption.decryptEncryptionKey(nextEnvelope, { accountId: 'second' });
         await vi.advanceTimersByTimeAsync(0);
         controller.abort();
-        await expect(cancelled).resolves.toBeNull();
+        await expect(cancelled).rejects.toBeInstanceOf(DataKeyOpeningCancelledError);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(oldWorker.terminated).toBe(false);
+        encryption.configureNativeCryptoWorker({ scope: { accountId: 'first', serverId: null, generation: 1 } });
         await vi.advanceTimersByTimeAsync(0);
         expect(oldWorker.terminated).toBe(true);
         oldResponse({ data: { status: 'ok', items: [cancelledKey] } } as MessageEvent);
@@ -518,7 +522,7 @@ describe('web crypto worker through Encryption', () => {
         expect(TestWorker.instances).toHaveLength(2);
     });
 
-    it('keeps web work pending beyond the native deadline and terminates it on caller cancellation', async () => {
+    it('keeps web work pending beyond the native deadline and caller detach until scope retirement', async () => {
         const encryption = await Encryption.create(new Uint8Array(32).fill(9));
         const encrypted = encodeBase64(await encryption.encryptEncryptionKey(new Uint8Array(32).fill(16)));
         encryption.configureNativeCryptoWorker({ routing: { mode: 'auto', timeoutMs: 100 } });
@@ -534,7 +538,9 @@ describe('web crypto worker through Encryption', () => {
         expect(settled).toBe(false);
         expect(TestWorker.instances[0]!.terminated).toBe(false);
         controller.abort();
-        await expect(pending).resolves.toBeNull();
+        await expect(pending).rejects.toBeInstanceOf(DataKeyOpeningCancelledError);
+        expect(TestWorker.instances[0]!.terminated).toBe(false);
+        encryption.retireAccountMaterial();
         expect(TestWorker.instances[0]!.terminated).toBe(true);
     });
 

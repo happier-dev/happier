@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { projectLegacySessionAccessCapabilitiesV1 } from '@happier-dev/protocol';
+import { projectLegacySessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 
 import { hasAuthoritativeSessionRouteData } from './hasAuthoritativeSessionRouteData';
 import type { NormalizedSessionAccessProjection } from '@/sync/engine/sessions/normalizeSessionAccessProjection';

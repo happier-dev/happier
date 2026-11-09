@@ -1,4 +1,4 @@
-import type { AccountDirectoryCapabilities } from '@happier-dev/protocol';
+import type { AccountDirectoryCapabilities } from '@happier-dev/protocol/features/payload/capabilities/accountDirectoryCapabilities';
 import { publishAccountServiceHomeLink } from '@happier-dev/cli-common/accountService';
 import {
     deleteHomeDirectoryLink,

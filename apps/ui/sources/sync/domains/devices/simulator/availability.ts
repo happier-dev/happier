@@ -1,4 +1,4 @@
-import type { SimulatorDeviceResourceV1 } from '@happier-dev/protocol';
+import type { SimulatorDeviceResourceV1 } from '@happier-dev/protocol/devices/simulator/v1';
 
 import type { SimulatorPreviewStreamState, SimulatorPreviewAvailability } from './types';
 import type { SimulatorPreviewState } from './store';

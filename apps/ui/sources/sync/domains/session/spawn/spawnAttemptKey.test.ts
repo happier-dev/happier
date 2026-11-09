@@ -1,24 +1,24 @@
 import { describe, expect, it } from 'vitest';
-import { SessionCreationKeyV1Schema } from '@happier-dev/protocol';
-
+import { SessionCreationKeyV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
+import type { SessionSpawnNewInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 
 import {
-    createSpawnAttemptKeyForFreshSpawnOptions,
     createSpawnAttemptKeyForSessionSpawnNewInput,
+    resolveSpawnAttemptDirectoryIdentity,
 } from './spawnAttemptKey';
 
-describe('createSpawnAttemptKeyForFreshSpawnOptions', () => {
+describe('Session creation custody identity', () => {
     it('distinguishes fresh spawns that differ only in skill session selection', () => {
         const base = {
-            machineId: 'machine-1', directory: '/repo',
+            executionTarget: { serverId: 'server-a', machineId: 'machine-1' }, directory: { kind: 'path' as const, path: '/repo' },
             agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
             capabilitySelection: {
                 mcp: { v: 1 as const, managedServersEnabled: true, forceIncludeServerIds: ['server-a'], forceExcludeServerIds: [] },
                 skills: { v: 1 as const, forceIncludeSkillIds: ['skill-a'], forceExcludeSkillIds: [], excludeNativeSkillNames: [] },
             },
         };
-        const first = createSpawnAttemptKeyForFreshSpawnOptions(base, '/home/alice');
-        expect(createSpawnAttemptKeyForFreshSpawnOptions({
+        const first = createSpawnAttemptKeyForSessionSpawnNewInput(base, '/home/alice');
+        expect(createSpawnAttemptKeyForSessionSpawnNewInput({
             ...base,
             capabilitySelection: { ...base.capabilitySelection, skills: { ...base.capabilitySelection.skills, forceIncludeSkillIds: ['skill-b'] } },
         }, '/home/alice')).not.toBe(first);
@@ -31,43 +31,40 @@ describe('createSpawnAttemptKeyForFreshSpawnOptions', () => {
         ['storage', { transcriptStorage: 'direct' }],
         ['configuration', { configuration: { mode: { value: 'plan', updatedAtMs: 1 }, model: { value: null, updatedAtMs: 1 }, permissionIntent: { value: null, updatedAtMs: 1 }, options: { effort: { value: 'high', updatedAtMs: 1 } } } }],
         ['organization', { organizationPlacement: { folderId: 'folder-b', tagIds: ['tag-a'] } }],
-    ] as const)('changes custody when the normalized immutable %s intent changes', (_label, changed) => {
+    ] satisfies Array<readonly [string, Partial<SessionSpawnNewInputV2>]>)('changes custody when the normalized immutable %s intent changes', (_label, changed) => {
         const base = {
-            machineId: 'machine-1',
-            serverId: 'server-a',
-            directory: '/repo',
+            executionTarget: { serverId: 'server-a', machineId: 'machine-1' },
+            directory: { kind: 'path', path: '/repo' },
             agentTarget: { kind: 'agent', identity: { pluginId: 'happier.claude', localId: 'claude' } },
             modelSelection: { v: 1, updatedAt: 1, ref: { agentTargetKey: 'happier.claude:claude', providerConnectionId: null, modelId: 'sonnet' } },
             profileId: 'profile-a',
             transcriptStorage: 'persisted',
             configuration: { mode: { value: null, updatedAtMs: 1 }, model: { value: null, updatedAtMs: 1 }, permissionIntent: { value: null, updatedAtMs: 1 }, options: {} },
             organizationPlacement: { folderId: 'folder-a', tagIds: ['tag-b', 'tag-a'] },
-        } as const;
-        const fingerprint = createSpawnAttemptKeyForFreshSpawnOptions(base, '/Users/alice');
+        } satisfies SessionSpawnNewInputV2;
+        const fingerprint = createSpawnAttemptKeyForSessionSpawnNewInput(base, '/Users/alice');
 
-        expect(createSpawnAttemptKeyForFreshSpawnOptions({ ...base, ...changed }, '/Users/alice'))
+        expect(createSpawnAttemptKeyForSessionSpawnNewInput({ ...base, ...changed }, '/Users/alice'))
             .not.toBe(fingerprint);
         expect(fingerprint).not.toContain('profile-a');
         expect(fingerprint).not.toContain('sonnet');
     });
 
-    it('normalizes equivalent recipe spelling and excludes routing-only server scope', () => {
+    it('normalizes equivalent recipe spelling', () => {
         const base = {
-            machineId: 'machine-1',
-            serverId: 'server-a',
-            directory: '~/repo',
+            executionTarget: { serverId: 'server-a', machineId: 'machine-1' },
+            directory: { kind: 'path', path: '~/repo' },
             agentTarget: { kind: 'agent', identity: { pluginId: 'happier.claude', localId: 'claude' } },
             organizationPlacement: { folderId: 'folder-a', tagIds: ['tag-b', 'tag-a'] },
-        } as const;
-        const fingerprint = createSpawnAttemptKeyForFreshSpawnOptions(base, '/Users/alice');
+        } satisfies SessionSpawnNewInputV2;
+        const fingerprint = createSpawnAttemptKeyForSessionSpawnNewInput(base, '/Users/alice');
 
-        expect(createSpawnAttemptKeyForFreshSpawnOptions({
+        expect(createSpawnAttemptKeyForSessionSpawnNewInput({
             ...base,
-            serverId: 'server-b',
-            directory: '/Users/alice/repo/',
+            directory: { kind: 'path', path: '/Users/alice/repo/' },
             organizationPlacement: { folderId: 'folder-a', tagIds: ['tag-a', 'tag-b'] },
         }, '/Users/alice')).toBe(fingerprint);
-        expect(createSpawnAttemptKeyForFreshSpawnOptions({ ...base, directory: '/other' }, '/Users/alice'))
+        expect(createSpawnAttemptKeyForSessionSpawnNewInput({ ...base, directory: { kind: 'path', path: '/other' } }, '/Users/alice'))
             .not.toBe(fingerprint);
     });
 
@@ -79,33 +76,23 @@ describe('createSpawnAttemptKeyForFreshSpawnOptions', () => {
         ['C:\\Users\\Alice\\Repo', 'c:/users/alice/repo/', 'C:\\Users\\Alice'],
         ['C:/Users/Alice\\Repo', 'c:\\users\\alice/repo', 'C:/Users/Alice/'],
     ])('uses one filesystem identity for %s and %s', (left, right, homeDir) => {
-        const target = { machineId: 'machine-1', serverId: 'server-a' } as const;
-
-        expect(createSpawnAttemptKeyForFreshSpawnOptions({ ...target, directory: left }, homeDir))
-            .toBe(createSpawnAttemptKeyForFreshSpawnOptions({ ...target, directory: right }, homeDir));
+        expect(resolveSpawnAttemptDirectoryIdentity(left, homeDir))
+            .toBe(resolveSpawnAttemptDirectoryIdentity(right, homeDir));
     });
 
     it('preserves home sibling boundaries and distinct real directories', () => {
-        const target = { machineId: 'machine-1', serverId: 'server-a' } as const;
         const homeDir = 'C:\\Users\\alice';
-        const homeRepo = createSpawnAttemptKeyForFreshSpawnOptions({ ...target, directory: '~\\repo' }, homeDir);
+        const homeRepo = resolveSpawnAttemptDirectoryIdentity('~\\repo', homeDir);
 
-        expect(createSpawnAttemptKeyForFreshSpawnOptions({ ...target, directory: 'C:\\Users\\alice2\\repo' }, homeDir))
+        expect(resolveSpawnAttemptDirectoryIdentity('C:\\Users\\alice2\\repo', homeDir))
             .not.toBe(homeRepo);
-        expect(createSpawnAttemptKeyForFreshSpawnOptions({ ...target, directory: 'C:\\Users\\alice\\other' }, homeDir))
+        expect(resolveSpawnAttemptDirectoryIdentity('C:\\Users\\alice\\other', homeDir))
             .not.toBe(homeRepo);
     });
 
     it('treats the extended UNC prefix case-insensitively', () => {
-        const target = { machineId: 'machine-1', serverId: 'server-a' } as const;
-
-        expect(createSpawnAttemptKeyForFreshSpawnOptions({
-            ...target,
-            directory: '\\\\?\\UNC\\Server\\Share\\Repo',
-        }, 'C:\\Users\\alice')).toBe(createSpawnAttemptKeyForFreshSpawnOptions({
-            ...target,
-            directory: '\\\\?\\unc\\server\\share\\repo\\',
-        }, 'C:\\Users\\alice'));
+        expect(resolveSpawnAttemptDirectoryIdentity('\\\\?\\UNC\\Server\\Share\\Repo', 'C:\\Users\\alice'))
+            .toBe(resolveSpawnAttemptDirectoryIdentity('\\\\?\\unc\\server\\share\\repo\\', 'C:\\Users\\alice'));
     });
 
     it('does not include direct-to-daemon raw environment material in custody identity', () => {

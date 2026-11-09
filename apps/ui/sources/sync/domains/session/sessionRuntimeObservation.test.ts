@@ -1,10 +1,54 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createSessionRuntimeObservationSource, readSessionRuntimeObservation, sessionRuntimeObservations } from './sessionRuntimeObservation';
 import { projectUiSessionRuntimeAwareness } from './attention/runtimePresentation';
+import { resolveSessionRuntimePublication } from '@/sync/store/domains/sessionRuntimePublication';
 
 afterEach(() => sessionRuntimeObservations.clear());
 
 describe('Session runtime observations', () => {
+    it('records actual full publications independently of lifecycle facts merged from a compact list', () => {
+        const first = { id: 'full-document-witness', serverId: 'home', active: true, thinking: false,
+            activeAt: 100, updatedAt: 100, metadataVersion: 1 };
+        const address = { serverId: first.serverId, sessionId: first.id };
+        resolveSessionRuntimePublication(undefined, first, first);
+        resolveSessionRuntimePublication(first, { ...first, updatedAt: 200 }, { ...first, updatedAt: 200 });
+        expect(sessionRuntimeObservations.read(address)?.fullPublicationUpdatedAt).toBeUndefined();
+        resolveSessionRuntimePublication(undefined, { ...first, updatedAt: 200 }, first, first.updatedAt);
+        expect(sessionRuntimeObservations.read(address)?.fullPublicationUpdatedAt).toBe(100);
+        const next = { ...first, metadataVersion: 2, updatedAt: 300 };
+        resolveSessionRuntimePublication(first, next, next, next.updatedAt);
+        expect(sessionRuntimeObservations.read(address)?.fullPublicationUpdatedAt).toBe(300);
+        resolveSessionRuntimePublication(next, { ...next, updatedAt: 400 }, { ...first, updatedAt: 150 }, 150);
+        expect(sessionRuntimeObservations.read(address)?.fullPublicationUpdatedAt).toBe(300);
+    });
+
+    it.each([true, false])('keeps unknown presence unknown on a receipt-only publication (active=%s)', active => {
+        const previous = { id: 'receipt-without-presence', serverId: 'home', active, thinking: false,
+            activeAt: 100, updatedAt: 100, presence: undefined, privatePayload: { retainedByContentOnly: true } };
+        const next = { ...previous, updatedAt: 300 };
+        expect(resolveSessionRuntimePublication(previous, next, next, next.updatedAt)).toBe(previous);
+        expect(readSessionRuntimeObservation(previous).presence).toBeUndefined();
+        const observation = sessionRuntimeObservations.read({ serverId: 'home', sessionId: previous.id });
+        expect(observation?.fullPublicationUpdatedAt).toBe(300);
+        expect(observation).not.toHaveProperty('privatePayload');
+    });
+
+    it('orders thinking resurrection at admission against its full-publication witness', () => {
+        const source = createSessionRuntimeObservationSource();
+        const address = { serverId: 'home', sessionId: 'thinking-witness' };
+        source.observe(address, { active: true, activeAt: 100, thinking: false, presence: 'online' });
+        source.recordFullPublication(address, 300);
+        expect(source.observe(address, { active: true, activeAt: 200, thinking: true, presence: 'online' })).toBe(false);
+        expect(source.read(address)).toMatchObject({ activeAt: 100, thinking: false, fullPublicationUpdatedAt: 300 });
+        expect(source.observe(address, { active: true, activeAt: 301, thinking: true, presence: 'online' })).toBe(true);
+        expect(source.observe(address, { active: false, activeAt: 302, thinking: false, presence: 302 })).toBe(true);
+        source.recordFullPublication(address, 400);
+        expect(source.observe(address, { active: true, activeAt: 302, thinking: true, presence: 'online' })).toBe(false);
+        expect(source.observe(address, { active: true, activeAt: 401, thinking: true, presence: 'online' })).toBe(true);
+        expect(source.observe({ ...address, serverId: 'different-home' }, { active: true, activeAt: 200, thinking: true })).toBe(true);
+        expect(source.observe({ ...address, serverId: null }, { active: true, activeAt: 200, thinking: true })).toBe(true);
+    });
+
     it('retains full-publication currentness independently of newer runtime evidence and clears both together', () => {
         const source = createSessionRuntimeObservationSource();
         const address = { serverId: 'home', sessionId: 'currentness' };

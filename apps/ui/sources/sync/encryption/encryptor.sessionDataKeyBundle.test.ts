@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { decodeBase64 } from '@/encryption/base64';
-import { CRYPTO_GOLDEN_VECTORS } from '@happier-dev/protocol';
+import { CRYPTO_GOLDEN_VECTORS } from '@happier-dev/protocol/crypto/cryptoGoldenVectors';
 import * as webAes from '@/encryption/aes.web';
 import { AES256Encryption } from './encryptor';
 import { createFakeCryptoWorker } from './nativeCryptoWorker/fakeCryptoWorker';

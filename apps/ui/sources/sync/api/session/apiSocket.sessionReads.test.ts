@@ -3,7 +3,10 @@ import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createDeferred } from '@/dev/testkit';
+import { storage as syncStorage } from '@/sync/domains/state/storage';
+import { fetchAndApplyMachines } from '@/sync/engine/machines/syncMachines';
 import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { setRuntimeFetch, resetRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { readSessionByIdHttp, resetSessionByIdHttpReadsForTests } from '@/sync/engine/sessions/sessionByIdHttp';
@@ -52,6 +55,45 @@ function prepare() {
     if (!readTransport) throw new Error('Expected an installed prepared read transport');
     return { target, request, readTransport };
 }
+
+it('does not publish a retired Machine census as an unavailable Home and settles its replacement', async () => {
+    const initialState = syncStorage.getState();
+    const retired = prepare();
+    const replacement = prepare();
+    const serverId = replacement.target.serverId;
+    const row = createPlainMachineRowFixture({ id: 'restored-machine', accountId: 'session-account' });
+    setRuntimeFetch(async input => new URL(String(input)).pathname === '/v1/machines'
+        ? Response.json([row]) : Response.json({}));
+    syncStorage.setState({ machines: {}, machineListByServerId: {}, machineListStatusByServerId: { [serverId]: 'loading' } });
+    const params = {
+        credentials: { token: oldToken },
+        encryption: null,
+        expectedAccountMode: 'plain' as const,
+        machineDataKeys: new Map(),
+        sourceServerId: serverId,
+        throwOnError: true,
+        applyMachines: (machines: Parameters<typeof initialState.applyMachines>[0], replace: boolean) =>
+            syncStorage.getState().applyMachines(machines, replace, { sourceServerId: serverId }),
+        onListComplete: () => syncStorage.getState().markMachineListSettled(serverId),
+        onListUnavailable: () => syncStorage.getState().markMachineListUnavailable(serverId),
+    };
+    try {
+        await fetchAndApplyMachines({ ...params, readTransport: retired.readTransport }).catch(error => {
+            if (!(error instanceof StaleServerGenerationError)) throw error;
+        });
+        expect(syncStorage.getState().machineListStatusByServerId[serverId]).toBe('loading');
+        await fetchAndApplyMachines({ ...params, readTransport: replacement.readTransport });
+        expect(syncStorage.getState().machineListStatusByServerId[serverId]).toBe('idle');
+        expect(syncStorage.getState().machines[row.id]?.availability?.kind).toBe('available');
+        setRuntimeFetch(async input => new URL(String(input)).pathname === '/v1/machines'
+            ? Response.json({ error: 'invalid_request' }, { status: 400 }) : Response.json({}));
+        await expect(fetchAndApplyMachines({ ...params, readTransport: replacement.readTransport }))
+            .rejects.toBeInstanceOf(Error);
+        expect(syncStorage.getState().machineListStatusByServerId[serverId]).toBe('error');
+    } finally {
+        syncStorage.setState(initialState, true);
+    }
+});
 
 function parts(init?: RequestInit) {
     const demand = SessionReadBatchRequestV1Schema.parse(JSON.parse(String(init?.body)));

@@ -52,8 +52,10 @@ import { DaemonMcpServersDetectResponseSchema } from '@happier-dev/protocol/mcp/
 import { prepareWarmCacheEncryptionKey } from './warmCacheEncryptionKey';
 import * as warmCache from './warmCachePersistence';
 import { suspendServerProfilePersistenceForDemo, resumeServerProfilePersistenceForDemo } from '@/sync/domains/server/serverProfiles';
-import { projectSessionDisplayV1, SessionOwnerMetadataV1Schema, SessionUsageLimitRecoveryV1Schema,
-    sealSessionOwnerDisplayEnvelopeV1, openSessionOwnerDisplayEnvelopeV1 } from '@happier-dev/protocol';
+import { projectSessionDisplayV1,
+    sealSessionOwnerDisplayEnvelopeV1, openSessionOwnerDisplayEnvelopeV1 } from '@happier-dev/protocol/sessions';
+import { SessionOwnerMetadataV1Schema} from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { SessionUsageLimitRecoveryV1Schema} from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { SESSION_LIST_DOCUMENT_ADMISSION, admitOpenedSessionListDisplayProjection,

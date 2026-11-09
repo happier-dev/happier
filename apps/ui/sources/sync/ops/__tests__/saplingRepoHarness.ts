@@ -4,12 +4,16 @@ import { join, resolve } from 'node:path';
 
 import {
     createSaplingScmCapabilities,
-    createScmCapabilities,
-    mapSaplingScmErrorCode,
-    normalizeScmRemoteRequest,
-    resolveScmScopedChangedPaths,
+    createScmCapabilities} from '@happier-dev/protocol/scm/capabilities';
+import {
+    mapSaplingScmErrorCode} from '@happier-dev/protocol/scm';
+import {
+    normalizeScmRemoteRequest} from '@happier-dev/protocol/scm/remoteNormalization';
+import {
+    resolveScmScopedChangedPaths} from '@happier-dev/protocol/scm/pathScope';
+import {
     SCM_OPERATION_ERROR_CODES,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/scm/operationError';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 const SAPLING_TEST_ENV: NodeJS.ProcessEnv = {

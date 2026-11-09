@@ -81,6 +81,91 @@ function createAccountLifetime(scope = { serverId: 'server-1', accountId: 'accou
     };
 }
 
+describe('Send after a person Stop', () => {
+    const stop = { v: 1, cause: 'explicit_stop', requestId: 'person-stop', requestedAtMs: 5 } as const;
+    const heldSession = (overrides: Partial<Session> = {}) => createSession({ active: false, presence: 0,
+        metadata: { ...createSession().metadata!, flavor: 'claude', sessionExplicitStopV1: stop } as Session['metadata'], ...overrides });
+    const personResume = expect.objectContaining({ executionAuthorization: { provenance: 'user_request', requestId: 'pending-1' } });
+
+    it.each(['online_only', 'when_available'] as const)(
+        'resumes through the explicit Resume admission, exactly once, under the %s policy', async policy => {
+            const harness = createPort();
+            harness.isMachineReachable.mockReturnValue(true);
+            harness.shouldDelegatePendingActivationToDaemon.mockResolvedValue(true);
+            const result = await submitSessionUserMessage(harness.port, { ...submitOptions(heldSession()),
+                configuredMode: 'server_pending', sessionInactiveResumePolicy: policy,
+                resumeTargetOverride: { machineId: 'm1', directory: '/tmp/project' } });
+            expect(result).toMatchObject({ type: 'success', persistence: 'pending', localId: 'pending-1' });
+            expect(harness.enqueuePendingMessage).toHaveBeenCalledOnce();
+            // Delegating would hand the row to the daemon's automatic admission, which refuses a hold.
+            expect(harness.enqueuePendingMessage.mock.calls[0]?.[4]).not.toHaveProperty('resumeWhenAvailable');
+            expect(harness.shouldDelegatePendingActivationToDaemon).not.toHaveBeenCalled();
+            expect(harness.ensureSessionRuntimeForPendingInput).toHaveBeenCalledOnce();
+            expect(harness.ensureSessionRuntimeForPendingInput).toHaveBeenCalledWith(personResume);
+        });
+
+    it('keeps the row queued with the true reason when the resume fails', async () => {
+        const harness = createPort();
+        harness.isMachineReachable.mockReturnValue(true);
+        harness.port.ensureSessionRuntimeForPendingInput = async () => ({ type: 'error',
+            errorCode: 'SPAWN_VALIDATION_FAILED', errorMessage: 'The machine refused the session' });
+        expect(await submitSessionUserMessage(harness.port, { ...submitOptions(heldSession()),
+            configuredMode: 'server_pending', sessionInactiveResumePolicy: 'online_only',
+            resumeTargetOverride: { machineId: 'm1', directory: '/tmp/project' } })).toMatchObject({
+            type: 'wake_failed', persistence: 'pending', errorMessage: 'The machine refused the session', localId: 'pending-1' });
+        expect(harness.blockPendingDelivery).not.toHaveBeenCalled();
+    });
+
+    it('resumes for a queued message sent now, without delegating and without blocking on failure', async () => {
+        const harness = createPort();
+        harness.shouldDelegatePendingActivationToDaemon.mockResolvedValue(true);
+        const ensure = vi.fn(async () => ({ type: 'error' as const,
+            errorCode: 'SPAWN_VALIDATION_FAILED', errorMessage: 'The machine refused the session' }));
+        harness.port.ensureSessionRuntimeForPendingInput = ensure;
+        expect(await submitSessionUserMessage(harness.port, { ...submitOptions(heldSession()), localId: 'queued-input',
+            existingDurablePendingMessage: true, requestedAction: { v: 1, kind: 'send_now' },
+            resumeTargetOverride: { machineId: 'm1', directory: '/tmp/project' } })).toMatchObject({ type: 'wake_failed', persistence: 'pending' });
+        expect(ensure).toHaveBeenCalledOnce();
+        expect(ensure).toHaveBeenCalledWith(expect.objectContaining({
+            executionAuthorization: { provenance: 'user_request', requestId: 'queued-input' } }));
+        expect(harness.shouldDelegatePendingActivationToDaemon).not.toHaveBeenCalled();
+        expect(harness.blockPendingDelivery).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ['automation', { surface: 'ui', authority: 'account_automation', actionCaller: { kind: 'host' } }],
+        ['another Session', { surface: 'agent', actionCaller: { kind: 'session', sessionId: 'lead', starterDepth: 0, turnDepth: 1 } }],
+    ] as const)('resumes for %s too: a send crosses the hold whoever sends it', async (_name, actionContext) => {
+        const harness = createPort();
+        harness.isMachineReachable.mockReturnValue(true);
+        await submitSessionUserMessage(harness.port, { ...submitOptions(heldSession()), actionContext,
+            configuredMode: 'server_pending', sessionInactiveResumePolicy: 'online_only',
+            resumeTargetOverride: { machineId: 'm1', directory: '/tmp/project' } });
+        expect(harness.ensureSessionRuntimeForPendingInput).toHaveBeenCalledOnce();
+        expect(harness.ensureSessionRuntimeForPendingInput).toHaveBeenCalledWith(personResume);
+    });
+
+    it('never crosses an archive with a person Resume', async () => {
+        const harness = createPort();
+        harness.isMachineReachable.mockReturnValue(true);
+        await submitSessionUserMessage(harness.port, { ...submitOptions(heldSession({ archivedAt: 9 })),
+            configuredMode: 'server_pending', sessionInactiveResumePolicy: 'online_only',
+            resumeTargetOverride: { machineId: 'm1', directory: '/tmp/project' } });
+        expect(harness.ensureSessionRuntimeForPendingInput).not.toHaveBeenCalledWith(personResume);
+    });
+
+    it('does not mint a person Resume for an ordinary Send into a Session without a hold', async () => {
+        const harness = createPort();
+        harness.isMachineReachable.mockReturnValue(true);
+        await submitSessionUserMessage(harness.port, { ...submitOptions(createSession({ active: false, presence: 0,
+            metadata: { ...createSession().metadata!, flavor: 'claude' } })),
+            configuredMode: 'server_pending', sessionInactiveResumePolicy: 'online_only',
+            resumeTargetOverride: { machineId: 'm1', directory: '/tmp/project' } });
+        expect(harness.ensureSessionRuntimeForPendingInput).toHaveBeenCalledOnce();
+        expect(harness.ensureSessionRuntimeForPendingInput).not.toHaveBeenCalledWith(personResume);
+    });
+});
+
 describe('submitSessionUserMessage Pending action ownership', () => {
     it.each([false, true])('returns a typed send failure without schema diagnostics (direct=%s)', async forceImmediate => {
         const session = createSession();

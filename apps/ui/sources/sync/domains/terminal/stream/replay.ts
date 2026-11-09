@@ -1,4 +1,4 @@
-import type { DaemonTerminalStreamEventUrl } from '@happier-dev/protocol';
+import type { DaemonTerminalStreamEventUrl } from '@happier-dev/protocol/daemon/terminal';
 
 import type { TerminalStreamCursor } from './model';
 
@@ -51,17 +51,21 @@ export function resolveTerminalReplayPlan(input: Readonly<{
     ensuredTerminalId: string;
     reused: boolean;
     cachedOutput: string;
-    cachedCursor: TerminalStreamCursor;
     replayMode: TerminalStreamCursor['mode'];
+    restoredCursor?: TerminalStreamCursor;
 }>): TerminalReplayPlan {
     const sameTerminal = input.cachedTerminalId === input.ensuredTerminalId;
+    if (input.reused && sameTerminal && input.restoredCursor?.mode === input.replayMode) {
+        return { initialCursor: input.restoredCursor, renderPreview: false,
+            clearRenderer: false, replacePreviewOnReplay: false };
+    }
     const canRenderPreview = input.reused && sameTerminal && input.cachedOutput.length > 0;
-    const canReuseCursor = canRenderPreview && input.cachedCursor.mode === input.replayMode;
 
     return {
         initialCursor: {
             mode: input.replayMode,
-            value: canReuseCursor ? Math.max(0, input.cachedCursor.value) : 0,
+            // A new renderer needs the retained bytes, not the previous renderer's tail cursor.
+            value: 0,
         },
         renderPreview: canRenderPreview,
         clearRenderer: !canRenderPreview,

@@ -16,7 +16,7 @@ import {
 export type RetainedFavoriteModelSelectionsV1 = AccountSettingsDefaults['favoriteModelSelectionsV1'];
 
 /** Protocol-owned retained engine carrier, now materialized from reserved authoring rows. */
-export type { RetainedRememberedEngineSelectionsByScopeV1 } from '@happier-dev/protocol';
+export type { RetainedRememberedEngineSelectionsByScopeV1 } from '@happier-dev/protocol/account/settings/legacyAuthoringMemorySettingsV1';
 
 type SettingsWithRetainedSessionAuthoringSelections = Readonly<{
     favoriteModelSelectionsV1?: RetainedFavoriteModelSelectionsV1;

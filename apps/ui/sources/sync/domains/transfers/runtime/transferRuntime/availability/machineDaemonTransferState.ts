@@ -3,12 +3,17 @@ import {
     type DirectPeerRouteKind,
     type PeerRouteViabilityRecord as TransferRouteViabilityRecord,
 } from '@happier-dev/peer-mediation';
+import {
+    MachinePublishedTransferListenerDiagnosticV1Schema,
+    type MachinePublishedTransferListenerDiagnosticV1,
+} from '@happier-dev/protocol/machines/machinePublishedContentV1';
 
 export type MachineDaemonTransferListenerClassState = Readonly<{
     enabled: boolean;
     configured: boolean;
     active: boolean;
     available?: boolean;
+    diagnostic?: MachinePublishedTransferListenerDiagnosticV1;
 }>;
 
 export type MachineDaemonTransferListenerClass =
@@ -67,11 +72,14 @@ function readListenerState(value: unknown): MachineDaemonTransferListenerState |
         return null;
     }
     const available = readBoolean(candidate.available);
+    const diagnostic = candidate.diagnostic === undefined
+        ? null : MachinePublishedTransferListenerDiagnosticV1Schema.safeParse(candidate.diagnostic);
     return {
         enabled,
         configured,
         active,
         ...(available === null ? {} : { available }),
+        ...(diagnostic?.success ? { diagnostic: diagnostic.data } : {}),
     };
 }
 

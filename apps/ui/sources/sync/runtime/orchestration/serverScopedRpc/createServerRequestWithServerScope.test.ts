@@ -40,7 +40,9 @@ beforeEach(async () => {
             if (url.pathname === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
         }
         // The cold Socket.IO boundary publishes no background domain rows.
-        if (['/v1/profile', '/v2/account/settings', '/v2/sessions', '/v1/machines'].includes(url.pathname)) {
+        if (['/v1/profile', '/v2/account/settings', '/v2/sessions', '/v1/machines',
+            '/v1/features/authenticated', '/v1/push-tokens', '/v1/account/encryption', '/v1/account/profile',
+            '/v2/session-organization'].includes(url.pathname)) {
             return Response.json({}, { status: 404 });
         }
         requests.push({ url: url.href, init: init ?? {} });
@@ -88,7 +90,7 @@ describe('createServerRequestWithServerScope', () => {
 
     it('does not turn an empty explicit Home into focused-Home authority', async () => {
         await expect(captureServerRequestAuthorityForServerAccountScope({ serverId: ' ', activeRequest: noActiveFallback })).rejects.toThrow();
-        expect(requests).toHaveLength(0);
+        expect(requests, JSON.stringify(requests.map(({ url }) => url))).toHaveLength(0);
     });
 
     it('uses the active request when the target Home has an applied Account lifetime', async () => {

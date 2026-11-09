@@ -201,7 +201,7 @@ export function createSessionBoardActionAdapter(options: SessionSystemRecordTran
                 const record = entry.value;
                 const opened = await open(record, { owner: 'host', namespace: 'surface', kind: 'item.v1', localId: record.address.localId }, SessionSurfaceItemV1StoredSchema);
                 if (opened.status !== 'ready') { projectedEntries.push({ status: 'unavailable' }); continue; }
-                projectedEntries.push({ status: 'ready', itemId: record.address.localId, revision: record.revision, item: opened.value, creator: record.creator });
+                projectedEntries.push({ status: 'ready', itemId: record.address.localId, revision: record.revision, item: opened.value });
             }
             return projectSessionBoardGetResultV1({ serverId: options.session.serverId, sessionId, capabilities: options.capabilities,
                 layout: layout.layout, entries: projectedEntries,

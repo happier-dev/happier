@@ -1,4 +1,4 @@
-import type { ParticipantRecipientV1 } from '@happier-dev/protocol';
+import type { ParticipantRecipientV1 } from '@happier-dev/protocol/messages/structured/participantMessageV1';
 
 export type SessionParticipantTarget = Readonly<{
     key: string;
@@ -12,4 +12,9 @@ export type SessionParticipantTarget = Readonly<{
      */
     accentName?: string;
     recipient: ParticipantRecipientV1;
+    /**
+     * The intent of the execution Run this target addresses, when known. A walkthrough generator
+     * (`scm_diff_summary`) is answered by its own Run, so every composer drops the Session's controls for it.
+     */
+    runIntent?: string;
 }>;

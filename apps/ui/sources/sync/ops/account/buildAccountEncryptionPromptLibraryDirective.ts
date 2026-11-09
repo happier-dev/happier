@@ -4,8 +4,7 @@ import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/a
 import { PROMPT_LIBRARY_RETAINED_ROOTS_V1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
 import { LEGACY_ROLE_GUIDANCE_HISTORY_ROOTS_V1 } from '@happier-dev/protocol/account/settings/accountSettingsHistoryRestoreV1';
 import { RETIRED_ACCOUNT_SETTINGS_ROOT_KEYS } from '@happier-dev/protocol/account/settings/accountSettings';
-import { CONNECTED_PRESENTATION_SOURCE_ROOTS_V1, CONNECTED_ACKNOWLEDGEMENTS_SOURCE_ROOTS_V1,
-  CONNECTED_DISCLOSURE_SOURCE_ROOT_V1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
+import { CONNECTED_PRESENTATION_SOURCE_ROOTS_V1, CONNECTED_ACKNOWLEDGEMENTS_SOURCE_ROOTS_V1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 
 /** Conversion preserves raw source retirement, not the default-filled runtime facade. */
 export function restoreAccountEncryptionPromptLibrarySettingsSources(params: Readonly<{
@@ -15,7 +14,7 @@ export function restoreAccountEncryptionPromptLibrarySettingsSources(params: Rea
   const settings: Record<string, unknown> = { ...params.settings };
   const roots = new Set<string>([...Object.values(PROMPT_LIBRARY_RETAINED_ROOTS_V1).filter(root => root !== null), ...LEGACY_ROLE_GUIDANCE_HISTORY_ROOTS_V1,
     ...RETIRED_ACCOUNT_SETTINGS_ROOT_KEYS, ...CONNECTED_PRESENTATION_SOURCE_ROOTS_V1,
-    ...CONNECTED_ACKNOWLEDGEMENTS_SOURCE_ROOTS_V1, CONNECTED_DISCLOSURE_SOURCE_ROOT_V1]);
+    ...CONNECTED_ACKNOWLEDGEMENTS_SOURCE_ROOTS_V1]);
   // Preserve source absence even before ordinary writers retire these roots.
   roots.add('remoteHostsV1');
   roots.add('notificationChannelsV1');

@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as platformCrypto from 'rn-encryption';
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { StoredMachinePublishedMetadataV1Schema, StoredMachinePublishedDaemonStateV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 
-import { createDeferred, createMachineFixture } from '@/dev/testkit';
+import { countStoreNotifications, createDeferred, createMachineFixture, renderHook } from '@/dev/testkit';
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { storage } from '@/sync/domains/state/storage';
+import type { Machine } from '@/sync/domains/state/storageTypes';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { hasCurrentMachineContent, readLiveMachineInventoryRows, resolveServerScopedMachineInventory } from '@/sync/domains/machines/resolveServerScopedMachines';
@@ -13,8 +15,10 @@ import { Encryption } from '@/sync/encryption/encryption';
 import { encodeBase64 } from '@/encryption/base64';
 import { createFakeCryptoWorker } from '@/sync/encryption/nativeCryptoWorker/fakeCryptoWorker';
 import { InvalidateSync } from '@/utils/sessions/sync';
+import * as cryptoBatchYield from '@/sync/encryption/cryptoBatchYield';
 
 import { buildUpdatedMachineFromSocketUpdate, fetchAndApplyMachines, type FetchedMachineRow } from './syncMachines';
+import { createHydrationPublication } from './hydrationPublication';
 
 const credentials = { token: 'header.eyJzdWIiOiJhY2NvdW50LTEifQ==.signature' };
 const initialState = storage.getState();
@@ -44,6 +48,184 @@ function createInventory() {
 }
 
 describe('Machine-list settlement through sync and the real store', () => {
+    it('publishes each released completion cohort once, with only changed records', async () => {
+        const inventory = createInventory();
+        const unchanged = createMachineFixture({ id: 'unchanged' });
+        inventory.callbacks.applyMachines([unchanged], false);
+        const retained = storage.getState().machines.unchanged;
+        let released = false;
+        const batches: Machine[][] = [];
+        const publication = createHydrationPublication({
+            readCurrentMachine: inventory.callbacks.getExistingMachine,
+            isCohortReleased: () => released,
+            cohortSize: 4,
+            hasWaitingTasks: () => true,
+            publish: machines => { batches.push(machines); inventory.callbacks.applyMachines(machines, false); },
+        });
+        for (let cohort = 0; cohort < 49; cohort++) {
+            released = false;
+            publication.enqueue({ ...unchanged });
+            const machines = Array.from({ length: 4 }, (_, index) => createMachineFixture({ id: `cohort-${cohort}-${index}` }));
+            for (const machine of machines) {
+                publication.enqueue(machine);
+                // Completions can arrive in different microtasks behind the
+                // same existing crypto boundary; they still form one cohort.
+                await Promise.resolve();
+            }
+            expect(batches).toHaveLength(cohort);
+            released = true;
+            publication.flush();
+            expect(batches).toHaveLength(cohort + 1);
+            expect(batches[cohort]!.map(machine => machine.id)).toEqual(machines.map(machine => machine.id));
+        }
+        expect(storage.getState().machines.unchanged).toBe(retained);
+        publication.enqueue({ ...unchanged });
+        await Promise.resolve();
+        publication.flush();
+        expect(batches).toHaveLength(49);
+    });
+
+    it.each([
+        { consumer: 'healthy', daemon: false }, { consumer: 'throwing', daemon: false },
+        { consumer: 'healthy', daemon: true },
+    ])('coalesces completed 196-Machine hydration cohorts ($consumer, daemon=$daemon)', async ({ consumer, daemon }) => {
+        const inventory = createInventory();
+        const secret = new Uint8Array(32).fill(17);
+        const encryption = await Encryption.create(secret);
+        encryption.configureNativeCryptoWorker({ routing: { mode: 'off' } });
+        const key = new Uint8Array(32).fill(23);
+        const envelope = encodeBase64(await encryption.encryptEncryptionKey(key), 'base64');
+        const rows = Array.from({ length: 196 }, (_, index) => createPlainMachineRowFixture({
+            id: `hydration-${index}`, accountId: 'account-1',
+        }));
+        await encryption.initializeMachines(new Map(rows.map(row => [row.id, key])));
+        const metadata = createMachineFixture().metadata!;
+        const ciphertext = await encryption.getMachineEncryption(rows[0]!.id)!.encryptMetadata(metadata);
+        const daemonCiphertext = daemon ? await encryption.getMachineEncryption(rows[0]!.id)!.encryptDaemonState({ status: 'running' }) : null;
+        for (const row of rows) Object.assign(row, { metadata: ciphertext, daemonState: daemonCiphertext,
+            daemonStateVersion: daemon ? 1 : 0, dataEncryptionKey: envelope,
+            access: { ...row.access!, resourceMode: 'e2ee' } });
+        const unrelated = createMachineFixture({ id: 'unrelated' });
+        inventory.callbacks.applyMachines([unrelated], false);
+        const before = storage.getState().machines.unrelated;
+        const cohorts = vi.spyOn(cryptoBatchYield, 'yieldToEventLoop');
+        const errors = vi.spyOn(console, 'error');
+        const consumerError = new Error('hydration consumer failed');
+        let unrelatedRenders = 0;
+        const hook = await renderHook(() => { unrelatedRenders++; return storage(state => state.machines.unrelated); });
+        unrelatedRenders = 0;
+        let hydrationPublications = 0;
+        let unrelatedNotifications = 0;
+        let consumerFailed = false;
+        const stop = storage.subscribe((state, previous) => {
+            if (state.machines.unrelated !== previous.machines.unrelated) unrelatedNotifications++;
+            if (state.machines !== previous.machines && rows.some(row =>
+                state.machines[row.id]?.metadata != null
+                && state.machines[row.id] !== previous.machines[row.id])) {
+                hydrationPublications++;
+                if (consumer === 'throwing' && !consumerFailed) {
+                    consumerFailed = true;
+                    throw consumerError;
+                }
+            }
+        });
+        try {
+            await fetchAndApplyMachines({ ...inventory.callbacks,
+                credentials: { ...credentials, secret: encodeBase64(secret, 'base64url') },
+                expectedAccountMode: 'e2ee', encryption, machineDataKeys: new Map(), machineDisplayHydrationConcurrencyLimit: 4,
+                request: async () => Response.json(rows),
+                applyMachineDisplayEntries: (machines, options) => storage.getState().replaceMachineDisplays(machines,
+                    { sourceServerId: inventory.serverId, ...options }),
+            });
+            console.info('[MACHINES-HYDRATE] cohorts', { consumer, daemon, publications: hydrationPublications,
+                cohorts: cohorts.mock.calls.length, unrelatedRenders });
+            // Timer releases are only one cohort boundary. Full completion
+            // batches consume at least the existing concurrency's worth of
+            // facts; once the FIFO drains only its in-flight phases remain.
+            // Daemon admission can additionally release the last metadata names;
+            // one completion can be handed out of the limiter during settlement.
+            const concurrency = 4;
+            const phases = daemon ? 2 : 1;
+            const completionCohortBound = cohorts.mock.calls.length
+                + Math.floor(rows.length * phases / concurrency)
+                + concurrency * phases + (daemon ? concurrency : 0) + 1;
+            expect.soft(hydrationPublications).toBeLessThanOrEqual(completionCohortBound);
+            expect.soft(cohorts.mock.calls.length).toBeLessThan(rows.length);
+            expect.soft(unrelatedNotifications).toBe(0);
+            expect.soft(unrelatedRenders).toBe(0);
+            expect(storage.getState().machines.unrelated).toBe(before);
+            expect.soft(rows.every(row => storage.getState().machines[row.id]?.metadata?.host === metadata.host)).toBe(true);
+            expect.soft(inventory.read().status).toBe('idle');
+            if (consumer === 'throwing') expect(errors.mock.calls.some(args => args.includes(consumerError))).toBe(true);
+        } finally { stop(); await hook.unmount(); }
+    });
+
+    it.each(['plain', 'e2ee'] as const)('reuses admitted %s page content and store identities until a revision changes', async (mode) => {
+        const inventory = createInventory();
+        const encryption = mode === 'e2ee' ? await Encryption.create(new Uint8Array(32).fill(17)) : null;
+        encryption?.configureNativeCryptoWorker({ routing: { mode: 'off' } });
+        const rows = Array.from({ length: 137 }, (_, index) => createPlainMachineRowFixture({
+            id: `page-machine-${index}`, accountId: 'account-1',
+        }));
+        const metadata = createMachineFixture().metadata!;
+        if (encryption) {
+            const key = new Uint8Array(32).fill(23);
+            const envelope = encodeBase64(await encryption.encryptEncryptionKey(key), 'base64');
+            await encryption.initializeMachines(new Map(rows.map(row => [row.id, key])));
+            const cipher = encryption.getMachineEncryption(rows[0]!.id)!;
+            const ciphertext = await cipher.encryptMetadata(metadata);
+            const daemonState = await cipher.encryptDaemonState({ status: 'running' });
+            for (const row of rows) Object.assign(row, { metadata: ciphertext, daemonState,
+                dataEncryptionKey: envelope, access: { ...row.access!, resourceMode: 'e2ee' } });
+        }
+        const published: (readonly Parameters<typeof initialState.applyMachines>[0][number][])[] = [];
+        const params = { ...inventory.callbacks,
+            credentials: encryption ? { ...credentials, secret: encodeBase64(new Uint8Array(32).fill(17), 'base64url') } : credentials,
+            expectedAccountMode: mode,
+            encryption, machineDataKeys: new Map(), replace: true,
+            request: async () => Response.json(rows),
+            applyMachineDisplayEntries: (machines: Parameters<typeof initialState.replaceMachineDisplays>[0], options: Parameters<typeof initialState.replaceMachineDisplays>[1]) =>
+                storage.getState().replaceMachineDisplays(machines, { ...options, sourceServerId: inventory.serverId }),
+            applyMachines: (machines: Parameters<typeof initialState.applyMachines>[0], replace: boolean) => {
+                inventory.callbacks.applyMachines(machines, replace);
+                published.push(machines.map(machine => storage.getState().machines[machine.id]!));
+            },
+        };
+        await fetchAndApplyMachines(params);
+        const baseline = storage.getState().machines;
+        expect(Object.keys(baseline)).toHaveLength(rows.length);
+        expect(Object.values(baseline).every(machine => machine.availability?.kind === 'available')).toBe(true);
+        // Observe the real parsers without replacing internal behavior. These
+        // counts measure repeated content admission, not incidental helper calls.
+        const metadataParses = vi.spyOn(StoredMachinePublishedMetadataV1Schema, 'safeParse');
+        const daemonParses = vi.spyOn(StoredMachinePublishedDaemonStateV1Schema, 'safeParse');
+        const notifications = countStoreNotifications(storage);
+        try {
+            published.length = 0;
+            await fetchAndApplyMachines(params);
+            expect.soft(metadataParses).not.toHaveBeenCalled();
+            expect.soft(daemonParses).not.toHaveBeenCalled();
+            expect.soft(notifications.read()).toHaveLength(0);
+            expect.soft(published.flat().every(machine => machine === baseline[machine.id])).toBe(true);
+            expect(storage.getState().machines).toBe(baseline);
+
+            metadataParses.mockClear(); daemonParses.mockClear(); notifications.reset(); published.length = 0;
+            const changed = rows[0]!;
+            const nextMetadata = { ...metadata, host: 'changed.example.test' };
+            Object.assign(changed, { metadataVersion: changed.metadataVersion + 1,
+                metadata: encryption ? await encryption.getMachineEncryption(changed.id)!.encryptMetadata(nextMetadata)
+                    : (await import('@happier-dev/protocol/machines/machineStoredContent')).encodePlainMachineStoredContent(nextMetadata) });
+            await fetchAndApplyMachines(params);
+            expect(metadataParses).toHaveBeenCalledTimes(1);
+            expect(daemonParses).not.toHaveBeenCalled();
+            expect(notifications.read().length).toBeGreaterThan(0);
+            expect(storage.getState().machines[changed.id]?.metadata?.host).toBe(nextMetadata.host);
+            expect(storage.getState().machines[changed.id]).not.toBe(baseline[changed.id]);
+            expect(Object.values(storage.getState().machines).filter(machine => machine.id !== changed.id)
+                .every(machine => machine === baseline[machine.id])).toBe(true);
+        } finally { notifications.stop(); }
+    });
+
     it('withholds legacy E2EE admission after an envelope replacement until its content opens', async () => {
         const inventory = createInventory();
         const profile = { id: inventory.serverId, serverIdentityId: inventory.serverId, name: 'Test Home',
@@ -91,7 +273,10 @@ describe('Machine-list settlement through sync and the real store', () => {
         try {
             await entered.promise;
             const warm = storage.getState().machines[incumbent.id]!;
-            expect(warm).toMatchObject({ seq: row.seq, dataEncryptionKey: nextEnvelope, metadataVersion: 1 });
+            // The new key basis may carry its published version, but none of
+            // the previous basis's opened content survives while it hydrates.
+            expect(warm).toMatchObject({ seq: row.seq, dataEncryptionKey: nextEnvelope,
+                metadataVersion: row.metadataVersion, metadata: null, daemonState: null });
             expect.soft(warm.availability?.kind).not.toBe('available');
             expect.soft(liveRows().size).toBe(0);
             release.resolve();
@@ -359,7 +544,7 @@ describe('Machine-list settlement through sync and the real store', () => {
             response.resolve(Response.json(rows));
             await pending;
             expect(inventory.read().status).toBe('idle');
-            expect(inventory.read().machines?.map(machine => machine.id)).toEqual(['first', 'last']);
+            expect(inventory.read().machines?.map(machine => machine.id).sort()).toEqual(['first', 'last', 'socket-first']);
             // Once a full read has completed, incremental updates retain its settled fact.
             storage.getState().applyMachines([createMachineFixture({ id: 'later-socket' })]);
             expect(inventory.read().status).toBe('idle');
@@ -419,11 +604,8 @@ describe('Machine-list settlement through sync and the real store', () => {
             await next;
             expect(reads).toBe(2);
             expect(inventory.read().status).toBe(outcome === 'failure' ? 'error' : 'idle');
-            if (outcome === 'failure') {
-                expect(inventory.read().machines?.[0]?.metadata?.host).toBe(machine.metadata?.host);
-            } else {
-                expect(inventory.read().machines).toEqual([]);
-            }
+            expect(inventory.read().machines).toHaveLength(outcome === 'failure' ? 1 : 0);
+            if (outcome === 'failure') expect(inventory.read().machines?.[0]?.metadata?.host).toBe(machine.metadata?.host);
         } finally {
             release.resolve();
             await first;
@@ -456,6 +638,7 @@ describe('Machine-list settlement through sync and the real store', () => {
         // Recovery also uses a completed read, including an empty response.
         await fetchAndApplyMachines({ ...inventory.callbacks, credentials, encryption: null,
             machineDataKeys: new Map(), replace: true, request: async () => Response.json([]) });
-        expect(inventory.read()).toEqual({ machines: [], status: 'idle' });
+        expect(inventory.read().status).toBe('idle');
+        expect(inventory.read().machines).toEqual([]);
     });
 });

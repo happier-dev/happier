@@ -73,8 +73,10 @@ describe('useLocalServiceInventoryState', () => {
             accountId: resolved.scope.accountId, credentialKey: resolved.credentialKey };
         const snapshotClient = vi.fn(async (): Promise<LocalServiceInventorySnapshotClientResult> => ({ ok: true, snapshot }));
         const watchSignals: AbortSignal[] = [];
+        const observationSignals: AbortSignal[] = [];
         const watchClient = vi.fn(async (input: import('./api').LocalServiceInventoryWatchClientInput): Promise<LocalServiceInventoryWatchClientResult> => {
-            if (input.signal) watchSignals.push(input.signal);
+            // The mounted Machine subscription also holds one observation-only request (363303bc81).
+            if (input.signal) (input.observationOnly ? observationSignals : watchSignals).push(input.signal);
             return new Promise(() => {});
         });
         let presented = true;
@@ -82,9 +84,11 @@ describe('useLocalServiceInventoryState', () => {
         const hook = await renderHook(() => useLocalServiceInventoryStateController({ ...key, snapshotClient, watchClient }), { wrapper });
         await vi.waitFor(() => expect(getLocalServiceInventoryState(key).generatedAt).toBe(1_000));
         await vi.waitFor(() => expect(watchSignals).toHaveLength(1));
+        expect(observationSignals).toHaveLength(1);
         if (visibility === 'hidden') { presented = false; await hook.rerender(); }
         else await hook.unmount();
         expect(watchSignals[0]?.aborted).toBe(true);
+        expect(observationSignals[0]?.aborted).toBe(true);
         expect(getLocalServiceInventoryState(key).rowsById.size).toBe(1);
         const closedReads = snapshotClient.mock.calls.length;
         const retained = getLocalServiceInventoryState(key);
@@ -126,7 +130,7 @@ describe('useLocalServiceInventoryState', () => {
         expect(snapshotClient).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'machine-a',
             serverId,
-            refresh: true,
+            refresh: false,
         }));
         expect(store.selectLocalServiceInventoryRows(hook.getCurrent().state)).toEqual(snapshot.entries);
     });

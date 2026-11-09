@@ -23,6 +23,14 @@ const accountId = parseToken(createAccountTokenForTests('plugin-owner'));
 afterEach(clearMachineRequestReachabilityForTest);
 
 describe('execution-origin Machine fact serialization', () => {
+    it('composes one stable origin per immutable materialization without merging distinct materializations', () => {
+        const first = candidate({ serverIdentityId: 'srv_one', machineId: 'stable-origin', materializationId: 'original' }).materialization;
+        const second = { ...first, materializationId: 'replacement' };
+        const origin = composePluginMachineExecutionOriginV1(first);
+        expect(composePluginMachineExecutionOriginV1(first)).toBe(origin);
+        expect(composePluginMachineExecutionOriginV1(second)).not.toBe(origin);
+        expect(composePluginMachineExecutionOriginV1(second).materializationRef.materializationId).toBe('replacement');
+    });
     it('updates only changed target facts and retains serialized eligibility across unrelated updates', () => {
         const targets = Array.from({ length: 138 }, (_, index) => ({ serverIdentityId: 'srv_one', machineId: `machine-${index}` }));
         const facts = new Map(targets.map((target, index) => [target.machineId,
@@ -313,8 +321,11 @@ describe('resolvePluginMachineExecutionOriginState', () => {
         expect(resolvePluginMachineExecutionOriginState(params)).toMatchObject({ kind: 'selected', origin: originA, selectionSource: 'auto' });
         expect(resolvePluginMachineExecutionOriginState({ ...params, storedTarget: { serverIdentityId: 'srv_one', machineId: 'machine-b' } }))
             .toMatchObject({ kind: 'selected', origin: originB, selectionSource: 'pinned' });
-        expect(resolvePluginMachineExecutionOriginState({ ...params, candidates: [{ ...a, validation: { kind: 'rejected', reason: 'offline' } }, b] }))
-            .toMatchObject({ kind: 'selected', origin: originB, selectionSource: 'auto' });
+        for (const reason of ['offline', 'revoked', 'activation_refused'] as const) {
+            expect(resolvePluginMachineExecutionOriginState({ ...params, candidates: [
+                { ...a, validation: { kind: 'rejected', reason } }, b,
+            ] })).toMatchObject({ kind: 'selected', origin: originB, selectionSource: 'auto' });
+        }
         expect(resolvePluginMachineExecutionOriginState({ ...params, renderedVersion: '2.0.0',
             candidates: [a, candidate({ ...b.materialization, version: '2.0.0' })] }))
             .toMatchObject({ kind: 'selected', origin: originB, selectionSource: 'auto' });

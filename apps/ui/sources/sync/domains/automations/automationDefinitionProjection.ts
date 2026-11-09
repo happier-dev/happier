@@ -1,4 +1,4 @@
-import type { AutomationDefinitionDetail, AutomationDefinitionListItem } from '@happier-dev/protocol';
+import type { AutomationDefinitionDetail, AutomationDefinitionListItem } from '@happier-dev/protocol/automations/automationApiV3';
 
 import type { AutomationDefinition } from './automationTypes';
 

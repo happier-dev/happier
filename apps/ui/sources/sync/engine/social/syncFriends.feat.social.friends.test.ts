@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { FeaturesResponse } from '@happier-dev/protocol';
+import type { FeaturesResponse } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit';

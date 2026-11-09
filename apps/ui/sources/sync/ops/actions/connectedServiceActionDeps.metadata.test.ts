@@ -315,7 +315,7 @@ describe('Connected metadata raw read ownership', () => {
         }
     });
 
-    it('revalidates mode after the row response before disclosing a catalog', async () => {
+    it('re-admits a read catalog over HTTP when no connection observation is admitted', async () => {
         const home = createHomeGovernanceHarness();
         installHomeGovernanceBoundaries(home);
         setRuntimeFetch(home.request);

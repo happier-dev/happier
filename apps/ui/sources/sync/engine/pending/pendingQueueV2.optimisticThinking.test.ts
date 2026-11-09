@@ -151,6 +151,7 @@ describe('pendingQueueV2 optimistic thinking', () => {
         });
         const [row] = await loadPendingOutboxForSession(sessionId, testOutboxScope);
         expect(row).toMatchObject({ text: 'approved prompt', displayText: 'approved display', rawRecord });
+        expect(JSON.parse(row!.request.body).usageTimingV1).toEqual({ v: 1, minMs: null, maxMs: null });
         expect(storage.getState().sessionPending[sessionId]?.messages[0]).toMatchObject({ text: 'approved prompt', rawRecord });
     });
 
@@ -223,7 +224,8 @@ describe('pendingQueueV2 optimistic thinking', () => {
         ]);
         expect(storage.getState().sessions[sessionId].optimisticThinkingAt ?? null).toBeNull();
         expect(requests[1]?.body).toEqual(requests[0]?.body);
-        expect(requests[0]?.body).toMatchObject({ v: 1, targetMachineId: 'machine-a', content: { t: 'plain' } });
+        expect(requests[0]?.body).toMatchObject({ v: 1, targetMachineId: 'machine-a', content: { t: 'plain' },
+            usageTimingV1: { v: 1, minMs: null, maxMs: null } });
     });
 
     it('refuses incompatible reset routing and activation options before custody', async () => {
@@ -309,6 +311,7 @@ describe('pendingQueueV2 optimistic thinking', () => {
         const ensureSessionRuntimeForPendingInput = vi.fn(async () => { throw new Error('Unexpected parent wake'); });
         const sendMessage = vi.fn(async () => { throw new Error('Unexpected main send'); });
         const port: SessionSubmitPort = {
+            blockPendingDelivery: async () => { throw new Error('Unexpected parent delivery block'); },
             enqueuePendingMessage: (id, text, displayText, metaOverrides, options) => enqueuePendingMessageV2Impl({
                 sessionId: id, text, displayText, metaOverrides, ...options, localId: options?.localId ?? undefined,
                 targetMachineId: 'machine-a', encryption: null, outboxScope: testOutboxScope, serverWireMode: 'pending_input_v3',
@@ -345,10 +348,10 @@ describe('pendingQueueV2 optimistic thinking', () => {
         expect(storage.getState().sessionPending[sessionId]?.messages[0]?.deliveryStatus).toBe('accepted');
     });
 
-    it('marks encrypted pending enqueue payloads as user messages', async () => {
+    it.each(['plain', 'e2ee'] as const)('publishes authored %s user message timing before encryption', async encryptionMode => {
         const sessionId = 's_test_encrypted_message_role';
-        storage.getState().applySessions([buildSession({ sessionId })]);
-        const encryption = await createPendingQueueEncryption({ sessionId, seedByte: 7 });
+        storage.getState().applySessions([buildSession({ sessionId, overrides: { encryptionMode } })]);
+        const encryption = encryptionMode === 'e2ee' ? await createPendingQueueEncryption({ sessionId, seedByte: 7 }) : null;
 
         const bodies: unknown[] = [];
         await enqueuePendingMessageV2({
@@ -363,8 +366,9 @@ describe('pendingQueueV2 optimistic thinking', () => {
 
         expect(bodies).toHaveLength(1);
         expect(bodies[0]).toEqual(expect.objectContaining({
-            ciphertext: expect.any(String),
+            ...(encryptionMode === 'e2ee' ? { ciphertext: expect.any(String) } : { content: { t: 'plain', v: expect.any(Object) } }),
             messageRole: 'user',
+            usageTimingV1: { v: 1, minMs: null, maxMs: null },
         }));
     });
 

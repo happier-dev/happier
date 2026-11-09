@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { fetchAccountEncryptionMigrationArtifactInventory } from './fetchAccountEncryptionMigrationArtifactInventory';
 
 describe('Account transition Artifact inventory', () => {

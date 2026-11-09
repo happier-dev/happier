@@ -4,7 +4,7 @@ import { PINNED_GROUP_KEY_V1 } from '@/sync/domains/session/listing/sessionListO
 import {
     SESSION_ORGANIZATION_MAX_ID_LENGTH,
     SESSION_ORGANIZATION_SNAPSHOT_VERSION,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/organization/constants';
 
 import {
     buildLegacySessionOrganizationImportPlan,

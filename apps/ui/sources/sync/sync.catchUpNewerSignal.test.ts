@@ -22,13 +22,16 @@ const requestMock = vi.hoisted(() => vi.fn());
 const externalTranscriptPageMock = vi.hoisted(() => vi.fn());
 const externalTranscriptReadAfterMock = vi.hoisted(() => vi.fn());
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { getPersistenceStorage } from './domains/state/persistenceStorage';
+import { profileDefaults } from './domains/profiles/profile';
+import type { InvalidateSync } from '@/utils/sessions/sync';
+import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
 
 installDisconnectedServerSocketBoundary((socket) => {
     configureConnectedServerSocketBoundary(socket);
@@ -63,13 +66,23 @@ async function restoreTestHome(serverUrl = 'https://transcript-tests.example'): 
                 updatedAt: 1, recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' },
             });
             if (requestUrl.pathname === '/v2/account/settings') return Response.json({ content: null, version: 0 });
+            if (requestUrl.pathname === '/v1/account/profile') return Response.json({ ...profileDefaults, id: 'transcript-account' });
             if (requestUrl.pathname === '/v2/cursor') return Response.json({ cursor: 0, changesFloor: 0 });
+            if (requestUrl.pathname === '/v1/machines/read-batch' && init?.method === 'POST') {
+                return createMachineReadBatchResponseFixture(init.body, machineId => machineId === 'machine-1'
+                    ? createPlainMachineRowFixture({ id: machineId, accountId: 'transcript-account', machine: createOfflineMachine() })
+                    : null);
+            }
             if (requestUrl.pathname.includes('/messages') || requestUrl.pathname === '/v2/sessions/parent') {
                 return await requestMock(path, init);
             }
             return Response.json({ error: 'not_found' }, { status: 404 });
         },
     });
+    // Offline transcript authority needs the Profile's admitted Account scope.
+    // Drain its real bootstrap read before seeding Sessions and Machines.
+    const { sync } = await import('./syncEngine');
+    await (sync as unknown as { profileSync: Pick<InvalidateSync, 'awaitQueue'> }).profileSync.awaitQueue();
 }
 import {
     markSessionSurfaceHidden,
@@ -90,9 +103,11 @@ const initialStorageState = storage.getState();
 const SESSION_ID = 's-catchup-newer-signal';
 
 function createSession(sessionId: string, seq: number): Session {
+    if (!account) throw new Error('Session fixtures require a restored Home');
     const now = Date.now();
     return {
         id: sessionId,
+        serverId: account.serverId,
         seq,
         encryptionMode: 'plain',
         createdAt: now,
@@ -239,7 +254,19 @@ async function seedLoadedSession(
     return sync;
 }
 
+await loadSyncSingletonForTests();
+
 describe('§13 catch-up-newer signal brackets the on-open catch-up', () => {
+    it('reports a materialized complete history without an older network cursor', async () => {
+        const { sync } = await import('./syncEngine');
+        const sessionId = 'complete-local-history';
+        storage.getState().applySessions([createSession(sessionId, 1)]);
+        storage.getState().applyMessages(sessionId, [buildMessage('first', 1)]);
+        storage.getState().applyMessagesLoaded(sessionId);
+        expect(sync.getSessionOlderMessagesAvailability(sessionId)).toBeNull();
+        storage.getState().markSessionMessagesHistoryStartLoaded(sessionId);
+        expect(sync.getSessionOlderMessagesAvailability(sessionId)).toBe(false);
+    });
     beforeEach(async () => {
         webLocks = installWebLockManagerMock();
         await loadSyncSingletonForTests();
@@ -266,6 +293,20 @@ describe('§13 catch-up-newer signal brackets the on-open catch-up', () => {
         requestMock.mockResolvedValue(emptyMessagesResponse());
         await sync.refreshSessionMessages(SESSION_ID);
         expect(sync.getSessionOlderMessagesAvailability(SESSION_ID)).toBe(false);
+    });
+
+    it('reports a failed newer page honestly, preserves rows, and allows the next read to recover', async () => {
+        const sync = await seedLoadedSession(10, 20);
+        const rowsBefore = storage.getState().sessionMessages[SESSION_ID];
+        requestMock.mockResolvedValue(Response.json({ error: 'unavailable' }, { status: 503 }));
+        const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+        try {
+            await expect(sync.loadNewerMessages(SESSION_ID)).resolves.toMatchObject({ loaded: 0, hasMore: true, status: 'retryable_error' });
+            expect(storage.getState().sessionMessages[SESSION_ID]).toBe(rowsBefore);
+            expect(catchUpInFlight()).toBe(0);
+            requestMock.mockImplementation(async () => emptyMessagesResponse());
+            await expect(sync.loadNewerMessages(SESSION_ID)).resolves.toMatchObject({ status: 'no_more' });
+        } finally { errors.mockRestore(); }
     });
 
     it('flips sessionCatchUpNewerInFlight while a normal on-open incremental newer catch-up runs, and clears it after', async () => {
@@ -334,6 +375,7 @@ describe('§13 catch-up-newer signal brackets the on-open catch-up', () => {
         storage.getState().applyMachines([createMachineFixture({
             id: 'machine-1', active: true, activeAt: Date.now(), storageMode: 'plain',
         })]);
+        observeMachinePresenceForTest({ serverId: account!.serverId, accountId: 'transcript-account' }, ['machine-1']);
             storage.getState().applySessions([createExternalSession('machine_only')]);
         storage.getState().applyMessagesLoaded(SESSION_ID);
         t.activeServerSessionIds = new Set([SESSION_ID]);
@@ -376,6 +418,7 @@ describe('§13 catch-up-newer signal brackets the on-open catch-up', () => {
         const { sync } = await import('./sync');
         const t = sync as unknown as SyncCatchUpTestAccess;
             storage.getState().applyMachines([createOfflineMachine()]);
+        observeMachinePresenceForTest({ serverId: account!.serverId, accountId: 'transcript-account' }, ['machine-1']);
         storage.getState().applySessions([createExternalSession('snapshot_complete')]);
         storage.getState().applyMessagesLoaded(SESSION_ID);
         t.activeServerSessionIds = new Set([SESSION_ID]);

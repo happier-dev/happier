@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createWorkspaceSyncStatusWatchBoundary } from '@/dev/testkit/harness/workspaceSyncStatusWatchBoundary';
-import { createWorkspaceSyncHarness } from '@/dev/testkit/harness/workspaceSyncHarness';
+import { createWorkspaceSyncHarness, createWorkspaceSyncRelationshipsListFixture } from '@/dev/testkit/harness/workspaceSyncHarness';
 
 const watches = createWorkspaceSyncStatusWatchBoundary();
 
@@ -12,7 +12,7 @@ const workspace = createWorkspaceSyncHarness(async input => {
         boundary.requests.push(input);
         if (boundary.pending) await new Promise<void>((_resolve, reject) => input.signal?.addEventListener('abort',
             () => reject(new Error('aborted')), { once: true }));
-        return input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_LIST ? { statuses: [] } : {
+        return input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST ? createWorkspaceSyncRelationshipsListFixture([]) : {
             status: 'page', relationshipId: (input.payload as { relationshipId: string }).relationshipId, totalCount: 0, nextCursor: null, conflicts: [],
         };
 });

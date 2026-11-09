@@ -5,7 +5,7 @@ import {
     SPAWN_SESSION_ERROR_DETAIL_KINDS,
     isConnectedServiceResumeUnreachableSpawnErrorDetail,
     isConnectedServiceUxDiagnosticSpawnErrorDetail,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/spawnSession';
 
 import { normalizeSpawnSessionResult } from './_shared';
 

@@ -28,6 +28,7 @@ describe('captured physical read binding', () => {
             prepared: { endpointUrl, runtimeOrigin, carrier: 'iroh' as const, generation: 7, request: preparedRequest } };
         const transport = createCapturedServerReadTransport(captured);
         const value = await transport.read('/v1/prepared-read', undefined, { retry: 'none' }, response => response.json());
+        expect(transport.serverId).toBe('prepared-read-home');
         expect(value).toEqual({ incumbent: true });
         expect(requests).toEqual([`${runtimeOrigin}/v1/prepared-read`]);
     });
@@ -41,6 +42,8 @@ describe('captured physical read binding', () => {
         const create = (serverId: string) => createCapturedServerReadTransport({ serverId, profile, credentials });
         const legacy = create(profile.id);
         const canonical = create(canonicalId);
+        expect(legacy.serverId).toBe(canonicalId);
+        expect(canonical.serverId).toBe(legacy.serverId);
         expect(legacy.key).toBe(canonical.key);
         const before = legacy.key;
         publishHomeAccountChange(canonicalId);

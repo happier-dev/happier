@@ -12,6 +12,30 @@ import {
 } from './executionRunActivityBus';
 
 describe('executionRunActivityBus', () => {
+    it.each([
+        { reader: 'owner (receives live Run hints)', live: true, reads: 0 },
+        { reader: 'collaborator (no live Run hints)', live: false, reads: 20 },
+    ])('re-reads a running roster on own-Session content pages only for a $reader', async ({ live, reads }) => {
+        const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+        const address = { serverId: 'home-content', sessionId: live ? 'owned-session' : 'shared-session' };
+        let calls = 0;
+        const unsubscribe = subscribeRunningExecutionRunRoster(address, () => {}, async () => { calls++; return []; }, () => live);
+        try {
+            await vi.waitFor(() => expect(calls).toBe(1));
+            // P03-SESSION-E2E: a live turn publishes a socket wake and a detailed page per message.
+            for (let index = 0; index < 20; index++) {
+                publishHomeAccountChange(address.serverId, [address.sessionId], { source: 'socket', changeKinds: ['session'], sessionSystemRecords: [] });
+                publishHomeAccountChange(address.serverId, [address.sessionId], { feedPageConsumed: true, changeKinds: ['session'] });
+                await new Promise(resolve => setTimeout(resolve, 0));
+            }
+            const contentReads = calls - 1;
+            if (live) expect(contentReads).toBe(0); else expect(contentReads).toBeGreaterThanOrEqual(reads);
+            // Access changes still re-read for every reader.
+            publishHomeAccountChange(address.serverId, [address.sessionId], { changeKinds: ['share'] });
+            await vi.waitFor(() => expect(calls - 1).toBe(contentReads + 1));
+        } finally { unsubscribe(); }
+    });
+
     it('keeps settled refreshes quiet while publishing changed runs, failures and recovery', async () => {
         const address = { serverId: 'home-a', sessionId: 'settled-roster' };
         const run = ExecutionRunPublicStateSchema.parse({

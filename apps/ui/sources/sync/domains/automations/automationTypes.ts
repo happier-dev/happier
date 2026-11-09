@@ -1,17 +1,26 @@
 import type {
-    AcpConfigOptionOverridesV1,
-    AgentExecutionTargetV1,
+    AcpConfigOptionOverridesV1} from '@happier-dev/protocol/sessions/metadata/overrides';
+import type {
+    AgentExecutionTargetV1} from '@happier-dev/protocol/agents/executionTargetV1';
+import type {
     AutomationDefinitionDetail as AutomationDefinitionDetailResponse,
     AutomationDefinitionListItem,
-    AutomationV3RunListItem,
-    BackendTargetRefV2,
-    SessionCapabilitySelectionV1,
-    SessionModelSelectionV1,
-    RuntimeDescriptorV1,
-    SessionExecutionTargetV1,
-    SessionOrganizationPlacementV1,
+    AutomationV3RunListItem} from '@happier-dev/protocol/automations/automationApiV3';
+import type {
+    BackendTargetRefV2} from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type {
+    SessionCapabilitySelectionV1} from '@happier-dev/protocol/reach/sessionCapabilitySelectionV1';
+import type {
+    SessionModelSelectionV1} from '@happier-dev/protocol/providers/selection/v1';
+import type {
+    RuntimeDescriptorV1} from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
+import type {
+    SessionExecutionTargetV1} from '@happier-dev/protocol/sessions/creation/sessionExecutionTargetV1';
+import type {
+    SessionOrganizationPlacementV1} from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import type {
     WindowsRemoteSessionLaunchMode,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/metadata/windowsRemoteSessionLaunchMode';
 
 import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
 

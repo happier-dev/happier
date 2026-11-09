@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+    applySessionListRenderablePatch,
     buildSessionListRenderableFromSession,
     areSessionListRenderablesEqual,
     deriveSessionListRenderableHasUnreadMessagesFromSession,
@@ -332,6 +333,44 @@ describe('preserveSessionListRenderableStaleFields', () => {
         });
 
         expect(preserveSessionListRenderableStaleFields(previous, next).metadataLayoutVersion).toBe(1);
+    });
+
+    it.each(['replacement', 'patch'] as const)('keeps unread based on admitted metadata through a %s', (mode) => {
+        const previous = buildRenderable({
+            id: 's_metadata_unread', seq: 10, latestReadyEventSeq: 10, latestTurnStatus: 'completed',
+            hasUnreadMessages: false, metadataVersion: 3,
+            metadata: { path: '/current', readStateV1: { v: 1, sessionSeq: 10, pendingActivityAt: 0, updatedAt: 400 } },
+        });
+        const incoming = { ...previous, updatedAt: 500, metadataVersion: 2, hasUnreadMessages: true,
+            metadata: { path: '/older', readStateV1: { v: 1 as const, sessionSeq: 0, pendingActivityAt: 0, updatedAt: 200 } },
+        };
+        const result = mode === 'patch'
+            ? applySessionListRenderablePatch(previous, incoming)
+            : preserveSessionListRenderableStaleFields(previous, incoming);
+        expect(result.metadata).toBe(previous.metadata);
+        expect(result.hasUnreadMessages).toBe(false);
+    });
+
+    it.each([
+        { previousRead: 0, read: 0, ready: null, unread: true },
+        { previousRead: 0, read: 3, ready: null, unread: false },
+        { previousRead: 0, read: 10, ready: null, unread: false },
+        { previousRead: 5, read: 5, ready: 5, unread: true },
+    ].flatMap(testCase => (['replacement', 'patch'] as const).map(mode => ({ ...testCase, mode }))))(
+        'reconciles unknown transcript unread through a $mode (read: $previousRead → $read, ready: $ready)',
+        ({ mode, previousRead, read, ready, unread }) => {
+        const previous = buildRenderable({ id: 's_unknown_activity', seq: 10,
+            latestTurnStatus: 'in_progress', latestReadyEventSeq: ready,
+            lastViewedSessionSeq: previousRead, hasUnreadMessages: true,
+            metadataVersion: 3, metadata: { path: '/repo' },
+        });
+        const incoming = { ...previous, metadataVersion: 2, metadata: { path: '/older' },
+            lastViewedSessionSeq: read, hasUnreadMessages: false,
+        };
+        const result = mode === 'patch'
+            ? applySessionListRenderablePatch(previous, incoming)
+            : preserveSessionListRenderableStaleFields(previous, incoming);
+        expect(result.hasUnreadMessages).toBe(unread);
     });
 
     it('keeps metadata-unavailable settled state across placeholder replacements', () => {

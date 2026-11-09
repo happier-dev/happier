@@ -68,14 +68,8 @@ export type SyncTuning = Readonly<{
     sessionSocketApplyCoalescingEnabled: boolean;
     sessionSocketApplyCoalescingWindowMs: number;
     sessionSocketApplyCoalescingMaxBatchSize: number;
-    sessionRealtimeProjectionMode: 'disabled' | 'shadow' | 'enabled';
     changesPageLimit: number;
-    changesMaxPagesPerResume: number;
-    webSyncInstanceLiveTtlMs: number;
-    webSyncInstanceHeartbeatMs: number;
     webSyncInstanceCursorRetentionMs: number;
-    webLifecycleHeartbeatTickMs: number;
-    webLifecycleHeartbeatDriftMs: number;
     nativeInactiveCheckpointDebounceMs: number;
     activityUpdateDebounceMs: number;
     safeCursorLagAlertMs: number;
@@ -176,11 +170,6 @@ function readNativeCryptoWorkerMode(obj: Record<string, unknown>): SyncTuning['n
     return value === 'off' || value === 'auto' || value === 'require' ? value : null;
 }
 
-function readSessionRealtimeProjectionMode(obj: Record<string, unknown>): SyncTuning['sessionRealtimeProjectionMode'] | null {
-    const value = obj.sessionRealtimeProjectionMode;
-    return value === 'disabled' || value === 'shadow' || value === 'enabled' ? value : null;
-}
-
 function readRatio(obj: Record<string, unknown>, key: keyof SyncTuning): number | null {
     const value = obj[key as string];
     if (typeof value !== 'number' || !Number.isFinite(value)) return null;
@@ -245,14 +234,8 @@ export function loadSyncTuning(opts?: {
         sessionSocketApplyCoalescingEnabled: true,
         sessionSocketApplyCoalescingWindowMs: 16,
         sessionSocketApplyCoalescingMaxBatchSize: 64,
-        sessionRealtimeProjectionMode: 'enabled',
         changesPageLimit: 200,
-        changesMaxPagesPerResume: 5,
-        webSyncInstanceLiveTtlMs: 45_000,
-        webSyncInstanceHeartbeatMs: 15_000,
         webSyncInstanceCursorRetentionMs: 7 * 24 * 60 * 60 * 1000,
-        webLifecycleHeartbeatTickMs: 30_000,
-        webLifecycleHeartbeatDriftMs: 60_000,
         nativeInactiveCheckpointDebounceMs: 300,
         activityUpdateDebounceMs: 5_000,
         safeCursorLagAlertMs: 300_000,
@@ -345,14 +328,8 @@ export function loadSyncTuning(opts?: {
         sessionSocketApplyCoalescingEnabled: readBoolean(merged, 'sessionSocketApplyCoalescingEnabled') ?? defaults.sessionSocketApplyCoalescingEnabled,
         sessionSocketApplyCoalescingWindowMs: readNumber(merged, 'sessionSocketApplyCoalescingWindowMs', { min: 0, max: 200 }) ?? defaults.sessionSocketApplyCoalescingWindowMs,
         sessionSocketApplyCoalescingMaxBatchSize: readNumber(merged, 'sessionSocketApplyCoalescingMaxBatchSize', { min: 2, max: 1000 }) ?? defaults.sessionSocketApplyCoalescingMaxBatchSize,
-        sessionRealtimeProjectionMode: readSessionRealtimeProjectionMode(merged) ?? defaults.sessionRealtimeProjectionMode,
         changesPageLimit: readNumber(merged, 'changesPageLimit', { min: 1, max: 10_000 }) ?? defaults.changesPageLimit,
-        changesMaxPagesPerResume: readNumber(merged, 'changesMaxPagesPerResume', { min: 1, max: 100 }) ?? defaults.changesMaxPagesPerResume,
-        webSyncInstanceLiveTtlMs: readNumber(merged, 'webSyncInstanceLiveTtlMs', { min: 1_000, max: 24 * 60 * 60 * 1000 }) ?? defaults.webSyncInstanceLiveTtlMs,
-        webSyncInstanceHeartbeatMs: readNumber(merged, 'webSyncInstanceHeartbeatMs', { min: 1_000, max: 60 * 60 * 1000 }) ?? defaults.webSyncInstanceHeartbeatMs,
         webSyncInstanceCursorRetentionMs: readNumber(merged, 'webSyncInstanceCursorRetentionMs', { min: 60_000, max: 365 * 24 * 60 * 60 * 1000 }) ?? defaults.webSyncInstanceCursorRetentionMs,
-        webLifecycleHeartbeatTickMs: readNumber(merged, 'webLifecycleHeartbeatTickMs', { min: 1_000, max: 60 * 60 * 1000 }) ?? defaults.webLifecycleHeartbeatTickMs,
-        webLifecycleHeartbeatDriftMs: readNumber(merged, 'webLifecycleHeartbeatDriftMs', { min: 1_000, max: 24 * 60 * 60 * 1000 }) ?? defaults.webLifecycleHeartbeatDriftMs,
         nativeInactiveCheckpointDebounceMs: readNumber(merged, 'nativeInactiveCheckpointDebounceMs', { min: 0, max: 10_000 }) ?? defaults.nativeInactiveCheckpointDebounceMs,
         activityUpdateDebounceMs: readNumber(merged, 'activityUpdateDebounceMs', { min: 1_000, max: 60_000 }) ?? defaults.activityUpdateDebounceMs,
         safeCursorLagAlertMs: readNumber(merged, 'safeCursorLagAlertMs', { min: 1_000, max: 24 * 60 * 60 * 1000 }) ?? defaults.safeCursorLagAlertMs,

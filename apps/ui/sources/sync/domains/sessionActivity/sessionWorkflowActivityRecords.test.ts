@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { makeSessionWorkflowRunSnapshot } from '@/dev/testkit';
-import { buildWorkflowRunSystemRecordLocalId } from '@happier-dev/protocol';
+import { buildWorkflowRunSystemRecordLocalId } from '@happier-dev/protocol/sessions/system/records/activity/activitySystemRecordKinds';
 import { openWorkflowRunSystemRecord } from './sessionWorkflowActivityRecords';
 
 describe('workflow System Record projection', () => {

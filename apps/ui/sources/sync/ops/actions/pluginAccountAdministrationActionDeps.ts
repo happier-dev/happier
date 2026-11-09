@@ -42,7 +42,9 @@ export function createPluginAccountAdministrationActionDeps(account: Pick<LazyAc
                     const loaded = !readProjection && daemon?.machineId && daemon.serverId
                         && areServerProfileIdentifiersEquivalent(daemon.serverId, account.serverId)
                         ? await loadDaemonMergedProjectionCacheEntry({ machineId: daemon.machineId,
-                            serverId: account.serverId, accountLifetime: lifetime, reuseFreshReady: true, signal: context.signal }) : null;
+                            serverId: account.serverId, accountLifetime: lifetime, reuseFreshReady: true, signal: context.signal,
+                            // Release execution matches the plugin UI bundle entries only.
+                            sections: ['familiesById.pluginUi'] }) : null;
                     if (!current()) return unavailable();
                     return await controller.select({ ...parsed, reader,
                         projection: readProjection ? readProjection() : loaded?.kind === 'ready' ? loaded.inputs.pluginProjectionV2 : null,

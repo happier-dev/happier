@@ -8,7 +8,8 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { resetMmkvStoresForTests } from '@/dev/reactNativeMmkvStub';
 import { CurrentCursorResponseSchema, ChangesResponseSchema } from '@happier-dev/protocol/changes';
 import { ArtifactReadBatchResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
-import { ApprovalRequestV1Schema, buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol';
+import { ApprovalRequestV1Schema} from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { throwIfAborted } from '@/utils/runtime/abortSignals';
 
 // Load the real graph before the shared per-test reachability reset. Cold source
@@ -48,7 +49,8 @@ async function load(request: (path: string, init?: RequestInit) => Promise<Respo
             throwIfAborted(controller.signal);
             let startedWith = store.getState().artifacts;
             const inventory = fetchAndApplyArtifactsList({ credentials: options.credentials ?? { token: 'test-bearer' },
-                encryption: null, artifactDataKeys: new Map(), inventoryScope: options.scope ?? scope,
+                encryption: null, artifactDataKeys: new Map(), serverId: (options.scope ?? scope).serverId,
+                inventoryScope: options.scope ?? scope,
                 request, signal: controller.signal, kinds: options.kinds,
                 inventoryReadStartedWith: startedWith,
                 hydrateArtifacts: rows => { store.getState().applyArtifacts(rows); startedWith = store.getState().artifacts; },

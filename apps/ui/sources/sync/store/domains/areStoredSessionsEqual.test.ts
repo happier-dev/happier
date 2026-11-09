@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { Session } from '../../domains/state/storageTypes';
 import { createSessionAccessFixture } from '@/dev/testkit/fixtures/sessionFixtures';
-import { areStoredSessionsEqual, reuseEqualSessionObjectFields } from './areStoredSessionsEqual';
+import { areStoredSessionsEqual } from './areStoredSessionsEqual';
 
 function makeSession(overrides: Partial<Session> = {}): Session {
     return {
@@ -25,23 +25,6 @@ function makeSession(overrides: Partial<Session> = {}): Session {
 }
 
 describe('areStoredSessionsEqual', () => {
-    it('reuses equal plain fields without folding class values or authority sidecars', () => {
-        const authority = Symbol('authority');
-        const previous = {
-            metadata: { path: '/repo' }, opaque: new Map([['old', 1]]),
-            nested: { value: new Date(1) }, [authority]: { admitted: true },
-        };
-        const next = {
-            metadata: { path: '/repo' }, opaque: new Map([['new', 2]]),
-            nested: { value: new Date(2) }, [authority]: { admitted: true },
-        };
-        const shared = reuseEqualSessionObjectFields(previous, next);
-        expect(shared.metadata).toBe(previous.metadata);
-        expect(shared.opaque).toBe(next.opaque);
-        expect(shared.nested).toBe(next.nested);
-        expect(shared[authority]).toBe(next[authority]);
-    });
-
     it('propagates read-access revocation while reusing an equal normalized access projection', () => {
         const previous = makeSession({ access: createSessionAccessFixture('view') });
         const equivalent = { ...previous, access: structuredClone(previous.access) };

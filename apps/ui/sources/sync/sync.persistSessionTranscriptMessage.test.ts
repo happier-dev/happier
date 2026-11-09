@@ -10,7 +10,9 @@ import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessi
 import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
-import { computeAccountEncryptionMigrateKeyFingerprintV1, projectSessionAccessCapabilitiesV1, V2SessionRecordSchema } from '@happier-dev/protocol';
+import { computeAccountEncryptionMigrateKeyFingerprintV1} from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
+import { projectSessionAccessCapabilitiesV1} from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
+import { V2SessionRecordSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { deriveAccountSigningPublicKey } from '@/auth/flows/challenge';
 
 installDisconnectedServerSocketBoundary();
@@ -240,6 +242,7 @@ describe('sync.persistSessionTranscriptMessage', () => {
             active: false,
             lastViewedSessionSeq: 1,
             seq: 1,
+            updatedAt: 100,
         });
     });
 
@@ -249,6 +252,7 @@ describe('sync.persistSessionTranscriptMessage', () => {
             createSessionFixture({
                 id: HISTORY_SESSION_ID,
                 active: false,
+                updatedAt: 200,
                 encryptionMode: 'e2ee',
                 metadata: {
                     path: '/tmp/voice-history',
@@ -271,6 +275,7 @@ describe('sync.persistSessionTranscriptMessage', () => {
         ))).resolves.toBeUndefined();
 
         expect(request).toHaveBeenCalledOnce();
+        expect(storage.getState().sessions[HISTORY_SESSION_ID]?.updatedAt).toBe(200);
         expect(vi.mocked(apiSocket.request).mock.calls.filter(([path]) => (
             new URL(path, 'https://voice-history-owner.example.test').pathname.startsWith(`/v2/sessions/${HISTORY_SESSION_ID}`)
         ))).toEqual([]);

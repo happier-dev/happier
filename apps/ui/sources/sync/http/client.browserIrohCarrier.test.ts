@@ -64,6 +64,17 @@ async function loadClientWithActiveCarrier(carrier: HomeCarrier | null) {
 }
 
 describe('serverFetch over a browser Iroh Home carrier', () => {
+    it('refuses a redirect returned by the semantic Home carrier with the shared closed code', async () => {
+        const { carrier } = createCarrier();
+        const request = vi.fn(async (_url: string, _init: RequestInit) => new Response(null,
+            { status: 307, headers: { location: 'https://other.example.test/v1/sessions' } }));
+        const client = await loadClientWithActiveCarrier({ ...carrier, request });
+        await expect(client.serverFetch('/v1/sessions', {
+            method: 'POST', body: 'synthetic-credential-body', redirect: 'follow',
+        }, { retry: 'none' })).rejects.toMatchObject({ code: 'credential_request_redirect_refused', retryable: false, status: 307 });
+        expect(request.mock.calls[0]?.[1].redirect).toBe('manual');
+    });
+
     it('sends the Home-scoped credential to the canonical URL through the carrier, not a fabricated origin', async () => {
         const { carrier, calls } = createCarrier();
         const runtimeFetch = vi.fn(async () => new Response(null, { status: 500 }));

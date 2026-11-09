@@ -41,18 +41,14 @@ describe('machine display renderables', () => {
         expect(readConnectedAccountBrowserSignInMachineSupport(withdrawn)).toBe('cli_update_required');
         expect(areMachineDisplaySemanticsEqual(capable, withdrawn)).toBe(false);
     });
-    it('captures heartbeat input scalars separately from a display retained and updated by the store', () => {
+    it('retains each immutable Machine display and projects a new heartbeat record', () => {
         const machine = createMachineFixture({ activeAt: 10, updatedAt: 10 });
         const first = buildMachineDisplayRenderableFromMachine(machine);
         expect(buildMachineDisplayRenderableFromMachine(machine)).toBe(first);
-        // The store retains both raw and display objects for a presence-only
-        // publication and advances their receipt timestamps in place.
-        machine.activeAt = first.activeAt = 20;
-        machine.updatedAt = first.updatedAt = 20;
-        const refreshed = buildMachineDisplayRenderableFromMachine(machine);
+        const refreshed = buildMachineDisplayRenderableFromMachine({ ...machine, activeAt: 20, updatedAt: 20 });
         expect(refreshed).not.toBe(first);
         expect(refreshed).toMatchObject({ activeAt: 20, updatedAt: 20 });
-        expect(refreshed.metadata).toBe(first.metadata);
+        expect(first).toMatchObject({ activeAt: 10, updatedAt: 10 });
     });
     it('invalidates an architecture-only update in both display subscription comparisons', () => {
         const before = makeMachineDisplay({ id: 'build', metadata: { platform: 'linux' } });
@@ -60,6 +56,35 @@ describe('machine display renderables', () => {
         expect(areMachineDisplayRenderablesEqual(before, after)).toBe(false);
         expect(areMachineDisplaySemanticsEqual(before, after)).toBe(false);
         expect(areMachineDisplaySemanticsEqual(after, { ...after, metadata: { ...after.metadata } })).toBe(true);
+    });
+    it('publishes new Session wake capability changes without requiring a presence update', () => {
+        const machine = createMachineFixture({
+            active: false,
+            activeAt: 0,
+            isShared: true,
+            managedInputRuntime: {
+                nativeReady: false,
+                wakeState: 'asleep',
+                state: 'asleep',
+                acceptedInputWakeOwner: 'home',
+                newSessionWake: { kind: 'unavailable', reason: 'no_controller' },
+            },
+        });
+        const unavailable = buildMachineDisplayRenderableFromMachine(machine);
+        const availableMachine = {
+            ...machine,
+            managedInputRuntime: { ...machine.managedInputRuntime!, newSessionWake: { kind: 'available' as const } },
+        };
+        const available = buildMachineDisplayRenderableFromMachine(availableMachine);
+        const identical = buildMachineDisplayRenderableFromMachine({
+            ...availableMachine,
+            managedInputRuntime: { ...availableMachine.managedInputRuntime, newSessionWake: { kind: 'available' } },
+        });
+
+        expect(areMachineDisplayRenderablesEqual(unavailable, available)).toBe(false);
+        expect(areMachineDisplaySemanticsEqual(unavailable, available)).toBe(false);
+        expect(areMachineDisplayRenderablesEqual(available, identical)).toBe(true);
+        expect(areMachineDisplaySemanticsEqual(available, identical)).toBe(true);
     });
     it('preserves admitted access facts and invalidates them when readiness changes', () => {
         const machine = {
@@ -73,6 +98,19 @@ describe('machine display renderables', () => {
             access: { ...machine.access, accessState: 'key_pending' } });
         expect(ready).toMatchObject({ isShared: true, access: machine.access });
         expect(areMachineDisplayRenderablesEqual(ready, pending)).toBe(false);
+    });
+
+    it('publishes a changed refusal reason while retaining an identical refusal display', () => {
+        const base = createMachineFixture({ metadata: null, isShared: true });
+        const access = { custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'use' as const,
+            resourceMode: 'plain' as const, accessState: 'refused' as const, reason: 'content_unpublished' as const };
+        const first = buildMachineDisplayRenderableFromMachine({ ...base, access });
+        const identical = buildMachineDisplayRenderableFromMachine({ ...base, access: { ...access } });
+        const changed = buildMachineDisplayRenderableFromMachine({ ...base,
+            access: { ...access, reason: 'custodian_only' as const } });
+        expect(areMachineDisplaySemanticsEqual(first, identical)).toBe(true);
+        expect(areMachineDisplaySemanticsEqual(first, changed)).toBe(false);
+        expect(areMachineDisplayRenderablesEqual(first, changed)).toBe(false);
     });
 
     it('treats a changed locked availability as a changed display snapshot', () => {

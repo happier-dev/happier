@@ -8,10 +8,12 @@ import {
 import { VoiceProviderSettingsEnvelopeV1Schema } from '@happier-dev/protocol/voice/realtime/providerSettings';
 import {
     accountSettingsParse,
-    type AccountSettings,
-    type SavedSecret,
+    type AccountSettings} from '@happier-dev/protocol/account/settings/accountSettings';
+import {
+    type SavedSecret} from '@happier-dev/protocol/profiles/backendProfileSchema';
+import {
     type VoiceSpeechDiagnosticsSettingsV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/voice/diagnostics';
 
 import {
     projectRuntimeAccountSettings,

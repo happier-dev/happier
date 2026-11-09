@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
     projectExternalSessionOperationSharedPresentationV1,
     type ExternalSessionOperationProgressV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/external/operationV1';
 
 import {
     createExternalSessionTranscriptLeaseScopeKeyFromLink,

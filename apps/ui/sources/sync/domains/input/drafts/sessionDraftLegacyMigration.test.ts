@@ -96,10 +96,10 @@ describe('migrateLegacySessionDrafts', () => {
         const actual = await vi.importActual<typeof import('@/sync/ops/sessionDrafts/sessionDraftRepository')>(
             '@/sync/ops/sessionDrafts/sessionDraftRepository',
         );
-        const { createSessionDraftPrivatePayloadV2 } = await import('@happier-dev/protocol');
+        const { createSessionDraftPrivatePayloadV2} = await import('@happier-dev/protocol/drafts/sessionDraftsV2');
         const values = new Map<string, string>();
         state.repository = actual.createSessionDraftRepository({ scope, syncEnabled: false,
-            storage: { getString: key => values.get(key), set: (key, value) => { values.set(key, value); }, delete: key => { values.delete(key); } },
+            storage: { getString: key => values.get(key), getAllKeys: () => [...values.keys()], set: (key, value) => { values.set(key, value); }, delete: key => { values.delete(key); } },
             cipher: { seal: async (address, document) => ({ t: 'plain', v: createSessionDraftPrivatePayloadV2(address, document) }),
                 open: async (_address, content) => content.t === 'plain' ? content.v.document : null },
         });
@@ -288,12 +288,12 @@ describe('migrateLegacySessionDrafts', () => {
         const actual = await vi.importActual<typeof import('@/sync/ops/sessionDrafts/sessionDraftRepository')>(
             '@/sync/ops/sessionDrafts/sessionDraftRepository',
         );
-        const { createSessionDraftPrivatePayloadV2 } = await import('@happier-dev/protocol');
+        const { createSessionDraftPrivatePayloadV2} = await import('@happier-dev/protocol/drafts/sessionDraftsV2');
         const values = new Map<string, string>();
         // Storage, encryption and remote transport are system boundaries; the repository and migration logic are real.
         const repository = actual.createSessionDraftRepository({
             scope, syncEnabled: true,
-            storage: { getString: key => values.get(key), set: (key, value) => { values.set(key, value); }, delete: key => { values.delete(key); } },
+            storage: { getString: key => values.get(key), getAllKeys: () => [...values.keys()], set: (key, value) => { values.set(key, value); }, delete: key => { values.delete(key); } },
             cipher: { seal: async (address, document) => ({ t: 'plain', v: createSessionDraftPrivatePayloadV2(address, document) }),
                 open: async (_address, content) => content.t === 'plain' ? content.v.document : null },
             transport: { read: async () => ({ status: 'absent' }), list: async () => ({ items: [] }),

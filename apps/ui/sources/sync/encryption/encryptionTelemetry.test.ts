@@ -1,4 +1,4 @@
-import { type SessionMessageV1 } from '@happier-dev/protocol';
+import { type SessionMessageV1 } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 
@@ -14,6 +14,7 @@ import { ArtifactEncryption } from './artifactEncryption';
 import { AES256Encryption } from './encryptor';
 import { EncryptionCache } from './encryptionCache';
 import { Encryption } from './encryption';
+import { DataKeyOpeningCancelledError } from './dataKeyOpenings';
 import {
     MACHINE_ENCRYPT_RAW_ATTRIBUTION_EVENTS,
     MachineEncryption,
@@ -372,7 +373,8 @@ describe('encryption telemetry', () => {
             },
         });
 
-        await expect(encryption.decryptEncryptionKeys(inputs)).resolves.toEqual([null, null, null]);
+        // A stale scope opened nothing: the whole batch is cancelled, never three refusals.
+        await expect(encryption.decryptEncryptionKeys(inputs)).rejects.toBeInstanceOf(DataKeyOpeningCancelledError);
         await expect(encryption.decryptEncryptionKeys(inputs)).resolves.toEqual([dataKeys[0], null, dataKeys[1]]);
     });
 

@@ -1,6 +1,7 @@
 import { ReviewEngineCapabilitiesSchema } from '@happier-dev/protocol/reviews/reviewEngines';
 import { ReviewWalkthroughResponseSchema, type ReviewFindingIdentity } from '@happier-dev/protocol/reviews/reviewNarration';
-import type { ActionExecuteResult, ActionExecutorContext } from '@happier-dev/protocol';
+import type { ActionExecuteResult} from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';

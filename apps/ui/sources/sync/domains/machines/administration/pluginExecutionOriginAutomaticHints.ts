@@ -10,7 +10,7 @@ import { getPluginExecutionOriginCandidateOrigin, readPluginMachineScopedContrib
     type PluginExecutionOriginNativeToolAuthentication } from './pluginExecutionOrigin';
 import { readPluginMachineExecutionLastUsedTarget } from './selectionPreferences';
 import { resolveFreshMachineAdministrationExecutionTarget } from './useTargetSelection';
-
+import { readMachineActivity } from '@/sync/domains/machines/machineActivity';
 import type { PluginMachineMaterializationV1 } from '@happier-dev/protocol/plugins/availability/v1';
 import { BUILT_IN_INSTALLABLES_REGISTRY } from '@happier-dev/protocol/installables';
 import { getLatestMachineCapabilityCacheState, subscribeLatestMachineCapabilityCacheState } from '@/hooks/server/useMachineCapabilitiesCache';
@@ -71,6 +71,21 @@ export function subscribePluginExecutionOriginNativeToolAuthentication(pluginId:
     return () => stops.forEach(stop => stop());
 }
 
+// One activity list per inventory publication, not one per plugin demand reading it.
+const machineActivityBySnapshots = new WeakMap<readonly ServerMachineInventorySnapshotV1[],
+    readonly Readonly<{ serverIdentityId: string; machineId: string; activeAt: number }>[]>();
+
+function readInventoryMachineActivity(machineSnapshots: readonly ServerMachineInventorySnapshotV1[]) {
+    let activity = machineActivityBySnapshots.get(machineSnapshots);
+    if (!activity) {
+        activity = machineSnapshots.flatMap(snapshot => snapshot.kind === 'resolved'
+            ? snapshot.machines.map(machine => ({ serverIdentityId: snapshot.serverIdentityId, machineId: machine.id,
+                activeAt: readMachineActivity(machine).activeAt ?? 0 })) : []);
+        machineActivityBySnapshots.set(machineSnapshots, activity);
+    }
+    return activity;
+}
+
 /** Existing local/desktop facts only; election remains Administration-owned. */
 export function readPluginExecutionOriginAutomaticHints(pluginId: string, candidates: readonly PluginExecutionOriginCandidateV1[],
     machineSnapshots?: readonly ServerMachineInventorySnapshotV1[],
@@ -81,13 +96,12 @@ export function readPluginExecutionOriginAutomaticHints(pluginId: string, candid
     const localMachineTarget = local?.machineId && profile?.serverIdentityId && local.daemonAccountId === scope?.accountId
         && isDaemonOnActiveRelay({ activeRelayUrl: profile.serverUrl, daemonRelayUrl: local.daemonServerUrl }) === true
         ? { serverIdentityId: profile.serverIdentityId, machineId: local.machineId } : null;
-    const machineActivity = machineSnapshots ? machineSnapshots.flatMap(snapshot => snapshot.kind === 'resolved'
-        ? snapshot.machines.map(machine => ({ serverIdentityId: snapshot.serverIdentityId, machineId: machine.id, activeAt: machine.activeAt })) : [])
+    const machineActivity = machineSnapshots ? readInventoryMachineActivity(machineSnapshots)
         : candidates.flatMap(candidate => {
             const origin = getPluginExecutionOriginCandidateOrigin(candidate);
             const target = { serverIdentityId: origin.serverIdentityId, machineId: getPluginMachineExecutionOriginRef(origin).machineId };
             const fresh = resolveFreshMachineAdministrationExecutionTarget(target);
-            return fresh ? [{ ...target, activeAt: fresh.machine.activeAt }] : [];
+            return fresh ? [{ ...target, activeAt: readMachineActivity(fresh.machine).activeAt ?? 0 }] : [];
         });
     return { lastUsedTarget: readPluginMachineExecutionLastUsedTarget(scope, pluginId),
         localMachineTarget, machineActivity, sourceMaterializations, installedPlugins,

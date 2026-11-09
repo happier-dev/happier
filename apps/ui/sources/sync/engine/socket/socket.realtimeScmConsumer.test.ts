@@ -189,7 +189,6 @@ function buildBaseParams(overrides: Partial<Omit<HandleUpdateContainerParams, 'u
     invalidateSessions: vi.fn(),
     invalidateArtifacts: vi.fn(),
     invalidateFriends: vi.fn(),
-    invalidateFriendRequests: vi.fn(),
     invalidateFeed: vi.fn(),
     invalidateAutomations: vi.fn(),
     invalidateTodos: vi.fn(),

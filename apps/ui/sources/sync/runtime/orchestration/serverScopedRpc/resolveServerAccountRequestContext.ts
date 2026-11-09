@@ -1,4 +1,3 @@
-import { type CapturedServerRequestPreparation } from './capturedServerReadTransport';
 import {
   TokenStorage,
   type AuthCredentials,
@@ -32,7 +31,7 @@ import { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } from './serverScopedRpcTypes';
 import { isEmbedWindowContext } from '@/embed/isEmbedWindowContext';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { throwIfAborted } from '@/utils/runtime/abortSignals';
-import { createCapturedServerReadTransport, type CapturedServerReadTransport } from './capturedServerReadTransport';
+import { createCapturedServerReadTransport, type CapturedServerReadTransport, type CapturedServerRequestPreparation } from './capturedServerReadTransport';
 import { captureAccountEncryptionObservationForHome, type AccountEncryptionObservationBinding } from '@/sync/http/accountEncryptionObservationBinding';
 
 function normalizeId(raw: unknown): string {
@@ -68,7 +67,7 @@ async function buildScopedContext(params: Readonly<{
     canonicalServerUrl?: string | null;
     publicServerUrl?: string | null;
     serverIdentityId?: string | null;
-    homeConnectionDescriptor?: import('@happier-dev/protocol').HomeConnectionDescriptorV1;
+    homeConnectionDescriptor?: import('@happier-dev/protocol/auth/accountDirectory').HomeConnectionDescriptorV1;
   }>;
   timeoutMs: number;
   prepareRequest?: CapturedServerRequestPreparation;
@@ -152,7 +151,7 @@ async function settleScopedContext(
     if (options.watchActiveHome) {
       unsubscribe = subscribeRegisteredStorageState((state) => {
         if (state.endpointStatus === 'offline') abandon(new ServerScopedTransportUnavailableError());
-      });
+      }, { endpointStatus: true });
     }
     if (options.signal) {
       onAbort = () => {

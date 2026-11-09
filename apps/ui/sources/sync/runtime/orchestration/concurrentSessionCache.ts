@@ -1092,6 +1092,7 @@ export async function fetchConcurrentSessionListQueryPage(
         sessionListMaxPages: 1,
         sessionListAttentionMaxPages: page.attentionCursor ? 1 : 0,
         requiredHydrationSessionIds: page.hydration === 'required' ? 'all' : undefined,
+        contentDemand: 'list-projection',
         candidateStartedBy: page.candidateStartedBy,
         awaitSessionListHydration: page.hydration === 'required',
         credentials: entry.credentials,

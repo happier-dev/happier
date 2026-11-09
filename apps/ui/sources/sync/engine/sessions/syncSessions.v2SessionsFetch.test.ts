@@ -19,14 +19,17 @@ import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetr
 import { HappyError } from '@/utils/errors/errors';
 import {
     createPlainSessionOwnerMetadataEnvelopeV1,
-    encodeV2SessionListCursorV1,
-    projectLegacySessionAccessCapabilitiesV1,
     projectSessionSharedMetadataV1,
-    SessionOwnerMetadataV1Schema,
+    SessionOwnerMetadataV1Schema} from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import {
+    encodeV2SessionListCursorV1,
     V2SessionRecordSchema,
-    type AccountEncryptionCurrentnessResponse,
     type V2SessionRecord,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/control/contract';
+import {
+    projectLegacySessionAccessCapabilitiesV1} from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
+import {
+    type AccountEncryptionCurrentnessResponse} from '@happier-dev/protocol/account/encryptionMode';
 
 import {
     buildRenderableFromRowAndCache,
@@ -504,7 +507,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
         ]);
     });
 
-    it('loads Account currentness once through the matching list request only when an owner envelope needs it', async () => {
+    it('loads identity once through an unbound list request without exporting an exact Account witness', async () => {
         const ownerMetadata = SessionOwnerMetadataV1Schema.parse({
             v: 1,
             workspace: { path: '/plain/private-worktree' },
@@ -539,7 +542,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
             log: { log: () => {} },
         });
 
-        expect(result.accountCurrentness).toEqual(PLAIN_ACCOUNT_CURRENTNESS);
+        expect(result.accountCurrentness).toBeUndefined();
         expect(request.mock.calls.filter(
             ([path]) => path === '/v1/account/encryption/currentness',
         )).toHaveLength(1);

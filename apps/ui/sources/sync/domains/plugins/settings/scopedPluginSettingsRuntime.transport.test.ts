@@ -4,6 +4,7 @@ import { ingestPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest';
 import { createDeferred, flushHookEffects } from '@/dev/testkit';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createLegacyAccountEncryptionCurrentnessFixture, createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 
 installDisconnectedServerSocketBoundary();
 // Load the real Sync/Settings graph after its network boundary is installed,
@@ -12,7 +13,6 @@ const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains
 const { replacePluginAccountAvailabilityProjection, clearPluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
 const { createUiAccountActionSettingsService } = await import('./accountActionSettings');
 const { publishActiveScopedPluginSettingsChanges } = await import('./scopedPluginSettingsChangeWatch');
-
 
 describe('Account plugin Settings HTTP issue admission', () => {
     it('observes only changed portable Account setting ids through the real scoped record and retires its watch', async () => {
@@ -146,4 +146,44 @@ describe('Account plugin Settings HTTP issue admission', () => {
             } finally { mode.resolve(Response.json({ mode: 'plain', updatedAt: 1 })); await connection.dispose(); bridge.dispose(); }
         },
     );
+
+    it('never writes plaintext plugin Account settings on a Home-reported plain while this device holds active keys', async () => {
+        const bridge = await loadSyncSingletonForTests();
+        const posts: unknown[] = [];
+        const secret = new Uint8Array(32).fill(7);
+        const token = `e30.${Buffer.from(JSON.stringify({ sub: 'account-a' })).toString('base64url')}.signature`;
+        // The device starts healthy on its E2EE Account; the Home then reports plain.
+        let hostile = false;
+        const connection = await restoreServerAccountForTest({
+            serverUrl: 'https://plugin-settings-downgrade.test', serverIdentityId: 'srv_settings_downgrade', accountId: 'account-a',
+            credentials: { token, secret: Buffer.from(secret).toString('base64url') },
+            request: async (url, init) => {
+                const path = new URL(String(url)).pathname;
+                if (path === '/v1/account/encryption') return Response.json({ mode: hostile ? 'plain' : 'e2ee', updatedAt: 1 });
+                if (path === '/v1/account/encryption/currentness') return Response.json(hostile
+                    ? createPlainAccountEncryptionCurrentnessFixture() : createLegacyAccountEncryptionCurrentnessFixture({ secret }));
+                if (path === '/v1/account/plugin-settings/acme.settings') {
+                    if (init?.method === 'POST') {
+                        posts.push(JSON.parse(String(init.body)));
+                        return Response.json({ status: 'updated', revision: 1 });
+                    }
+                    return Response.json({ status: 'absent' });
+                }
+                return null;
+            },
+        });
+        try {
+            const { scopedPluginSettingsStorageAdapterForTests: scopedPluginSettingsAdapter } = await import('./scopedPluginSettingsRuntime');
+            hostile = true;
+            const result = await scopedPluginSettingsAdapter.write({
+                pluginId: 'acme.settings', scope: { kind: 'account' },
+                target: { kind: 'account', serverIdentityId: 'srv_settings_downgrade' },
+                fields: [{ key: 'endpoint', redacted: false }], fieldId: 'endpoint',
+                mutation: { kind: 'set', value: 'https://endpoint.test' },
+                expectedRevision: { kind: 'account', value: 'absent' }, isCurrent: () => true,
+            });
+            expect(posts).toEqual([]);
+            expect(result.status).toBe('unavailable');
+        } finally { await connection.dispose(); bridge.dispose(); }
+    });
 });

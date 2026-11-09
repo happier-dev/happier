@@ -68,6 +68,7 @@ it('reads one old committed message through the exact Home semantic reader witho
     const input = { context: { surface: 'ui' as const }, sessionId: state.session.id, messageId: state.source.id,
         roles: ['assistant'] as const, scope: 'main' as const };
     const result = await readSessionTranscriptForAction(input, state.scope);
+    console.info('Exact semantic transcript read cost', state.costs(), result.ok ? result.diagnostics : result);
     expect(result.ok).toBe(true);
     expect(state.costs()).toEqual({ messageRequests: 1, acquiredRows: 1 });
     expect(result).toMatchObject({ ok: true, items: [{ id: state.source.id, seq: 25, semanticRole: 'assistant', text: sourceText }],

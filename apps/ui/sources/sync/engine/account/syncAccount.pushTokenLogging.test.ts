@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PermissionStatus } from 'expo-modules-core';
-import { AccountEncryptionModeResponseSchema, AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol';
+import { AccountEncryptionModeResponseSchema} from '@happier-dev/protocol/account/encryptionMode';
+import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import * as homes from '@/sync/domains/server/serverProfiles';
 import { storage } from '@/sync/domains/state/storageStore';

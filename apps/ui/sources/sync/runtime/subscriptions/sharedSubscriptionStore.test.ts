@@ -16,6 +16,28 @@ type TestState = Readonly<{
 type TestSnapshot = Readonly<{ value: number }>;
 
 describe('createSharedSubscriptionStore', () => {
+    it('applies a keyed publish to its own entry without keying every retained entry', async () => {
+        // The Machines list publishes each row's attention into a store that retains one entry per
+        // Machine: the work of one publication must not grow with the number of other Machines.
+        let keyed = 0;
+        const store = createSharedSubscriptionStore({
+            emptyState: 0, createState: () => 0, normalizeInput: (key: string) => key,
+            storeKey: (key: string) => { keyed += 1; return key; },
+            retainState: true,
+            defaultSnapshotClient: () => Promise.resolve(1),
+            refresh: ({ snapshotClient }) => snapshotClient(),
+            applySnapshot: (_state: number, snapshot: number) => snapshot,
+        });
+        const releases = Array.from({ length: 100 }, (_, index) => store.subscribe(`machine-${index}`, () => {}));
+        try {
+            await vi.waitFor(() => expect(store.getState('machine-99')).toBe(1));
+            keyed = 0;
+            store.publish('machine-42', 7);
+            expect(store.getState('machine-42')).toBe(7);
+            expect(store.getState('machine-41')).toBe(1);
+            expect(keyed).toBeLessThanOrEqual(4);
+        } finally { for (const release of releases) release(); store.reset(); }
+    });
     it('reconfigures one demanded resource promptly without adopting or settling a retired read', async () => {
         type Input = Readonly<{ machineId: string; view: 'summary' | 'overview' }>;
         type State = Readonly<{ value: number; view: Input['view'] | null }>;

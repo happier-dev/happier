@@ -26,7 +26,7 @@ export type CapturedServerReadTransport = Readonly<{
 /**
  * Use the captured request owner's exact profile/credential inputs, but not one
  * borrower's cancellation closure. The pending owner supplies the shared signal
- * and owns it until the last borrower leaves. Response consumption retains the
+ * and owns its cancellation lifetime. Response consumption retains the
  * acquired carrier; returning a raw Response here would release it too early.
  */
 type CapturedProfile = Parameters<typeof resolveServerScopedTransport>[0]['profile'];

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildSessionMessageObservationFactsV1 } from '@happier-dev/protocol';
+import { buildSessionMessageObservationFactsV1 } from '@happier-dev/protocol/sessions';
 
 // C6/D2a (stale-reopen targeted refetch): when a session becomes visible with stale-message
 // markers (rows edited while hidden), onSessionVisible must refetch only the stale region and
@@ -440,9 +440,13 @@ describe('sync stale-reopen targeted refetch (C6/D2a)', () => {
         });
 
         // The AccountChange producer replaces earlier session hints, not an identity-complete edit journal.
-        await syncForTest.repairSessionTranscriptRevision({
-            sessionId: SESSION_ID, minSeq: 5, messageIds: ['mm5'], messageSeqs: { mm5: 5 },
-        });
+        // The transcript is being viewed, so the revision is repaired now rather than deferred to open.
+        markSessionSurfaceVisible(SESSION_ID);
+        try {
+            await syncForTest.repairSessionTranscriptRevision({
+                sessionId: SESSION_ID, minSeq: 5, messageIds: ['mm5'], messageSeqs: { mm5: 5 },
+            });
+        } finally { markSessionSurfaceHidden(SESSION_ID); }
 
         expect(readStoredTranscriptText('mm15')).toBe('coalesced edit');
         expect(readStoredSessionMessages(storage.getState(), SESSION_ID)).toHaveLength(20);
@@ -708,6 +712,152 @@ describe('sync stale-reopen targeted refetch (C6/D2a)', () => {
             await expect.poll(() => readStoredTranscriptText('mm15')).toBe('late hint repaired');
             expect(readStoredSessionMessages(storage.getState(), SESSION_ID)).toHaveLength(20);
             expect(readStoredSessionMessages(storage.getState(), SESSION_ID)).toContain(oldest);
+        } finally {
+            markSessionSurfaceHidden(SESSION_ID, appliedServer.serverId);
+            sync.resetMessageTransport();
+            sync.disconnectServer();
+        }
+    });
+
+    it('skips the changes-feed revision read for a revision the live consumer already applied, and reads once when behind or missing', async () => {
+        const { getActiveServerSnapshot } = await import('./domains/server/serverRuntime');
+        const { planSyncActionsFromChanges } = await import('./runtime/orchestration/changesPlanner');
+        const { applyPlannedChangeActions } = await import('./runtime/orchestration/changesApplier');
+        const appliedServer = getActiveServerSnapshot();
+        storage.getState().activateProfileScope({ serverId: appliedServer.serverId, accountId: 'account-a' });
+        const { sync } = await seedLoadedHistorySession();
+        const syncForTest = sync as unknown as SyncStaleReopenTestAccess & {
+            appliedServerTarget: typeof appliedServer;
+            serverID: string;
+            handleUpdate: (update: import('./api/types/apiTypes').ApiUpdateContainer) => Promise<void>;
+        };
+        syncForTest.appliedServerTarget = appliedServer;
+        syncForTest.serverID = 'account-a';
+        storage.getState().applySessions([{ ...createSession(SESSION_ID, 20), serverId: appliedServer.serverId }]);
+        let cursor = 0;
+        // Real planner -> applier -> Sync repair owner; only HTTP and the socket frame are boundaries.
+        const applyRevisionPage = async (hint: Record<string, unknown>) => {
+            cursor += 1;
+            const planned = planSyncActionsFromChanges([{ cursor, kind: 'session', entityId: SESSION_ID, changedAt: cursor, hint }],
+                { isSessionListMember: () => true });
+            return await applyPlannedChangeActions({
+                planned,
+                credentials: { token: 't', secret: 's' },
+                isSessionMessagesLoaded: (sid) => storage.getState().sessionMessages[sid]?.isLoaded === true,
+                getSessionMaterializedMaxSeq: (sid) => syncForTest.sessionMaterializedMaxSeqById[sid] ?? 0,
+                // The row-level Session refresh is the separate exact read-batch owner, not a transcript read.
+                invalidate: { sessionRows: async () => {} },
+                invalidateMessagesForSession: async () => {},
+                repairSessionTranscriptRevision: (repair) => syncForTest.repairSessionTranscriptRevision(repair),
+                invalidateScmStatusForSession: () => {},
+                applyTodoSocketUpdates: async () => {},
+                kvBulkGet: async () => ({ values: [] }),
+            });
+        };
+        let served = plainTranscriptApiMessage('mm15', 15, 'mm15', 15);
+        requestMock.mockImplementation((path: string) => Promise.resolve(String(path).includes('afterSeq=14')
+            ? new Response(JSON.stringify({ messages: [served], nextAfterSeq: null }),
+                { status: 200, headers: { 'Content-Type': 'application/json' } })
+            : emptyMessagesResponse()));
+        try {
+            markSessionSurfaceVisible(SESSION_ID, appliedServer.serverId);
+            sync.onSessionVisible(SESSION_ID);
+            await sync.refreshSessionMessages(SESSION_ID);
+            requestMock.mockClear();
+
+            const writes = 5;
+            for (let index = 1; index <= writes; index++) {
+                const updatedAt = 100 + index;
+                served = plainTranscriptApiMessage('mm15', 15, `live ${index}`, updatedAt);
+                await syncForTest.handleUpdate({
+                    id: `live-${index}`, seq: 40 + index, createdAt: updatedAt,
+                    body: { t: 'message-updated', delivery: 'full' as const, sid: SESSION_ID, message: served },
+                });
+                expect(await applyRevisionPage({ updatedMessageSeq: 15, updatedMessageId: 'mm15', updatedMessageUpdatedAt: updatedAt }))
+                    .toMatchObject({ status: 'complete', safeAdvanceCursor: String(cursor) });
+            }
+            console.info('TRANSCRIPT_REVISION_READS_CURRENT', JSON.stringify({ writes, reads: messagesRequestPaths().length }));
+            expect(readStoredTranscriptText('mm15')).toBe(`live ${writes}`);
+            expect(messagesRequestPaths()).toHaveLength(0);
+
+            // Behind: the socket frame for 201 was missed; exactly one read makes the row current.
+            served = plainTranscriptApiMessage('mm15', 15, 'missed frame', 201);
+            expect(await applyRevisionPage({ updatedMessageSeq: 15, updatedMessageId: 'mm15', updatedMessageUpdatedAt: 201 }))
+                .toMatchObject({ status: 'complete' });
+            expect(messagesRequestPaths()).toHaveLength(1);
+            expect(readStoredTranscriptText('mm15')).toBe('missed frame');
+            expect(syncForTest.sessionReceivedMessages.get(SESSION_ID)?.get('mm15')).toBe(201);
+
+            // Missing: no held revision for the row; a hint without the revision keeps its read.
+            syncForTest.sessionReceivedMessages.get(SESSION_ID)?.delete('mm15');
+            served = plainTranscriptApiMessage('mm15', 15, 'missing row', 202);
+            await applyRevisionPage({ updatedMessageSeq: 15, updatedMessageId: 'mm15', updatedMessageUpdatedAt: 202 });
+            expect(messagesRequestPaths()).toHaveLength(2);
+            expect(syncForTest.sessionReceivedMessages.get(SESSION_ID)?.get('mm15')).toBe(202);
+            await applyRevisionPage({ updatedMessageSeq: 15, updatedMessageId: 'mm15' });
+            expect(messagesRequestPaths()).toHaveLength(3);
+        } finally {
+            markSessionSurfaceHidden(SESSION_ID, appliedServer.serverId);
+            sync.resetMessageTransport();
+            sync.disconnectServer();
+        }
+    });
+
+    it('defers a changes-feed revision for a retained transcript nobody is viewing until the Session opens', async () => {
+        const { getActiveServerSnapshot } = await import('./domains/server/serverRuntime');
+        const { planSyncActionsFromChanges } = await import('./runtime/orchestration/changesPlanner');
+        const { applyPlannedChangeActions } = await import('./runtime/orchestration/changesApplier');
+        const appliedServer = getActiveServerSnapshot();
+        storage.getState().activateProfileScope({ serverId: appliedServer.serverId, accountId: 'account-a' });
+        const { sync } = await seedLoadedHistorySession();
+        const syncForTest = sync as unknown as SyncStaleReopenTestAccess & { appliedServerTarget: typeof appliedServer; serverID: string };
+        syncForTest.appliedServerTarget = appliedServer;
+        syncForTest.serverID = 'account-a';
+        storage.getState().applySessions([{ ...createSession(SESSION_ID, 20), serverId: appliedServer.serverId }]);
+        let cursor = 0;
+        // Real planner -> applier -> Sync repair owner; only HTTP is a boundary.
+        const applyRevisionPage = async (updatedAt: number) => {
+            cursor += 1;
+            const planned = planSyncActionsFromChanges([{ cursor, kind: 'session', entityId: SESSION_ID, changedAt: cursor,
+                hint: { updatedMessageSeq: 15, updatedMessageId: 'mm15', updatedMessageUpdatedAt: updatedAt } }],
+                { isSessionListMember: () => true });
+            return await applyPlannedChangeActions({
+                planned,
+                credentials: { token: 't', secret: 's' },
+                isSessionMessagesLoaded: (sid) => storage.getState().sessionMessages[sid]?.isLoaded === true,
+                getSessionMaterializedMaxSeq: (sid) => syncForTest.sessionMaterializedMaxSeqById[sid] ?? 0,
+                invalidate: { sessionRows: async () => {} },
+                invalidateMessagesForSession: async () => {},
+                repairSessionTranscriptRevision: (repair) => syncForTest.repairSessionTranscriptRevision(repair),
+                invalidateScmStatusForSession: () => {},
+                applyTodoSocketUpdates: async () => {},
+                kvBulkGet: async () => ({ values: [] }),
+            });
+        };
+        let served = plainTranscriptApiMessage('mm15', 15, 'mm15', 15);
+        requestMock.mockImplementation((path: string) => Promise.resolve(String(path).includes('afterSeq=14')
+            ? new Response(JSON.stringify({ messages: [served], nextAfterSeq: null }),
+                { status: 200, headers: { 'Content-Type': 'application/json' } })
+            : emptyMessagesResponse()));
+        try {
+            // The transcript stays retained after the Session was left (Home shows its row only).
+            markSessionSurfaceHidden(SESSION_ID, appliedServer.serverId);
+            const edits = 6;
+            for (let index = 1; index <= edits; index++) {
+                served = plainTranscriptApiMessage('mm15', 15, `streamed ${index}`, 100 + index);
+                expect(await applyRevisionPage(100 + index)).toMatchObject({ status: 'complete', safeAdvanceCursor: String(cursor) });
+            }
+            console.info('UNVIEWED_TRANSCRIPT_REVISION_READS', JSON.stringify({ edits, reads: messagesRequestPaths().length }));
+            expect(messagesRequestPaths()).toHaveLength(0);
+            expect(readStaleTranscriptMessageIds(syncForTest.deferredTranscriptState, SESSION_ID)).toContain('mm15');
+
+            // Opening the Session reads the current revision once.
+            markSessionSurfaceVisible(SESSION_ID, appliedServer.serverId);
+            sync.onSessionVisible(SESSION_ID);
+            await sync.refreshSessionMessages(SESSION_ID);
+            await expect.poll(() => readStoredTranscriptText('mm15')).toBe(`streamed ${edits}`);
+            expect(messagesRequestPaths().filter((path) => path.includes('afterSeq=14'))).toHaveLength(1);
+            expect(readStaleTranscriptMessageIds(syncForTest.deferredTranscriptState, SESSION_ID)).not.toContain('mm15');
         } finally {
             markSessionSurfaceHidden(SESSION_ID, appliedServer.serverId);
             sync.resetMessageTransport();

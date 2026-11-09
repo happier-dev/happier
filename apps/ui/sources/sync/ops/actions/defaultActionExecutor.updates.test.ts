@@ -154,6 +154,28 @@ describe('Updates Actions through current UI update owners', () => {
                 .toEqual([[scope.serverId, scope.accountId, machine.id, 'start'], [scope.serverId, scope.accountId, machine.id, 'poll']]);
         } finally { releasePoll(); await act(() => hook.unmount()); }
     });
+    it('keeps a helper update and its batch busy through the fresh daemon facts', async () => {
+        const { scope } = await installOwner();
+        const helper: UpdateItem = { ...cli, id: 'studio:installable:gh', subject: { kind: 'installable', key: 'gh' } };
+        let release!: () => void;
+        const pending = new Promise<void>(resolve => { release = resolve; });
+        let entered!: () => void;
+        const reading = new Promise<void>(resolve => { entered = resolve; });
+        const boundary = rpc.getMockImplementation()!;
+        rpc.mockImplementation(async request => {
+            if (request.method === RPC_METHODS.CAPABILITIES_DETECT) { entered(); await pending; }
+            return boundary(request);
+        });
+        const { runUpdateBatch, readUpdateBatch } = await import('@/updates/machineUpdateRuns');
+        const completion = runUpdateBatch(scope, [helper], item => runMachineItemUpdate(item, { scope }));
+        await reading;
+        const during = observeMachineUpdateRun(readMachineUpdateRuns(scope.serverId), helper.id).running;
+        const batch = readUpdateBatch(scope);
+        release(); await completion;
+        expect(during).toBe(true);
+        expect(batch).toEqual({ done: 0, total: 1, stopping: false });
+    });
+
     it('reads exact current selectors and refuses an unmounted owner', async () => {
         const { scope } = await installOwner();
         const executor = createDefaultActionExecutor();

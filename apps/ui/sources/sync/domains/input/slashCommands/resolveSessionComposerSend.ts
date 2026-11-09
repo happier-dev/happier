@@ -1,6 +1,7 @@
 import { parseSessionSlashCommand } from './parseSessionSlashCommand';
-import type { ActionId, PromptInvocationBehaviorV1, PromptInvocationsV1 } from '@happier-dev/protocol';
-import { isPromptInvocationAvailable, normalizePromptInvocationTokenV1 } from '@happier-dev/protocol/prompts/library/promptInvocationsV1';
+import type { ActionId} from '@happier-dev/protocol/actions/actionIds';
+import type { PromptInvocationBehaviorV1, PromptInvocationsV1 } from '@happier-dev/protocol/prompts/library/promptInvocationsV1';
+import { isPromptInvocationAvailable, normalizePromptInvocationTokenV1, RESERVED_PROMPT_INVOCATION_TOKENS_V1 } from '@happier-dev/protocol/prompts/library/promptInvocationsV1';
 import { findBuiltInPrompt } from './builtInPrompts';
 import { renderPromptTemplateTextV1 } from './renderPromptTemplateTextV1';
 import { isExecutionRunsFeatureAction } from '@/sync/domains/actions/isExecutionRunsFeatureAction';
@@ -22,8 +23,6 @@ export type SessionComposerSendResolution =
         allowArgs: boolean;
         rest: string;
     };
-
-const RESERVED_TOKENS: ReadonlySet<string> = new Set(['/clear', '/compact']);
 
 function resolveGoalCommand(input: string): Extract<SessionComposerSendResolution, { kind: 'goal' }> | null {
     const trimmed = input.trim();
@@ -107,7 +106,7 @@ export function resolveSessionComposerSend(args: {
             const firstSpace = trimmed.search(/\s/);
             const rawToken = firstSpace === -1 ? trimmed : trimmed.slice(0, firstSpace);
             const normalizedToken = normalizePromptInvocationTokenV1(rawToken);
-            if (!RESERVED_TOKENS.has(normalizedToken)) {
+            if (!RESERVED_PROMPT_INVOCATION_TOKENS_V1.has(normalizedToken)) {
                 const rest = firstSpace === -1 ? '' : trimmed.slice(firstSpace).trim();
                 const builtIn = findBuiltInPrompt(normalizedToken);
                 if (builtIn) {
@@ -135,7 +134,7 @@ export function resolveSessionComposerSend(args: {
             const rawToken = firstSpace === -1 ? trimmed : trimmed.slice(0, firstSpace);
             const normalizedToken = normalizePromptInvocationTokenV1(rawToken);
 
-            if (!RESERVED_TOKENS.has(normalizedToken)) {
+            if (!RESERVED_PROMPT_INVOCATION_TOKENS_V1.has(normalizedToken)) {
                 const rest = firstSpace === -1 ? '' : trimmed.slice(firstSpace).trim();
                 for (const entry of invocations) {
                     if (!entry || typeof entry !== 'object') continue;

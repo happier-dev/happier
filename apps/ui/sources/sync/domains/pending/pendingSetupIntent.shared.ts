@@ -212,7 +212,7 @@ export function fromSerializedRecord(raw: string): PendingSetupIntent | null {
 import { CurrentUiContextSnapshotV1Schema, type CurrentUiContextSnapshotV1 } from '@happier-dev/protocol/plugins/ui/currentUiContext';
 import type { ChangelogEntry } from '@/changelog';
 
-export type AskHappierContext = Readonly<{ kind: 'release'; release: Readonly<ChangelogEntry> }>;
+export type AskHappierContext = Readonly<{ kind: 'release'; release: Readonly<Pick<ChangelogEntry, 'id' | 'versionLabel' | 'date' | 'markdown'>> }>;
 
 type AskHappierAuthoringContext = Readonly<{
     context?: AskHappierContext;

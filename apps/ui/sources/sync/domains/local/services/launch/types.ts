@@ -7,7 +7,7 @@ import type {
     DaemonLocalServiceLauncherStartResponseV1,
     LocalServiceLauncherSnapshotV1,
     LocalServiceLaunchTargetV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/local/services/launcher/v1';
 
 export type LocalServiceLaunchTarget = LocalServiceLaunchTargetV1;
 export type LocalServiceLauncherSnapshot = LocalServiceLauncherSnapshotV1;

@@ -1,4 +1,5 @@
 import { COMPUTER_PRESENT_USER_ACTION_IDS } from '@happier-dev/protocol/computer/v1';
+import { isComputerRuntimeActionId } from '@happier-dev/protocol/actions/executor/computer';
 import type { RuntimeActionExecute } from '@happier-dev/protocol/actions/executor/types';
 
 import { executeComputerActionViaMachineRpc } from './machineRpc';
@@ -31,14 +32,14 @@ function readMachineId(input: unknown): string | null {
 }
 
 /**
- * The person's computer controls as runtime Actions: the front door has already applied Actions
- * settings and the present-user floor; this leaf carries them to the machine the request names, for
- * the Session or Machine-person source. Only the person's Actions travel here (choose, look, stop, hand back,
- * permission pane), and only with present-user authority, because the daemon route stamps that
- * authority itself. Agent computer Actions run in their Session's own dispatch, never from this client.
+ * The front door has applied Actions settings. Person controls (choose, look, stop, hand back,
+ * permission pane) use the named Machine's direct RPC, which stamps present-user authority.
+ * Agent proposals use the Account Action transport, retaining their caller, Session context
+ * and automation authority, including target reads while preparing an approval.
  */
 export function createComputerRuntimeActionExecutor(input: Readonly<{
     executeOnMachine?: ComputerMachineRpc;
+    executeAgentAction?: RuntimeActionExecute;
     resolveOwnDesktopOnly?: (target: Readonly<{ machineId: string; serverId?: string }>) => boolean;
     fallback: RuntimeActionExecute;
     /** The invoking Account owns publication, never the effect's returned acknowledgement. */
@@ -46,8 +47,15 @@ export function createComputerRuntimeActionExecutor(input: Readonly<{
 }>): RuntimeActionExecute {
     const executeOnMachine = input.executeOnMachine ?? executeComputerActionViaMachineRpc;
     return async (args) => {
-        if (!args.actionId.startsWith('computer.')) return await input.fallback(args);
-        if (!PRESENT_USER_ACTION_IDS.has(args.actionId) || args.context.authority !== 'present_user') {
+        if (!isComputerRuntimeActionId(args.actionId)) return await input.fallback(args);
+        if (args.context.authority !== 'present_user') {
+            if (!input.executeAgentAction) return refuse('present_user_required');
+            const machineId = readMachineId(args.input);
+            if (!machineId) return refuse('invalid_parameters');
+            return await input.executeAgentAction({ ...args, context: { ...args.context,
+                externalActionTarget: { kind: 'machine', machineId } } });
+        }
+        if (!PRESENT_USER_ACTION_IDS.has(args.actionId)) {
             return refuse('present_user_required');
         }
         const sessionId = typeof args.context.defaultSessionId === 'string' ? args.context.defaultSessionId.trim() : '';

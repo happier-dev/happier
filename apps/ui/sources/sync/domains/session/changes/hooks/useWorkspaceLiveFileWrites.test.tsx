@@ -48,6 +48,75 @@ beforeEach(() => {
 afterEach(async () => { await standardCleanup(); storage.setState(original); });
 
 describe('live file-write hooks', () => {
+    it('does no membership or Session-record scans for unrelated transcript arrivals while admitted writes and moves reach tree and tab consumers', async () => {
+        // Match the 1,000-Session REVIEW-B3 reproduction; only two belong to this workspace.
+        const records = Object.fromEntries(Array.from({ length: 1000 }, (_, index) => {
+            const id = `session-${index}`;
+            return [id, session(id, { metadata: {
+                path: index < 2 ? '/repo' : `/other-${index}`, machineId: 'machine-1', host: 'test',
+            } })];
+        }));
+        let membershipScans = 0;
+        let recordReads = 0;
+        const sessions = new Proxy(records, {
+            ownKeys(target) { membershipScans += 1; return Reflect.ownKeys(target); },
+            get(target, key, receiver) {
+                if (typeof key === 'string' && key.startsWith('session-')) recordReads += 1;
+                return Reflect.get(target, key, receiver);
+            },
+        });
+        storage.setState({ sessions, sessionMessages: {
+            'session-0': transcript([]), 'session-1': transcript([]), 'session-999': transcript([]),
+        } });
+        const settled = vi.fn<(paths: readonly string[]) => void>();
+        let renders = 0;
+        const hook = await renderHook(() => {
+            renders += 1;
+            // The tree uses both the live map and settlement stream; Details uses the same map via tab presentation.
+            useWorkspaceFileWriteSettlements(scope, settled);
+            return { writes: useWorkspaceLiveFileWrites(scope), tab: useWorkspaceFileWriteTabPresentation(scope) };
+        });
+        const initial = hook.getCurrent();
+        const initialRenders = renders;
+        membershipScans = 0;
+        recordReads = 0;
+        await act(async () => {
+            for (let version = 1; version <= 10; version += 1) {
+                storage.setState(state => ({ sessionMessages: {
+                    ...state.sessionMessages, 'session-999': transcript([call('unrelated', 'unrelated.ts')], version),
+                } }));
+            }
+        });
+        expect({ membershipScans, recordReads, renders: renders - initialRenders }).toEqual({ membershipScans: 0, recordReads: 0, renders: 0 });
+        expect(hook.getCurrent()).toBe(initial);
+
+        const file = { key: 'file:src/one.ts', kind: 'file', title: 'one.ts', resource: { kind: 'file', path: 'src/one.ts' }, isPinned: false, isPreview: true };
+        await act(async () => storage.setState(state => ({ sessionMessages: {
+            ...state.sessionMessages, 'session-0': transcript([call('admitted', 'src/one.ts')]),
+        } })));
+        expect([...hook.getCurrent().writes.keys()]).toEqual(['src/one.ts']);
+        expect(hook.getCurrent().tab(file)).toMatchObject({ status: { tone: 'working' } });
+        await act(async () => storage.setState(state => ({ sessionMessages: {
+            ...state.sessionMessages, 'session-0': transcript([call('admitted', 'src/one.ts', 'completed')], 2),
+        } })));
+        expect(settled.mock.calls).toEqual([[['src/one.ts']]]);
+        expect(hook.getCurrent().writes.size).toBe(0);
+        expect(hook.getCurrent().tab(file)).toBeUndefined();
+
+        await act(async () => storage.setState(state => ({ sessionMessages: {
+            ...state.sessionMessages, 'session-1': transcript([call('moving', 'src/one.ts')]),
+        } })));
+        expect(hook.getCurrent().tab(file)).toMatchObject({ status: { tone: 'working' } });
+        await act(async () => storage.setState(state => ({ sessions: {
+            ...state.sessions, 'session-1': session('session-1', { metadata: { path: '/elsewhere', machineId: 'machine-1', host: 'test' } }),
+        } })));
+        expect(hook.getCurrent().writes.size).toBe(0);
+        expect(hook.getCurrent().tab(file)).toBeUndefined();
+        await act(async () => storage.setState(state => ({ sessions: { ...state.sessions, 'session-1': session() } })));
+        expect([...hook.getCurrent().writes.keys()]).toEqual(['src/one.ts']);
+        expect(hook.getCurrent().tab(file)).toMatchObject({ status: { tone: 'working' } });
+    });
+
     it('uses the shared tab status for a live file and retains non-file presentation', async () => {
         storage.setState({ sessionMessages: { 'session-1': transcript([call('tab-write', 'src/one.ts')]) } });
         const fallback = { faviconUrl: 'https://example.com/favicon.png', status: { tone: 'attention' as const, label: 'Needs input' } };

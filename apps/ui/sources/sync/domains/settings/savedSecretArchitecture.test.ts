@@ -45,26 +45,23 @@ describe('saved secret architecture', () => {
                 relativePath: relative(UI_SOURCES_ROOT, fullPath).replaceAll('\\', '/'),
                 contents: readFileSync(fullPath, 'utf8'),
             }))
-            .filter(({ relativePath, contents }) => (
-                relativePath !== 'components/secrets/useSavedSecretsMutable.ts'
-                && /useSettingMutable\(\s*['"]secrets['"]\s*\)/u.test(contents)
-            ))
+            .filter(({ contents }) => /useSettingMutable\(\s*['"]secrets['"]\s*\)/u.test(contents))
             .map(({ relativePath }) => relativePath)
             .sort();
 
         expect(violations).toEqual([]);
     });
 
-    it('keeps catalog pickers and the Secrets list off the legacy whole-array mutation hook', () => {
-        const canonicalCatalogConsumers = [
-            'app/(app)/new/pick/secret.tsx',
-            'app/(app)/settings/secrets.tsx',
-            'components/secrets/SecretsList.tsx',
-            'components/ui/forms/valueRefs/SavedSecretPickerModal.tsx',
-        ];
-        const violations = canonicalCatalogConsumers.filter((relativePath) => (
-            readFileSync(join(UI_SOURCES_ROOT, relativePath), 'utf8').includes('useSavedSecretsMutable')
-        ));
+    it('has no Account Settings whole-array Saved Secret writer beside the catalog owner', () => {
+        // Personal keys are created, renamed, rotated and deleted through the catalog's personal Actions only.
+        const violations = walkSourceFiles(UI_SOURCES_ROOT)
+            .map((fullPath) => ({
+                relativePath: relative(UI_SOURCES_ROOT, fullPath).replaceAll('\\', '/'),
+                contents: readFileSync(fullPath, 'utf8'),
+            }))
+            .filter(({ contents }) => contents.includes('useSavedSecretsMutable') || contents.includes('applySavedSecretReplacementIntent'))
+            .map(({ relativePath }) => relativePath)
+            .filter((relativePath) => relativePath !== 'sync/domains/settings/savedSecretArchitecture.test.ts');
 
         expect(violations).toEqual([]);
     });

@@ -30,7 +30,7 @@ export type BrowserAutomationRequest = Readonly<{
         id: string;
     }>;
     actionKind: string;
-    timeoutMs: number;
+    timeoutMs?: BrowserAutomationActionRequestV1['timeoutMs'];
     payload?: Readonly<Record<string, unknown>>;
     dialogResponse?: BrowserAutomationActionRequestV1['dialogResponse'];
 }>;
@@ -186,9 +186,8 @@ function summarizeRawFailure(error: unknown): Record<string, unknown> {
 }
 
 export function createBrowserAutomationControlService(
-    input: Readonly<{ nowMs: () => number; maxTimelineEntries?: number }>,
+    input: Readonly<{ nowMs: () => number }>,
 ): BrowserAutomationControlService {
-    const maxTimelineEntries = Math.max(1, Math.min(input.maxTimelineEntries ?? 500, 500));
     let nextTimelineSeq = 0;
     const ownersByViewKey = new Map<string, BrowserAutomationOwner>();
     const ownerIdToViewKey = new Map<string, string>();
@@ -253,33 +252,30 @@ export function createBrowserAutomationControlService(
         const resultSummary = result.resultSummary
             ? { status: result.status, ...(result.errorCode ? { errorCode: result.errorCode } : {}), ...result.resultSummary }
             : result;
-        const nextEntries = [
-            ...entries,
-            {
-                timelineEntryId: `browser_automation_timeline:${nextTimelineSeq}`,
-                automationRequestId: active.request.automationRequestId,
-                browserSessionId: active.request.browserSessionId,
-                viewId: active.request.viewId,
-                actionKind: active.request.actionKind,
-                requesterKind: active.request.requestedBy,
-                status: result.status,
-                adapterKind: active.owner.adapterKind,
-                fidelity: active.owner.fidelity,
-                trustedInput: active.owner.trustedInput,
-                queuedAtMs: active.queuedAtMs,
-                startedAtMs: active.startedAtMs,
-                finishedAtMs,
-                durationMs: Math.max(0, finishedAtMs - active.startedAtMs),
-                navigationGenerationBefore: active.navigationGenerationBefore,
-                navigationGenerationAfter: active.owner.navigationGeneration,
-                controlEpochBefore: active.controlEpochBefore,
-                controlEpochAfter: controller.controlEpoch,
-                targetSummary: redactBrowserAutomationTimelineDetails(active.request.payload ?? {}),
-                resultSummary: redactBrowserAutomationTimelineDetails(resultSummary),
-                ...(result.errorCode ? { reasonCode: result.errorCode } : {}),
-            } satisfies BrowserAutomationTimelineEntry,
-        ].slice(-maxTimelineEntries);
-        timelineByViewKey.set(viewKey, nextEntries);
+        entries.push({
+            timelineEntryId: `browser_automation_timeline:${nextTimelineSeq}`,
+            automationRequestId: active.request.automationRequestId,
+            browserSessionId: active.request.browserSessionId,
+            viewId: active.request.viewId,
+            actionKind: active.request.actionKind,
+            requesterKind: active.request.requestedBy,
+            status: result.status,
+            adapterKind: active.owner.adapterKind,
+            fidelity: active.owner.fidelity,
+            trustedInput: active.owner.trustedInput,
+            queuedAtMs: active.queuedAtMs,
+            startedAtMs: active.startedAtMs,
+            finishedAtMs,
+            durationMs: Math.max(0, finishedAtMs - active.startedAtMs),
+            navigationGenerationBefore: active.navigationGenerationBefore,
+            navigationGenerationAfter: active.owner.navigationGeneration,
+            controlEpochBefore: active.controlEpochBefore,
+            controlEpochAfter: controller.controlEpoch,
+            targetSummary: redactBrowserAutomationTimelineDetails(active.request.payload ?? {}),
+            resultSummary: redactBrowserAutomationTimelineDetails(resultSummary),
+            ...(result.errorCode ? { reasonCode: result.errorCode } : {}),
+        } satisfies BrowserAutomationTimelineEntry);
+        timelineByViewKey.set(viewKey, entries);
     }
 
     function finishActiveAction(active: ActiveAction, result: BrowserAutomationResult): void {
@@ -492,10 +488,6 @@ export function createBrowserAutomationControlService(
             if (request.navigationGeneration !== owner.navigationGeneration) {
                 return Promise.resolve(rejectAndRecord(request, owner, 'stale', 'stale_navigation'));
             }
-            // UI page engines cannot answer browser dialogs. Reject before dispatching their action.
-            if (request.dialogResponse !== undefined) {
-                return Promise.resolve(rejectAndRecord(request, owner, 'unsupported', 'unsupported_action'));
-            }
             if (!owner.supportedActions.includes(request.actionKind)) {
                 return Promise.resolve(rejectAndRecord(request, owner, 'unsupported', 'unsupported_action'));
             }
@@ -535,7 +527,7 @@ export function createBrowserAutomationControlService(
                 controller.controller = controller.humanHeld || request.requestedBy === 'user' ? 'human' : request.requestedBy === 'system' ? 'system' : 'agent';
             }
             emitChange();
-            active.timeoutId = setTimeout(() => {
+            if (request.timeoutMs !== undefined) active.timeoutId = setTimeout(() => {
                 interruptActiveAction(active, { status: 'timed_out', errorCode: 'timed_out' });
             }, request.timeoutMs);
 
@@ -552,7 +544,8 @@ export function createBrowserAutomationControlService(
                 }
             }
 
-            owner.executeAction(request, { signal: abortController.signal, deadlineMs: active.startedAtMs + request.timeoutMs, onActiveTarget: target => {
+            owner.executeAction(request, { signal: abortController.signal,
+                deadlineMs: request.timeoutMs === undefined ? undefined : active.startedAtMs + request.timeoutMs, onActiveTarget: target => {
                 if (active.settled || active.interruption || abortController.signal.aborted
                     || controller.activeAutomationRequestId !== request.automationRequestId) return;
                 const parsed = BrowserActiveTargetV1Schema.safeParse(target);

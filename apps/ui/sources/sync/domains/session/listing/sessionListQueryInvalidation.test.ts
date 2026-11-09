@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { publishHomeAccountChange, publishHomeAccountChangeWake } from '@/sync/runtime/orchestration/homeAccountChange';
 
 import {
     invalidateSessionListQueryHome,
@@ -76,6 +76,29 @@ describe('filtered-list Account-change invalidation', () => {
         expect(invalidate).toHaveBeenCalledTimes(3);
         expect(invalidate).toHaveBeenLastCalledWith('structural');
 
+        dispose();
+    });
+    it('leaves focused-Home row and Machine wakes to the consumed feed page: N wakes, 0 list re-queries', () => {
+        const invalidate = vi.fn();
+        const dispose = subscribeSessionListQueryHomeInvalidation(() => new Map([
+            ['home-a', { invalidate, retire: vi.fn() }],
+        ]));
+
+        // A streamed turn and busy Machines publish many content-free wakes; each is
+        // followed by the catch-up page that the canonical planner classifies.
+        for (let index = 0; index < 10; index += 1) {
+            publishHomeAccountChangeWake('home-a', {
+                t: 'account-change', changeKinds: ['session'], entityIds: [`session-${index}`], sessionSystemRecords: [],
+            }, 'catch-up-pending');
+            publishHomeAccountChangeWake('home-a', {
+                t: 'account-change', changeKinds: ['machine'], entityIds: [`machine-${index}`],
+            }, 'catch-up-pending');
+        }
+        expect(invalidate).toHaveBeenCalledTimes(0);
+
+        // The consumed page still re-queries a genuinely structural change.
+        publishHomeAccountChange('home-a', ['session-1'], { feedPageConsumed: true, sessionListQueryAffects: true });
+        expect(invalidate).toHaveBeenCalledTimes(1);
         dispose();
     });
 });

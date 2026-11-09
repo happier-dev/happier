@@ -1,4 +1,5 @@
-import type { AgentActivityKindV1, AgentActivityStatusV1 } from '@happier-dev/protocol';
+import type { AgentActivityKindV1} from '@happier-dev/protocol/sessions/work/agentActivity/agentActivityKindV1';
+import type { AgentActivityStatusV1 } from '@happier-dev/protocol/sessions/work/agentActivity/agentActivityStatusV1';
 
 /**
  * The merged agent-activity model: one unit of agent work, however it became known.

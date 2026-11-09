@@ -1,4 +1,5 @@
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { normalizeWorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 
@@ -33,6 +34,7 @@ export function resolveProjectForSession(
 ): ProjectKeyLookupResult {
     const session = sessions[sessionId] ?? null;
     const metadata = session ? readSessionOwnerMetadataView(session) : null;
+    if (readSessionDirectoryKind(metadata) === 'managed') return null;
     if (metadata?.path) {
         const serverId =
             session && 'serverId' in session && typeof session.serverId === 'string'

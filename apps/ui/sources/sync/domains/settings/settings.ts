@@ -26,6 +26,7 @@ import {
     type CurrentSessionAuthoringSelectionsRuntimeProjection,
 } from './sessionAuthoringSelectionPersistence';
 import { migrateLegacyVoiceOpenAiChatProvider } from '@/voice/adapters/localConversation/migrateLegacyOpenAiChatProvider';
+import { stripRetiredNewSessionSettings } from './localOnlyAccountSettings';
 
 // NOTE: We intentionally do NOT support legacy provider config objects (e.g. `openaiConfig`).
 // Profiles must use `environmentVariables` + `envVarRequirements` only.
@@ -70,6 +71,8 @@ export type Settings = KnownSettings;
 export type WritableSettingsKey = Exclude<
     keyof Settings,
     | 'currentFavoriteModelSelectionsV1'
+    | 'lastUsedBackendTarget'
+    | 'lastUsedAgent'
 >;
 
 /** Public generic Account Settings write shape. */
@@ -130,7 +133,7 @@ export function settingsParse(settings: unknown): Settings {
         inputSchemaVersion,
         supportedSchemaVersion: SUPPORTED_SCHEMA_VERSION,
     });
-    const canonical = migrated === initial ? initial : parseProtocolAccountSettings(migrated);
+    const canonical = stripRetiredNewSessionSettings(migrated === initial ? initial : parseProtocolAccountSettings(migrated));
     const local = parseLocalAccountSettings(raw);
     const merged = {
         ...canonical,
@@ -155,7 +158,7 @@ export function settingsParse(settings: unknown): Settings {
     if (migrated === initial && !migratedLegacyChat) {
         return projectRuntimeAccountSettings(projected) as Settings;
     }
-    const migratedCanonical = parseProtocolAccountSettings(migrationInput);
+    const migratedCanonical = stripRetiredNewSessionSettings(parseProtocolAccountSettings(migrationInput));
     const migratedMerged = {
         ...migratedCanonical,
         ...local,

@@ -2,6 +2,7 @@ import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/
 import { createMcpServerActionExecuteV1, projectMcpServerActionFailureV1,
     MCP_SERVER_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/mcp/servers/serverActionsV1';
 import { McpServerCatalogSnapshotV1Schema } from '@happier-dev/protocol/mcp/servers/serverCatalogV1';
+import type { DaemonMcpServersDetectResponse } from '@happier-dev/protocol/mcp/servers/daemonRpcV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { readRpcRequestDisposition } from '@happier-dev/sync-client';
 import { readMcpPluginItemMetadataFromProjectionV1 } from '@happier-dev/protocol/mcp/servers/pluginItemsV1';
@@ -14,10 +15,9 @@ import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverSc
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import type { LazyActionAccountContext } from './actionAccountContext';
 import { createUiConnectedServiceAction } from './connectedServiceActionDeps';
-import { resolveUiAccountActionFallbackMachineId } from './accountActionDeps';
+import { resolveMcpServerAdministrationMachineId } from './mcpServerAdministrationTarget';
 import { CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD, ConnectedAccountControlCommandRequestSchema } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
 import { storage } from '@/sync/domains/state/storageStore';
-import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { readMcpServerToolAgentFacts } from './mcpServerToolAgentFacts';
 import { readInstalledMachineAgentIds } from '@/sync/domains/capabilities/reach/installedMachineAgents';
 import { machineAgentInventoryStore } from '@/agents/machineAgents/machineAgentInventoryStore';
@@ -40,28 +40,20 @@ export function createUiMcpServerActionExecuteV1(account: LazyActionAccountConte
             assertCurrent();
             const resolveAdministrationMachine = async () => {
                 assertCurrent();
-                // Preserve the Action's admitted exact target, just as Test
-                // does. Presence guides automatic selection, not rerouting.
-                if (context.externalActionTarget?.kind === 'machine') {
-                    return context.externalActionTarget.machineId.trim() || null;
-                }
-                const [{ resolveFreshMachineAdministrationExecutionTarget }, { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 }] = await Promise.all([
-                    import('@/sync/domains/machines/administration/useTargetSelection'),
-                    import('@/sync/domains/machines/administration/selectionPreferences'),
-                ]);
-                assertCurrent();
-                const selected = storage.getState().settings.machineAdministrationTargetsLocalV1[MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.mcpServers] ?? null;
-                if (!selected) return resolveUiAccountActionFallbackMachineId(account);
-                const target = resolveFreshMachineAdministrationExecutionTarget(selected, { accountScope: account.accountLifetime.scope });
-                return target && areServerProfileIdentifiersEquivalent(target.profile.id, account.serverId)
-                    ? target.machine.id : null;
+                return resolveMcpServerAdministrationMachineId(account.accountLifetime.scope, {
+                    target: context.externalActionTarget,
+                    ...(request.actionId === 'mcp.servers.signIn.start' ? { intent: 'retry' as const } : {}),
+                });
             };
             const readPluginItems = async () => {
                 assertCurrent();
                 const machineId = await resolveAdministrationMachine();
                 if (!machineId) return null;
                 const { loadDaemonMergedProjectionInputs } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
-                const inputs = await loadDaemonMergedProjectionInputs({ machineId, serverId: account.serverId, accountLifetime: account.accountLifetime, signal: cancellation.signal });
+                // Only the MCP family (with the always-loaded packages) feeds the item metadata; the full
+                // catalogue would hydrate every section of the Machine's projection for one list.
+                const inputs = await loadDaemonMergedProjectionInputs({ machineId, serverId: account.serverId, accountLifetime: account.accountLifetime,
+                    signal: cancellation.signal, sections: ['familiesById.mcp'] });
                 assertCurrent();
                 if (!inputs?.pluginProjectionV2) return null;
                 return readMcpPluginItemMetadataFromProjectionV1(inputs.pluginProjectionV2);
@@ -97,7 +89,7 @@ export function createUiMcpServerActionExecuteV1(account: LazyActionAccountConte
                     const { loadDaemonMergedProjectionInputs } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
                     assertCurrent();
                     const inputs = await loadDaemonMergedProjectionInputs({ machineId, serverId: account.serverId,
-                        accountLifetime: account.accountLifetime, signal: cancellation.signal });
+                        accountLifetime: account.accountLifetime, signal: cancellation.signal, sections: ['agentsById'] });
                     assertCurrent();
                     const projection = inputs?.pluginProjectionV2;
                     if (!projection) return null;
@@ -116,12 +108,12 @@ export function createUiMcpServerActionExecuteV1(account: LazyActionAccountConte
                         releaseCatalog ??= observeMcpServerCatalog(scope);
                         try {
                             const { encryption } = await account.resolveAccountEncryption();
-                            const admitted = await resolveAccountStorageContext(account.credentials, { encryption, request: account.request });
+                            const admitted = await resolveAccountStorageContext(account.credentials, { encryption, request: account.request, usage: 'fresh-authority' });
                             assertCurrent();
                             let snapshot = getMcpServerCatalogSnapshot(scope);
                             if ((snapshot.status !== 'ready' && snapshot.status !== 'partial') || snapshot.stale || !snapshot.value) {
                                 await refreshMcpServerCatalog(scope);
-                                const checked = await resolveAccountStorageContext(account.credentials, { encryption, request: account.request });
+                                const checked = await resolveAccountStorageContext(account.credentials, { encryption, request: account.request, usage: 'fresh-authority' });
                                 assertCurrent();
                                 if (checked.mode !== admitted.mode) return { status: 'unavailable', reason: 'account-mode-mismatch' };
                                 snapshot = getMcpServerCatalogSnapshot(scope);
@@ -178,11 +170,24 @@ export function createUiMcpServerActionExecuteV1(account: LazyActionAccountConte
                         code: actionId === 'mcp.servers.test' ? 'outcome_unknown' : 'invalid_action_output' });
                     // The RPC owner retains consumed ACKs; only read disclosure
                     // depends on the invocation remaining current afterwards.
-                    if (actionId === 'mcp.found.list') assertCurrent();
+                    if (actionId === 'mcp.found.list') {
+                        assertCurrent();
+                        // Like `skills.found.list`, the ingress keeps each machine's last whole-machine
+                        // result in the device-local warm cache, so every Found reader shows it on return.
+                        // `parsed` used this Action's own output schema, so it is a Found result.
+                        const found = parsed.data as DaemonMcpServersDetectResponse;
+                        const directory = typeof input === 'object' && input !== null ? Reflect.get(input, 'directory') : undefined;
+                        if (found.ok && !directory) {
+                            const { saveFoundWarmCacheEntry } = await import('@/sync/domains/state/warmCachePersistence');
+                            saveFoundWarmCacheEntry(account.serverId, account.accountId,
+                                { kind: 'mcp_server', machineId, observedAt: Date.now(), result: found });
+                        }
+                    }
                     return parsed.data;
                 },
             })(request);
-        } catch (cause) { return projectMcpServerActionFailureV1(cause); }
+        } catch (cause) { return projectMcpServerActionFailureV1(cause,
+            request.actionId === 'mcp.servers.signIn.start' ? 'host_admission' : undefined); }
         finally { releaseCatalog?.(); subscription.dispose(); cancellation.dispose(); }
     };
 }

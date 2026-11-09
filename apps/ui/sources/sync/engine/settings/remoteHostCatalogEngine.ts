@@ -3,12 +3,14 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import { readRemoteHostCatalogProjection } from '@/sync/api/account/apiRemoteHostCatalog';
 import { createScopedSnapshotLoader, type ScopedLoadTarget } from '@/sync/engine/scope/scopedSnapshotLoader';
+import { subscribeAccountCatalogInvalidation } from './accountCatalogInvalidation';
 import { applyRemoteHostCatalogSnapshot, beginRemoteHostCatalogLoad, getRemoteHostCatalogSnapshot,
     invalidateRemoteHostCatalog, invalidateRemoteHostCatalogsForServer } from '@/sync/store/settings/remoteHostCatalogSnapshot';
 
 type Target = ScopedLoadTarget & Readonly<{ scope: ServerAccountScope }>;
 const targetFor = (scope: ServerAccountScope): Target => ({ key: `remote-hosts:${serverAccountScopeKeySuffix(scope)}`, serverId: scope.serverId, scope });
 const loader = createScopedSnapshotLoader<Target>({
+    subscribeRetainedInvalidation: subscribeAccountCatalogInvalidation,
     load: async ({ scope }, context) => {
         beginRemoteHostCatalogLoad(scope);
         return context.readWithMaintenance<Awaited<ReturnType<typeof readRemoteHostCatalogProjection>>>({

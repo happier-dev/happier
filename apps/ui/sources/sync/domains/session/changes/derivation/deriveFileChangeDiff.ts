@@ -1,5 +1,5 @@
 import { createTwoFilesPatch } from 'diff';
-import type { FileChangeEvidence } from '@happier-dev/protocol';
+import type { FileChangeEvidence } from '@happier-dev/protocol/sessions/changes/types';
 
 /** Formats Protocol-selected content; null is unavailable and an empty string is an exact empty comparison. */
 export function deriveFileChangeDiff(file: FileChangeEvidence): string | null {

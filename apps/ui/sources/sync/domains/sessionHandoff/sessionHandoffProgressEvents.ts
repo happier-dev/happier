@@ -1,4 +1,4 @@
-import type { SessionHandoffStatus } from '@happier-dev/protocol';
+import type { SessionHandoffStatus } from '@happier-dev/protocol/sessions/control/handoff/handoffStatus';
 
 export type SessionHandoffProgressUpdate = Readonly<{
     sessionId: string;

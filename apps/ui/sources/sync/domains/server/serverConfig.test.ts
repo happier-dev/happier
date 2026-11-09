@@ -52,6 +52,8 @@ function clearServerEnv(): void {
     delete process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT;
     delete process.env.EXPO_PUBLIC_HAPPY_PRECONFIGURED_SERVERS;
     delete process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
+    // An unconfigured source build; the UI test env otherwise carries the official profile.
+    vi.stubEnv('EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON', '');
 }
 
 describe('getServerUrl', () => {
@@ -69,6 +71,7 @@ describe('getServerUrl', () => {
 
     afterEach(() => {
         vi.unstubAllGlobals();
+        vi.unstubAllEnvs();
         restoreEnvVar('EXPO_PUBLIC_HAPPIER_SERVER_URL', previousCanonicalEnv);
         restoreEnvVar('EXPO_PUBLIC_HAPPY_SERVER_URL', previousEnv);
         restoreEnvVar('EXPO_PUBLIC_SERVER_URL', previousLegacyGenericEnv);
@@ -190,6 +193,21 @@ describe('getServerUrl', () => {
         expect(isUsingCustomServer()).toBe(false);
 
         expect(profiles.listServerProfiles().some((p) => p.serverUrl === 'http://localhost:3013')).toBe(true);
+    });
+
+    it('keeps an empty server selection when resetting after the last profile was removed', async () => {
+        process.env.EXPO_PUBLIC_HAPPY_PRECONFIGURED_SERVERS = JSON.stringify([
+            { name: 'Cloud', url: 'https://cloud.example.test' },
+        ]);
+        stubWebRuntime('null');
+
+        for (const profile of profiles.listServerProfiles()) {
+            await profiles.removeServerProfile(profile.id);
+        }
+
+        await expect(setServerUrl(null)).resolves.toBeUndefined();
+        expect(getServerUrl()).toBe('');
+        expect(profiles.listServerProfiles()).toEqual([]);
     });
 
 });

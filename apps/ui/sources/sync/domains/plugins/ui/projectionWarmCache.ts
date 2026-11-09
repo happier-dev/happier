@@ -1,7 +1,4 @@
-import {
-    PluginProjectionV2Schema,
-    type DaemonContributionRegistryProjectionMountedTargetV1,
-} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import type { DaemonContributionRegistryProjectionMountedTargetV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type {
     PluginUiPlatformV1,
     PluginUiTargetedContributionsV1,
@@ -70,9 +67,10 @@ function hasAnyOwnKey(value: Readonly<Record<string, unknown>> | undefined | nul
 }
 
 /**
- * Builds the minimal retained projection, then round-trips it through the
- * canonical Protocol schema so the persisted bytes are exactly what the
- * restoring reader accepts. A projection with no admitted `pluginUi` entries
+ * Projects the transport-admitted DTO to the minimal retained shape. The
+ * persistence owner copies/freeze-owns new values and validates disk ingress;
+ * reparsing the already admitted live DTO here only reconstructs its graph.
+ * A projection with no admitted `pluginUi` entries
  * yields `null`: an empty targeted snapshot is never retained and never
  * restored as authority.
  */
@@ -82,13 +80,17 @@ function buildRetainedAdmissionProjection(
     if (!projection) return null;
     const pluginUi = projection.familiesById.pluginUi;
     if (!pluginUi || !hasAnyOwnKey(pluginUi.entriesById)) return null;
-    const retained = PluginProjectionV2Schema.safeParse({
+    return {
         v: 2,
         generation: projection.generation,
         installedPackagesById: projection.installedPackagesById,
+        agentsById: {},
+        actionsById: {},
+        resourcesById: {},
+        settingsById: {},
         familiesById: { pluginUi },
-    });
-    return retained.success ? retained.data : null;
+        diagnostics: [],
+    };
 }
 
 /**

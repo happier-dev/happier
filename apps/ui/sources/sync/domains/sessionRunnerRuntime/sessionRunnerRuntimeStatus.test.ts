@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { SESSION_RUNNER_RUNTIME_METADATA_KEY } from '@happier-dev/protocol';
+import { SESSION_RUNNER_RUNTIME_METADATA_KEY } from '@happier-dev/protocol/sessions/control/sessionRunnerRuntimeV1';
 
 import {
     readStaleSessionRunnerRuntimeState,

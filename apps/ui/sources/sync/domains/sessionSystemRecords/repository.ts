@@ -1,4 +1,4 @@
-import type { SessionSystemRecordStored, SessionSystemRecordStoredPageResponse } from '@happier-dev/protocol';
+import type { SessionSystemRecordStored, SessionSystemRecordStoredPageResponse } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordRoutes';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { linearBackoffDelay } from '@/utils/timing/time';
@@ -45,6 +45,7 @@ type Entry = {
     snapshot: SessionSystemRecordRepositoryEntry<RecordValue>;
     listeners: Set<() => void>;
     pending?: Promise<void>;
+    controller?: AbortController;
     invalidatedWhileLoading: boolean;
     /** Consecutive transient failures of this query; reset by any answer. */
     transientFailures: number;
@@ -86,9 +87,8 @@ function retainValue(previous: RecordValue | null, next: RecordValue): RecordVal
 }
 
 /**
- * A read that could not complete (`offline` is only the transport's name for a
- * thrown request) or a retryable server answer. Neither proves the retained
- * record gone, nor the Home unreachable.
+ * A connection failure or retryable server answer. Neither proves the retained
+ * record gone, nor the Home unreachable. Definite adapter refusals never retry.
  */
 function isTransientFailure(result: FetchError): boolean {
     return result.status === 'offline' || (result.status === 'server_error' && result.retryable);
@@ -255,17 +255,22 @@ export function createSessionSystemRecordRepository(options: SessionSystemRecord
     }
     function retainObservedValue(entry: Entry, next: RecordValue): RecordValue {
         if ('source' in next) return retainValue(entry.snapshot.data, next);
-        // A list placement and an addressed reply can receive the same revision
-        // through different HTTP responses. Give both the existing record object
-        // so their opening is shared without another inventory or record cache.
-        const retained = new Map<string, SessionSystemRecordStored>();
-        const key = (record: SessionSystemRecordStored) => JSON.stringify([record.id, record.revision]);
-        for (const observed of sessions.get(entry.session.sessionId)?.queries.values() ?? []) {
-            const value = observed.snapshot.data;
-            if (!value || 'source' in value) continue;
-            for (const record of 'records' in value ? value.records : [value]) retained.set(key(record), record);
-        }
-        const retain = (record: SessionSystemRecordStored) => retained.get(key(record)) ?? record;
+        // The addressed query is the identity owner for list and direct replies.
+        // Admit only the returned records; unrelated retained queries are untouched.
+        const retain = (record: SessionSystemRecordStored) => {
+            if (record.address.owner !== 'host') return record;
+            const addressed = lookup(entry.session, { type: 'read', address: record.address }, true);
+            if (!addressed) return record;
+            const previous = addressed.snapshot.data;
+            const retained = retainRecord(previous && !('records' in previous) && !('source' in previous) ? previous : undefined, record);
+            // A list answer can arrive after a newer direct answer. Seed an
+            // unanswered query's identity without advancing its observation state;
+            // different admitted revisions retain their own query's order.
+            if (addressed !== entry && previous === null && addressed.snapshot.lastError === null) {
+                publish(addressed, { ...addressed.snapshot, data: retained });
+            }
+            return retained;
+        };
         return retainValue(entry.snapshot.data, 'records' in next
             ? { ...next, records: next.records.map(retain) }
             : retain(next));
@@ -291,11 +296,13 @@ export function createSessionSystemRecordRepository(options: SessionSystemRecord
         if (entry.pending) return entry.pending;
         clearRetry(entry);
         publish(entry, { ...entry.snapshot, loading: entry.snapshot.data === null ? 'initial' : 'refreshing' });
-        const operation = query.type === 'read' ? transport.read(session, query.address)
-            : query.type === 'legacy_workflow' ? readLegacyWorkflowSystemRecord(options, session, query.localId)
-                : transport.list(session, query);
+        const controller = new AbortController();
+        entry.controller = controller;
+        const operation = query.type === 'read' ? transport.read(session, query.address, controller.signal)
+            : query.type === 'legacy_workflow' ? readLegacyWorkflowSystemRecord(options, session, query.localId, controller.signal)
+                : transport.list(session, query, controller.signal);
         entry.pending = operation.then((result) => {
-            if (retired) return;
+            if (retired || controller.signal.aborted || entry.controller !== controller) return;
             if (result.status === 'ok') {
                 entry.transientFailures = 0;
                 publish(entry, { data: retainObservedValue(entry, result.value), loading: 'idle', freshness: entry.invalidatedWhileLoading ? 'stale' : 'fresh', reachability: 'reachable', lastError: null });
@@ -320,6 +327,8 @@ export function createSessionSystemRecordRepository(options: SessionSystemRecord
                 if (result.status === 'forbidden' || result.status === 'not_found') invalidateBoardCount(session);
             }
         }).finally(() => {
+            if (entry.controller !== controller) return;
+            entry.controller = undefined;
             entry.pending = undefined;
             const refreshAgain = entry.invalidatedWhileLoading;
             entry.invalidatedWhileLoading = false;
@@ -327,18 +336,23 @@ export function createSessionSystemRecordRepository(options: SessionSystemRecord
         });
         return entry.pending;
     }
-    function invalidateEntry(entry: Entry) {
+    function invalidateEntry(entry: Entry, force = false) {
+        if (force && entry.pending) {
+            entry.controller?.abort();
+            entry.controller = undefined;
+            entry.pending = undefined;
+        }
         entry.invalidatedWhileLoading = Boolean(entry.pending);
         if (entry.snapshot.freshness !== 'stale') publish(entry, { ...entry.snapshot, freshness: 'stale' });
         if (entry.listeners.size > 0 && !entry.pending) void refresh(entry.session, entry.query);
     }
-    function invalidate(session: SessionAddress, addresses?: readonly HostSessionSystemRecordAddress[]) {
+    function invalidate(session: SessionAddress, addresses?: readonly HostSessionSystemRecordAddress[], options?: Readonly<{ force?: boolean }>) {
         if (retired || !isScopeHome(session)) return;
         if (!addresses || addresses.some(address => address.namespace === 'surface' && address.kind === 'item.v1')) invalidateBoardCount(session);
         const retained = sessions.get(session.sessionId);
         if (!retained) return;
         if (!addresses) {
-            for (const entry of retained.queries.values()) invalidateEntry(entry);
+            for (const entry of retained.queries.values()) invalidateEntry(entry, options?.force);
             return;
         }
         const affected = new Set<Entry>();
@@ -355,7 +369,7 @@ export function createSessionSystemRecordRepository(options: SessionSystemRecord
                 for (const entry of retained.lists.get(listSelectorKey(address.namespace, kind, localId)) ?? []) affected.add(entry);
             }
         }
-        for (const entry of affected) invalidateEntry(entry);
+        for (const entry of affected) invalidateEntry(entry, options?.force);
     }
     return {
         scope: options.scope,
@@ -460,10 +474,10 @@ export function createSessionSystemRecordRepository(options: SessionSystemRecord
             if (retired) return;
             for (const retained of sessions.values()) for (const entry of retained.queries.values()) {
                 if (entry.listeners.size === 0) continue;
-                if (options?.force !== true && entry.snapshot.freshness !== 'stale') continue;
-                entry.invalidatedWhileLoading = Boolean(entry.pending);
-                if (entry.snapshot.freshness !== 'stale') publish(entry, { ...entry.snapshot, freshness: 'stale' });
-                if (!entry.pending) void refresh(entry.session, entry.query);
+                // Ordinary refresh demand joins the read already serving this
+                // observation; only a real invalidation or force needs a newer read.
+                if (options?.force !== true && (entry.pending || entry.snapshot.freshness !== 'stale')) continue;
+                invalidateEntry(entry, options?.force);
             }
         },
         notifyContentContextChanged(session: SessionAddress) {
@@ -479,6 +493,7 @@ export function createSessionSystemRecordRepository(options: SessionSystemRecord
                 retained.boardCount.holders.clear();
             }
             for (const retained of sessions.values()) for (const entry of retained.queries.values()) {
+                entry.controller?.abort();
                 clearRetry(entry);
                 publish(entry, forbidden);
                 entry.listeners.clear();

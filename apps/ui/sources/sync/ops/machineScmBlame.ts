@@ -7,6 +7,7 @@ import {
 import type { ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
 import type { MachineScmCallOptions } from './scm/machineScm';
 import { invokeUiScmAction, normalizeUiScmFacadeResult } from './scm/scmActionInvocation';
+import { createFrontDoorActionExecute } from './actions/frontDoorRuntimeActionExecutor';
 
 export async function machineScmBlameFile(
     machineId: string,
@@ -14,10 +15,9 @@ export async function machineScmBlameFile(
     options?: MachineScmCallOptions & Readonly<{ onApprovalPending?: (registration: ActionApprovalContinuation) => void }>,
 ): Promise<ScmBlameFileResponse> {
     const payload = ScmBlameFileRequestSchema.parse(request);
-    const { createDefaultActionExecutor } = await import('./actions/defaultActionExecutor');
     const signal = options?.signal;
     const scope = options?.serverId && options.accountId ? { serverId: options.serverId, accountId: options.accountId } : null;
-    const executor = createDefaultActionExecutor(signal && scope && options?.onApprovalPending ? {
+    const executor = createFrontDoorActionExecute(undefined, signal && scope && options?.onApprovalPending ? {
         hostActionApprovalLifetime: { actionId: 'scm.blame.get', signal, surface: 'ui' },
         onBlockingApprovalPending: ({ artifactId }) => {
             if (signal.aborted) return;

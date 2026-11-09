@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 
 describe('resolveTransferRouteDecision', () => {
     it('selects exact iroh_peer ahead of every fallback when advertised', async () => {

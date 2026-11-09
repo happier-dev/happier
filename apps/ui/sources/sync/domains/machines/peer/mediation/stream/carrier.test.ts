@@ -1,6 +1,6 @@
 import {
     PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/machines/peer/mediation/tunnel/encoding';
 import { describe, expect, it } from 'vitest';
 import { MACHINE_RPC_JSON_BASE64_ENCODING } from './carrier';
 

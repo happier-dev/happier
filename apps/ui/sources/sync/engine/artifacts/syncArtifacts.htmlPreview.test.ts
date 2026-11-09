@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ARTIFACT_UPLOAD_PATH_V1, decodeArtifactUploadMetadataV1 } from '@happier-dev/transfers';
-import { ARTIFACT_HTML_BUNDLE_MIME_V1, ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, type ArtifactBlobReferenceV1 } from '@happier-dev/protocol';
+import { ARTIFACT_HTML_BUNDLE_MIME_V1} from '@happier-dev/protocol/artifacts/artifactHtmlV1';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent} from '@happier-dev/protocol/storage/artifactStoredContent';
+import { type ArtifactBlobReferenceV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import type { Artifact, DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { Encryption } from '@/sync/encryption/encryption';
 import { ArtifactEncryption } from '@/sync/encryption/artifactEncryption';
@@ -63,9 +65,7 @@ describe('Artifact HTML private preview', () => {
             header: encodePlainArtifactStoredContent({ kind: 'html', title: 'HTML', mime: ARTIFACT_HTML_BUNDLE_MIME_V1 }),
             body: encodePlainArtifactStoredContent({ body: JSON.stringify(bundle) }),
             headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
-        const request = async (path: string) => path.endsWith('/html-preview')
-            ? Response.json({ url: `https://${artifactId}.preview.test/a/${artifactId}` })
-            : Response.json(path === '/v1/artifacts/read' ? detailBatch(artifact) : artifact);
+        const request = async (path: string) => Response.json(path === '/v1/artifacts/read' ? detailBatch(artifact) : artifact);
         const view = await fetchArtifactForViewFromApi({ artifactId, credentials: { token: 'captured-token' }, request,
             encryption: null, artifactDataKeys: new Map() });
         expect(view?.htmlPreview?.bundle).toEqual(bundle);
@@ -128,7 +128,8 @@ describe('Artifact HTML private preview', () => {
                 encryptionMode: mode, dataEncryptionKey: artifact.dataEncryptionKey,
                 callerDataEncryptionKey: artifact.dataEncryptionKey, recipients: [] });
             if (path === `/v1/artifacts/${artifactId}/blobs/${blobId}`) return Response.json({ blobId, content });
-            if (path === `/v1/artifacts/${artifactId}/html-preview`) return Response.json({ url: `https://${artifactId}.preview.test/a/${artifactId}` });
+            // A private local frame must not depend on Home preview DNS/TLS.
+            if (path === `/v1/artifacts/${artifactId}/html-preview`) return Response.json({ error: 'artifact_html_isolation_unavailable' }, { status: 503 });
             throw new Error(`Unexpected HTTP path ${path}`);
         };
         const headerOpens = vi.spyOn(ArtifactEncryption.prototype, 'decryptHeaderRaw');
@@ -148,10 +149,7 @@ describe('Artifact HTML private preview', () => {
         expect(bodyOpens).toHaveBeenCalledTimes(mode === 'e2ee' ? 1 : 0);
         headerOpens.mockRestore();
         bodyOpens.mockRestore();
-        const url = new URL(result.url);
-        expect(url.origin).toBe(`https://${artifactId}.preview.test`);
-        expect(url.search).toBe('');
-        expect(url.hash).toBe('');
+        expect(paths.filter(path => path.endsWith('/html-preview'))).toHaveLength(0);
         expect(result.bundle).toMatchObject({ v: 1, entrypoint: 'index.html', files: { 'index.html': { mime: 'text/html',
             contentBase64: Buffer.from(bytes).toString('base64') } } });
         expect(paths.some(path => path.includes('public'))).toBe(false);

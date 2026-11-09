@@ -8,7 +8,8 @@ import { readRunnerActivationExportFile, type RunnerActivationCustody } from '..
 import { RunnerActivationBindingV1Schema } from '@happier-dev/protocol/ephemeralRunner/activation';
 import type { RunnerArtifactArchiveMetadataV1 } from '@happier-dev/protocol/ephemeralRunner/runnerArtifact';
 import tweetnacl from 'tweetnacl';
-import { signMachineInstallationProof, type HomeConnectionDescriptorV1 } from '@happier-dev/protocol';
+import { signMachineInstallationProof} from '@happier-dev/protocol/machines/identity/installationIdentity';
+import { type HomeConnectionDescriptorV1 } from '@happier-dev/protocol/auth/accountDirectory';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 

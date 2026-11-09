@@ -19,6 +19,7 @@ import {
     publishLocalServiceInventoryMachineSummary,
     getLocalServiceInventoryState,
     invalidateLocalServiceInventoryStore,
+    revalidateLocalServiceInventoryStore,
     publishLocalServiceInventorySnapshot,
     resetLocalServiceInventoryStoreForTests,
     subscribeLocalServiceInventoryStore,
@@ -232,7 +233,7 @@ describe('shared local-service inventory store', () => {
         expect(selectLocalServiceInventoryRows(getLocalServiceInventoryState(key))).toEqual(heldRows);
         await vi.waitFor(() => expect(rpc.snapshot).toHaveBeenCalledTimes(2));
         expect(rpc.machine).toHaveBeenCalledWith(expect.objectContaining({ accountId: 'account-a',
-            method: RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_REFRESH, payload: { machineId: 'machine-a' } }));
+            method: RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_SNAPSHOT, payload: { machineId: 'machine-a' } }));
         pending.resolve({ protocolVersion: 1, snapshot: { ...snapshot, generatedAt: 2_000, entries: [] } });
         await vi.waitFor(() => expect(watchSignals).toHaveLength(2));
         expect(getLocalServiceInventoryState(key).generatedAt).toBe(2_000);
@@ -281,6 +282,33 @@ describe('shared local-service inventory store', () => {
         unsubscribe();
     });
 
+    it('reads the daemon-kept inventory on returning demand and forces a rescan only for an explicit refresh', async () => {
+        rpc.machine.mockImplementation(async (request: { method: string; payload?: { observationOnly?: true } }) => {
+            if (request.payload?.observationOnly || request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) return new Promise(() => {});
+            return rpc.snapshot(request);
+        });
+        rpc.snapshot.mockResolvedValue({ protocolVersion: 1, snapshot });
+        const key = { machineId: 'machine-a', serverId: 'server-a', accountId: 'account-a', credentialKey: 'credential-a' };
+        const methods = () => rpc.snapshot.mock.calls.map(([request]) => (request as { method: string }).method);
+        const scans = () => methods().filter(method => method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_REFRESH).length;
+        // Showing, hiding and showing a widget again three times is ordinary demand, not a request to rescan.
+        for (let show = 0; show < 3; show += 1) {
+            const release = subscribeLocalServiceInventoryStore(key, () => {});
+            await vi.waitFor(() => expect(methods()).toHaveLength(show + 1));
+            release();
+        }
+        expect(scans()).toBe(0);
+        const release = subscribeLocalServiceInventoryStore(key, () => {});
+        await vi.waitFor(() => expect(methods()).toHaveLength(4));
+        revalidateLocalServiceInventoryStore(key);
+        await vi.waitFor(() => expect(methods()).toHaveLength(5));
+        expect(scans(), 'returning to the foreground re-reads the current inventory').toBe(0);
+        invalidateLocalServiceInventoryStore(key);
+        await vi.waitFor(() => expect(methods()).toHaveLength(6));
+        expect(scans(), 'the refresh control asks the daemon to scan now').toBe(1);
+        release();
+    });
+
     it('fetches once for a key regardless of how many consumers subscribe', async () => {
         const snapshotClient = rpc.snapshot.mockResolvedValue({
             protocolVersion: 1,
@@ -294,7 +322,7 @@ describe('shared local-service inventory store', () => {
 
         expect(snapshotClient).toHaveBeenCalledTimes(1);
         expect(snapshotClient).toHaveBeenCalledWith(expect.objectContaining({
-            method: RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_REFRESH,
+            method: RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_SNAPSHOT,
             serverId: 'server-a', payload: { machineId: 'machine-a' },
         }));
         expect(selectLocalServiceInventoryRows(getLocalServiceInventoryState(key))).toEqual(snapshot.entries);
@@ -340,6 +368,31 @@ describe('shared local-service inventory store', () => {
         expect(getLocalServiceInventoryState(key).generatedAt).toBe(2_000);
         expect(selectLocalServiceInventoryPresentationRows(getLocalServiceInventoryState(key))).toBe(presentation);
         unsub();
+    });
+
+
+    it.each(['Machine', 'count'] as const)('recovers initial census after a late failed read without losing the newer ready %s receipt', async receipt => {
+        const initial = createDeferred<unknown>();
+        rpc.snapshot.mockReturnValueOnce(initial.promise).mockResolvedValue({ protocolVersion: 1, snapshot });
+        const key = { machineId: 'machine-a', serverId: 'server-a' };
+        const release = subscribeLocalServiceInventoryStore(key, () => {});
+        try {
+            expect(rpc.snapshot).toHaveBeenCalledTimes(1);
+            const publish = receipt === 'Machine' ? publishLocalServiceInventoryMachineSummary : publishLocalServiceInventorySummary;
+            publish(key, { v: 1, state: 'ready', runningCount: 1 });
+            initial.resolve({ ok: false, error: 'request_failed' });
+            await flushMicrotasks();
+            expect(getLocalServiceInventoryState(key).refreshState).toBe('idle');
+            expect(getLocalServiceInventoryRunningCount(key)).toBe(1);
+            expect(rpc.snapshot).toHaveBeenCalledTimes(2);
+            const watches = rpc.machine.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH && !request.payload.observationOnly);
+            expect(watches).toHaveLength(1);
+            expect(watches[0]?.[0].payload.sinceGeneratedAt).toBe(snapshot.generatedAt);
+            const reads = rpc.machine.mock.calls.length;
+            for (let arrival = 0; arrival < 139; arrival += 1) publish(key, { v: 1, state: 'ready', runningCount: 1 });
+            await flushMicrotasks();
+            expect(rpc.machine).toHaveBeenCalledTimes(reads);
+        } finally { release(); }
     });
 
     it('does not fabricate a daemon generation when a refresh fails', async () => {

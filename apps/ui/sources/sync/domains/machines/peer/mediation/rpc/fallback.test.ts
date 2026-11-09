@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { PEER_MEDIATION_RECEIPTS } from '@happier-dev/protocol';
+import { PEER_MEDIATION_RECEIPTS } from '@happier-dev/protocol/machines/peer/mediation/receipts';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { createMachineRpcPeerFallbackReceipt } from './fallback';

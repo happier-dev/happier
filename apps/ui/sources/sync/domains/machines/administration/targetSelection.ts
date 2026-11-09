@@ -174,6 +174,12 @@ export function areMachineAdministrationInventoriesKnown(snapshots: readonly Ser
     return snapshots.every((snapshot) => snapshot.kind === 'resolved' || snapshot.kind === 'missingIdentity');
 }
 
+/** Domain eligibility and preference for automatic selection; named targets remain authoritative. */
+export type MachineAdministrationAutomaticSelectionPolicy = Readonly<{
+    isEligible: (candidate: MachineAdministrationCandidateV1) => boolean;
+    compare: (left: MachineAdministrationCandidateV1, right: MachineAdministrationCandidateV1) => number;
+}>;
+
 /**
  * Administration's initial target decision. Ordinary scopes start on the sole
  * live online candidate: machines that are away cannot run anything, so they
@@ -184,15 +190,20 @@ export function resolveMachineAdministrationTargetState(params: Readonly<{
     storedTarget: MachineAdministrationTargetV1 | null;
     candidates: readonly MachineAdministrationCandidateV1[];
     allowSoleCandidate?: boolean;
+    /** Choose the preferred eligible live candidate instead of requiring a sole live candidate. */
+    automaticSelection?: MachineAdministrationAutomaticSelectionPolicy;
     /** Whether a Home's machine list has been read and is current; without it no Home counts as read. */
     isInventoryKnown?: (serverIdentityId: string) => boolean;
     readInventoryStatus?: (serverIdentityId: string) => MachineInventoryStatus;
 }>): MachineAdministrationTargetStateV1 {
     const candidates = [...params.candidates].sort(compareCandidates);
     if (params.storedTarget === null) {
-        const live = candidates.filter((candidate) => candidate.availability === 'online' && candidate.observation === 'live');
+        const automaticSelection = params.automaticSelection;
+        const live = candidates.filter((candidate) => isMachineAdministrationCandidateSelectable(candidate)
+            && (!automaticSelection || automaticSelection.isEligible(candidate)));
+        if (automaticSelection) live.sort((left, right) => automaticSelection.compare(left, right) || compareCandidates(left, right));
         const only = live[0];
-        if (params.allowSoleCandidate === false || live.length !== 1 || !only) {
+        if (params.allowSoleCandidate === false || (!automaticSelection && live.length !== 1) || !only) {
             return Object.freeze({ kind: 'unselected', candidates: Object.freeze(candidates) });
         }
         return projectCandidateState(only.target, only);

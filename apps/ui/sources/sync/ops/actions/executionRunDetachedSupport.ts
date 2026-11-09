@@ -1,4 +1,4 @@
-import { machineCapabilitiesDetect } from '@/sync/ops/capabilities';
+import { machineCapabilitiesDescribe } from '@/sync/ops/capabilities';
 import { readExecutionRunProtocolV2Support } from '@happier-dev/protocol/execution/runs/protocolSupport';
 
 /**
@@ -35,9 +35,8 @@ export async function detectDetachedExecutionRunSupport(params: Readonly<{
         return 'machine_not_selected';
     }
     try {
-        const capability = await machineCapabilitiesDetect(
+        const capability = await machineCapabilitiesDescribe(
             params.machineId,
-            { requests: [{ id: 'tool.executionRuns' }] },
             {
                 ...(params.serverId ? { serverId: params.serverId } : {}),
                 ...(params.signal ? { signal: params.signal } : {}),

@@ -5,6 +5,7 @@ import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/
 import { DaemonNpmRegistryProfileMutationRequestV1Schema } from '@happier-dev/protocol/rpc/npmRegistryProfiles';
 import { Modal } from '@/modal';
 import { t } from '@/text';
+import { describeDirectDeliveryVisibility, readDirectDeliveryVisibility } from '@/components/sessions/teamCredentials/directDeliveryDisclosure';
 import { resolveFreshMachineAdministrationExecutionTarget,
     type FreshMachineAdministrationExecutionTargetV1 } from '@/sync/domains/machines/administration/useTargetSelection';
 import { sameMachineAdministrationExecutionTarget } from '@/sync/domains/machines/administration/operationCurrentness';
@@ -12,6 +13,7 @@ import { machineAdministrationTargetsEqual } from '@/sync/domains/machines/admin
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { machineNpmRegistryProfilesGet, machineNpmRegistryProfilesMutate } from '@/sync/ops/machineNpmRegistryProfiles';
 import type { LazyActionAccountContext } from './actionAccountContext';
+import type { DaemonNpmRegistryProfileMutationRequestV1 } from '@happier-dev/protocol/rpc/npmRegistryProfiles';
 
 type RegistryCredential = Readonly<{ kind: 'bearer_token'; secret: string }>;
 /** Incumbent mounted target and private token delivery, never serialized into an Action or approval. */
@@ -54,11 +56,13 @@ export function createUiNpmRegistryProfileAction(
             return outputs[actionId].parse(result);
         }
         const mutation = inputs[actionId].parse(input);
-        let credential: RegistryCredential | null = null;
+        let credential: Extract<DaemonNpmRegistryProfileMutationRequestV1, { action: 'login' }>['credential'] | null = null;
         if (actionId === 'plugins.npm_registry_profiles.login') {
-            if (delivery) credential = await delivery.acquireCredential(mutation.mutationId);
+            if ('login' in mutation && mutation.login) credential = mutation.login;
+            else if (delivery) credential = await delivery.acquireCredential(mutation.mutationId);
             else {
-                const secret = await Modal.prompt(t('settingsPlugins.registriesLoginTitle'), t('settingsPlugins.registriesLoginBody'), {
+                const secret = await Modal.prompt(t('settingsPlugins.registriesLoginTitle'),
+                    [t('settingsPlugins.registriesLoginBody'), describeDirectDeliveryVisibility(readDirectDeliveryVisibility())].join('\n\n'), {
                     inputType: 'secure-text', confirmText: t('settingsPlugins.registriesLogin'), cancelText: t('common.cancel'),
                 });
                 if (secret?.trim()) credential = { kind: 'bearer_token', secret: secret.trim() };
@@ -68,11 +72,25 @@ export function createUiNpmRegistryProfileAction(
         }
         // The raw RPC schema is the daemon's single mutation grammar. Its secret
         // operand is materialized only here, after policy and native acquisition.
-        const { target: _target, ...operands } = mutation;
+        const publicOperands = { ...mutation };
+        if ('login' in publicOperands) delete publicOperands.login;
+        const { target: _target, ...operands } = publicOperands;
         const action = actionId.slice('plugins.npm_registry_profiles.'.length);
         const request = DaemonNpmRegistryProfileMutationRequestV1Schema.parse({ ...operands,
             action, machineId: selected.machine.id, ...(credential ? { credential } : {}) });
-        const result = await machineNpmRegistryProfilesMutate(selected.machine.id, request, options);
-        return outputs[actionId].parse(result);
+        try {
+            const result = await machineNpmRegistryProfilesMutate(selected.machine.id, request, options);
+            return outputs[actionId].parse(result);
+        } finally {
+            // Retiring the client RPC does not stop the daemon's npm web wait.
+            // Its admitted Action owns explicit cleanup on the captured Machine,
+            // including when the sheet or its selected Machine has changed.
+            if (context.signal?.aborted && request.action === 'login'
+                && request.credential.kind === 'browser' && request.credential.step === 'complete') {
+                await machineNpmRegistryProfilesMutate(selected.machine.id, {
+                    ...request, credential: { ...request.credential, step: 'cancel' },
+                }, { serverId: selected.serverId, accountId: account.accountId }).catch(() => undefined);
+            }
+        }
     };
 }

@@ -66,7 +66,7 @@ describe('sessionStop', () => {
   it('reports unavailable control without claiming the runtime needs an upgrade', async () => {
     mockResolvePreferredServerIdForSessionId.mockReturnValue('server-a');
     mockSessionRpcWithServerScope.mockRejectedValue(new RpcError('RPC method not available', RPC_ERROR_CODES.METHOD_NOT_AVAILABLE));
-    const res = await sessionStop('sid-1');
+    const res = await sessionStop('sid-1', 'explicit_stop');
     expect(res).toMatchObject({
       success: false,
       message: 'RPC method not available',
@@ -84,7 +84,7 @@ describe('sessionStop', () => {
   it('does not fall back to session-end when the errorCode is missing (legacy message-only)', async () => {
     mockResolvePreferredServerIdForSessionId.mockReturnValue('server-b');
     mockSessionRpcWithServerScope.mockRejectedValue(new Error('RPC method not available'));
-    const res = await sessionStop('sid-2');
+    const res = await sessionStop('sid-2', 'explicit_stop');
     expect(res).toMatchObject({
       success: false,
       message: 'RPC method not available',
@@ -96,7 +96,7 @@ describe('sessionStop', () => {
     mockResolvePreferredServerIdForSessionId.mockReturnValue('server-c');
     mockSessionRpcWithServerScope.mockRejectedValue(new Error('boom'));
 
-    const res = await sessionStop('sid-3');
+    const res = await sessionStop('sid-3', 'explicit_stop');
     expect(res).toMatchObject({ success: false, message: 'boom', code: 'session_stop_failed' });
   });
 });

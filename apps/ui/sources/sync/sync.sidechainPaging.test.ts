@@ -34,7 +34,7 @@ import { configureConnectedServerSocketBoundary, installDisconnectedServerSocket
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
-import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { MachinePublishedRowV1Schema } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
 import { createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
 
@@ -299,6 +299,44 @@ describe('sync sidechain paging', () => {
         await sync.ensureSidechainMessagesLoaded('s1', 'tool_task_empty');
 
         expect(requestMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('catches up a retained sidechain on renewed demand only after the known Session head advances', async () => {
+        const sidechainId = 'tool_task_1';
+        const row = (seq: number) => ({
+            id: `child-${seq}`, seq, localId: null, sidechainId,
+            content: { t: 'plain', v: { role: 'agent', content: { type: 'acp', agentId: 'claude',
+                data: { type: 'message', message: `answer-${seq}`, sidechainId } } } },
+            createdAt: seq, updatedAt: seq,
+        });
+        let latestSeq = 3;
+        requestMock.mockImplementation(async (path: string) => {
+            const afterSeq = new URL(path, 'https://paging.example.test').searchParams.get('afterSeq');
+            return Response.json({
+                messages: afterSeq === '3' ? [row(4)] : afterSeq === '4' ? [row(5)]
+                    : [row(2), row(3), ...(latestSeq === 5 ? [row(4), row(5)] : [])],
+                hasMore: false, nextBeforeSeq: null, nextAfterSeq: afterSeq === '3' ? 4 : null,
+            });
+        });
+        const { sync } = await import('./sync');
+        storage.getState().applySessions([{ ...createSession({ sessionId: 's1' }), seq: 3 }]);
+        await sync.ensureSidechainMessagesLoaded('s1', sidechainId);
+        expect(readSidechainRowCount('s1', sidechainId)).toBe(2);
+        await sync.ensureSidechainMessagesLoaded('s1', sidechainId);
+        expect(requestMock).toHaveBeenCalledTimes(1);
+
+        // While the view is away, the durable Session head advances without materializing its body.
+        latestSeq = 5;
+        storage.getState().applySessions([{ ...storage.getState().sessions.s1!, seq: latestSeq }]);
+        expect(readSidechainRowCount('s1', sidechainId)).toBe(2);
+        expect(await sync.ensureSidechainMessagesLoaded('s1', sidechainId)).toBe('loaded');
+        expect(storage.getState().sessionMessages.s1?.reducerState.sidechains.get(sidechainId)?.map(row => row.text))
+            .toEqual(['answer-2', 'answer-3', 'answer-4', 'answer-5']);
+        await sync.ensureSidechainMessagesLoaded('s1', sidechainId);
+        expect(requestMock).toHaveBeenCalledTimes(3);
+        expect(requestMock.mock.calls.slice(1).map(([path]) => new URL(path, 'https://paging.example.test').searchParams.get('afterSeq')))
+            .toEqual(['3', '4']);
+        expect(storage.getState().sessionMessages.s1?.isLoaded ?? false).toBe(false);
     });
 
     it('uses nextBeforeSeq from the latest sidechain page as the cursor for older paging', async () => {

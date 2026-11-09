@@ -1,17 +1,21 @@
 import { cpus, platform, arch } from 'node:os';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { selectActiveTestHomeForTests } from '@/dev/testkit/fixtures/persistedHomeProfiles';
 import * as ownerEnvelopes from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
 import * as dataKeyEnvelopes from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import * as metadataSchemas from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import {
-    createPlainSessionOwnerMetadataEnvelopeV1,
-    projectLegacySessionAccessCapabilitiesV1,
-    SessionListQueryResponseV1Schema,
+    createPlainSessionOwnerMetadataEnvelopeV1} from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import {
+    projectLegacySessionAccessCapabilitiesV1} from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
+import {
+    SessionListQueryResponseV1Schema} from '@happier-dev/protocol/sessions/listing/response';
+import {
     type V2SessionRecord,
-    V2SessionRecordSchema,
+    V2SessionRecordSchema} from '@happier-dev/protocol/sessions/control/contract';
+import {
     type SessionListQueryV1,
-} from '@happier-dev/protocol';
-
+} from '@happier-dev/protocol/sessions/listing/query';
 import { SessionReadBatchRequestV1Schema } from '@happier-dev/protocol/sessions/read/sessionReadBatchV1';
 
 import { encodeBase64 } from '@/encryption/base64';
@@ -35,6 +39,11 @@ import { buildRenderableFromRowAndCache, fetchAndApplySessions as fetchAndApplyS
 import { createCompactSessionListFetchBoundary, createCompactSessionListRowFixture } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { fetchAndApplySessionById } from './sessionById';
 import { buildUpdatedSessionFromSocketUpdate } from './syncSessions';
+import { handleSocketUpdate } from '@/sync/engine/socket/socket';
+import { UpdateContainerSchema } from '@happier-dev/protocol/updates';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { loadSyncTuning } from '@/sync/runtime/syncTuning';
+import { countTransportRequests } from '@/dev/testkit/performance/counts';
 import { retainVisibleSessionListSurfaces } from '@/sync/domains/session/sessionSurfaceVisibility';
 
 function fetchAndApplySessions(params: Parameters<typeof fetchAndApplySessionsSource>[0]) {
@@ -197,67 +206,7 @@ it('hydrates full Sessions only on demand while reusing current display document
     await vi.waitFor(() => expect(storage.getState().sessions['demand-4']?.metadata?.summary?.text).toBe('Updated Session 4'));
 });
 
-it.each(['metadata', 'agent-state'] as const)('reuses a newer admitted %s document when an identical inventory descriptor lags behind', async document => {
-    storage.setState(storage.getInitialState(), true);
-    const serverId = 'lagging-inventory-home';
-    const credentials = { token: 'lagging-inventory-account' };
-    const accountCurrentness = createPlainAccountEncryptionCurrentnessFixture();
-    const base = { ...createOwnerChoicesPage(1).sessions[0]!, metadataLayoutVersion: 0, ownerMetadata: undefined,
-        metadata: JSON.stringify({ path: '/lagging-inventory', host: 'home', summary: { text: 'Original', updatedAt: 1 } }),
-        agentStateVersion: 1, agentState: JSON.stringify({ requests: {} }),
-        pendingPermissionRequestCount: 1, pendingUserActionRequestCount: 0, pendingRequestObservedAt: 1 };
-    const rowAt = (version: number) => ({ ...base,
-        ...(document === 'metadata'
-            ? { metadataVersion: version, metadata: JSON.stringify({ path: '/lagging-inventory', host: 'home',
-                summary: { text: `Opened ${version}`, updatedAt: version } }) }
-            : { agentStateVersion: version, agentState: JSON.stringify({ requests: {
-                [`permission-${version}`]: { tool: 'Bash', kind: 'permission', arguments: { command: 'git status' }, createdAt: version },
-            } }) }),
-    });
-    let inventory = rowAt(1);
-    let detail = rowAt(2);
-    const batches: string[][] = [];
-    const boundary = createCompactSessionListFetchBoundary(async (path, init) => {
-        if (path === '/v2/sessions/read-batch') {
-            const request = SessionReadBatchRequestV1Schema.parse(JSON.parse(String(init.body)));
-            batches.push(request.sessionIds);
-            return Response.json({ results: request.sessionIds.map(sessionId => ({ sessionId,
-                detail: { status: 200, body: { session: detail } } })) });
-        }
-        return Response.json({ sessions: [inventory], nextCursor: null, hasNext: false });
-    });
-    const currentRow = () => storage.getState().sessionListRowsByServerId[serverId]?.[base.id];
-    const refresh = () => fetchAndApplySessionsSource({ serverId, credentials, accountCurrentness, encryption: null,
-        contentDemand: 'list-projection', sessionDataKeys: new Map(), request: boundary,
-        getExistingSession: id => storage.getState().sessions[id], getCurrentSessionListRenderable: currentRow,
-        applySessionListRenderables: values => storage.getState().applyServerScopedSessionListRows(serverId, values, { source: 'rowOnly', mode: 'replace' }),
-        applySessionListRenderablePatches: patches => storage.getState().applyServerScopedSessionListRowPatches(serverId, patches),
-        applySessions: values => storage.getState().applySessions(values), awaitSessionListHydration: true, log: { log() {} },
-    });
-    await refresh();
-    expect(batches).toEqual([[base.id]]);
-    expect(currentRow()?.[document === 'metadata' ? 'metadataVersion' : 'agentStateVersion']).toBe(2);
-    const retained = currentRow();
-    batches.length = 0;
-    for (let refreshIndex = 0; refreshIndex < 3; refreshIndex++) {
-        await refresh();
-        expect(currentRow()).toBe(retained);
-    }
-    expect(batches).toEqual([]);
-    inventory = rowAt(3);
-    detail = rowAt(3);
-    await refresh();
-    expect(batches).toEqual([[base.id]]);
-    if (document === 'metadata') expect(currentRow()?.metadata?.summaryText).toBe('Opened 3');
-    else expect(currentRow()?.currentRequestRef).toMatchObject({ kind: 'permission', requestId: 'permission-3' });
-    const settled = currentRow();
-    batches.length = 0;
-    for (let refreshIndex = 0; refreshIndex < 3; refreshIndex++) {
-        await refresh();
-        expect(currentRow()).toBe(settled);
-    }
-    expect(batches).toEqual([]);
-});
+beforeEach(async () => { await selectActiveTestHomeForTests(); });
 
 afterEach(() => {
     standardCleanup();
@@ -287,7 +236,7 @@ function createOwnerChoicesPage(count = 6) {
         attentionNextCursor: null, attentionHasNext: false };
 }
 
-it('restores 1000 proved display rows from persisted cache without batch hydration', async () => {
+it('FLOWBUDGET restores 1000 proved display rows from persisted cache without batch hydration', async () => {
     storage.setState(storage.getInitialState(), true);
     const serverId = 'persisted-compact-home';
     const credentials = { token: 'persisted-compact-account' };
@@ -304,6 +253,8 @@ it('restores 1000 proved display rows from persisted cache without batch hydrati
         return Response.json({ sessions: listedRows.slice(start, end),
             nextCursor: end < listedRows.length ? String(end) : null, hasNext: end < listedRows.length });
     });
+    const transport = countTransportRequests(boundary, (path, init) =>
+        `${init?.method ?? 'GET'} ${new URL(path, 'https://persisted-compact.test').pathname}`);
     const refresh = (cachedSessionListEntries?: Record<string, SessionListCacheEntryV1>, scope = { credentials, accountCurrentness }) => fetchAndApplySessionsSource({
         serverId, ...scope, encryption: null, sessionDataKeys: new Map(),
         contentDemand: 'list-projection', sessionListPageSize: 200, sessionListMaxPages: 5,
@@ -315,7 +266,7 @@ it('restores 1000 proved display rows from persisted cache without batch hydrati
                 }
                 batches.push(input.sessionIds.map(String));
             }
-            return boundary(path, init);
+            return transport.request(path, init);
         },
         cachedSessionListEntries,
         getExistingSession: id => storage.getState().sessions[id],
@@ -326,6 +277,7 @@ it('restores 1000 proved display rows from persisted cache without batch hydrati
         awaitSessionListHydration: true, log: { log() {} },
     });
     await refresh();
+    console.info('FLOWBUDGET_LIST_COLD', JSON.stringify({ requests: transport.read(), bodies: batches.flat().length }));
     expect(batches.flat()).toEqual(rows.map(row => row.id));
     expect(Object.keys(storage.getState().sessions)).toEqual([]);
     const written = buildSessionListCacheEntriesFromRenderables(storage.getState().sessionListRowsByServerId[serverId] ?? {});
@@ -333,7 +285,9 @@ it('restores 1000 proved display rows from persisted cache without batch hydrati
         [id, SessionListCacheEntryV1Schema.parse(JSON.parse(JSON.stringify(entry)))]));
     storage.setState(storage.getInitialState(), true);
     batches.length = 0;
+    transport.reset();
     await refresh(restored);
+    console.info('FLOWBUDGET_LIST_WARM', JSON.stringify({ requests: transport.read(), bodies: batches.flat().length }));
     expect(batches).toEqual([]);
     const displayed = storage.getState().sessionListRowsByServerId[serverId] ?? {};
     expect(Object.keys(displayed)).toHaveLength(1_000);
@@ -409,7 +363,7 @@ it('refuses a persisted display proof after an equal-version Session key replace
     expect(Object.keys(storage.getState().sessions)).toEqual([]);
 });
 
-it('reopens owner metadata after a shared-only socket revision instead of proving the retained owner current', async () => {
+it('reopens owner metadata after a socket revision that changed the owner envelope instead of proving the retained owner current', async () => {
     storage.setState(storage.getInitialState(), true);
     const serverId = 'socket-owner-revision-home';
     const credentials = { token: 'socket-owner-account' };
@@ -428,9 +382,12 @@ it('reopens owner metadata after a shared-only socket revision instead of provin
     expect(opened.ok).toBe(true);
     expect(existing(original.id)?.ownerMetadataView?.name).toBe('Opened owner N');
     const shared = JSON.stringify({ v: 1, summary: { text: 'Shared N+1', updatedAt: 2 } });
+    const freshOwnerEnvelope = createPlainSessionOwnerMetadataEnvelopeV1({ v: 1, workspace: { name: 'Fresh owner N+1', path: '/owner-n-plus-one' } });
+    // A tuple frame carries the owner envelope exactly when it changed (docs/protocol.md); the
+    // socket apply leaves that envelope to the canonical owner reader.
     const { nextSession } = await buildUpdatedSessionFromSocketUpdate({ session: existing(original.id)!,
         getCurrentSession: () => existing(original.id)!, sessionEncryption: null,
-        updateBody: { metadataLayoutVersion: 1, metadata: { version: 2, value: shared } },
+        updateBody: { metadataLayoutVersion: 1, metadata: { version: 2, value: shared }, ownerMetadata: { value: freshOwnerEnvelope } },
         updateSeq: 2, updateCreatedAt: 2 });
     storage.getState().applySessions([nextSession]);
     expect(existing(original.id)?.metadataVersion).toBe(2);
@@ -440,8 +397,7 @@ it('reopens owner metadata after a shared-only socket revision instead of provin
     const entry = buildSessionListCacheEntriesFromRenderables({ [retained.id]: retained })[retained.id]!;
     expect(entry.displayProof).toBeUndefined();
     const restored = SessionListCacheEntryV1Schema.parse(JSON.parse(JSON.stringify(entry)));
-    const fresh = { ...original, metadataVersion: 2, metadata: shared,
-        ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1({ v: 1, workspace: { name: 'Fresh owner N+1', path: '/owner-n-plus-one' } }) };
+    const fresh = { ...original, metadataVersion: 2, metadata: shared, ownerMetadata: freshOwnerEnvelope };
     let batches = 0;
     const boundary = createCompactSessionListFetchBoundary(async path => path === '/v2/sessions/read-batch'
         ? undefined : Response.json({ sessions: [fresh], nextCursor: null, hasNext: false }));
@@ -464,7 +420,120 @@ it('reopens owner metadata after a shared-only socket revision instead of provin
     expect(Object.keys(storage.getState().sessions)).toEqual([]);
 });
 
+it.each(['metadata', 'agent-state'] as const)('reuses a newer admitted %s document when an identical inventory descriptor lags behind', async document => {
+    storage.setState(storage.getInitialState(), true);
+    const serverId = 'lagging-inventory-home';
+    const credentials = { token: 'lagging-inventory-account' };
+    const accountCurrentness = createPlainAccountEncryptionCurrentnessFixture();
+    const base = { ...createOwnerChoicesPage(1).sessions[0]!, metadataLayoutVersion: 0, ownerMetadata: undefined,
+        metadata: JSON.stringify({ path: '/lagging-inventory', host: 'home', summary: { text: 'Original', updatedAt: 1 } }),
+        agentStateVersion: 1, agentState: JSON.stringify({ requests: {} }),
+        pendingPermissionRequestCount: 1, pendingUserActionRequestCount: 0, pendingRequestObservedAt: 1 };
+    const rowAt = (version: number) => ({ ...base,
+        ...(document === 'metadata'
+            ? { metadataVersion: version, metadata: JSON.stringify({ path: '/lagging-inventory', host: 'home',
+                summary: { text: `Opened ${version}`, updatedAt: version } }) }
+            : { agentStateVersion: version, agentState: JSON.stringify({ requests: {
+                [`permission-${version}`]: { tool: 'Bash', kind: 'permission', arguments: { command: 'git status' }, createdAt: version },
+            } }) }),
+    });
+    let inventory = rowAt(1);
+    let detail = rowAt(2);
+    const batches: string[][] = [];
+    const boundary = createCompactSessionListFetchBoundary(async (path, init) => {
+        if (path === '/v2/sessions/read-batch') {
+            const request = SessionReadBatchRequestV1Schema.parse(JSON.parse(String(init.body)));
+            batches.push(request.sessionIds);
+            return Response.json({ results: request.sessionIds.map(sessionId => ({ sessionId,
+                detail: { status: 200, body: { session: detail } } })) });
+        }
+        return Response.json({ sessions: [inventory], nextCursor: null, hasNext: false });
+    });
+    const currentRow = () => storage.getState().sessionListRowsByServerId[serverId]?.[base.id];
+    const refresh = () => fetchAndApplySessionsSource({ serverId, credentials, accountCurrentness, encryption: null,
+        contentDemand: 'list-projection', sessionDataKeys: new Map(), request: boundary,
+        getExistingSession: id => storage.getState().sessions[id], getCurrentSessionListRenderable: currentRow,
+        applySessionListRenderables: values => storage.getState().applyServerScopedSessionListRows(serverId, values, { source: 'rowOnly', mode: 'replace' }),
+        applySessionListRenderablePatches: patches => storage.getState().applyServerScopedSessionListRowPatches(serverId, patches),
+        applySessions: values => storage.getState().applySessions(values), awaitSessionListHydration: true, log: { log() {} },
+    });
+    await refresh();
+    expect(batches).toEqual([[base.id]]);
+    expect(currentRow()?.[document === 'metadata' ? 'metadataVersion' : 'agentStateVersion']).toBe(2);
+    const retained = currentRow();
+    batches.length = 0;
+    for (let refreshIndex = 0; refreshIndex < 3; refreshIndex++) {
+        await refresh();
+        expect(currentRow()).toBe(retained);
+    }
+    expect(batches).toEqual([]);
+    inventory = rowAt(3);
+    detail = rowAt(3);
+    await refresh();
+    expect(batches).toEqual([[base.id]]);
+    if (document === 'metadata') expect(currentRow()?.metadata?.summaryText).toBe('Opened 3');
+    else expect(currentRow()?.currentRequestRef).toMatchObject({ kind: 'permission', requestId: 'permission-3' });
+    const settled = currentRow();
+    batches.length = 0;
+    for (let refreshIndex = 0; refreshIndex < 3; refreshIndex++) {
+        await refresh();
+        expect(currentRow()).toBe(settled);
+    }
+    expect(batches).toEqual([]);
+});
 
+it('opens current request identity after a cache-only socket advances an observed Agent-state version', async () => {
+    storage.setState(storage.getInitialState(), true);
+    const serverId = String(getActiveServerSnapshot().serverId);
+    const credentials = { token: 'socket-state-account' };
+    const accountCurrentness = createPlainAccountEncryptionCurrentnessFixture();
+    const encryption = await Encryption.create(new Uint8Array(32).fill(89));
+    let row = { ...createOwnerChoicesPage(1).sessions[0]!, metadataLayoutVersion: 0, ownerMetadata: undefined,
+        metadata: JSON.stringify({ path: '/state-revision', host: 'home' }), agentStateVersion: 1,
+        pendingPermissionRequestCount: 1, pendingUserActionRequestCount: 0, pendingRequestObservedAt: 1 };
+    let batches = 0;
+    const currentRow = () => storage.getState().sessionListRowsByServerId[serverId]?.[row.id];
+    const boundary = createCompactSessionListFetchBoundary(async path => path === '/v2/sessions/read-batch'
+        ? undefined : Response.json({ sessions: [row], nextCursor: null, hasNext: false }));
+    const refresh = () => fetchAndApplySessionsSource({ serverId, credentials, accountCurrentness, encryption,
+        contentDemand: 'list-projection', sessionDataKeys: new Map(),
+        request: async (path, init) => { if (path === '/v2/sessions/read-batch') batches += 1; return boundary(path, init); },
+        getExistingSession: id => storage.getState().sessions[id], getCurrentSessionListRenderable: currentRow,
+        applySessionListRenderables: values => storage.getState().applyServerScopedSessionListRows(serverId, values, { source: 'rowOnly', mode: 'replace' }),
+        applySessionListRenderablePatches: patches => storage.getState().applyServerScopedSessionListRowPatches(serverId, patches),
+        applySessions: values => storage.getState().applySessions(values), awaitSessionListHydration: true, log: { log() {} },
+    });
+    await refresh();
+    expect(currentRow()?.metadataLayoutVersion).toBe(0);
+    expect(currentRow()?.currentRequestRef).toBeNull();
+    expect(Object.keys(storage.getState().sessions)).toEqual([]);
+    const agentState = JSON.stringify({ requests: { 'permission-current': { tool: 'Bash', kind: 'permission',
+        arguments: { command: 'git status' }, createdAt: 2 } } });
+    vi.useFakeTimers();
+    await handleSocketUpdate({ sourceServerId: serverId, credentials, encryption, readAccountMode: async () => 'plain',
+        update: UpdateContainerSchema.parse({ id: 'socket-observed-state-2', seq: 2, createdAt: 2, body: { t: 'update-session', id: row.id,
+            metadataLayoutVersion: 0, agentState: { version: 2, value: agentState },
+            pendingPermissionRequestCount: 1, pendingUserActionRequestCount: 0, pendingRequestObservedAt: 2 } }),
+        artifactDataKeys: new Map(), applySessions: values => storage.getState().applySessions(values),
+        fetchSessions() {}, hydrateSessionById() {}, applyMessages() {}, onSessionVisible() {},
+        isSessionMessagesLoaded: () => false, getSessionMaterializedMaxSeq: () => 0,
+        markSessionMaterializedMaxSeq() {}, onMessageGapDetected() {}, assumeUsers: async () => {},
+        applyTodoSocketUpdates: async () => {}, invalidateMachines() {}, invalidateSessions() {},
+        invalidateArtifacts() {}, invalidateFriends() {}, invalidateFeed() {},
+        invalidateAutomations() {}, invalidateTodos() {}, log: { log() {} },
+    });
+    await vi.advanceTimersByTimeAsync(loadSyncTuning().activityUpdateDebounceMs);
+    vi.useRealTimers();
+    expect(currentRow()?.agentStateVersion).toBe(2);
+    expect(currentRow()?.currentRequestRef).toBeNull();
+    expect(Object.keys(storage.getState().sessions)).toEqual([]);
+    row = { ...row, agentStateVersion: 2, agentState, pendingRequestObservedAt: 2 };
+    batches = 0;
+    await refresh();
+    expect(batches).toBe(1);
+    expect(currentRow()?.currentRequestRef).toMatchObject({ kind: 'permission', requestId: 'permission-current' });
+    expect(Object.keys(storage.getState().sessions)).toEqual([]);
+});
 
 it('projects Account-opened full-detail owner envelopes through the shared title and mention readers', async () => {
     const secret = new Uint8Array(32).fill(17);
@@ -683,42 +752,30 @@ it('opens an unchanged owner envelope once and retains unrelated scoped row subs
     } finally { unsubscribe(); }
 });
 
-it.each([
-    { queryMs: 245, currentnessMs: 9216 },
-    // Resume 7 resource totals: 5946.4 ms and 3964.8 ms (rounded up to a timer millisecond).
-    { queryMs: 5946.4, currentnessMs: 3965 },
-])('publishes owner query choices without serializing independent reads ($queryMs / $currentnessMs ms)', async ({ queryMs, currentnessMs }) => {
-    // Recorded HTTP latency is the only substitution. Parsing, Account-mode
-    // validation, owner projection, snapshot publication and the store are real.
-    vi.useFakeTimers();
-    const startedAt = Date.now();
-    let publishedAt: number | undefined;
-    const requests: Array<{ path: string; at: number }> = [];
+it('reads one fresh witness only after a query establishes owner metadata demand', async () => {
+    const requests: string[] = [];
     const body = createOwnerChoicesPage();
     const pending = fetchAndApplySessions({
         serverId: 'latency-home', credentials: { token: 'latency' }, encryption: null, sessionDataKeys: new Map(),
+        awaitSessionListHydration: true,
         source: { kind: 'query', allowV1Fallback: false, body: { ...QUERY, scope: 'all_accessible', includeAttention: false } },
         request: async (path) => {
-            requests.push({ path, at: Date.now() - startedAt });
-            await new Promise(resolve => setTimeout(resolve, path === '/v2/sessions/query' ? queryMs : currentnessMs));
+            requests.push(path);
             return Response.json(path === '/v2/sessions/query' ? body : createPlainAccountEncryptionCurrentnessFixture());
         },
         getExistingSession: () => null,
         applySessionListRenderables: (renderables) => {
-            publishedAt = Date.now() - startedAt;
             storage.getState().applyServerScopedSessionListRows('latency-home', renderables, { source: 'rowOnly', mode: 'replace' });
         },
         applySessionListRenderablePatches: patches => storage.getState().applyServerScopedSessionListRowPatches('latency-home', patches),
         applySessions() {}, log: { log() {} },
     });
-    await vi.runAllTimersAsync();
     const result = await pending;
     expect(result.current).toBe(true);
     const stored = storage.getState().sessionListRowsByServerId['latency-home'];
     expect(Object.keys(stored ?? {})).toHaveLength(6);
     expect(stored?.['choice-0']?.metadata?.path).toBe('/private/0');
-    console.info('SESSION_CHOICES_LATENCY_MEASUREMENT', JSON.stringify({ queryMs, currentnessMs, publishedAt, requests }));
-    expect(publishedAt).toBeLessThanOrEqual(Math.max(queryMs, currentnessMs));
+    expect(requests).toEqual(['/v2/sessions/query', '/v1/account/encryption/currentness']);
 });
 
 it.each(['unavailable-authority', 'retired-read', 'empty-query'] as const)(

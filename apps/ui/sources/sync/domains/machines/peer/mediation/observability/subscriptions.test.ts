@@ -7,17 +7,19 @@ import {
 } from './store';
 import {
     createFeatureDecision,
+    type FeatureDecision} from '@happier-dev/protocol/features/decision';
+import {
     FeaturesResponseSchema,
+    type FeaturesResponse} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import {
     PEER_MEDIATION_OBSERVABILITY_DELTA_SOCKET_EVENT,
     PEER_MEDIATION_OBSERVABILITY_SNAPSHOT_SOCKET_EVENT,
     PEER_MEDIATION_OBSERVABILITY_SUBSCRIBE_SOCKET_EVENT,
     PEER_MEDIATION_OBSERVABILITY_UNSUBSCRIBE_SOCKET_EVENT,
-    type FeaturesResponse,
-    type FeatureDecision,
     type PeerMediationObservabilityDeltaV1,
     type PeerMediationObservabilityScopeV1,
     type PeerMediationObservabilitySnapshotV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/machines/peer/mediation/observability/v1';
 
 type SubscriptionModuleShape = Readonly<{
     resolvePeerMediationObservabilitySubscriptionState: (

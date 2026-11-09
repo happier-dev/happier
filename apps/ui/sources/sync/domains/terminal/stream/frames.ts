@@ -1,7 +1,8 @@
 import type {
-    DaemonTerminalStreamReadResponse,
+    DaemonTerminalStreamReadResponse} from '@happier-dev/protocol/daemon/terminal';
+import type {
     TerminalStreamReadResponse as ProtocolTerminalStreamReadResponse,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/terminal/stream';
 
 import { decodeBase64 } from '@/encryption/base64';
 
@@ -163,6 +164,7 @@ export function mapTerminalByteStreamReadResponse(response: ProtocolTerminalStre
         frames,
         nextCursor: response.nextByteOffset,
         done: response.done,
+        ...(response.holdForOutput ? { holdForOutput: true } : {}),
         outputRetention: { mode: 'byte-offset', retainedFromCursor: response.droppedBeforeByteOffset,
             availableCursor: response.availableByteOffset, truncated: response.droppedBeforeByteOffset > 0 },
     };

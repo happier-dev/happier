@@ -9,78 +9,44 @@ import { SkillReadResultV1Schema } from '@happier-dev/protocol/prompts/library/s
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { readSkillText } from '@/components/settings/skills/detail/skillFileContent';
 import { readSkillActionRefusal } from '@/components/settings/skills/detail/useSkillDetail';
+import { acknowledgeSkillCreation, retrySkillInstallRules, type SkillCreationAcknowledgment } from '@/components/settings/skills/add/skillInstall';
 import {
-  loadFoundWarmCacheEntry,
-  subscribeFoundWarmCacheEntry,
-} from '@/sync/domains/state/warmCachePersistence';
+  useFoundCacheEntries,
+  useFoundMachineScans,
+  type FoundMachineFailure,
+  type FoundMachineScanOutcome,
+  type FoundMachineScanOf,
+} from '@/sync/domains/capabilities/found/useFoundMachineScans';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { foundSkillsByName } from './foundSkillInventory';
 
 export type FoundItem = SkillFoundListResultV1['items'][number];
-export type FoundMachineFailure = 'failed' | 'older_machine';
+export type { FoundMachineFailure };
 
-/** One machine's Found list as the page shows it: the last known result, and what is happening now. */
-export type FoundMachineScan = Readonly<{
-  machineId: string;
-  /** The last `skills.found.list` result for this machine (device-local, never bytes). */
-  result: SkillFoundListResultV1 | null;
-  scanning: boolean;
-  /** The latest scan failed. The last known result stays. */
-  failure: FoundMachineFailure | null;
-}>;
+/** One machine's Found skills list as the page shows it: the last known result, and what is happening now. */
+export type FoundMachineScan = FoundMachineScanOf<SkillFoundListResultV1>;
 
-export type FoundAdoptOutcome = Readonly<{
-  /** The library skill ids the adoption made. */
-  skillIds: readonly string[];
-  /** Skills added whose place (rules) could not be set. */
-  incomplete: boolean;
-}>;
+export type FoundAdoptOutcome = SkillCreationAcknowledgment;
 
 const NOT_AVAILABLE = /RPC_METHOD_(NOT_AVAILABLE|NOT_FOUND)|unsupported_action/;
-
-type Entries = Readonly<Record<string, SkillFoundListResultV1 | null>>;
-const EMPTY_ENTRIES: Entries = Object.freeze({});
 
 /**
  * The last known `skills.found.list` result per machine from the device-local warm cache, kept current
  * as any reader writes it (the page's scan, the composer's). It never reads a machine.
  */
-export function useFoundSkillsCache(machineIds: readonly string[], requestedScope?: ServerAccountScope | null): Entries {
-  const activeScope = useAccountSettingsScope();
-  const scope = requestedScope === undefined ? activeScope : requestedScope;
-  const idsKey = machineIds.join('\u0000');
-  const accountId = scope?.accountId;
-  const serverId = scope?.serverId;
-  const key = JSON.stringify([serverId, accountId, idsKey]);
-  const [entries, setEntries] = React.useState<Readonly<{ key: string; value: Entries }>>({ key, value: EMPTY_ENTRIES });
-  React.useLayoutEffect(() => {
-    const ids = idsKey ? idsKey.split('\u0000') : [];
-    const read = (machineId: string) => {
-      const entry = loadFoundWarmCacheEntry(serverId, accountId, 'skill', machineId);
-      return entry?.kind === 'skill' ? entry.result : null;
-    };
-    setEntries({ key, value: Object.fromEntries(ids.map((id) => [id, read(id)])) });
-    const unsubscribers = ids.map((machineId) =>
-      subscribeFoundWarmCacheEntry(serverId, accountId, 'skill', machineId, () =>
-        setEntries((prev) => prev.key === key ? { key, value: { ...prev.value, [machineId]: read(machineId) } } : prev),
-      ),
-    );
-    return () => unsubscribers.forEach((off) => off());
-  }, [accountId, idsKey, serverId, key]);
-  return entries.key === key ? entries.value : EMPTY_ENTRIES;
+export function useFoundSkillsCache(machineIds: readonly string[], requestedScope?: ServerAccountScope | null) {
+  return useFoundCacheEntries('skill', machineIds, requestedScope);
 }
 
-/** How many Found skills are not in the library yet, across the last known results (the rail's count). */
+/** Distinct Found skill names not in the library yet, across the last known results. */
 export function useFoundSkillsCount(machineIds: readonly string[]): number {
   const entries = useFoundSkillsCache(machineIds);
-  return React.useMemo(
-    () =>
-      Object.values(entries).reduce(
-        (total, result) => total + (result?.items.filter((item) => item.inLibrary === null).length ?? 0),
-        0,
-      ),
-    [entries],
-  );
+  return React.useMemo(() => {
+    let count = 0;
+    for (const _row of foundSkillsByName(Object.keys(entries), entries, item => item.inLibrary === null)) count += 1;
+    return count;
+  }, [entries]);
 }
 
 /**
@@ -93,58 +59,19 @@ export function useFoundSkillsCount(machineIds: readonly string[]): number {
 export function useFoundSkills(machineIds: readonly string[]) {
   const scope = useAccountSettingsScope();
   const { execute, ready } = useMountedActionExecution(scope?.serverId ?? null);
-  const idsKey = machineIds.join('\u0000');
-  const entries = useFoundSkillsCache(machineIds);
-  const [busy, setBusy] = React.useState<ReadonlySet<string>>(() => new Set());
-  const [failures, setFailures] = React.useState<
-    Readonly<Record<string, FoundMachineFailure>>
-  >({});
-
-  const scan = React.useCallback(
-    async (machineId: string) => {
-      setBusy((prev) => new Set(prev).add(machineId));
-      let failure: FoundMachineFailure | null = null;
-      try {
-        const response = await execute('skills.found.list', { machineId });
-        if (!response.ok) {
-          failure = NOT_AVAILABLE.test(`${response.errorCode ?? ''} ${response.error ?? ''}`)
-            ? 'older_machine'
-            : 'failed';
-        } else {
-          // The executor's ingress writes the cache; the page reads it back through `useFoundSkillsCache`.
-          if (!SkillFoundListResultV1Schema.safeParse(response.result).success) failure = 'failed';
-        }
-      } catch {
-        failure = 'failed';
-      } finally {
-        setBusy((prev) => {
-          const next = new Set(prev);
-          next.delete(machineId);
-          return next;
-        });
-        setFailures((prev) => {
-          if (failure === null) {
-            if (!(machineId in prev)) return prev;
-            const { [machineId]: _cleared, ...rest } = prev;
-            return rest;
-          }
-          return { ...prev, [machineId]: failure };
-        });
+  const scanOne = React.useCallback(
+    async (machineId: string): Promise<FoundMachineScanOutcome> => {
+      const response = await execute('skills.found.list', { machineId });
+      if (!response.ok) {
+        return NOT_AVAILABLE.test(`${response.errorCode ?? ''} ${response.error ?? ''}`) ? 'older_machine'
+          : { failure: 'failed', cause: response.errorCode ?? null };
       }
+      // The executor's ingress writes the cache; the page reads it back through `useFoundSkillsCache`.
+      return SkillFoundListResultV1Schema.safeParse(response.result).success ? null : 'failed';
     },
     [execute],
   );
-
-  const scans = React.useMemo<readonly FoundMachineScan[]>(
-    () =>
-      (idsKey ? idsKey.split('\u0000') : []).map((machineId) => ({
-        machineId,
-        result: entries[machineId] ?? null,
-        scanning: busy.has(machineId),
-        failure: failures[machineId] ?? null,
-      })),
-    [busy, entries, failures, idsKey],
-  );
+  const { scans, scan } = useFoundMachineScans('skill', machineIds, scanOne);
 
   /** `skills.found.adopt`: one call for every item (bytes over the machine transfer, default reach). */
   const adopt = React.useCallback(
@@ -160,13 +87,12 @@ export function useFoundSkills(machineIds: readonly string[]) {
       const receipt = SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.found.adopt'].parse(
         response.result,
       );
-      return {
-        skillIds: receipt.skillIds,
-        incomplete: (receipt.incomplete?.length ?? 0) > 0,
-      };
+      return acknowledgeSkillCreation(receipt);
     },
     [execute],
   );
+
+  const retryRules = React.useCallback((receipt: FoundAdoptOutcome) => retrySkillInstallRules(execute, receipt), [execute]);
 
   /** Both sides of a masked name: the library copy and the machine's copy of its SKILL.md. */
   const readBoth = React.useCallback(
@@ -191,5 +117,5 @@ export function useFoundSkills(machineIds: readonly string[]) {
     [execute],
   );
 
-  return { scans, scan, adopt, readBoth, ready, scope };
+  return { scans, scan, adopt, retryRules, readBoth, ready, scope };
 }

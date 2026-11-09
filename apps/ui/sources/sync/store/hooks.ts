@@ -15,8 +15,6 @@ export {
   useLocalSettings,
   useLocalSetting,
 } from './settingsReadHooks';
-import { actionOperationStore, isActionOperationTerminal } from '@/sync/domains/actionOperations/actionOperationStore';
-import { readTranscriptBrowserActionIdentity } from '@/components/sessions/transcript/references/transcriptBrowserActionReference';
 import { useAiLaunchProfiles } from './useAiLaunchProfiles';
 export { useThemeProfiles, useThemeProfilesSnapshot } from './useThemeProfiles';
 import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
@@ -293,9 +291,11 @@ export function useSession(id: string, serverId?: string | null): Session | null
 
 /** One Home-qualified live carrier owner; projections retain their own subscription granularity. */
 export function useSessionSelector<T>(id: string, serverId: string | null | undefined, select: (session: Session | null) => T): T {
+  const normalizedSessionId = normalizeSessionId(id);
   const normalizedServerId = normalizeTrimmedString(serverId);
   const activeServerId = useActiveServerSnapshot(Boolean(normalizedServerId)).serverId;
-  return getStorage()((state) => select(selectHomeQualifiedSession(state, id, serverId, activeServerId)));
+  return getStorage()((state) => select(selectHomeQualifiedSession(state, normalizedSessionId, serverId, activeServerId)),
+    { sessions: normalizedSessionId ? [normalizedSessionId] : [] });
 }
 
 /**
@@ -1728,48 +1728,6 @@ export function useSessionMessages(
   return React.useMemo(() => ({ messages, isLoaded }), [isLoaded, messages]);
 }
 
-type SessionCompletedBrowserActionOptions = UseSessionMessagesOptions & Readonly<{
-  operationScope?: Readonly<{ serverId: string | null; accountId: string | null; machineId: string | null }> | null;
-}>;
-
-/** Completion identity consumed by browser discovery, not transcript presentation. */
-export function useSessionCompletedBrowserActionKey(sessionId: string, options?: SessionCompletedBrowserActionOptions): string {
-  const normalizedSessionId = normalizeSessionId(sessionId);
-  const enabled = options?.enabled !== false;
-  const transcriptKey = getStorage()((state) => {
-    if (!enabled) return '';
-    const transcript = state.sessionMessages[normalizedSessionId];
-    const messages = readSessionMessagesSnapshot(normalizedSessionId,
-      transcript?.messageIdsOldestFirst ?? emptyArray as string[],
-      transcript?.messagesById ?? emptyRecord,
-      transcript?.messagesVersion ?? 0, transcript?.isLoaded ?? false);
-    return messages.filter(message => message.kind === 'tool-call'
-      && message.tool.state === 'completed' && readTranscriptBrowserActionIdentity({
-        toolName: message.tool.name, input: message.tool.input,
-      }) !== null).map(message => message.id).join('\n');
-  }, { sessionMessages: [normalizedSessionId] });
-  const serverId = options?.operationScope?.serverId;
-  const accountId = options?.operationScope?.accountId;
-  const machineId = options?.operationScope?.machineId;
-  const operationsEnabled = enabled && Boolean(normalizedSessionId && serverId && accountId && machineId);
-  const subscribe = React.useCallback((listener: () => void) => operationsEnabled
-    ? actionOperationStore.subscribe(listener) : () => {}, [operationsEnabled]);
-  const readOperationKey = React.useCallback(() => {
-    if (!operationsEnabled) return '';
-    const completed = [...actionOperationStore.getSnapshot().operationsByKey.values()]
-      .filter(operation => operation.serverId === serverId
-        && operation.snapshot.scope.accountId === accountId
-        && operation.snapshot.scope.machineId === machineId
-        && operation.snapshot.scope.sessionId === normalizedSessionId
-        && operation.snapshot.actionId === 'browser.view.open'
-        && isActionOperationTerminal(operation.snapshot.state))
-      .map(operation => operation.snapshot.operationId).sort();
-    return completed.length > 0 ? JSON.stringify(completed) : '';
-  }, [operationsEnabled, serverId, accountId, machineId, normalizedSessionId]);
-  const operationKey = React.useSyncExternalStore(subscribe, readOperationKey, readOperationKey);
-  return operationKey ? JSON.stringify([transcriptKey, operationKey]) : transcriptKey;
-}
-
 /** Whether the Session's transcript has been read at least once; a boolean subscription, no ids. */
 export function useSessionTranscriptLoaded(sessionId: string): boolean {
   const normalizedSessionId = normalizeSessionId(sessionId);
@@ -2648,6 +2606,41 @@ export function useMachineListForServerSelection<T>(serverId: string, select: (m
     refresh();
     return stop;
   }, [demand, selector, serverId, store]);
+  return React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+}
+
+export type MachineLaunchInventoryInput = Readonly<{
+  activeMachines: Machine[];
+  machineListByServerId: Record<string, Machine[] | null>;
+  machineListStatusByServerId: StorageState['machineListStatusByServerId'];
+}>;
+
+/**
+ * A value derived from every Home's launch inventory. A row publication replaces these lists even when the derived
+ * answer is unchanged, so a reader that needs a summary selects it here and redraws only when the value changes.
+ * `select` must be stable; it reruns only when the inventories change, and an equal result keeps its identity.
+ */
+export function useMachineLaunchInventorySelection<T>(select: (inventory: MachineLaunchInventoryInput) => T): T {
+  const store = getStorage();
+  const owner = machineInventoryPresentation(store);
+  const retained = React.useRef<T | undefined>(undefined);
+  const getSnapshot = React.useMemo(() => {
+    let last: { activeMachines: Machine[]; lists: Record<string, Machine[] | null>; statuses: unknown; value: T } | undefined;
+    return (): T => {
+      const state = store.getState();
+      const activeMachines = owner.active(state, 'launch');
+      const lists = owner.lists(state, 'launch');
+      const statuses = state.machineListStatusByServerId;
+      if (last && last.activeMachines === activeMachines && last.lists === lists && last.statuses === statuses) return last.value;
+      const value = retainDeep(retained.current, select({ activeMachines, machineListByServerId: lists, machineListStatusByServerId: statuses }));
+      retained.current = value;
+      last = { activeMachines, lists, statuses, value };
+      return value;
+    };
+  }, [owner, select, store]);
+  const subscribe = React.useCallback((listener: () => void) => store.subscribe(listener, {
+    machines: true, machineListByServerId: true, machineListStatusByServerId: true,
+  }), [store]);
   return React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 

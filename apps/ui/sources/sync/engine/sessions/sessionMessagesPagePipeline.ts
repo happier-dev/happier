@@ -1,4 +1,5 @@
-import type { SessionMessageV1, SessionMessagesPageV1, SessionMessageRole } from '@happier-dev/protocol';
+import type { SessionMessageV1, SessionMessagesPageV1} from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
+import type { SessionMessageRole } from '@happier-dev/protocol/sessions/messages/sessionMessageRole';
 import { fetchSessionMessagesPage } from '@happier-dev/sync-client';
 import type { DecryptOptions } from '@/sync/encryption/encryptor';
 import { createSessionEncryptionUnavailableError } from '@/sync/encryption/sessionEncryptionUnavailableError';
@@ -14,8 +15,10 @@ import {
     createRawMessageNormalizationSequenceState,
     normalizeRawMessageInSequence,
     type NormalizedMessage,
+    type RawRecord,
 } from "@happier-dev/session-core/raw";
 import { getTaskLifecycleEventFromRawContent, type TaskLifecycleEvent } from './taskLifecycle';
+import { socketTranscriptStreamSegmentAssembler } from '@/sync/engine/socket/socketTranscriptStreamSegmentAssembler';
 import {
     applyTranscriptObservationMetadata,
     isRecoveredHistoryTranscriptObservation,
@@ -545,7 +548,7 @@ export async function runSessionMessagesPagePipeline(params: {
 
     const normalizedMessages: NormalizedMessage[] = [];
     const lifecycleEvents: TaskLifecycleEvent[] = [];
-    const appliedRowCurrentness: Array<Readonly<{ messageId: string; updatedAt: number }>> = [];
+    const appliedRowCurrentness: Array<Readonly<{ messageId: string; updatedAt: number; localId: string | null; record: RawRecord | null }>> = [];
     const normalizationState = createRawMessageNormalizationSequenceState();
     measureMessageNormalization(params.purpose, replayableMessages.length, () => {
         for (let i = 0; i < replayableMessages.length; i++) {
@@ -611,6 +614,8 @@ export async function runSessionMessagesPagePipeline(params: {
                 appliedRowCurrentness.push({
                     messageId: normalized.id,
                     updatedAt: inputUpdatedAt,
+                    localId: decrypted.localId ?? null,
+                    record: decrypted.content,
                 });
             }
         }
@@ -652,6 +657,13 @@ export async function runSessionMessagesPagePipeline(params: {
             row.messageId,
             row.updatedAt,
         );
+        // A streamed segment's applied revision is the base its next durable append names.
+        if (row.localId) {
+            socketTranscriptStreamSegmentAssembler.noteTranscriptStreamSegmentDurableRevision({
+                sessionId: params.sessionId, localId: row.localId, messageId: row.messageId,
+                updatedAt: row.updatedAt, record: row.record,
+            });
+        }
     }
     for (const event of lifecycleEvents) {
         params.onTaskLifecycleEvent?.(event);

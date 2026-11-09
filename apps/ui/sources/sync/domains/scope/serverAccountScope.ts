@@ -9,6 +9,11 @@ export type ServerAccountScopeLifetime = Readonly<{
     /** Credential-owned display lifetime when this binding itself belongs to a mounted reader. */
     accountLifetime?: ServerAccountScopeLifetime;
     isCurrent(): boolean;
+    /**
+     * A finite reader whose work ended while its Account stays current. Shared answers hand
+     * it off to their next reader; this is not retirement and does not evict them.
+     */
+    isReleased?(): boolean;
     onRetire(cancel: () => void): Readonly<{ dispose(): void }>;
 }>;
 

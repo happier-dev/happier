@@ -1,10 +1,13 @@
 import type {
-    AgentExecutionTargetV1,
-    BackendTargetRefV2,
-    RuntimeDescriptorV1,
+    AgentExecutionTargetV1} from '@happier-dev/protocol/agents/executionTargetV1';
+import type {
+    BackendTargetRefV2} from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type {
+    RuntimeDescriptorV1} from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
+import type {
     SessionAuthoringTerminalV1,
     SessionAuthoringValueV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/authoring/index';
 
 export type SessionAuthoringSnapshot = Readonly<{
     directory: string;

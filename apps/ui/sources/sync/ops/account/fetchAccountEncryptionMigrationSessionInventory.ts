@@ -1,5 +1,5 @@
 import { StoredSessionOwnerMetadataEnvelopeV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
-import { SessionDisplayProjectionV1Schema } from '@happier-dev/protocol';
+import { SessionDisplayProjectionV1Schema } from '@happier-dev/protocol/sessions';
 
 import {
     fetchSessionListPageCompat,

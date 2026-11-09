@@ -1,7 +1,7 @@
 import type {
     DaemonTerminalStreamEventUrl,
     DaemonTerminalStreamReadResponse,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/terminal';
 
 export type TerminalStreamCursor = Readonly<{
     mode: 'byte-offset' | 'legacy-event-cursor';
@@ -71,6 +71,7 @@ export type TerminalStreamReadResponse =
         frames: readonly TerminalStreamFrame[];
         nextCursor: number;
         done: boolean;
+        holdForOutput?: true;
         outputRetention?: TerminalOutputRetention;
         legacyResponse?: DaemonTerminalStreamReadResponse;
     }>
@@ -98,7 +99,8 @@ export type TerminalInputEvent =
 
 export type TerminalStreamCarrier = Readonly<{
     kind: 'machine-rpc-base64';
-    read: (request: TerminalStreamReadRequest) => Promise<TerminalStreamReadResponse>;
+    /** `signal` releases one held read; the carrier's own lifetime still ends every read. */
+    read: (request: TerminalStreamReadRequest, options?: Readonly<{ signal?: AbortSignal }>) => Promise<TerminalStreamReadResponse>;
     acknowledge: (ack: TerminalRendererAck) => Promise<void>;
     sendInput: (terminalId: string, event: TerminalInputEvent) => Promise<void>;
 }>;

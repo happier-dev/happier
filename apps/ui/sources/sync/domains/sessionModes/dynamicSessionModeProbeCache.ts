@@ -1,5 +1,5 @@
 import type { PreflightSessionModeList } from '@/sync/domains/sessionModes/sessionModeOptions';
-import type { ProbedResourceSnapshot } from '@happier-dev/protocol';
+import type { ProbedResourceSnapshot } from '@happier-dev/protocol/common/probedResourceCache';
 
 import { createPersistentProbedResourceCache, ProbedResourceError, type ProbedResourceFailure } from '@/sync/runtime/probedResources/createPersistentProbedResourceCache';
 
@@ -46,6 +46,7 @@ const persistedCache = createPersistentProbedResourceCache<PreflightSessionModeL
     staleTimeMs: DYNAMIC_SESSION_MODE_PROBE_SUCCESS_TTL_MS,
     errorCooldownMs: DYNAMIC_SESSION_MODE_PROBE_ERROR_BACKOFF_MS,
     normalizePersistedValue: normalizePersistedModeList,
+    onAccountRetired: () => transientUnavailableByKey.clear(),
 });
 
 export function resetDynamicSessionModeProbeCacheForTests(): void {

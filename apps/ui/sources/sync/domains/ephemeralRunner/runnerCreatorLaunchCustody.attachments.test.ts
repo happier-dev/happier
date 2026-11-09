@@ -353,6 +353,7 @@ describe('Runner creator attachment launch custody', () => {
     });
 
     it('retains a verified ordinary-upload checkpoint in the existing activation custody', async () => {
+        const attachmentHandle = { v: 1 as const, sessionId: 'session-1', id: 'issued-file-a' };
         const custodyModule = await import('./runnerCreatorLaunchCustody');
         const recordCheckpoint = (
             custodyModule as unknown as Readonly<Record<string, unknown>>
@@ -381,12 +382,24 @@ describe('Runner creator attachment launch custody', () => {
             scope,
             activationId,
             upload: {
+                id: 'file-a', name: 'notes.txt', mimeType: 'text/plain', path: '.happier/uploads/legacy-notes.txt',
+                sizeBytes: 8, sha256: 'a'.repeat(64),
+            },
+        });
+        await expect(readRunnerCreatorAttachmentUploadCustody(scope, activationId)).resolves.toMatchObject({
+            resumedUploads: [{ id: 'file-a', path: '.happier/uploads/legacy-notes.txt' }],
+        });
+        await recordCheckpoint({
+            scope,
+            activationId,
+            upload: {
                 id: 'file-a',
                 name: 'notes.txt',
                 mimeType: 'text/plain',
                 path: '.happier/uploads/notes.txt',
                 sizeBytes: 8,
                 sha256: 'a'.repeat(64),
+                attachmentHandle,
             },
         });
 
@@ -398,6 +411,7 @@ describe('Runner creator attachment launch custody', () => {
                 path: '.happier/uploads/notes.txt',
                 sizeBytes: 8,
                 sha256: 'a'.repeat(64),
+                attachmentHandle,
             }],
         });
     });

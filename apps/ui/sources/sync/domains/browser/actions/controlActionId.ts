@@ -1,4 +1,5 @@
-import type { BrowserCommandV1, RuntimeActionIdV1 } from '@happier-dev/protocol';
+import type { BrowserCommandV1} from '@happier-dev/protocol/browser/control/v1';
+import type { RuntimeActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 
 /** Closed Browser command variants enter their existing, exact semantic Actions. */
 const CONTROL_ACTION_IDS = {

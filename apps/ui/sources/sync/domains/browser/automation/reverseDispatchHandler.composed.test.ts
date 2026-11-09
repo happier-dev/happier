@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { BrowserInjectedRuntimeResultMessageV1Schema, BrowserAutomationActionResultV1Schema, UiBrowserAutomationDispatchRequestV1Schema, UiBrowserAutomationDispatchResultV1Schema, uiBrowserAutomationDispatchMethod, type RuntimeActionExecuteArgs } from '@happier-dev/protocol';
+import { BrowserInjectedRuntimeResultMessageV1Schema, BrowserAutomationActionResultV1Schema} from '@happier-dev/protocol/browser/automation/v1';
+import { UiBrowserAutomationDispatchRequestV1Schema, UiBrowserAutomationDispatchResultV1Schema, uiBrowserAutomationDispatchMethod} from '@happier-dev/protocol/browser/automation/reverseDispatchV1';
+import { type RuntimeActionExecuteArgs } from '@happier-dev/protocol/actions/executor/types';
 
 import { handleUiBrowserAutomationDispatchRequest } from './reverseDispatchHandler';
 import { createBrowserAutomationControlService } from './controlService';
@@ -7,12 +9,18 @@ import { registerBrowserRuntimeControlAdapter, clearBrowserRuntimeControlRegistr
 import { applyBrowserControlEvent, createBrowserControlState } from '../control/reducer';
 import { buildBrowserAdapterCapabilities } from '../adapters/capabilities';
 import { createInjectedPageAutomationOwner } from '@/components/browser/adapters/automation/injectedPageRuntime';
-import { createActionExecutor, FeaturesResponseSchema } from '@happier-dev/protocol';
-import { createActionExecutorBoundaryFixture } from '@/dev/testkit';
-import { loadBrowserDaemonRuntimeForTests } from '@/dev/testkit/harness/browserDaemonRuntime';
+import { createActionExecutor} from '@happier-dev/protocol/actions/actionExecutor';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { createActionExecutorBoundaryFixture, standardCleanup, flushHookEffects } from '@/dev/testkit';
+import { loadBrowserDaemonRuntimeForTests, loadBrowserDaemonApprovalCurrentnessForTests } from '@/dev/testkit/harness/browserDaemonRuntime';
 import { openExternalUrl } from '@/utils/url/openExternalUrl';
-
 import type { DesktopWebViewNativeAvailability } from '../adapters/desktopWebView';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { BrowserDiagnosticsEvalResultV1Schema } from '@happier-dev/protocol/browser/diagnostics/v1';
+import { useBrowserDiagnosticsRuntime } from '@/components/browser/diagnostics/useBrowserDiagnosticsRuntime';
+import { renderHook } from '@/dev/testkit/hooks/renderHook';
+import { act } from 'react-test-renderer';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { importSavedSecretPasskeysInContext } from '@/sync/ops/actions/browserProfileLoginsImport';
 
 const { nativeInvoke, nativeHost } = vi.hoisted(() => ({ nativeInvoke: vi.fn(), nativeHost: vi.fn(() => true) }));
@@ -37,7 +45,7 @@ const boundView = { ...view, sessionId: 'happier-session' };
 const request = { v: 1, ...view, automationRequestId: 'click-1', actionKind: 'click', navigationGeneration: 0, requestedBy: 'agent', requesterRef: { kind: 'agent', id: 'agent-1' }, timeoutMs: 1000, payload: { selector: '#button' } } as const;
 const args: RuntimeActionExecuteArgs = { actionId: 'browser.automation.click', input: request,
   context: { surface: 'agent', authority: 'account_automation', defaultSessionId: 'happier-session' } };
-const { createDaemonRuntimeActionExecutor, createBrowserAutomationReverseDispatcher } = await loadBrowserDaemonRuntimeForTests();
+const { createDaemonRuntimeActionExecutor, createBrowserAutomationReverseDispatcher, createClientActionReverseDispatcher } = await loadBrowserDaemonRuntimeForTests();
 
 function mountView(executePageAction?: (signal: AbortSignal) => Promise<Readonly<{ status: 'succeeded' }>>, withAutomation = true,
   availability?: DesktopWebViewNativeAvailability, adapterKind: 'localPreview' | 'externalUrl' = 'localPreview') {
@@ -60,6 +68,7 @@ function mountView(executePageAction?: (signal: AbortSignal) => Promise<Readonly
 }
 
 afterEach(() => {
+  standardCleanup();
   clearBrowserRuntimeControlRegistryForTests();
   nativeInvoke.mockReset();
   nativeHost.mockReturnValue(true);
@@ -67,6 +76,86 @@ afterEach(() => {
 });
 
 describe('daemon to exact mounted UI browser Action', () => {
+  it('continues one approved Agent eval at its mounted engine without another App approval', async () => {
+    let approvals = 0;
+    let decision: 'approve' | 'reject' = 'approve';
+    const result = BrowserDiagnosticsEvalResultV1Schema.parse({ v: 1, evalRequestId: 'approved-eval', viewId: view.viewId, navigationGeneration: 0,
+      tier: 'injectedPage', audited: true, status: 'completed', result: { type: 'number', value: 2 } });
+    const mounted = mountView(undefined, false, desktopAvailability, 'externalUrl');
+    const hook = await renderHook(() => useBrowserDiagnosticsRuntime({ enabled: true,
+      view: mounted.state.viewsById[view.viewId] }));
+    const retireDiagnostics = registerBrowserRuntimeControlAdapter({ browserSessionId: view.browserSessionId,
+      control: { readState: () => mounted.state, applyDispatchResult: () => {} },
+      diagnostics: hook.getCurrent()?.runtimeAdapter });
+    expect(hook.getCurrent()?.interaction?.state).toBe('disabled');
+    const clientActionExecute = createClientActionReverseDispatcher(() => ({
+      hasConnectedClientRpcHandler: () => false,
+      callConnectedClientRpc: async (method, payload, options) => {
+        expect(method).toBe(uiBrowserAutomationDispatchMethod(view));
+        expect(options?.timeoutMs).toBe(2000);
+        expect(UiBrowserAutomationDispatchRequestV1Schema.parse(payload)).toMatchObject({ authority: 'account_automation' });
+        options?.onIssued?.();
+        return { ok: true, result: await handleUiBrowserAutomationDispatchRequest(payload, boundView, { signal: options?.signal }) };
+      },
+    }));
+    const { createDaemonApprovalExecutionOriginCurrentness, createDaemonExternalActionTargetResolver } = await loadBrowserDaemonApprovalCurrentnessForTests();
+    const isApprovalExecutionOriginCurrent = createDaemonApprovalExecutionOriginCurrentness({
+      accountId: 'account', machineId: 'machine', serverId: 'home',
+      resolveTarget: createDaemonExternalActionTargetResolver({ credentials: { token: 'test-account-token', encryption: null } }),
+      // These Home identity/Account eligibility reads are the authenticated HTTP boundary.
+      resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: 'stable-home', machineId: 'machine' }),
+      isAccountCurrent: async () => true,
+      listAccountApiTokens: async () => { throw new Error('Unsigned Account host has no API-token lookup'); },
+      resolveCurrentSessionAgentSpawnPolicyV1: async () => accountSettingsParse({}).sessionAgentSpawnPolicyV1,
+    });
+    const executor = createActionExecutor(createActionExecutorBoundaryFixture({ clientActionExecute,
+      isApprovalExecutionOriginCurrent,
+      approvalsCreate: async () => { approvals++; return { artifactId: 'eval-approval' }; },
+      approvalsWaitForDecision: async ({ request }) => decision === 'approve'
+        ? { decision, request, decisionAuthority: 'present_user' } : { decision, request },
+      approvalsUpdate: async () => ({ ok: true }),
+    }));
+    const input = { v: 1, ...view, evalRequestId: 'approved-eval', navigationGeneration: 0, tier: 'injectedPage',
+      expression: '1 + 1', objectGroupId: 'group', diagnosticsInteractionEnabled: true };
+    const context = { surface: 'agent', authority: 'account_automation', defaultSessionId: boundView.sessionId,
+      serverId: 'home', serverIdentityId: 'stable-home', runtimeAccountId: 'account', actionRequestId: 'eval-request',
+      actionCaller: { kind: 'host' },
+      externalActionTarget: { kind: 'machine', machineId: 'machine' }, actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }),
+    } as const;
+    expect(await executor.execute('browser.diagnostics.eval', input, { ...context, surface: 'cli',
+      actionRequestAttributionV1: { requestRef: 'unknown-requester', requester: null,
+        persona: { serverId: 'stable-home', sessionId: boundView.sessionId }, origin: null },
+    })).toMatchObject({ ok: false, errorCode: 'approval_requester_unavailable' });
+    expect(approvals).toBe(0);
+    expect(hook.getCurrent()?.bridge?.evalRequest).toBeUndefined();
+    let execution!: ReturnType<typeof executor.execute>;
+    let refusal: string | undefined;
+    await act(async () => {
+      execution = executor.execute('browser.diagnostics.eval', input, context);
+      void execution.then(result => { if (!result.ok) refusal = `${result.errorCode}:${String(result.details?.reason ?? '')}`; });
+    });
+    await vi.waitFor(async () => {
+      await flushHookEffects();
+      expect(hook.getCurrent()?.bridge?.evalRequest, refusal).toMatchObject({ evalRequestId: 'approved-eval' });
+    });
+    // The page transport answers through the real hook's registered engine bridge.
+    await act(async () => hook.getCurrent()?.bridge?.onEvalResult?.(result));
+    expect(await execution).toEqual({ ok: true, result });
+    expect(approvals).toBe(1);
+    expect(hook.getCurrent()?.interaction?.evalConsole?.entries).toMatchObject([{ evalRequestId: 'approved-eval', status: 'completed' }]);
+    decision = 'reject';
+    expect(await executor.execute('browser.diagnostics.eval', input, { ...context, actionRequestId: 'rejected-eval' }))
+      .toMatchObject({ ok: false, errorCode: 'approval_rejected' });
+    expect(approvals).toBe(2);
+    expect(hook.getCurrent()?.bridge?.evalRequest).toBeUndefined();
+    decision = 'approve';
+    retireDiagnostics();
+    mounted.dispose();
+    expect(await executor.execute('browser.diagnostics.eval', input, { ...context, actionRequestId: 'retired-eval' }))
+      .toMatchObject({ ok: false, errorCode: 'runtime_action_disabled' });
+    expect(hook.getCurrent()?.bridge?.evalRequest).toBeUndefined();
+    await hook.unmount();
+  });
   it('opens native DevTools from the public agent Action through the exact mounted view without automation', async () => {
     const mounted = mountView(undefined, false, desktopAvailability);
     let enabled = true;
@@ -123,13 +212,51 @@ describe('daemon to exact mounted UI browser Action', () => {
     expect(nativeInvoke).toHaveBeenCalledWith('desktop_browser_open_devtools', { request: view });
   });
 
-  it('rejects dialog responses through the mounted Action route without clicking the page', async () => {
+  it('resolves an exact mounted pane through the public Action even without a positive registration hint', async () => {
+    const mounted = mountView();
+    // The connected-client RPC is the network boundary. Reconnect advertisements are
+    // positive hints, not a census: the server may still own this exact live room.
+    const runtimeActionExecute = createDaemonRuntimeActionExecutor({ env: { NODE_ENV: 'test' },
+      resolveRouteOwners: () => ({ browserUiAutomation: {
+        ownsAutomationView: () => false,
+        uiAutomation: createBrowserAutomationReverseDispatcher({ getMachineClient: () => ({
+          hasConnectedClientRpcHandler: () => false,
+          callConnectedClientRpc: async (method, payload) => {
+            const wire = UiBrowserAutomationDispatchRequestV1Schema.parse(payload);
+            const result = method === uiBrowserAutomationDispatchMethod(view)
+              ? await handleUiBrowserAutomationDispatchRequest(wire, boundView)
+              : { ok: false, errorCode: 'runtime_action_disabled', error: 'wrong_view' };
+            return { ok: true, result: UiBrowserAutomationDispatchResultV1Schema.parse(result) };
+          },
+        }) }),
+      } }),
+      resolveServerFeaturesSnapshot: () => ({ status: 'ready', features: FeaturesResponseSchema.parse({ features: {
+        browser: { enabled: true, viewTargets: { enabled: true }, internal: { enabled: true },
+          sidecar: { enabled: true }, automation: { enabled: true } },
+      } }) }),
+    });
+    const executor = createActionExecutor(createActionExecutorBoundaryFixture({ runtimeActionExecute }));
+    const context = { ...args.context, bypassApprovals: true,
+      externalActionTarget: { kind: 'machine' as const, machineId: 'machine-1' } };
+    try {
+      expect(await executor.execute('browser.automation.status', { ...request, actionKind: 'getStatus' }, context))
+        .toMatchObject({ ok: true, result: { status: 'succeeded', resultSummary: { controller: 'none' } } });
+      expect(await executor.execute('browser.automation.click', request, context))
+        .toMatchObject({ ok: true, result: { status: 'succeeded', resultSummary: { clicked: true } } });
+      expect(mounted.clicks()).toBe(1);
+      mounted.dispose();
+      expect(await executor.execute('browser.automation.status', { ...request, actionKind: 'getStatus' }, context))
+        .toMatchObject({ ok: false, errorCode: 'runtime_action_disabled' });
+    } finally { mounted.dispose(); }
+  });
+
+  it('admits dialog responses through the mounted Action route', async () => {
     const mounted = mountView();
     const result = await handleUiBrowserAutomationDispatchRequest({ v: 1, actionId: args.actionId,
       input: { ...request, dialogResponse: { kind: 'confirm', message: 'Continue?', accept: true } },
       authority: args.context.authority, sessionId: boundView.sessionId }, boundView);
-    expect(result).toMatchObject({ status: 'unsupported', errorCode: 'unsupported_action' });
-    expect(mounted.clicks()).toBe(0);
+    expect(result).toMatchObject({ status: 'succeeded', resultSummary: { clicked: true } });
+    expect(mounted.clicks()).toBe(1);
   });
 
   it.each([true, false])('opens the mounted page through the real Machine-targeted Action with its canonical kindless input (automation=%s)', async withAutomation => {
@@ -286,7 +413,7 @@ describe('daemon to exact mounted UI browser Action', () => {
     expect(mounted.clicks()).toBe(0);
   });
 
-  it('projects exact controller status and preserves present-user cancellation authority', async () => {
+  it.each(['present_user', 'account_automation'] as const)('projects exact controller status and cancels policy-admitted %s input', async authority => {
     vi.useFakeTimers();
     let settle!: (result: { status: 'succeeded' }) => void;
     const mounted = mountView(() => new Promise(resolve => { settle = resolve; }));
@@ -294,13 +421,13 @@ describe('daemon to exact mounted UI browser Action', () => {
     const invoke = (actionId: string, authority: string) => handleUiBrowserAutomationDispatchRequest({ v: 1, actionId,
       input: actionId === 'browser.automation.status' ? { ...request, automationRequestId: 'status-1', actionKind: 'getStatus' } : view,
       authority, sessionId: boundView.sessionId }, boundView);
-    expect(await invoke('browser.automation.cancelActive', 'account_automation')).toEqual({ v: 1, outcome: 'owner_mismatch', canceledCount: 0 });
     expect(await invoke('browser.automation.status', 'account_automation')).toMatchObject({ status: 'succeeded', resultSummary: { controller: 'agent', activeAutomationRequestId: 'click-1' } });
-    expect(await invoke('browser.automation.cancelActive', 'present_user')).toEqual({ v: 1, outcome: 'canceled', canceledCount: 1, completion: 'uncertain' });
+    expect(await invoke('browser.automation.cancelActive', authority)).toEqual({ v: 1, outcome: 'canceled', canceledCount: 1, completion: 'uncertain' });
     settle({ status: 'succeeded' });
     expect(await active).toMatchObject({ status: 'canceled' });
   });
 });
+
 
 describe('admitted private cookie continuation to the exact native view', () => {
   beforeEach(() => { nativeHost.mockReturnValue(true); });

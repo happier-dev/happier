@@ -313,6 +313,35 @@ describe('sync.markSessionViewed (authoritative read cursor)', () => {
         }
     });
 
+    it('acknowledges read cursor advances on a streaming Session without re-reading the Session list', async () => {
+        const { sync } = await import('./sync');
+        const sessionId = 'viewer-streaming';
+        const viewerAt = (lastViewedSessionSeq: number) => ({
+            latestFailureSeq: null,
+            readState: { state: 'tracking' as const, lastViewedSessionSeq, unreadSince: null },
+            relevance: { relevant: true, reasons: ['owned_by_me' as const] },
+            attention: { needsAttention: false, reasons: [], primary: null, presentation: 'full' as const },
+            follow: { follows: false as const, notificationLevel: null },
+            notification: { level: 'important' as const, source: 'owner' as const },
+        });
+        storage.getState().applySessions([{ ...createPlainSession({ sessionId }), viewer: viewerAt(3), lastViewedSessionSeq: 3 }]);
+        await sync.refreshSessions();
+        requestMock.mockClear();
+        // Settles whatever full Session list refresh an acknowledgement scheduled, without starting one.
+        const sessionsQueue = Reflect.get(sync, 'sessionsSync') as { awaitQueue(): Promise<unknown> };
+        // A viewer reading a streaming Session acknowledges each newly committed message.
+        for (let seq = 4; seq <= 9; seq += 1) {
+            emitReadCursorWithServerScopeMock.mockResolvedValueOnce({ result: 'success', lastViewedSessionSeq: seq, viewer: viewerAt(seq) });
+            await sync.markSessionViewed(activeAddress(sessionId), { sessionSeq: seq });
+            await sessionsQueue.awaitQueue();
+        }
+        expect(storage.getState().sessions[sessionId]?.viewer).toEqual(viewerAt(9));
+        expect(storage.getState().sessions[sessionId]?.lastViewedSessionSeq).toBe(9);
+        const listReads = requestMock.mock.calls.map(([path]) => String(path))
+            .filter((path) => path === '/v2/sessions' || path === '/v2/sessions/query' || path === '/v2/session-organization');
+        expect(listReads).toEqual([]);
+    });
+
     it('does not apply an old Account acknowledgement to a replacement Account session', async () => {
         const sessionId = 'account-switch';
         storage.getState().applySessions([createPlainSession({ sessionId })]);

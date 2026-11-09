@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 // importing them must not initialize an unrelated live socket connection.
 vi.mock('@/sync/api/session/apiSocket', () => ({ apiSocket: { request: vi.fn() } }));
 
-import { PluginProjectionV2Schema } from '@happier-dev/protocol';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import * as pluginAvailability from '@happier-dev/protocol/plugins/availability';
 import {
     createPackageAssetArchiveV1,

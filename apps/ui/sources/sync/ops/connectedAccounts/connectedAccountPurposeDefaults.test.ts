@@ -7,7 +7,7 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { createDeferred } from '@/dev/testkit';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { PROFILE_TRANSFER_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileTransferV1';
-import { PluginProjectionV2Schema } from '@happier-dev/protocol';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createMachineFixture } from '@/dev/testkit';
@@ -28,7 +28,7 @@ it('activates genuine auxiliary Agent defaults through the current reader and pu
         agentsById: { codex: { id: 'codex', title: 'Codex', identity,
             connectedAccounts: [{ purpose: 'primary', service, credentialKinds: ['oauth'] }],
             capabilities: { surfaces: [], sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } } },
-        actionsById: {}, familiesById: {},   resourcesById: {}, settingsById: {}, diagnostics: [] });
+        actionsById: {}, familiesById: {}, resourcesById: {}, settingsById: {}, diagnostics: [] });
     const http = createHomeHubArtifactHttpBoundary(accountId);
     const history = createDeferred<void>();
     let historyReads = 0;

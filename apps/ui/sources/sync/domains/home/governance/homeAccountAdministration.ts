@@ -2,6 +2,7 @@ import type {
     AccountStatusV1,
     HomeAccountMutationCapabilityV1,
     HomeAccountMutationUnavailableReasonV1,
+    HomeAccountDetailV1,
     HomeRoleV1,
 } from '@happier-dev/protocol/home/governance';
 
@@ -182,4 +183,18 @@ export function resolveHomeAccountAdministrationActions(params: Readonly<{
         ),
         assignableRoles: setRole.state === 'hidden' ? NO_ROLES : assignableRoles,
     });
+}
+
+/**
+ * Presents the Home's operator decision. Restriction is independent of Account lifecycle;
+ * reachability can narrow the projected authority, but the client never reconstructs it.
+ */
+export function resolveHomePublicProfileModeration(params: Readonly<{
+    target: Pick<HomeAccountDetailV1, 'publicProfile'>;
+    mutationsAvailable: boolean;
+}>): HomeAccountActionAvailability {
+    const { target, mutationsAvailable } = params;
+    return target.publicProfile
+        ? presentProjectedCapability(target.publicProfile.managementCapability, mutationsAvailable)
+        : HIDDEN;
 }

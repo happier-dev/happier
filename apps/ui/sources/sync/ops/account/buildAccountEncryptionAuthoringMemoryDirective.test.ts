@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol';
+import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
 
 import { createAuthoringMemoryCipher } from '@/sync/encryption/authoringMemoryEncryption';
 import { buildAccountEncryptionAuthoringMemoryDirective } from './buildAccountEncryptionAuthoringMemoryDirective';

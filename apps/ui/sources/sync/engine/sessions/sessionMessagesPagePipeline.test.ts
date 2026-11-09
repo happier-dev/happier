@@ -1,7 +1,7 @@
-import { type SessionMessageV1 } from '@happier-dev/protocol';
+import { type SessionMessageV1 } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { MessageActionReferenceV1 } from '@happier-dev/protocol';
+import type { MessageActionReferenceV1 } from '@happier-dev/protocol/sessions/messages/messageActionReferenceV1';
 
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storage';
@@ -150,6 +150,7 @@ describe('runSessionMessagesPagePipeline', () => {
                 isMutableToolCall: () => false,
                 invalidateScmStatus: () => {},
                 isSessionMessagesLoaded: () => true,
+                isSessionFullContentConsumerActive: () => true,
                 getSessionMaterializedMaxSeq: () => materializedSeq,
                 markSessionMaterializedMaxSeq: (_id, seq) => { materializedSeq = seq; },
                 onMessageGapDetected: () => {},
@@ -601,6 +602,7 @@ describe('runSessionMessagesPagePipeline', () => {
             isMutableToolCall: () => false,
             invalidateScmStatus: () => {},
             isSessionMessagesLoaded: () => true,
+            isSessionFullContentConsumerActive: () => true,
             getSessionMaterializedMaxSeq: () => 10,
             markSessionMaterializedMaxSeq: vi.fn(),
             onMessageGapDetected: vi.fn(),

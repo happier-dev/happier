@@ -1,5 +1,5 @@
-import type { ActionExecutorDeps } from '@happier-dev/protocol';
-import { PluginExecutionOriginActionInputSchemas as inputs } from '@happier-dev/protocol/actions/pluginExecutionOriginActionFamily';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+import { PluginExecutionOriginActionInputSchemas as inputs, type PluginExecutionOriginUnavailableResult } from '@happier-dev/protocol/actions/pluginExecutionOriginActionFamily';
 import { readCurrentAppShellPluginUiExecutionOriginCandidates } from '@/components/appShell/plugins/committedPluginUiProjection';
 import { readPluginAccountAvailability } from '@/sync/domains/plugins/availability/projection';
 import { captureActiveServerAccountScopeLifetime, getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
@@ -27,7 +27,10 @@ export function createPluginExecutionOriginActionDeps(account: Pick<LazyActionAc
             && scope.accountId === account.accountId && areServerProfileIdentifiersEquivalent(scope.serverId, account.serverId)
             && areServerAccountScopesEqual(scope, getActiveServerAccountScope())
             && areServerAccountScopesEqual(scope, storage.getState().settingsScope);
-        if (!scope || !current()) return { status: 'unavailable' };
+        const unavailable = (code: PluginExecutionOriginUnavailableResult['reason']['code']) => actionId === 'plugins.execution_origin.list'
+            ? { status: 'unavailable', reason: { code, phase: 'selection', retryable: false } } satisfies PluginExecutionOriginUnavailableResult
+            : { status: 'unavailable' as const };
+        if (!scope || !current()) return unavailable('account_scope_unavailable');
         const parsed = inputs[actionId].parse(input);
         if (parsed.contextualTarget || (actionId === 'plugins.execution_origin.list'
             && inputs[actionId].parse(input).contextual === true)) {
@@ -39,14 +42,14 @@ export function createPluginExecutionOriginActionDeps(account: Pick<LazyActionAc
                     && command.pluginId === parsed.pluginId && areServerAccountScopesEqual(command.account.scope, account.accountLifetime.scope)
                     && command.account.isCurrent() && current() ? command : null;
             };
-            if (!mounted) return { status: 'unavailable' };
+            if (!mounted) return unavailable('current_ui_context_unavailable');
             if (!parsed.contextualTarget) return { status: 'available', contextualTargets:
                 mounted.readCurrentUiContext()?.commands.flatMap(descriptor => {
                     const command = resolve(descriptor.id);
                     return command ? [{ commandId: descriptor.id, ...command.target }] : [];
                 }) ?? [] };
             const command = resolve(parsed.contextualTarget.commandId);
-            if (!command) return { status: 'unavailable' };
+            if (!command) return unavailable('contextual_target_unavailable');
             if (actionId === 'plugins.execution_origin.list') return command.read();
             context.signal?.throwIfAborted();
             const origin = actionId === 'plugins.execution_origin.set' ? inputs[actionId].parse(input).origin : null;
@@ -61,10 +64,12 @@ export function createPluginExecutionOriginActionDeps(account: Pick<LazyActionAc
         if (actionId === 'plugins.execution_origin.list') {
             const facts = readFacts();
             const candidates = readFreshPluginMachineExecutionOriginCandidates(facts);
+            const admission = facts.reader.readMaterializations();
             const storedTarget = readCurrentPluginMachineExecutionTargetPreference(parsed.pluginId);
             const selection = resolvePluginMachineExecutionOriginState({ ...facts, storedOrigin: null, storedTarget, candidates,
                 automaticOrigin: executionOriginMachineSnapshotPublication.readAutomaticOrigin(parsed.pluginId, captureActiveServerAccountScopeLifetime()),
-                ...readPluginExecutionOriginAutomaticHints(parsed.pluginId, candidates),
+                ...readPluginExecutionOriginAutomaticHints(parsed.pluginId, candidates, undefined,
+                    admission.kind === 'available' ? admission.materializations : [], facts.reader.readInstalledPlugins()),
                 homeServerIdentityId: getServerProfileById(scope.serverId)?.serverIdentityId });
             return { status: 'available', storedTarget, storedOrigin: null,
                 selectedOrigin: selection.kind === 'selected' ? selection.origin : null,

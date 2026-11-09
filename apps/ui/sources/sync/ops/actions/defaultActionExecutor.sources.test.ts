@@ -102,8 +102,9 @@ async function openMoveScenario(options: Readonly<{ failure?: 'source-conflict' 
     mode?: 'plain' | 'e2ee'; scopedRequire?: boolean; reviewPolicy?: 'default' | 'waived' }> = {}) {
     const mode = options.mode ?? (options.failure === 'secret-preparation-pending' ? 'e2ee' : 'plain');
     const accountSecret = new Uint8Array(32).fill(11);
+    const serverIdentityId = 'srv_composed_move';
     const serverId = await homes.addHome({ name: 'Composed Move', serverUrl: 'https://composed-source-move.test',
-        serverIdentityId: 'srv_composed_move', accountId: 'account-owner', currentAccount: true, accountEncryptionMode: mode,
+        serverIdentityId, accountId: 'account-owner', currentAccount: true, accountEncryptionMode: mode,
         ...(mode === 'e2ee' ? { credentials: { token: createAccountTokenForTests('account-owner', { currentAccount: true }),
             secret: encodeBase64(accountSecret, 'base64url') } } : {}),
     });
@@ -113,7 +114,7 @@ async function openMoveScenario(options: Readonly<{ failure?: 'source-conflict' 
             { principal: { kind: 'account', accountId: 'account-owner' }, level: 'view' },
             { principal: { kind: 'account', accountId: 'unrelated-reader' }, level: 'view' },
         ] });
-    const detail = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId }) });
+    const detail = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId: serverIdentityId }) });
     const binding = createDeploymentSecretVariableBindingV1({ name: 'PASSWORD', phase: 'runtime', resourceId: 'original', resourceRevision: 2 });
     detail.content.bindings = [binding];
     const effects: string[] = [];
@@ -338,7 +339,7 @@ async function openMoveScenario(options: Readonly<{ failure?: 'source-conflict' 
     const workflow = createWorkflowAutomationHttpBoundary();
     const automationId = '11111111-1111-4111-8111-111111111111';
     const triggerId = '22222222-2222-4222-8222-222222222222';
-    const stepInput = { serverId, environmentId: detail.environment.id, targetLinkId: detail.environment.runtimeTargetLinkId! };
+    const stepInput = { serverId: serverIdentityId, environmentId: detail.environment.id, targetLinkId: detail.environment.runtimeTargetLinkId! };
     const definition = WorkflowDefinitionV1Schema.parse({ version: 1, blocks: [{ kind: 'action', id: 'deploy', actionId: 'deployments.deploy',
         input: Object.fromEntries(Object.entries(stepInput).map(([key, value]) => [key, { kind: 'literal', value }])) }] });
     const fixture = createWorkflowAutomationDetailFixture({ id: automationId, revision: 1, triggerId, definition });
@@ -797,3 +798,76 @@ it.each([false, true])('settles a Source tombstone through the UI Inbox with pro
     expect(await decideApprovalAsInbox(serverId, artifactId, 'approve')).toMatchObject(expected);
     expect(homes.requestsFor('/v1/projects/sources/deleted-source').filter(request => request.method === 'DELETE')).toHaveLength(1);
 });
+
+
+it.each(['same-home', 'other-home', 'other-account'] as const)(
+    'replays a producer-created Source move from an independent device only for the same Home and Account (%s)', async decisionScope => {
+        const scenario = await openMoveScenario();
+        await homes.requireActionApproval(scenario.serverId, 'projects.sources.moveToTeam', 'agent');
+        const { getServerProfileById, listServerProfiles } = await import('@/sync/domains/server/serverProfiles');
+        const { seedPersistedHomeProfilesForTests } = await import('@/dev/testkit/fixtures/persistedHomeProfiles');
+        const { ApprovalRequestV2Schema } = await import('@happier-dev/protocol/approvals/approvalRequestV1');
+        const receiverProfile = getServerProfileById(scenario.serverId);
+        if (!receiverProfile) throw new Error('Expected the browser Home profile');
+        const receiverProfiles = listServerProfiles();
+        // Device persistence is the boundary: the real producer sees its own
+        // local id, and the browser later has only its independently saved id.
+        const creatorServerId = 'stack_agent-qa-servers-deploy__id_default';
+        const creatorInput = { ...scenario.input, serverId: creatorServerId };
+        try {
+            await seedPersistedHomeProfilesForTests({ activeServerId: creatorServerId,
+                profiles: receiverProfiles.map(profile => profile.id === receiverProfile.id
+                    ? { ...profile, id: creatorServerId, legacyServerIds: [] } : profile) });
+            expect(getServerProfileById(creatorServerId)?.serverIdentityId).toBe(receiverProfile.serverIdentityId);
+            const produced = await createDefaultActionExecutor().execute('projects.sources.moveToTeam', creatorInput, {
+                surface: 'agent', authority: 'account_automation', serverId: creatorServerId,
+                actionRequestId: 'independent-device-source-move',
+            });
+            expect(produced, JSON.stringify(produced)).toMatchObject({ ok: true, result: {
+                kind: 'approval_request_created', artifactId: expect.any(String),
+            } });
+            if (!produced.ok || typeof produced.result !== 'object' || produced.result === null
+                || !('artifactId' in produced.result) || typeof produced.result.artifactId !== 'string') {
+                throw new Error('Expected the real producer to persist a Source move review');
+            }
+            const artifactId = produced.result.artifactId;
+            const readApproval = () => ApprovalRequestV2Schema.parse(JSON.parse(homes.artifacts(scenario.serverId).readPlainBody(artifactId) ?? 'null'));
+            const pending = readApproval();
+            expect(pending).toMatchObject({ status: 'open', actionArgs: creatorInput,
+                executionOriginV1: { serverId: creatorServerId, serverIdentityId: receiverProfile.serverIdentityId,
+                    accountId: 'account-owner' },
+                preview: { hostReviewedChildren: { children: expect.arrayContaining([
+                    expect.objectContaining({ action: 'projects.sources.update', role: 'source-owner',
+                        input: expect.objectContaining({ serverId: creatorServerId }) }),
+                    expect.objectContaining({ action: 'deployments.bindings.set',
+                        scopeInput: expect.objectContaining({ serverId: creatorServerId }) }),
+                ]) } },
+            });
+            expect(scenario.effects).toEqual([]);
+            const browserProfiles = receiverProfiles.map(profile => decisionScope === 'other-home' && profile.id === receiverProfile.id
+                ? { ...profile, serverIdentityId: 'srv_reinstalled_source_home', legacyServerIds: [],
+                    homeConnectionDescriptor: undefined } : profile);
+            await seedPersistedHomeProfilesForTests({ profiles: browserProfiles, activeServerId: receiverProfile.id });
+            expect(getServerProfileById(creatorServerId)).toBeNull();
+            if (decisionScope === 'other-account') await homes.switchAccount(scenario.serverId, 'another-account', { currentAccount: true });
+            const decided = await decideApprovalAsInbox(receiverProfile.id, artifactId, 'approve');
+            if (decisionScope !== 'same-home') {
+                expect(decided, JSON.stringify(decided)).toMatchObject({ ok: false, errorCode: 'approval_stale', effectAttempted: false });
+                expect(scenario.effects).toEqual([]);
+                expect(scenario.source().owner).toEqual({ kind: 'account', accountId: 'account-owner' });
+                return;
+            }
+            expect(decided, JSON.stringify(decided)).toMatchObject({ ok: true, result: { status: 'executed', execution: {
+                ok: true, result: { kind: 'completed', source: { owner: { kind: 'team', teamId: 'team' } } },
+            } } });
+            expect(scenario.effects).toEqual(['machine-team', 'secret-copy', 'bindings', 'source-owner', 'token-root', 'token-child',
+                'trigger', 'machine-withdraw', 'source-audience']);
+            expect(readApproval()).toMatchObject({ actionArgs: creatorInput,
+                executionOriginV1: pending.executionOriginV1, preview: pending.preview });
+            await decideApprovalAsInbox(receiverProfile.id, artifactId, 'approve');
+            expect(scenario.effects.filter(effect => effect === 'source-owner')).toHaveLength(1);
+        } finally {
+            await seedPersistedHomeProfilesForTests({ profiles: receiverProfiles, activeServerId: receiverProfile.id });
+        }
+    },
+);

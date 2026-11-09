@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
-import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { captureActiveServerAccountScopeLifetime, retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { PluginSettingsContributionV2Schema } from '@happier-dev/protocol/plugins/contributions/settings';
+import { act } from 'react-test-renderer';
+import { renderHook, standardCleanup } from '@/dev/testkit';
 
 const runtime = vi.hoisted(() => ({
     token: 'token-a',
@@ -39,6 +42,10 @@ vi.mock('@/sync/ops/machineContributionRegistryProjection', async (importOrigina
 
 installDisconnectedServerSocketBoundary();
 const { scopedPluginSettingsStorageAdapterForTests: scopedPluginSettingsAdapter } = await import('./scopedPluginSettingsRuntime');
+const { useScopedPluginSettingsProjection } = await import('./scopedPluginSettingsProjection');
+const { projectAccountDeclaredPluginSettingsGroups } = await import('./accountDeclaredPluginSettings');
+const { executeScopedPluginSettingsAdministrationAction } = await import('@/sync/ops/actions/pluginSettingsAdministrationAction');
+const { watchActiveScopedPluginSettingsChanges } = await import('./scopedPluginSettingsChangeWatch');
 const tokenA = createAccountTokenForTests('account-a');
 const tokenB = createAccountTokenForTests('account-b');
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
@@ -87,6 +94,54 @@ afterEach(async () => {
 });
 
 describe('scopedPluginSettingsAdapter Account currentness', () => {
+    it.each(['updated', 'conflict'] as const)('refreshes only the mounted plugin projection after a public Action receives %s', async status => {
+        let revision = 4;
+        let values: Readonly<Record<string, unknown>> = { endpoint: 'before' };
+        const reads: string[] = [];
+        runtime.serverFetch.mockImplementation(async (path: string, init?: RequestInit) => {
+            if (path === '/v1/account/encryption') return jsonResponse(async () => ({ mode: 'plain', updatedAt: 1 }));
+            if (init?.method === 'GET') {
+                reads.push(path);
+                return jsonResponse(async () => ({ status: 'present', revision,
+                    content: { t: 'plain', v: { v: 1, values: path.endsWith('/acme.settings') ? values : { endpoint: 'unrelated' } } } }));
+            }
+            if (path === '/v1/account/plugin-settings/acme.settings' && init?.method === 'POST') {
+                revision += 1;
+                values = { endpoint: status === 'updated' ? 'after' : 'concurrent-winner' };
+                return jsonResponse(async () => ({ status, revision }));
+            }
+            throw new Error(`Unexpected Account Settings request: ${path}`);
+        });
+        const scope = { kind: 'account' as const };
+        const accountLifetime = captureActiveServerAccountScopeLifetime();
+        const groups = projectAccountDeclaredPluginSettingsGroups({ pluginId: 'acme.settings', declaration: { id: 'acme.settings',
+            contributes: { settings: [PluginSettingsContributionV2Schema.parse({ id: 'preferences', title: 'Preferences', scope: 'account',
+                target: { kind: 'plugin' }, fields: [{ id: 'endpoint', title: 'Endpoint', schema: { type: 'string' } }] })] } } });
+        const hook = await renderHook(() => ({
+            selected: useScopedPluginSettingsProjection({ pluginId: 'acme.settings', scope, target: ACCOUNT_TARGET,
+                perActiveServerIdentityId: null, accountLifetime, fields: ACCOUNT_FIELDS, enabled: true, adapter: scopedPluginSettingsAdapter }),
+            unrelated: useScopedPluginSettingsProjection({ pluginId: 'acme.other', scope, target: ACCOUNT_TARGET,
+                perActiveServerIdentityId: null, accountLifetime, fields: ACCOUNT_FIELDS, enabled: true, adapter: scopedPluginSettingsAdapter }),
+        }));
+        try {
+            expect(hook.getCurrent().selected.state.values).toEqual({ endpoint: 'before' });
+            const unrelated = hook.getCurrent().unrelated.state;
+            const unrelatedReads = reads.filter(path => path.endsWith('/acme.other')).length;
+            await act(async () => {
+                const result = await executeScopedPluginSettingsAdministrationAction({ actionId: 'plugins.settings.set',
+                    input: { pluginId: 'acme.settings', scope, target: { kind: 'account' }, localId: 'endpoint', value: 'after' }, context: { surface: 'ui' },
+                    target: ACCOUNT_TARGET, groups, adapter: scopedPluginSettingsAdapter, secretAdapter: scopedPluginSettingsAdapter,
+                    assertCurrent() {} });
+                expect(result, JSON.stringify(result)).toMatchObject(status === 'updated' ? { ok: true }
+                    : { ok: false, errorCode: 'plugin_settings_revision_conflict' });
+            });
+            expect(values).toEqual({ endpoint: status === 'updated' ? 'after' : 'concurrent-winner' });
+            expect(hook.getCurrent().selected.state.values).toEqual({ endpoint: status === 'updated' ? 'after' : 'concurrent-winner' });
+            expect(hook.getCurrent().unrelated.state).toBe(unrelated);
+            expect(reads.filter(path => path.endsWith('/acme.other'))).toHaveLength(unrelatedReads);
+        } finally { standardCleanup(); }
+    });
+
     it('rechecks the captured Settings intent after the final encryption-mode read before issuing a write', async () => {
         let intentCurrent = true;
         let encryptionReads = 0;
@@ -285,9 +340,16 @@ describe('scopedPluginSettingsAdapter Account currentness', () => {
         await vi.waitFor(() => expect(runtime.serverFetch).toHaveBeenCalledTimes(4));
 
         retireActiveServerAccountScopeLifetime();
+        const replacementLifetime = captureActiveServerAccountScopeLifetime();
+        if (!replacementLifetime) throw new Error('Expected replacement Account lifetime');
+        let invalidations = 0;
+        const watch = watchActiveScopedPluginSettingsChanges({ pluginId: 'acme.settings', target: ACCOUNT_TARGET,
+            lifetime: replacementLifetime, onInvalidated() { invalidations += 1; } });
         delayedMutation.resolve({ status: 'updated', revision: 1 });
 
         await expect(write).resolves.toEqual({ status: 'applied', revision: { kind: 'account', value: 1 } });
+        expect(invalidations).toBe(0);
+        watch.dispose();
     });
 
     it('does not accept a success-shaped mutation body from a non-success HTTP response', async () => {

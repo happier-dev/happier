@@ -1,10 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { sealWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowCheckpointStoredEnvelopeV1,
   sealWorkflowProgressStoredEnvelopeV1, sealWorkflowFinalResultStoredEnvelopeV1,
-  serializeWorkflowStoredContentEnvelopeV1, materializeWorkflowAcceptedSnapshotV1,
-  AutomationPluginEventOccurrenceEvidenceV1Schema, AutomationStoredContentEnvelopeV1Schema,
-  deriveAutomationOccurrenceKeyV1, deriveAutomationOccurrenceTriggerEvidenceEqualityTagV1,
-  openAccountScopedBlobCiphertext } from '@happier-dev/protocol';
+  serializeWorkflowStoredContentEnvelopeV1} from '@happier-dev/protocol/workflows/workflowStoredContentV1';
+import { materializeWorkflowAcceptedSnapshotV1} from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
+import {
+  AutomationPluginEventOccurrenceEvidenceV1Schema,
+  deriveAutomationOccurrenceKeyV1} from '@happier-dev/protocol/automations/automationOccurrenceV1';
+import { AutomationStoredContentEnvelopeV1Schema} from '@happier-dev/protocol/automations/automationStoredContentEnvelopeV1';
+import { deriveAutomationOccurrenceTriggerEvidenceEqualityTagV1} from '@happier-dev/protocol/automations/automationEventTriggerEvidence';
+import {
+  openAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { Encryption } from '@/sync/encryption/encryption';
 import { buildAccountEncryptionMigrationStorageDirectives } from './buildAccountEncryptionMigrationStorageDirectives';
 

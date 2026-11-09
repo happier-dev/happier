@@ -1,8 +1,8 @@
-import type { BrowserViewTargetV1 } from '@happier-dev/protocol';
+import type { BrowserViewTargetV1 } from '@happier-dev/protocol/browser/target/v1';
 import type {
     BrowserRenderEngineKindV1,
     BrowserSemanticAdapterKindV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/browser/adapters/kinds';
 
 export type BrowserAdapterPlatform = 'web' | 'desktop' | 'ios' | 'android';
 

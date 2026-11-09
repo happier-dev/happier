@@ -1,11 +1,15 @@
 import { expect, it } from 'vitest';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { emptyPromptLibraryRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
 import { PromptLibraryCatalogKeyV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 
 installDisconnectedServerSocketBoundary();
+// Prepare the real runtime after installing its transport boundary, before the
+// per-test deadline measures the finite read rather than cold graph loading.
+await loadSyncSingletonForTests();
 
 it.each(['prompts', 'notifications'] as const)('admits a finite %s borrower while retained history cleanup is pending', async domain => {
     let historyStarted = false;

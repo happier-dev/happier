@@ -1,4 +1,4 @@
-import type { BrowserCommandV1 } from '@happier-dev/protocol';
+import type { BrowserCommandV1 } from '@happier-dev/protocol/browser/control/v1';
 import { describe, expect, it } from 'vitest';
 
 import { shouldSurfaceBrowserPrivacy } from '@/components/browser/profile/browserPrivacyVisibility';

@@ -78,9 +78,11 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
         });
 
         let capturedCiphertext: string | null = null;
+        let capturedTiming: unknown;
         const request = async (_path: string, init?: RequestInit) => {
             const parsed = JSON.parse(String(init?.body ?? 'null'));
             capturedCiphertext = typeof parsed?.ciphertext === 'string' ? parsed.ciphertext : null;
+            capturedTiming = parsed?.usageTimingV1;
             return new Response('{}', { status: 200 });
         };
 
@@ -93,6 +95,7 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
         });
 
         expect(capturedCiphertext).toEqual(expect.any(String));
+        expect(capturedTiming).toEqual({ v: 1, minMs: null, maxMs: null });
         const sessionEncryption = getSessionEncryptionOrThrow({ encryption, sessionId });
         const decrypted = await sessionEncryption.decryptRaw(capturedCiphertext!);
         expect(decrypted).toMatchObject({
@@ -107,13 +110,14 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
         expect(decrypted?.meta?.displayText).toBe('Old display');
     });
 
-    it('marks encrypted pending updates as user messages and preserves producer metadata', async () => {
+    it.each([true, false])('edits encrypted pending input and preserves producer metadata with committed Copy enabled=%s', async copyEnabled => {
         const sessionId = 's_test_update_message_role';
         const encryption = await createPendingQueueEncryption({ sessionId });
 
         storage.setState(
             {
                 ...storage.getState(),
+                settings: { ...storage.getState().settings, transcriptMessageCopyActionEnabled: copyEnabled },
                 sessions: {
                     ...storage.getState().sessions,
                     [sessionId]: buildSession({ sessionId }) as Session,
@@ -159,6 +163,10 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
         expect(opened).toMatchObject({
             role: 'user', content: { text: 'new text' }, meta: { claudeRemoteMaxThinkingTokens: 4096 },
         });
+        expect(storage.getState().sessionPending[sessionId]?.messages).toMatchObject([
+            { localId: 'p1', text: 'new text' },
+        ]);
+        expect(storage.getState().settings.transcriptMessageCopyActionEnabled).toBe(copyEnabled);
     });
 
     it('serializes an edited contentless composer attachment selection in the pending PATCH', async () => {
@@ -358,7 +366,14 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
                 content: { type: 'text', text: '@src/index.ts old text' },
                 meta: {
                     otherMetadata: 'preserved',
-                    happierStructuredInputV1: { v: 1, mentions: [mention] },
+                    happierSkillMentions: [{ name: 'shadowed-root-skill' }],
+                    happierVendorPluginMentions: [{ vendorPluginRef: 'plugin://shadowed-root' }],
+                    happierStructuredInputV1: {
+                        v: 1,
+                        mentions: [mention],
+                        skillMentions: [{ name: 'shadowed-envelope-skill' }],
+                        vendorPluginMentions: [{ vendorPluginRef: 'plugin://shadowed-envelope' }],
+                    },
                 },
             },
         });

@@ -1,10 +1,8 @@
 import { isMachineReachable, resolveMachineReachability, type MachineReachabilityScope } from '@/sync/domains/machines/reachability/machineReachability';
 
-import { resolveMachineSpawnReadinessV1, type MachineSpawnReadinessV1 } from '@happier-dev/protocol/machines/machineSpawnReadinessV1';
+import { resolveMachineSpawnReadinessV1, type MachineSpawnReadinessV1, type MachineReadinessProbeStateV1 } from '@happier-dev/protocol/machines/machineSpawnReadinessV1';
 
 export type MachineSpawnReadiness = MachineSpawnReadinessV1;
-
-type MachineReadinessProbeState = boolean | 'unknown' | 'probing' | null | undefined;
 
 /** The picker needs display/presence facts, not daemon-owned machine state. */
 export type MachineSpawnReadinessMachine = Readonly<{
@@ -20,8 +18,8 @@ export function resolveMachineSpawnReadiness(params: Readonly<{
     selectedMachineId?: string | null;
     machine?: MachineSpawnReadinessMachine | null;
     scope?: MachineReachabilityScope | null;
-    rpcAvailable?: MachineReadinessProbeState;
-    keyAvailable?: MachineReadinessProbeState;
+    rpcAvailable?: MachineReadinessProbeStateV1;
+    keyAvailable?: MachineReadinessProbeStateV1;
     requireExactSpawnReadiness?: boolean;
     /** A restrictive caller veto; true never overrides current scoped reachability. */
     machineReachable?: boolean;
@@ -54,10 +52,10 @@ export function canAttemptMachineSpawn(params: Readonly<{
         machineReachable: params.machineReachable,
         nowMs: params.nowMs,
     });
-    if (currentReadiness.status !== 'ready' && currentReadiness.status !== 'unknown' && currentReadiness.status !== 'probing') return false;
+    if (currentReadiness.status !== 'ready' && currentReadiness.status !== 'unknown') return false;
     // Retain only exact probe refusals. Presence and identity are projections
     // of current Machine facts, so an older readiness snapshot cannot veto recovery.
     const readiness = params.spawnReadiness?.status === 'rpcUnavailable' || params.spawnReadiness?.status === 'keyUnavailable'
         ? params.spawnReadiness : currentReadiness;
-    return readiness.status === 'ready' || readiness.status === 'unknown' || readiness.status === 'probing';
+    return readiness.status === 'ready' || readiness.status === 'unknown';
 }

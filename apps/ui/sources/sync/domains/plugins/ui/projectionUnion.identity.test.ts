@@ -6,13 +6,341 @@ import { projectPluginPortableUiDeclarationsV1 } from '@happier-dev/protocol/plu
 import { PluginProjectedResourceV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { PluginSourceCustodyV1Schema } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import * as sourceCustodyComparison from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import * as executionOriginComparison from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import * as strictJsonProjection from '@happier-dev/protocol/json/strictJsonValue';
+import * as projectionOrigins from './projectionOrigins';
 import { resolveAtmospherePictureCatalog } from '@/components/atmosphere/pictureCatalog';
-import { EMPTY_PLUGIN_UI_PROJECTION, normalizePluginInstalledUiDeclarations } from './projection';
+import { EMPTY_PLUGIN_UI_PROJECTION, normalizePluginInstalledUiDeclarations, type PluginUiActionProjection } from './projection';
 import { preparePluginUiProjectionOrigins, readPluginUiAccountExecutableOrigin } from './projectionOrigins';
 import { createInstalledPluginUiProjectionPublication, createPluginUiExecutionOriginCandidatePublication, createPluginUiProjectionUnionPublication, mergeInstalledPluginUiProjections, readPluginUiContributionOrigin, readPluginUiContributionSupplies, readPluginUiExecutionOriginCandidates, readPluginUiProjectionEntryExecutionOrigin, unionPluginUiProjections, type PluginUiProjectionUnionMember } from './projectionUnion';
 
 describe('execution-origin projection identity', () => {
+    it('retains current materialization facts with linear work when observations are republished', () => {
+        const measure = (size: number) => {
+            let reads = 0;
+            const members = Array.from({ length: size }, (_, index) => {
+                const source = sourceMember(`retention-${index}`, 'acme.union', 'shared');
+                const value = PluginMachineMaterializationV1Schema.parse({
+                    serverIdentityId: 'srv_identity', machineId: source.machineId, materializationId: source.machineId,
+                    pluginId: 'acme.union', version: '1.0.0', sourceClass: 'localPath', portableRelease: false,
+                    enabled: true, trustState: 'trusted', observedAt: 1, uiArtifacts: [],
+                });
+                const materialization = new Proxy(value, { get(target, key, receiver) {
+                    if (key === 'portableRelease') reads++;
+                    return Reflect.get(target, key, receiver);
+                } });
+                return { ...source, projection: { ...source.projection!, installedPackagesById: {
+                    'acme.union': { ...source.projection!.installedPackagesById['acme.union']!, displayName: 'Union' },
+                } }, materializationsByPluginId: { 'acme.union': materialization } };
+            });
+            const owner = createPluginUiProjectionUnionPublication();
+            owner.publish(members);
+            const updated = members.map(member => ({ ...member, materializationsByPluginId: {
+                'acme.union': { ...member.materializationsByPluginId['acme.union'], observedAt: 2 },
+            } }));
+            reads = 0;
+            owner.publish(updated);
+            return reads;
+        };
+        const small = measure(32);
+        const large = measure(64);
+        if (process.env.UNION_CHURN_PROFILE) console.info('UNION_CHURN retention reads', { small, large });
+        expect(large).toBeLessThanOrEqual(small * 2);
+    });
+
+    it('interns re-read native materialization facts per plugin instead of comparing them across every plugin', () => {
+        // A Machine re-read publishes fresh materialization objects with equal
+        // content for every plugin. Interning compares each manifest/artifact
+        // only with content that can be equal, so the work grows with the
+        // plugin count, not with its square (P03-SESSION-SETTLE: 85 plugins x
+        // 3 Machines held one 15 s publication on Session open).
+        const measure = (pluginCount: number) => {
+            const machines = ['settle-a', 'settle-b', 'settle-c'];
+            const materialize = (machineId: string, pluginId: string) => PluginMachineMaterializationV1Schema.parse({
+                serverIdentityId: 'srv_identity', machineId, materializationId: machineId, pluginId, version: '1.0.0',
+                sourceClass: 'localPath', portableRelease: false, enabled: true, trustState: 'trusted', observedAt: 1,
+                declaredManifest: PluginPortableReleaseManifestV1Schema.parse({ schemaVersion: 2, id: pluginId, version: '1.0.0',
+                    displayName: 'Settle', runtime: { apiVersion: 1 }, contributes: { ui: {
+                        renderers: [{ id: 'content', kind: 'declarative', root: { kind: 'text', text: 'Settle payload' } }],
+                        views: [{ id: 'content', container: 'appPage', target: { kind: 'app' }, title: 'Settle', renderer: 'content' }],
+                    } } }),
+                uiArtifacts: ['a', 'b'].map(slot => ({ contributionId: 'content', artifactId: `${pluginId}-${slot}`, tier: 'hostedWeb',
+                    platform: 'web', artifactDigest: `sha256:${slot.repeat(64)}`, hostUiApiRange: '^1.0.0' })),
+            });
+            const pluginIds = Array.from({ length: pluginCount }, (_, index) => `acme.settle-${index}`);
+            const member = (machineId: string) => {
+                const fragments = pluginIds.map(pluginId => sourceMember(machineId, pluginId, `${pluginId}-row`).projection!);
+                return { ...sourceMember(machineId, pluginIds[0]!, `${pluginIds[0]}-row`), projection: preparePluginUiProjectionOrigins({
+                    ...fragments[0]!,
+                    installedPackagesById: Object.fromEntries(fragments.flatMap(fragment => Object.entries(fragment.installedPackagesById))
+                        .map(([pluginId, installed]) => [pluginId, { ...installed, displayName: 'Settle' }])),
+                    unknownEntriesById: Object.assign({}, ...fragments.map(fragment => fragment.unknownEntriesById)),
+                }), materializationsByPluginId: Object.fromEntries(pluginIds.map(pluginId => [pluginId, materialize(machineId, pluginId)])) };
+            };
+            const owner = createPluginUiProjectionUnionPublication();
+            owner.publish(machines.slice(0, 1).map(member));
+            // The other Machines' projections settle: each re-read arrives as
+            // fresh, equal-content materialization and projection objects.
+            const keys = vi.spyOn(Object, 'keys');
+            const same = vi.spyOn(strictJsonProjection, 'sameStrictJsonValue');
+            try {
+                owner.publish(machines.map(member));
+                return { keys: keys.mock.calls.length, comparisons: same.mock.calls.length };
+            } finally { keys.mockRestore(); same.mockRestore(); }
+        };
+        const small = measure(16);
+        const large = measure(64);
+        if (process.env.UNION_CHURN_PROFILE) console.info('UNION_CHURN materialization interning', { small, large });
+        // Four times the plugins may cost about four times the work, never sixteen.
+        expect(large.comparisons).toBeLessThanOrEqual(small.comparisons * 4 * 1.5);
+        expect(large.keys).toBeLessThanOrEqual(small.keys * 4 * 1.5);
+    });
+
+    it('matches a plugin declaration only against that plugin\'s selectable origins when a Machine republishes them', () => {
+        // A Machine's selectable list carries every plugin's origin. Fleet
+        // agreement for one plugin must not compare each of its entries with
+        // every other plugin's origin (P03-SESSION-SETTLE: about 4M origin
+        // comparisons in the 15 s after a Session open on 85 plugins).
+        const measure = (pluginCount: number) => {
+            const pluginIds = Array.from({ length: pluginCount }, (_, index) => `acme.select-${index}`);
+            const member = (machineId: string, payload: string) => {
+                const fragments = pluginIds.map(pluginId => sourceMember(machineId, pluginId, `${pluginId}-row`).projection!);
+                const projection = preparePluginUiProjectionOrigins({ ...fragments[0]!,
+                    installedPackagesById: Object.fromEntries(fragments.flatMap(fragment => Object.entries(fragment.installedPackagesById))
+                        .map(([pluginId, installed]) => [pluginId, { ...installed, displayName: 'Select' }])),
+                    unknownEntriesById: Object.fromEntries(fragments.flatMap(fragment => Object.entries(fragment.unknownEntriesById))
+                        .map(([key, entry]) => [key, { ...entry, payload }])),
+                });
+                return { ...sourceMember(machineId, pluginIds[0]!, `${pluginIds[0]}-row`), projection,
+                    selectableExecutionOrigins: pluginIds.map(pluginId => projection.installedPackagesById[pluginId]!.executionOrigin!) };
+            };
+            // Different payloads make every plugin conflict-sensitive across the two Machines.
+            const members = [member('select-a', 'first'), member('select-b', 'second')];
+            const owner = createPluginUiProjectionUnionPublication();
+            owner.publish(members);
+            const republished = members.map(value => ({ ...value, selectableExecutionOrigins: [...value.selectableExecutionOrigins] }));
+            const equal = vi.spyOn(executionOriginComparison, 'arePluginMachineExecutionOriginsEqual');
+            try {
+                owner.publish(republished);
+                return equal.mock.calls.length;
+            } finally { equal.mockRestore(); }
+        };
+        const small = measure(16);
+        const large = measure(64);
+        if (process.env.UNION_CHURN_PROFILE) console.info('UNION_CHURN selectable origin comparisons', { small, large });
+        expect(large).toBeLessThanOrEqual(small * 4 * 1.5);
+    });
+
+    it('compares only changed suppliers instead of multiplying unrelated member reads by plugin count', () => {
+        const measure = (pluginCount: number) => {
+            let unrelatedInputReads = 0;
+            const members = Array.from({ length: 148 }, (_, index) => {
+                const member = sourceMember(`cost-${index}`, `acme.cost-${index % pluginCount}`);
+                return index === 1 ? new Proxy(member, { get(target, key, receiver) {
+                    if (key === 'projection') unrelatedInputReads++;
+                    return Reflect.get(target, key, receiver);
+                } }) : member;
+            });
+            const owner = createPluginUiProjectionUnionPublication();
+            const initial = owner.publish(members);
+            unrelatedInputReads = 0;
+            const edited = { ...members[0]!, projection: { ...members[0]!.projection!, unknownEntriesById: {
+                ...members[0]!.projection!.unknownEntriesById,
+                'cost-0': { ...members[0]!.projection!.unknownEntriesById['cost-0'], title: 'Changed declaration' },
+            } } };
+            const next = owner.publish([edited, ...members.slice(1)]);
+            expect(next.pluginUiProjection?.unknownEntriesById['cost-0']?.title).toBe('Changed declaration');
+            expect(next.pluginUiProjection?.unknownEntriesById['cost-1']).toBe(initial.pluginUiProjection?.unknownEntriesById['cost-1']);
+            return unrelatedInputReads;
+        };
+        // Same fleet and one changed supplier: adding unrelated plugin families
+        // cannot multiply reads of an unchanged supplier's currentness.
+        const small = measure(2);
+        const large = measure(66);
+        if (process.env.UNION_CHURN_PROFILE) console.info('UNION_CHURN unchanged supplier reads', { small, large });
+        expect(large).toBe(small);
+    });
+
+    it('prepares only changed supplier rows in a 300-Action, 30-supplier publication', () => {
+        const pluginId = 'acme.union-cost';
+        const members = Array.from({ length: 30 }, (_, index) => {
+            const member = sourceMember(`supplier-${index}`, pluginId);
+            const actionsById = Object.fromEntries(Array.from({ length: 300 }, (_, row) => {
+                const id = `action-${row}`;
+                return [`${pluginId}/${id}`, { pluginId, id, title: id, scopes: ['session'],
+                    surfaces: ['ui'], placementBindings: [], dangerLevel: 'safe',
+                    available: true, execution: { target: 'daemon' as const },
+                    occurrenceId: member.machineId,
+                    executionOrigin: member.projection!.installedPackagesById[pluginId]!.executionOrigin } satisfies PluginUiActionProjection];
+            }));
+            return { ...member, projection: preparePluginUiProjectionOrigins({ ...member.projection!, actionsById }) };
+        });
+        const owner = createPluginUiProjectionUnionPublication();
+        const initial = owner.publish(members);
+        const rowId = `${pluginId}/action-0`;
+        const initialSupplies = readPluginUiContributionSupplies(initial.pluginUiProjection?.actionsById[rowId]);
+        let preparedKeys = 0;
+        const add = Set.prototype.add;
+        const set = Map.prototype.set;
+        const stackTraceLimit = Error.stackTraceLimit;
+        Error.stackTraceLimit = 30;
+        const countPreparedKey = (value: unknown) => {
+            if (typeof value === 'string' && value.startsWith(`${pluginId}/action-`)
+                && new Error().stack?.includes('prepareUnionPublicationSource')) preparedKeys++;
+        };
+        // Count contribution-key work at preparation, not required output-list
+        // assembly: a readiness change really changes each Action's supply list.
+        const keys = vi.spyOn(Set.prototype, 'add').mockImplementation(function(this: Set<unknown>, value: unknown) {
+            countPreparedKey(value);
+            return add.call(this, value);
+        });
+        const counts = vi.spyOn(Map.prototype, 'set').mockImplementation(function(this: Map<unknown, unknown>, key: unknown, value: unknown) {
+            countPreparedKey(key);
+            return set.call(this, key, value);
+        });
+        const custody = vi.spyOn(PluginSourceCustodyV1Schema, 'safeParse');
+        const publishSupply = vi.spyOn(projectionOrigins, 'publishPluginUiContributionSupplies');
+        const changed = members.map((member, index) => index === 13
+            ? { ...member, phase: 'establishing' as const, interactionEnabled: false,
+                projection: { ...member.projection!, generation: 2 } } : member);
+        try {
+            const next = owner.publish(changed);
+            const supplies = readPluginUiContributionSupplies(next.pluginUiProjection?.actionsById[rowId]);
+            expect(supplies).toHaveLength(30);
+            expect(supplies.find(supply => supply.machineId === members[13]!.machineId))
+                .toMatchObject({ phase: 'establishing', interactionEnabled: false });
+            for (const supply of supplies) if (supply.machineId !== members[13]!.machineId)
+                expect(supply).toBe(initialSupplies.find(before => before.machineId === supply.machineId));
+            expect.soft(preparedKeys).toBe(0); // No declaration key changed.
+            const untouchedCustodies = new Set<unknown>(members.filter((_, index) => index !== 13)
+                .map(member => member.projection!.installedPackagesById[pluginId]!.sourceCustody));
+            expect(custody.mock.calls.filter(([value]) => untouchedCustodies.has(value))).toHaveLength(0);
+            expect(custody.mock.calls.some(([value]) => value === members[13]!.projection!.installedPackagesById[pluginId]!.sourceCustody)).toBe(true);
+            preparedKeys = 0;
+            publishSupply.mockClear();
+            custody.mockClear();
+            for (let publication = 0; publication < 20; publication++) expect(owner.publish([...changed])).toBe(next);
+            expect(preparedKeys).toBe(0);
+            expect(publishSupply).not.toHaveBeenCalled();
+            expect(custody).not.toHaveBeenCalled();
+            const remaining = changed.filter((_, index) => index !== 13).reverse();
+            const withdrawn = owner.publish(remaining);
+            expect(Object.keys(withdrawn.pluginUiProjection!.actionsById)).toHaveLength(300);
+            expect(readPluginUiContributionSupplies(withdrawn.pluginUiProjection!.actionsById[rowId])).toHaveLength(29);
+            expect(preparedKeys).toBeGreaterThan(0);
+            expect(preparedKeys).toBeLessThanOrEqual(300 * 3); // Only the removed supplier's keys.
+            const cleared = owner.publish([]);
+            expect(cleared.pluginUiProjection).toBeNull();
+        } finally { keys.mockRestore(); counts.mockRestore(); custody.mockRestore(); publishSupply.mockRestore(); Error.stackTraceLimit = stackTraceLimit; }
+    });
+
+    it('does not strict-walk admitted declaration values during cold union preparation', () => {
+        const members = Array.from({ length: 30 }, (_, index) => {
+            const member = sourceMember(`admitted-${index}`, 'acme.admitted');
+            return { ...member, projection: preparePluginUiProjectionOrigins({ ...member.projection!,
+                unknownEntriesById: strictJsonProjection.projectNativeJsonValueForTransport(Object.fromEntries(
+                    Array.from({ length: 300 }, (_, row) => [`row-${row}`, {
+                        ...member.projection!.unknownEntriesById[member.machineId],
+                        payload: { children: [{ text: `Row ${row}` }] },
+                    }]),
+                )) as Readonly<Record<string, Readonly<Record<string, unknown>>>>,
+            }) };
+        });
+        const descriptor = Object.getOwnPropertyDescriptors;
+        const stackTraceLimit = Error.stackTraceLimit;
+        Error.stackTraceLimit = 30;
+        let admittedComparisonWalks = 0;
+        let ingressWalks = 0;
+        const descriptors = vi.spyOn(Object, 'getOwnPropertyDescriptors').mockImplementation(value => {
+            const stack = new Error().stack ?? '';
+            if (stack.includes('walkStrictPluginJsonValue')) {
+                if (/readDeclarationComparisonSnapshot|readMaterializationDeclarationComparison/.test(stack)) admittedComparisonWalks++;
+                else ingressWalks++;
+            }
+            return descriptor(value);
+        });
+        try {
+            const owner = createPluginUiProjectionUnionPublication();
+            expect(Object.keys(owner.publish(members).pluginUiProjection!.unknownEntriesById)).toHaveLength(300);
+            expect(admittedComparisonWalks).toBe(0);
+            // New raw supply envelopes still cross their real origin/custody
+            // ingress. They must not inherit a declaration's admission proof.
+            expect(ingressWalks).toBeGreaterThan(0);
+        } finally { descriptors.mockRestore(); Error.stackTraceLimit = stackTraceLimit; }
+    });
+
+    it('publishes each supply once when a 148-Machine union selects a different origin', () => {
+        const pluginId = 'acme.linear-supplies';
+        const members = Array.from({ length: 148 }, (_, index) => sourceMember(`machine-${String(index).padStart(3, '0')}`, pluginId, 'row'));
+        const owner = createPluginUiProjectionUnionPublication();
+        const firstOrigin = members[0]!.projection!.installedPackagesById[pluginId]!.executionOrigin!;
+        const nextOrigin = members.at(-1)!.projection!.installedPackagesById[pluginId]!.executionOrigin!;
+        const before = owner.publish(members, new Map([[pluginId, firstOrigin]]));
+        const publish = vi.spyOn(projectionOrigins, 'publishPluginUiContributionSupplies');
+        let supplierComparisons = 0;
+        const compare = executionOriginComparison.arePluginMachineExecutionOriginsEqual;
+        // Observe the real predicate; do not substitute its equality decision.
+        const comparisons = vi.spyOn(executionOriginComparison, 'arePluginMachineExecutionOriginsEqual').mockImplementation((left, right) => {
+            if (new Error().stack?.includes('publishFirstAdmitted')) supplierComparisons++;
+            return compare(left, right);
+        });
+        try {
+            const after = owner.publish(members, new Map([[pluginId, nextOrigin]]));
+            expect(readPluginUiContributionOrigin(after.pluginUiProjection?.unknownEntriesById.row)?.machineId).toBe(members.at(-1)!.machineId);
+            expect(readPluginUiContributionSupplies(after.pluginUiProjection?.unknownEntriesById.row)).toHaveLength(members.length);
+            expect(publish.mock.calls.reduce((count, [supplies]) => count + supplies.length, 0)).toBe(members.length);
+            expect(after.pluginUiProjection?.unknownEntriesById.row?.hostSupplies)
+                .toBe(before.pluginUiProjection?.unknownEntriesById.row?.hostSupplies);
+            expect(supplierComparisons).toBeLessThanOrEqual(members.length);
+            expect(supplierComparisons).toBeGreaterThan(0);
+        } finally { publish.mockRestore(); comparisons.mockRestore(); }
+    });
+
+    it('retains only current projection roots across 24 replacements of a 66-plugin catalog', () => {
+        const leaves = Array.from({ length: 66 }, (_, index) => sourceMember('inventory', `acme.retention${index}`, `row${index}`));
+        const first = leaves[0]!;
+        let member: PluginUiProjectionUnionMember = { ...first, projection: { ...first.projection!,
+            installedPackagesById: Object.assign({}, ...leaves.map(leaf => leaf.projection!.installedPackagesById)),
+            unknownEntriesById: Object.assign({}, ...leaves.map(leaf => leaf.projection!.unknownEntriesById)),
+        } };
+        const owner = createPluginUiProjectionUnionPublication();
+        const retired = new Set<object>();
+        owner.publish([member]);
+        for (let publication = 0; publication < 24; publication++) {
+            retired.add(member.projection!);
+            member = { ...member, phase: publication % 2 ? 'current' : 'establishing',
+                interactionEnabled: publication % 2 === 1,
+                projection: { ...member.projection!, generation: publication + 2, diagnostics: [] } };
+            // Observe the real owner's strong indexes, without replacing their logic
+            // or relying on GC scheduling/heap-size thresholds for a retention test.
+            const set = vi.spyOn(Map.prototype, 'set');
+            let currentMaps: Map<unknown, unknown>[];
+            try {
+                owner.publish([member]);
+                currentMaps = set.mock.calls.flatMap(([key], index) => {
+                    const context: unknown = set.mock.contexts[index];
+                    return key === member.projection && context instanceof Map ? [context] : [];
+                });
+            } finally { set.mockRestore(); }
+            expect(currentMaps.length).toBeGreaterThan(0);
+            for (const map of currentMaps) {
+                expect(map.size).toBeLessThanOrEqual(67); // One current root plus its 66 plugin slices.
+                expect([...retired].some(root => map.has(root))).toBe(false);
+            }
+            const reachable = new Set<object>();
+            const visit = (value: unknown): void => {
+                if (!value || typeof value !== 'object' || reachable.has(value)) return;
+                reachable.add(value);
+                if (value instanceof Map) for (const [key, child] of value) { visit(key); visit(child); }
+                else if (value instanceof Set) for (const child of value) visit(child);
+                else for (const key of Reflect.ownKeys(value)) visit(Reflect.get(value, key));
+            };
+            visit(owner.getSnapshot());
+            expect([...retired].some(root => reachable.has(root))).toBe(false);
+            expect(Object.keys(owner.getSnapshot().pluginUiProjection!.installedPackagesById)).toHaveLength(66);
+        }
+    });
+
     it('does not read stable published selections again and still applies changed selections', () => {
         const pluginId = 'acme.stable';
         const first = sourceMember('first', pluginId, 'row');

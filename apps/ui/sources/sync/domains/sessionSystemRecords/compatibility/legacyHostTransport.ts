@@ -61,11 +61,12 @@ export async function readLegacyWorkflowSystemRecord(
     options: SessionSystemRecordTransportOptions,
     session: SessionAddress,
     localId: string,
+    signal?: AbortSignal,
 ): Promise<SessionSystemRecordFetchResult<LegacyWorkflowRecordProjection>> {
     if (!areServerProfileIdentifiersEquivalent(session.serverId, options.scope.serverId)) return { status: 'forbidden' };
     try {
         const query = new URLSearchParams({ namespace: 'activity', localId });
-        const response = await options.request(`/v2/sessions/${encodeURIComponent(session.sessionId)}/system-records/record?${query}`, { method: 'GET' });
+        const response = await options.request(`/v2/sessions/${encodeURIComponent(session.sessionId)}/system-records/record?${query}`, { method: 'GET', signal });
         let json: unknown;
         try { json = await response.json(); } catch { return { status: 'invalid_response' }; }
         if (!response.ok) {

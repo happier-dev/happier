@@ -1,4 +1,4 @@
-import type { RelationshipStatus } from '@happier-dev/protocol';
+import type { RelationshipStatus } from '@happier-dev/protocol/social/friends';
 
 export {
     RelationshipStatusSchema,

@@ -1,5 +1,5 @@
 import { DIRECT_ROUTE_GRANT_TTL_MS } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantCachePolicyV1';
-import { MachineLiveStreamRelayAuthorizationV1Schema, type MachineLiveStreamRelayAuthorizationV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
+import { MachineLiveStreamRelayAuthorizationV1Schema, type MachineLiveStreamRelayAuthorizationV1, type MachineLiveStreamSourceAdmissionV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 import { PeerLoopbackEndpointCandidateV1Schema, type PeerLoopbackEndpointCandidateV1 } from '@happier-dev/protocol/machines/peer/mediation/loopbackEndpointV1';
 import { SignedDirectRouteGrantV2Schema, DirectRouteGrantRequestV2Schema, type SignedDirectRouteGrantV2 } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantV2';
 
@@ -97,6 +97,7 @@ export async function requestLiveStreamRelayAuthorization(input: Readonly<{
     server: TargetServer;
     credentials: AuthCredentials;
     startRequest: MachineLiveStreamUnsignedStartRequest;
+    sourceAdmission?: MachineLiveStreamSourceAdmissionV1;
     timeoutMs?: number;
     signal?: AbortSignal;
 }>): Promise<OperationResult<MachineLiveStreamRelayAuthorizationV1>> {
@@ -117,6 +118,7 @@ export async function requestLiveStreamRelayAuthorization(input: Readonly<{
                     targetMachineId: input.startRequest.targetMachineId,
                     flowKind: 'live_stream',
                     routeKind: 'server_relay',
+                    ...(input.sourceAdmission ? { sourceAdmission: input.sourceAdmission } : {}),
                     ttlMs: DIRECT_ROUTE_GRANT_TTL_MS.serverRelayedLiveStream,
                     // Per-tab viewer target (W1-C-2): the server mint binds this socket id into the
                     // signed grant payload so frames are delivered to the exact tab. Omitted on the

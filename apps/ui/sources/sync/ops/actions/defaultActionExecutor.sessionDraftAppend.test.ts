@@ -72,9 +72,12 @@ const { createUiClientActionReverseHandler } = await import('./clientActionRever
 const { captureLazyActionAccountContext } = await import('./actionAccountContext');
 await (await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage')).prepareSessionDraftPersistenceStorage();
 const { resetSessionDraftValueCachesForTests } = await import('@/dev/testkit/sessionDraftRepositoryTestkit');
-const { writeExistingSessionDraft, getSessionDraftSnapshot } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+const { writeExistingSessionDraft, getSessionDraftSnapshot, readSessionDiscussionSelectionSourceFromDraft } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
 const { createExistingSessionComposerDocumentOwner } = await import('@/components/sessions/composer/existingSessionComposerDocumentOwner');
 const { readComposerPresentationSnapshot } = await import('@/components/sessions/presentation/sessionComposerPresentationTargets');
+const { appendSessionDraftText } = await import('@/components/sessions/composer/sessionDraftAppendAction');
+const { sendTranscriptSelectionToSession } = await import('@/components/sessions/transcript/messageSelection/sendTranscriptSelectionToSession');
+const { sendDiscussionSelectionToSession } = await import('@/components/discussions/sendDiscussionSelectionToSession');
 const originalState = storage.getState();
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
 let serverId: string;
@@ -427,6 +430,77 @@ describe('Session draft append through the real Action executor', () => {
             { surface: 'ui', authority: 'present_user', serverId, runtimeAccountId: 'alice' });
         expect(result).toMatchObject({ ok: false, errorCode: 'action_disabled' });
         expect(homes.requestsFor('/v2/sessions/lead').filter(request => request.input != null).length).toBe(0);
+    });
+
+    it('refuses provenance from another Home before appending', async () => {
+        const scope = { serverId, accountId: 'alice' };
+        writeExistingSessionDraft({ scope, sessionId: 'lead', patch: { text: 'Existing draft' } });
+        const result = await executor().execute(actionId, { sessionId: 'lead', text: 'Wrong Home source',
+            discussionSource: { kind: 'discussion', serverId: 'other-home', discussionId: 'discussion', messageIds: ['message'] } },
+            { surface: 'ui', authority: 'present_user', serverId, runtimeAccountId: 'alice' });
+        expect(result).toMatchObject({ ok: true, result: { status: 'unavailable' } });
+        expect(readComposerPresentationSnapshot({ kind: 'session', sessionId: 'lead' })?.text).toBe('Existing draft');
+        expect(readSessionDiscussionSelectionSourceFromDraft(getSessionDraftSnapshot(scope,
+            { kind: 'session', sessionId: 'lead' })?.document)).toBeNull();
+    });
+
+    it.each(['transcript', 'discussion'] as const)('appends %s selections through the same Action before revealing the composer', async source => {
+        const scope = { serverId, accountId: 'alice' };
+        writeExistingSessionDraft({ scope, sessionId: 'lead', patch: { text: 'Existing draft' } });
+        let revealed = false;
+        const reveal = () => {
+            expect(readComposerPresentationSnapshot({ kind: 'session', sessionId: 'lead' })?.text)
+                .toBe('Existing draft\n\nSelected words');
+            expect(readSessionDiscussionSelectionSourceFromDraft(getSessionDraftSnapshot(scope,
+                { kind: 'session', sessionId: 'lead' })?.document)).toEqual(source === 'discussion'
+                ? { kind: 'discussion', serverId, discussionId: 'discussion', messageIds: ['message'] } : null);
+            revealed = true;
+        };
+        const result = source === 'transcript'
+            ? await sendTranscriptSelectionToSession({ sourceSessionId: 'source', sourceServerId: serverId,
+                sourceMachineId: null, sourceSessionName: null, selectedMessages: [{ id: 'message', role: 'user', text: 'Selected words' }],
+                bulkCopyFormat: 'plain', template: '{{MESSAGES}}', roleLabels: { user: 'You', assistant: 'Assistant' },
+                chooseDestinationSessionId: async () => ({ kind: 'existingSession', sessionId: 'lead', serverId }),
+                appendToDraft: appendSessionDraftText, openNewSession: async () => false, navigateToSession: reveal })
+            : await sendDiscussionSelectionToSession({ sessionId: 'lead', serverId, selectedText: 'Selected words',
+                source: { kind: 'discussion', serverId, discussionId: 'discussion', messageIds: ['message'] },
+                template: '{{MESSAGES}}', sourceSessionName: null, appendToDraft: appendSessionDraftText,
+                revealPrimaryComposer: reveal, focusPrimaryComposer: () => true });
+        expect(result).toBe(true);
+        expect(revealed).toBe(true);
+        expect(homes.requestsFor('/v2/sessions/lead').filter(request => request.input != null).length).toBe(0);
+        expect(homes.requests.some(request => request.path.includes('/messages') && request.input != null)).toBe(false);
+    });
+
+    it.each([true, false])('appends to the exact inactive Home without replacing the visible Home or its same-id draft (sync=%s)', async synchronized => {
+        const features = createRootLayoutFeaturesResponse({ features: { sessions: { drafts: { enabled: synchronized } } } });
+        homes.answer(serverId, '/v1/features', { body: features });
+        homes.answer(serverId, '/v1/features/authenticated', { body: features });
+        const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
+        const destinationScope = { serverId, accountId: 'alice' };
+        writeExistingSessionDraft({ scope: destinationScope, sessionId: 'lead', patch: { text: 'Destination draft' } });
+        const visibleServerId = await homes.addHome({ name: 'Visible Home', serverUrl: 'https://visible-draft.test', accountId: 'bob' });
+        await connection?.dispose();
+        connection = await restoreServerAccountForTest({ serverUrl: 'https://visible-draft.test', accountId: 'bob',
+            additionalRequestOrigins: ['https://draft-destination.test'],
+            request: createSessionReadBatchFetchBoundary(homes.request) });
+        const visibleScope = { serverId: visibleServerId, accountId: 'bob' };
+        storage.getState().activateProfileScope(visibleScope);
+        await storage.getState().activateSettingsScope(visibleScope);
+        storage.getState().activateSessionLocalStateScope(visibleScope);
+        installSessionActionFixture({ homes, storage, serverId: visibleServerId, session: { id: 'lead' } });
+        writeExistingSessionDraft({ scope: visibleScope, sessionId: 'lead', patch: { text: 'Visible draft' } });
+        const discussionSource = { kind: 'discussion' as const, serverId, discussionId: 'discussion', messageIds: ['message'] };
+        const result = await executor().execute(actionId, { sessionId: 'lead', text: 'Cross Home selection', discussionSource },
+            { surface: 'ui', authority: 'present_user', serverId, runtimeAccountId: 'alice' });
+        expect(result).toMatchObject({ ok: true, result: { status: 'appended', sessionId: 'lead' } });
+        const destination = createExistingSessionComposerDocumentOwner({ scope: destinationScope, ref: { kind: 'session', sessionId: 'lead' } });
+        expect(destination.read().document.text).toBe('Destination draft\n\nCross Home selection');
+        expect(readSessionDiscussionSelectionSourceFromDraft(getSessionDraftSnapshot(destinationScope,
+            { kind: 'session', sessionId: 'lead' })?.document)).toEqual(discussionSource);
+        expect(readComposerPresentationSnapshot({ kind: 'session', sessionId: 'lead' })?.text).toBe('Visible draft');
+        expect(storage.getState().profileScope).toEqual(visibleScope);
     });
 
     it('refuses a retired captured Account without appending under its replacement credentials', async () => {

@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { SessionCreationKeyV1Schema } from '@happier-dev/protocol';
+import { SessionCreationKeyV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
 import { SessionManagerOptionsV1Schema } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
-import { createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createLockedEncryptedSessionByIdResponseFixture, createSessionFixture, createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { selectSessionRelationRecords } from '@/components/sessions/work/reportSubtree';
 import { resolvePutUnderEligibility } from '@/components/sessions/work/putUnderCandidates';
@@ -52,6 +53,11 @@ async function setup() {
     const home = await upsertServerProfile({ serverUrl: 'https://reports.example', name: 'Reports' });
     testHomeId = home.id;
     storage.getState().activateProfileScope({ serverId: active.id, accountId: 'account' });
+    const machine = createMachineFixture({ kind: 'ephemeral_session_runner' });
+    storage.setState({
+        sessions: { lead: createSessionFixture({ id: 'lead', serverId: home.id }) },
+        machineListByServerId: { [home.id]: [machine] },
+    });
     const token = `e30.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.signature`;
     // Persistent credentials and HTTP are the only replaced system boundaries.
     vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token });
@@ -68,6 +74,31 @@ const input = { sessionId: 'child/id', managerSessionId: 'lead', expectedManager
 const context = { surface: 'ui', authority: 'present_user' } as const;
 
 describe('manager captured Home Action transport', () => {
+    it.each([
+        { name: 'persistent', machine: { kind: 'persistent' }, reason: null },
+        { name: 'ephemeral', machine: { kind: 'ephemeral_session_runner' }, reason: 'source_key_unavailable' },
+        { name: 'revoked persistent', machine: { kind: 'persistent', revokedAt: 1 }, reason: 'runner_unreachable' },
+        { name: 'replaced persistent', machine: { kind: 'persistent', replacedByMachineId: 'replacement' }, reason: 'runner_unreachable' },
+        { name: 'locked persistent', machine: { kind: 'persistent', availability: { kind: 'locked', reason: 'encryption_material_unavailable' } }, reason: 'runner_unreachable' },
+    ] as const)('classifies the $name destination before requiring the E2EE source DEK', async ({ machine, reason }) => {
+        const env = await setup();
+        const committed = { ok: true, sessionId: input.sessionId, managerSessionId: input.managerSessionId, attachedAt: 1 };
+        try {
+            storage.setState({ machineListByServerId: { [env.home.id]: [createMachineFixture(machine)] } });
+            const source = await createLockedEncryptedSessionByIdResponseFixture(createSessionFixture({
+                id: input.sessionId, encryptionMode: 'e2ee', encryptedContentAvailability: 'encrypted_access_pending',
+            }));
+            env.request.mockImplementation(async (url) => Response.json(
+                new URL(url).pathname.includes('/manager') ? committed : source,
+            ));
+            await expect(env.execute({ ...input, context, serverId: env.home.id })).resolves.toEqual(reason
+                ? { ...committed, sourceKeyPreparation: { kind: 'waiting', reason } }
+                : committed);
+            expect(env.request.mock.calls.some(([url]) => new URL(url).pathname === '/v2/sessions/child%2Fid')).toBe(true);
+            expect(machineRpc).not.toHaveBeenCalled();
+        } finally { env.account.dispose(); }
+    });
+
     it.each([
         { payload: { error: 'credential_scope_denied' }, errorCode: 'credential_scope_denied' },
         { payload: { error: 'credential_scope_denied', details: { sessionId: 'private' } }, errorCode: 'invalid_action_output' },

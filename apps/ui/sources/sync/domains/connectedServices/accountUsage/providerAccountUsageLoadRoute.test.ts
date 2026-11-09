@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { buildProviderAccountUsageRecordId, ProviderAccountUsageSnapshotV1Schema,
-    sealProviderAccountUsageSnapshot } from '@happier-dev/protocol';
+import { buildProviderAccountUsageRecordId, ProviderAccountUsageSnapshotV1Schema} from '@happier-dev/protocol/connect/account-usage-primitives';
+import {
+    sealProviderAccountUsageSnapshot } from '@happier-dev/protocol/connect/accountUsage';
 import { encodeBase64 } from '@/encryption/base64';
 import { openProviderAccountUsageSnapshot } from './openProviderAccountUsageSnapshot';
 

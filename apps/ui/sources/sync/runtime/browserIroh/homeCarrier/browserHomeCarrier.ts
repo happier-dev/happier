@@ -21,7 +21,7 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { HomeCarrier } from '@/sync/runtime/homeCarrier';
 import { IrohError, type IrohErrorCode } from '@happier-dev/iroh-native';
-import type { IrohEndpointDescriptorV1 } from '@happier-dev/protocol';
+import type { IrohEndpointDescriptorV1 } from '@happier-dev/protocol/connectivity/iroh/endpointDescriptorV1';
 
 import { resolveBrowserIrohHostDecision, type BrowserIrohHostDecision } from '../hostEligibility';
 

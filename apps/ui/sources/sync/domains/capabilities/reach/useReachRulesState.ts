@@ -41,11 +41,11 @@ function project(state: State): ReachRulesV1 {
 
 /** One optimistic/Undo owner, retained by the operation whose lifetime it serves. */
 export function createReachRulesController(source: ReachRulesSource, execute: ExecuteReachRules,
-    publishOptimistic?: (rules: ReachRulesV1 | null) => void) {
+    publishOptimistic?: (rules: ReachRulesV1 | null) => void, previous: ReachRulesV1 | null = null) {
     let latest = source;
     let latestExecute = execute;
     const state: State = { rules: source.rules,
-        written: source.rules, revision: source.revision, previous: null, pending: [], running: false, active: true, publishOptimistic };
+        written: source.rules, revision: source.revision, previous, pending: [], running: false, active: true, publishOptimistic };
     let snapshot = { rules: state.rules, revision: state.revision };
     const listeners = new Set<() => void>();
     const publish = (current: State, operation = false) => {
@@ -112,15 +112,15 @@ export function createReachRulesController(source: ReachRulesSource, execute: Ex
     };
     const undoLast = () => state.previous ? change({ kind: 'replace', rules: reachRulesToDraftsV1(state.previous) })
         : Promise.resolve<ReachRulesWriteResult>({ ok: false, message: 'nothing_to_undo' });
-    return { change, undoLast, getSnapshot: () => snapshot,
+    return { change, undoLast, getSnapshot: () => snapshot, getUndoRules: () => state.previous,
         subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
         activate() { state.active = true; },
         retire() { state.active = false; if (state.pending.length) state.publishOptimistic?.(null); },
         updateSource(next: ReachRulesSource, nextExecute = latestExecute) {
             latest = next;
             latestExecute = nextExecute;
-            if (next.status !== 'ready' || next.revision === 'absent') return;
-            if (state.revision !== 'absent' && next.revision < state.revision) return;
+            if (!next.valueAvailable) return;
+            if (state.revision !== 'absent' && (next.revision === 'absent' || next.revision < state.revision)) return;
             state.written = next.rules;
             state.revision = next.revision;
             publish(state);
@@ -139,5 +139,5 @@ export function useReachRulesState(source: ReachRulesSource, execute: ExecuteRea
     }, [controller]);
     const snapshot = React.useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
     return { rules: source.valueAvailable ? snapshot.rules : source.rules, revision: snapshot.revision,
-        status: source.status, change: controller.change, undoLast: controller.undoLast };
+        status: source.status, valueAvailable: source.valueAvailable, change: controller.change, undoLast: controller.undoLast };
 }

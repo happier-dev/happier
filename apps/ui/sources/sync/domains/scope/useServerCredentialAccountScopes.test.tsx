@@ -57,6 +57,21 @@ describe('useServerCredentialAccountScopes', () => {
         expect(binding.isCurrent()).toBe(false);
         expect(retired).toHaveBeenCalledOnce();
     });
+    it('renders a single-Home consumer twice from mount to bound: the resolving state is not a republish', async () => {
+        await signIn('home-a', 'account-a');
+        const { useServerCredentialAccountScopeBinding } = await import('./useServerCredentialAccountScopes');
+        let renders = 0;
+        const hook = await renderHook(() => {
+            renders++;
+            return useServerCredentialAccountScopeBinding('home-a');
+        });
+        try {
+            await vi.waitFor(() => expect(hook.getCurrent().binding?.accountId).toBe('account-a'));
+            // Mount (resolving) and bound. A third render would be the same resolving state republished
+            // as a fresh object, multiplied by every row of a picker that reads the scope.
+            expect(renders).toBe(2);
+        } finally { await hook.unmount(); }
+    });
     it('does not reacquire the profile resolver per entry on unchanged credential-scope renders', async () => {
         await signIn('home-a', 'account-a');
         await signIn('home-b', 'account-b');

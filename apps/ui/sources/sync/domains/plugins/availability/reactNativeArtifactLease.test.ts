@@ -302,6 +302,57 @@ function fixture(input: Readonly<{
 }
 
 describe('React Native Artifact lease acquisition', () => {
+    it.each(['mount', 'account'] as const)('settles %s retirement while the persistent write boundary is still pending', async (retirement) => {
+        const current = fixture();
+        const account = createLifetime();
+        const cancellation = new AbortController();
+        const persistent = createPersistentStore();
+        let releaseWrite!: () => void;
+        const heldWrite = new Promise<void>(resolve => { releaseWrite = resolve; });
+        let enteredWrite!: () => void;
+        const writeEntered = new Promise<void>(resolve => { enteredWrite = resolve; });
+        // Only physical storage and daemon transport are substituted. The real
+        // producer, selected lease, integrity, custody and cache remain composed.
+        const cache = createPluginReactNativeBundleCache({ persistentStore: {
+            ...persistent.store,
+            write: async record => {
+                enteredWrite();
+                await heldWrite;
+                return persistent.store.write(record);
+            },
+        } });
+        const fetchDaemonArtifactBytes = vi.fn(async () => current.daemonResponse);
+        const producer = createPluginReactNativeArtifactAvailabilityProducer({
+            getCache: () => cache, appExact: inactiveAppExactSource, fetchDaemonArtifactBytes,
+        });
+        const input = { reader: current.reader, artifactGraph: current.graph, cacheIdentity: current.cacheIdentity,
+            accountLifetime: account.lifetime, signal: cancellation.signal, isCurrent: () => true,
+            daemon: { machineId: current.origin.materializationRef.machineId, serverId: scope.serverId } };
+        let settlement: Awaited<ReturnType<typeof producer.acquire>> | undefined;
+        const pending = producer.acquire(input).then(result => { settlement = result; return result; });
+        try {
+            await writeEntered;
+            if (retirement === 'mount') cancellation.abort();
+            else account.retire();
+            await vi.waitFor(() => expect(settlement).toMatchObject({ kind: 'unavailable', code: 'artifact_lease_revoked',
+                layer: 'artifact', phase: 'preparation', retryable: false }));
+            expect(cache.readInstalledArtifact(current.cacheIdentity)).toBeNull();
+            expect(fetchDaemonArtifactBytes).toHaveBeenCalledTimes(1);
+        } finally {
+            releaseWrite();
+            const result = await pending;
+            if (result.kind === 'available') result.dispose();
+        }
+        // A new, genuinely current consumer still acquires the exact retained
+        // bytes after the physical write settles, without repeating transport.
+        const recovered = await producer.acquire({ ...input, accountLifetime: createLifetime().lifetime,
+            signal: new AbortController().signal });
+        expect(recovered.kind).toBe('available');
+        expect(cache.readInstalledArtifact(current.cacheIdentity)?.bytes).toEqual(current.entryBytes);
+        expect(fetchDaemonArtifactBytes).toHaveBeenCalledTimes(1);
+        if (recovered.kind === 'available') recovered.dispose();
+    });
+
     it('reads immutable bytes once across mounted effects and reacquires after Account retirement', async () => {
         const current = fixture();
         const cache = createPluginReactNativeBundleCache();
@@ -405,7 +456,8 @@ describe('React Native Artifact lease acquisition', () => {
             daemon: { machineId: current.origin.materializationRef.machineId, serverId: scope.serverId },
         };
         // Mis-binding the producer's origin forwarding must refuse the identical byte request.
-        expect(await producer.acquire(input)).toMatchObject({ kind: 'unavailable', code: 'artifact_not_current' });
+        expect(await producer.acquire(input)).toMatchObject({ kind: 'unavailable', code: 'artifact_not_current',
+            layer: 'artifact', phase: 'preparation', retryable: false });
         const acquired = await producer.acquire({ ...input, executionOrigin: current.origin });
         expect(acquired.kind).toBe('available');
         if (acquired.kind !== 'available') throw new Error('Expected installed RN Artifact');
@@ -781,7 +833,7 @@ describe('React Native Artifact lease acquisition', () => {
         });
     });
 
-    it('evicts one corrupt persistent Artifact identity before falling back to its exact daemon', async () => {
+    it('uses retained verified Artifact bytes without reacquiring them from the daemon', async () => {
         const current = fixture();
         const persistent = createPersistentStore();
         const persistentIdentity = {
@@ -814,12 +866,17 @@ describe('React Native Artifact lease acquisition', () => {
 
         expect(acquired).toMatchObject({
             kind: 'available',
-            lease: { sourceKind: 'daemon' },
+            lease: { sourceKind: 'persistentCache' },
         });
-        expect(persistent.reads).toHaveBeenCalledBefore(fetchArtifactBytes);
-        expect(persistent.removes).toHaveBeenCalledWith(persistentIdentity);
-        expect(fetchArtifactBytes).toHaveBeenCalledTimes(1);
-        expect(persistent.writes).toHaveBeenCalledTimes(1);
+        if (acquired.kind !== 'available') throw new Error('Expected retained Artifact lease');
+        await expect(acquired.lease.readFile(current.graph.entry)).resolves.toMatchObject({
+            kind: 'available', bytes: corruptEntry,
+        });
+        acquired.lease.dispose();
+        expect(persistent.reads).toHaveBeenCalledTimes(1);
+        expect(persistent.removes).not.toHaveBeenCalled();
+        expect(fetchArtifactBytes).not.toHaveBeenCalled();
+        expect(persistent.writes).not.toHaveBeenCalled();
     });
 
     it('retires the lease without deleting the retained bytes when the Account disables the plugin', async () => {

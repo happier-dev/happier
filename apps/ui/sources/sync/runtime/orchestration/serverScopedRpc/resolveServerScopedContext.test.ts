@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Encryption } from '@/sync/encryption/encryption';
+import { createLegacyAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { resolveServerScopedContext } from './resolveServerScopedContext';
 
 const getCredentialsSpy = vi.hoisted(() => vi.fn());
@@ -50,9 +53,22 @@ describe('resolveServerScopedContext', () => {
     beforeEach(() => {
         getAppliedActiveServerSnapshotSpy.mockImplementation(() => getActiveServerSnapshotSpy());
         isAppliedActiveServerRuntimeAvailableSpy.mockReturnValue(true);
+        setRuntimeFetch(async (input, init) => {
+            const target = new URL(String(input));
+            if (target.pathname !== '/v1/account/encryption/currentness') return Response.json({});
+            const account = target.hostname === 'server-a.example.test' ? 'a' : 'b';
+            if (new Headers(init?.headers).get('authorization') !== `Bearer ${tokenForSub(`account-${account}`)}`) {
+                return Response.json({ error: 'unauthorized' }, { status: 401 });
+            }
+            return Response.json(createLegacyAccountEncryptionCurrentnessFixture({
+                secret: new Uint8Array(32).fill(account.charCodeAt(0)),
+            }));
+        });
     });
 
     afterEach(() => {
+        invalidateAccountEncryptionModeCache();
+        resetRuntimeFetch();
         getCredentialsSpy.mockReset();
         listServerProfilesSpy.mockReset();
         getActiveServerSnapshotSpy.mockReset();

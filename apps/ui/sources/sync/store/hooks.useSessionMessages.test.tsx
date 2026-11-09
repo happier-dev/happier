@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, beforeEach } from 'vitest';
+import { selectActiveTestHomeForTests } from '@/dev/testkit/fixtures/persistedHomeProfiles';
 import { act } from 'react-test-renderer';
 
 import { createSessionListRenderableSessionFixture, createSessionMessagesFixture, renderHook, standardCleanup } from '@/dev/testkit';
@@ -1231,3 +1232,6 @@ describe('useSessionSubagentSourceMessages', () => {
         }
     });
 });
+
+// P03-TESTKIT-SERVER: the unconfigured test build seeds no Home; select one through the real owner.
+beforeEach(async () => { await selectActiveTestHomeForTests(); });

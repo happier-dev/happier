@@ -186,7 +186,11 @@ export function buildSimulatorPreviewControl(input: Readonly<{
         case 'keyboard_text':
             return parseControl({ ...base, kind: 'keyboard_text', text: input.action.text });
         case 'keyboard_key':
-            return parseControl({ ...base, kind: 'keyboard_key', key: input.action.key });
+            return input.action.modifiers?.length ? { ok: false, reasonCode: 'invalid_control' }
+                : parseControl({ ...base, kind: 'keyboard_key', key: input.action.key });
+        case 'pointer':
+        case 'wheel':
+            return { ok: false, reasonCode: 'invalid_control' };
         case 'hardware_button':
             return parseControl({ ...base, kind: 'hardware_button', button: input.action.button });
         case 'orientation':

@@ -2,9 +2,12 @@ import type { MachinePublishedMetadataV1 } from '@happier-dev/protocol/machines/
 import type { MachineAgentsSnapshot } from '@/agents/machineAgents/machineAgentInventoryStore';
 import { BackendTargetRefV2Schema } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
+type PublishedMachineAgentInventory = MachinePublishedMetadataV1['agentInventory']
+  | Pick<NonNullable<MachinePublishedMetadataV1['agentInventory']>, 'installedAgentIds'>;
+
 /** Factory availability does not establish any of its configured executable instances. */
 export function readInstalledMachineAgentInventory(
-  published: MachinePublishedMetadataV1['agentInventory'],
+  published: PublishedMachineAgentInventory,
   cached: MachineAgentsSnapshot | undefined,
   definitionIds?: readonly string[],
 ): Readonly<{ agentIds: readonly string[]; complete: boolean }> {
@@ -29,7 +32,7 @@ export function readInstalledMachineAgentInventory(
 
 /** Shared passive read for reach and Action facts; it never starts a probe. */
 export function readInstalledMachineAgentIds(
-  published: MachinePublishedMetadataV1['agentInventory'],
+  published: PublishedMachineAgentInventory,
   cached: MachineAgentsSnapshot | undefined,
   definitionIds?: readonly string[],
 ): readonly string[] {

@@ -1,4 +1,4 @@
-import { ACCOUNT_EMAIL_CHANGE_PATH_V1, ACCOUNT_PASSWORD_CHANGE_PATH_V1, ACCOUNT_PASSWORD_ENROLL_PATH_V1, ACCOUNT_PASSWORD_ENROLL_EMAIL_REQUEST_PATH_V1, ACCOUNT_PASSWORD_MUTATION_CHALLENGE_PATH_V1, ACCOUNT_PASSWORD_REMOVE_PATH_V1, ACCOUNT_EMAIL_CHANGE_REQUEST_PATH_V1, ACCOUNT_SECURITY_PATH_V1, ACCOUNT_TERMINAL_PRESENT_USER_POLICY_PATH_V1, AccountPasswordMutationResponseV1Schema, AccountEmailChangeRequestResponseV1Schema, AccountSecurityGetResponseV1Schema, AccountTerminalPresentUserPolicySetResponseV1Schema, type AccountTerminalPresentUserPolicySetRequestV1, AccountSecurityRouteErrorV1Schema, PasswordMutationPreparationResponseV1Schema, type AccountPasswordChangeRequestV1, type AccountPasswordEnrollRequestV1, type AccountPasswordRemoveRequestV1, type AccountSecurityGetResponseV1 } from '@happier-dev/protocol/auth/accountSecurity';
+import { ACCOUNT_EMAIL_CHANGE_PATH_V1, ACCOUNT_PASSWORD_CHANGE_PATH_V1, ACCOUNT_PASSWORD_ENROLL_PATH_V1, ACCOUNT_PASSWORD_ENROLL_EMAIL_REQUEST_PATH_V1, ACCOUNT_PASSWORD_MUTATION_CHALLENGE_PATH_V1, ACCOUNT_PASSWORD_REMOVE_PATH_V1, ACCOUNT_EMAIL_CHANGE_REQUEST_PATH_V1, ACCOUNT_SECURITY_PATH_V1, AccountPasswordMutationResponseV1Schema, AccountEmailChangeRequestResponseV1Schema, AccountSecurityGetResponseV1Schema, AccountSecurityRouteErrorV1Schema, PasswordMutationPreparationResponseV1Schema, type AccountPasswordChangeRequestV1, type AccountPasswordEnrollRequestV1, type AccountPasswordRemoveRequestV1, type AccountSecurityGetResponseV1 } from '@happier-dev/protocol/auth/accountSecurity';
 import { createAccountEncryptionMigrateRequestBindingDigestV1, type AccountEncryptionMigrateRequest, type AccountEncryptionMigrateTransitionPasswordCredential } from '@happier-dev/protocol/account/encryptionMigrate';
 import { buildE2eeAccountPasswordEnrollRequestV1, buildE2eeAccountPasswordChangeRequestV1, buildE2eeAccountPasswordRemoveRequestV1, createE2eePasswordMutationChallengeProofV1, readE2eePasswordPreparationV1 } from '@happier-dev/protocol/auth/accountSecurityCrypto';
 import { createPasswordCredentialTargetDigestV1 } from '@happier-dev/protocol/auth/passwordMutationChallenge';
@@ -81,17 +81,6 @@ async function call(
 
 export async function fetchAccountSecurity(request: ServerFetch, signal?: AbortSignal): Promise<AccountSecurityProjectionV1> {
     return AccountSecurityGetResponseV1Schema.parse(await call(request, ACCOUNT_SECURITY_PATH_V1, null, signal));
-}
-
-/** Exact-Home HTTP leaf for the CLI/daemon approvals policy (`account.security.terminalPresentUser.set`). */
-export async function setAccountTerminalPresentUserPolicy(
-    request: ServerFetch,
-    input: AccountTerminalPresentUserPolicySetRequestV1,
-    signal?: AbortSignal,
-) {
-    return AccountTerminalPresentUserPolicySetResponseV1Schema.parse(await call(
-        request, ACCOUNT_TERMINAL_PRESENT_USER_POLICY_PATH_V1, input, signal, AccountTerminalPresentUserPolicySetResponseV1Schema,
-    ));
 }
 
 /** Exact-Home HTTP leaf used by the shared Account Security Action adapter. */

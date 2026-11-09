@@ -3,7 +3,7 @@ export function createTaskLimiter(limit: number) {
     const maxConcurrency = Math.max(1, Math.trunc(limit));
     let running = 0;
     const waiting: Array<() => void> = [];
-    return <T>(task: () => Promise<T>): Promise<T> => new Promise<T>((resolve, reject) => {
+    const run = <T>(task: () => Promise<T>): Promise<T> => new Promise<T>((resolve, reject) => {
         const start = () => {
             running++;
             void Promise.resolve().then(task).then(resolve, reject).finally(() => {
@@ -14,6 +14,7 @@ export function createTaskLimiter(limit: number) {
         if (running < maxConcurrency) start();
         else waiting.push(start);
     });
+    return Object.assign(run, { hasWaitingTasks: () => waiting.length > 0 });
 }
 
 export async function runTasksWithLimit<T>(

@@ -15,7 +15,7 @@ import { runWithServerRequestAuthorityForServerAccountScope } from '@/sync/runti
 import { desktopHostKind } from '@/utils/platform/desktopHost';
 import { isRuntimeActive } from '@/utils/runtime/isRuntimeActive';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import { resolveBrowserPreviewRefusal, type BrowserPreviewRefusalReasonCode } from '@/sync/domains/browser/adapters/targets/localPreview';
+import { resolveBrowserPreviewRefusal, type BrowserPreviewRefusal } from '@/sync/domains/browser/adapters/targets/localPreview';
 
 export type NativeDirectPreviewLease = Readonly<{
     localOrigin: string;
@@ -29,7 +29,7 @@ export function hasNativePreviewRenderer(): boolean {
 }
 
 export type ServerPreviewAccessResult = Readonly<
-    { ok: true; url: string } | { ok: false; reasonCode: BrowserPreviewRefusalReasonCode }
+    { ok: true; url: string } | ({ ok: false } & BrowserPreviewRefusal)
 >;
 
 export async function acquireServerPreviewAccess(input: Readonly<{
@@ -60,7 +60,7 @@ export async function acquireServerPreviewAccess(input: Readonly<{
             });
             if (!response.ok) return {
                 ok: false,
-                reasonCode: resolveBrowserPreviewRefusal(response.status, await response.json()) ?? unavailable.reasonCode,
+                ...(resolveBrowserPreviewRefusal(response.status, await response.json()) ?? { reasonCode: unavailable.reasonCode }),
             } satisfies ServerPreviewAccessResult;
             const access = LocalServicePreviewServerAccessV1Schema.parse(await response.json());
             return eligible() && access.previewId === input.previewId && access.machineId === input.machineId

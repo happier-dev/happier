@@ -5,6 +5,15 @@ const role = { name: 'Builder', instructions: 'Build carefully', runsAs: { kind:
 const item = { roleId: 'shared-role', role, shared: true, viewOnly: true, migratedFromV0_2: false, revision: { headerVersion: 1, bodyVersion: 1 } };
 
 describe('shared role Settings layer', () => {
+  it('projects reader overrides of disabled Roles without granting execution admission', () => {
+    const engine = { agentTargetKey: 'agent:example.agents/external', modelId: 'reader-model' };
+    const entries = buildRoleCatalog({ items: [{ ...item, role: { ...role, enabled: false } }], overrides: {
+      [item.roleId]: { roleId: item.roleId, instructionsOverride: 'Reader instructions', engine },
+    } });
+    expect(entries[0]?.role).toMatchObject({ enabled: false, instructions: 'Reader instructions', engine });
+    expect(role.instructions).toBe('Build carefully');
+  });
+
   it('reuses equal projected entries and arrays while updating only a changed role or override', () => {
     const project = createRoleCatalogProjection();
     const first = { items: parseRolesListOutput({ items: [item, { ...item, roleId: 'other-role' }] })!, overrides: {} };

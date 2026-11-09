@@ -1,4 +1,4 @@
-import type { ProviderAccountSubscriptionV1 } from '@happier-dev/protocol';
+import type { ProviderAccountSubscriptionV1 } from '@happier-dev/protocol/connect/accountSubscription';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 

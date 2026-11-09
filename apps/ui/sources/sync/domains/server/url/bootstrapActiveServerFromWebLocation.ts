@@ -1,8 +1,10 @@
 import { canonicalizeServerUrl, createServerUrlComparableKey } from './serverUrlCanonical';
-import { getActiveServerUrl, isActiveServerSelectionExplicit, resolveUniqueServerProfileByUrl } from '../serverProfiles';
+import { consumeWebServerUrlOverrideFromLocation, getActiveServerUrl, readWebServerEntry, isActiveServerSelectionExplicit, resolveUniqueServerProfileByUrl } from '../serverProfiles';
 import { setActiveServer, upsertAndActivateServer } from '../serverRuntime';
 
-export type WebServerUrlOverride = Readonly<{ serverUrl: string; cleanedRelativeUrl: string }>;
+import { readWebServerUrlOverrideFromLocation, type WebServerUrlOverride } from './webServerUrlOverride';
+export { readWebServerUrlOverrideFromLocation, readWebDestinationServerIdFromLocation, type WebServerUrlOverride } from './webServerUrlOverride';
+export { consumeWebServerUrlOverrideFromLocation } from '../serverProfiles';
 
 export type WebServerUrlOverrideAction = Readonly<{
     kind: 'cleanup_only' | 'refresh_auth' | 'switch_server';
@@ -26,11 +28,13 @@ export async function commitWebServerUrlOverride(params: Readonly<{
     } else if (params.action.kind === 'refresh_auth') {
         await params.refreshAuth();
     }
-    consumeWebServerUrlOverrideFromLocation({ serverUrl: params.action.serverUrl, signal: params.signal });
+    consumeWebServerUrlOverrideFromLocation({ serverUrl: params.action.serverUrl, signal: params.signal, retainSelection: true });
 }
 
-function isWebRuntime(): boolean {
-    return typeof window !== 'undefined' && typeof document !== 'undefined';
+/** Sign-in returns to the same entry Home even after admission cleans the browser URL. */
+export function resolveWebServerEntrySignInRoute(): '/' | `/?server=${string}` {
+    const entry = readWebServerEntry();
+    return entry ? `/?server=${encodeURIComponent(entry.serverUrl)}` : '/';
 }
 
 function normalizeServerUrl(raw: string): string | null {
@@ -63,68 +67,6 @@ function shouldReplaceEquivalentStoredUrl(current: string | null, desired: strin
     if (!current || current === desired) return false;
     return isGenericLoopbackHostname(normalizeHostname(current))
         && isNamedLocalhostHostname(normalizeHostname(desired));
-}
-
-function normalizePathname(raw: string): string {
-    const pathname = String(raw ?? '').trim() || '/';
-    const withSlash = pathname.startsWith('/') ? pathname : `/${pathname}`;
-    return withSlash.length > 1 ? withSlash.replace(/\/+$/, '') : withSlash;
-}
-
-function isRouteOwnedServerParam(pathname: string): boolean {
-    const normalized = normalizePathname(pathname);
-    return normalized === '/terminal' || normalized === '/terminal/connect';
-}
-
-/** Destination scope is a boot hint, not a global Home override during navigation. */
-export function readWebDestinationServerIdFromLocation(): string | null {
-    if (!isWebRuntime() || typeof window.location?.href !== 'string') return null;
-    try {
-        const current = new URL(window.location.href);
-        if (isRouteOwnedServerParam(current.pathname)) return null;
-        return current.searchParams.get('serverId')?.trim() || null;
-    } catch {
-        return null;
-    }
-}
-
-export function readWebServerUrlOverrideFromLocation(): WebServerUrlOverride | null {
-    if (!isWebRuntime()) return null;
-    if (typeof window.location?.href !== 'string') return null;
-
-    try {
-        const current = new URL(window.location.href);
-        if (isRouteOwnedServerParam(current.pathname)) return null;
-
-        const rawServer = (current.searchParams.get('server') ?? '').trim();
-        const rawLegacyUrl = (current.searchParams.get('url') ?? '').trim();
-        const rawLegacyAuto = (current.searchParams.get('auto') ?? '').trim().toLowerCase();
-        const legacyAutoEnabled = rawLegacyAuto === '1' || rawLegacyAuto === 'true' || rawLegacyAuto === 'yes' || rawLegacyAuto === 'on';
-
-        const serverUrl = normalizeServerUrl(rawServer) || (legacyAutoEnabled ? normalizeServerUrl(rawLegacyUrl) : null);
-        if (!serverUrl) return null;
-
-        current.searchParams.delete('server');
-        current.searchParams.delete('url');
-        current.searchParams.delete('auto');
-        // serverId qualifies the destination, independently of this global Home selection.
-        const search = current.searchParams.toString();
-        const cleanedRelativeUrl = `${current.pathname}${search ? `?${search}` : ''}${current.hash ?? ''}`;
-        return { serverUrl, cleanedRelativeUrl };
-    } catch {
-        return null;
-    }
-}
-
-/** Consume only the admitted Home still present at the current browser destination. */
-export function consumeWebServerUrlOverrideFromLocation(params: Readonly<{
-    serverUrl: string;
-    signal?: AbortSignal;
-}>): void {
-    if (params.signal?.aborted) return;
-    const current = readWebServerUrlOverrideFromLocation();
-    if (current?.serverUrl !== params.serverUrl) return;
-    window.history.replaceState(window.history.state, '', current.cleanedRelativeUrl);
 }
 
 export async function bootstrapActiveServerFromWebLocation(

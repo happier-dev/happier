@@ -1,7 +1,7 @@
 import React from 'react';
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
-import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createHomeGovernanceHarness, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -10,7 +10,8 @@ import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 
 installDisconnectedServerSocketBoundary();
-beforeAll(loadSyncSingletonForTests);
+// Load the real cold module graph after its transport boundary, during collection.
+await loadSyncSingletonForTests();
 
 
 
@@ -122,6 +123,21 @@ function countFeaturesFetchCalls(fetchMock: { mock: { calls: Array<readonly unkn
 }
 
 describe('featureDecisionRuntime', () => {
+    it('resolves the released Automations alias through the Workflows decision in runtime and selected Homes', async () => {
+        const { settingsDefaults } = await import('@/sync/domains/settings/settings');
+        const { resolveRuntimeFeatureDecisionFromSnapshot, resolveMainSelectionFeatureDecision } = await import('./featureDecisionRuntime');
+        const settings = { ...settingsDefaults, featureToggles: { automations: false } };
+        const features = FeaturesResponseSchema.parse({ features: {
+            workflows: { enabled: true }, automations: { enabled: true },
+        } });
+        const snapshot = { status: 'ready' as const, features };
+        expect(resolveRuntimeFeatureDecisionFromSnapshot({ featureId: 'automations', settings, snapshot }))
+            .toMatchObject({ featureId: 'workflows', state: 'disabled', blockedBy: 'local_policy' });
+        expect(resolveMainSelectionFeatureDecision({ featureId: 'automations', settings, snapshot: {
+            status: 'ready', serverIds: ['home'], snapshotsByServerId: { home: snapshot },
+        } })).toMatchObject({ featureId: 'workflows', state: 'disabled', blockedBy: 'local_policy' });
+    });
+
     afterEach(async () => {
         // Retire mounted retry observers before disconnecting their Account;
         // keep the credential and socket boundaries installed for real teardown.
@@ -746,17 +762,19 @@ describe('featureDecisionRuntime', () => {
         }
     });
 
-    it('recovers a still-mounted main-selection feature consumer after the transient-error backoff', async () => {
+    it('shares one retry timer and read across mixed consumers and publishes recovery', async () => {
         await publishTestHomeProfiles({ restoreAccount: true });
 
         let now = 0;
         const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now);
         const nativeSetTimeout = globalThis.setTimeout.bind(globalThis);
         let runRetries: Array<() => void> = [];
+        let retryFires = 0;
         const retryTimerId = 42_424 as unknown as ReturnType<typeof setTimeout>;
         const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation((handler, timeout, ...args) => {
             if (timeout === 5_000) {
                 runRetries.push(() => {
+                    retryFires += 1;
                     now += 5_001;
                     if (typeof handler === 'function') handler(...args);
                 });
@@ -766,7 +784,7 @@ describe('featureDecisionRuntime', () => {
         });
         const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout');
         let featuresFetchCount = 0;
-        let responseMode: 'recover' | 'error' | 'unsupported' = 'recover';
+        let responseMode: 'recover' | 'error' | 'unsupported' | 'forbidden' = 'recover';
         const { resetRuntimeFetch, setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
         const fetchMock = vi.fn<typeof testHomes.request>(async (url, init) => {
             if (!isFeaturesFetchUrl(url)) {
@@ -776,6 +794,7 @@ describe('featureDecisionRuntime', () => {
             if (responseMode === 'unsupported') {
                 return Response.json(({}), { status: 404 });
             }
+            if (responseMode === 'forbidden') return Response.json({}, { status: 403 });
             if (responseMode === 'error' || featuresFetchCount === 1) {
                 throw new Error('temporary server restart');
             }
@@ -825,7 +844,7 @@ describe('featureDecisionRuntime', () => {
             expect(seen.at(-1)?.mainSelection?.snapshotsByServerId?.['srv_server-a']).toMatchObject({ status: 'error' });
             expect(seen.at(-1)?.runtime).toMatchObject({ status: 'error' });
             expect(seen.at(-1)?.explicit).toMatchObject({ status: 'error' });
-            expect(runRetries).toHaveLength(3);
+            expect(runRetries).toHaveLength(1);
 
             await act(async () => {
                 const retries = runRetries;
@@ -839,6 +858,8 @@ describe('featureDecisionRuntime', () => {
                 runtime: { status: 'ready' }, explicit: { status: 'ready' },
             }));
             expect(countFeaturesFetchCalls(fetchMock)).toBe(2);
+            expect(retryFires).toBe(1);
+            expect(runRetries).toHaveLength(0);
             expect(seen.at(-1)?.mainSelection?.snapshotsByServerId?.['srv_server-a']).toMatchObject({ status: 'ready' });
             expect(seen.at(-1)?.mainSelection?.snapshotsByServerId?.['srv_server-b']).toMatchObject({ status: 'ready' });
             expect(seen.at(-1)?.runtime).toMatchObject({ status: 'ready' });
@@ -855,7 +876,7 @@ describe('featureDecisionRuntime', () => {
             runRetries = [];
             const cancelledScreen = await renderScreen(React.createElement(Test));
             await flushHookEffects(10);
-            expect(runRetries).toHaveLength(3);
+            expect(runRetries).toHaveLength(1);
             const cancelledRetries = runRetries;
             runRetries = [];
             const fetchesBeforeUnmount = countFeaturesFetchCalls(fetchMock);
@@ -885,11 +906,97 @@ describe('featureDecisionRuntime', () => {
                 unsupportedScreen.tree.unmount();
         await flushHookEffects(2);
             });
+
+            resetServerFeaturesClientForTests();
+            primeReadyPeer();
+            responseMode = 'forbidden';
+            runRetries = [];
+            const forbiddenScreen = await renderScreen(React.createElement(Test));
+            await flushHookEffects(10);
+            expect(seen.at(-1)).toMatchObject({
+                mainSelection: { snapshotsByServerId: { 'srv_server-a': { status: 'error', httpStatus: 403 } } },
+                runtime: { status: 'error', httpStatus: 403 }, explicit: { status: 'error', httpStatus: 403 },
+            });
+            expect(runRetries).toHaveLength(0);
+            await forbiddenScreen.unmount();
         } finally {
             nowSpy.mockRestore();
             clearTimeoutSpy.mockRestore();
             setTimeoutSpy.mockRestore();
             resetRuntimeFetch();
+        }
+    });
+
+    it('re-arms one cached retry at its original deadline when demand remounts before expiry', async () => {
+        await publishTestHomeProfiles({ restoreAccount: true });
+        let now = 0;
+        const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now);
+        const nativeSetTimeout = globalThis.setTimeout.bind(globalThis);
+        const nativeClearTimeout = globalThis.clearTimeout.bind(globalThis);
+        const retries = new Map<ReturnType<typeof setTimeout>, { dueAt: number; fire: () => void }>();
+        let nextTimerId = 92_000;
+        let fires = 0;
+        const timerSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation((handler, timeout, ...args) => {
+            if (timeout === 5_000 || timeout === 4_000) {
+                const id = ++nextTimerId as unknown as ReturnType<typeof setTimeout>;
+                retries.set(id, { dueAt: now + timeout, fire: () => {
+                    retries.delete(id);
+                    fires += 1;
+                    if (typeof handler === 'function') handler(...args);
+                } });
+                return id;
+            }
+            return nativeSetTimeout(handler, timeout, ...args);
+        });
+        const clearSpy = vi.spyOn(globalThis, 'clearTimeout').mockImplementation(id => {
+            if (retries.delete(id as ReturnType<typeof setTimeout>)) return;
+            nativeClearTimeout(id);
+        });
+        const { resetRuntimeFetch, setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+        let reads = 0;
+        setRuntimeFetch(async (url, init) => {
+            if (!isFeaturesFetchUrl(url)) return testHomes.request(url, init);
+            if (++reads === 1) throw new Error('temporary restart');
+            return Response.json(createFeaturesPayload({ voiceEnabled: true }));
+        });
+        const { resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        const { useServerFeaturesSnapshotForServerId } = await import('./featureDecisionRuntime');
+        function Probe() {
+            return React.createElement('View', { snapshot: useServerFeaturesSnapshotForServerId('srv_server-a') });
+        }
+        try {
+            resetServerFeaturesClientForTests();
+            const first = await renderScreen(React.createElement(Probe));
+            await flushHookEffects(10);
+            expect(first.findByType('View').props.snapshot).toMatchObject({ status: 'error' });
+            expect([...retries.values()].map(retry => retry.dueAt)).toEqual([5_000]);
+            await first.unmount();
+            expect(retries.size).toBe(0);
+            now = 1_000;
+            const remount = await renderScreen(React.createElement(Probe));
+            await flushHookEffects(10);
+            expect(reads).toBe(1);
+            expect([...retries.values()].map(retry => retry.dueAt)).toEqual([5_000]);
+            now = 4_999;
+            expect(fires).toBe(0);
+            expect(reads).toBe(1);
+            now = 5_000;
+            await act(async () => {
+                [...retries.values()].forEach(retry => retry.fire());
+                await flushHookEffects(10);
+            });
+            expect(fires).toBe(1);
+            expect(reads).toBe(2);
+            expect(remount.findByType('View').props.snapshot).toMatchObject({ status: 'ready' });
+            expect(retries.size).toBe(0);
+            await remount.unmount();
+        } finally {
+            standardCleanup();
+            resetServerFeaturesClientForTests();
+            resetRuntimeFetch();
+            clearSpy.mockRestore();
+            timerSpy.mockRestore();
+            nowSpy.mockRestore();
         }
     });
 

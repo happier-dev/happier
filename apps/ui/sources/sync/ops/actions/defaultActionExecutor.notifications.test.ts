@@ -36,7 +36,8 @@ async function addHome() {
         serverIdentityId: 'srv_notifications', currentAccount: true,
     });
     const { storage } = await import('@/sync/domains/state/storage');
-    const machine = createMachineFixture({ id: 'machine-one', activeAt: Date.now(), storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER });
+    const machine = createMachineFixture({ id: 'machine-one', activeAt: Date.now(), storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+        access: { custodian: { accountId: 'account-a', displayName: 'Account A' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } });
     storage.setState({
         machines: { [machine.id]: machine },
         machineListByServerId: { [serverId]: [machine] },
@@ -44,8 +45,7 @@ async function addHome() {
     const installation = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(5));
     const publishedMachine = { ...createPlainMachineRowFixture({ id: machine.id, accountId: 'account-a', machine }),
         installationId: 'notification-installation', installationPublicKey: encodeBase64(installation.publicKey), revokedAt: null,
-        replacedByMachineId: null, dataEncryptionKey: null, runnerContentKeyBinding: null,
-        access: { custodian: { accountId: 'account-a', displayName: 'Account A' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } };
+        replacedByMachineId: null, dataEncryptionKey: null, runnerContentKeyBinding: null };
     harness.answer(serverId, '/v1/machines', { body: [publishedMachine] });
     // Requester custody uses the canonical exact read, not the ordinary census.
     harness.answer(serverId, `/v1/machines/${machine.id}`, { body: { machine: publishedMachine } });
@@ -110,8 +110,9 @@ describe('default Action notification daemon transport', () => {
         daemonResult = { attemptedChannels: 1, deliveredChannels: 1 };
         const input = { title: 'Review', message: 'Review did not converge', channels: ['builtin:expo_push'] };
 
+        // Keep the automation ceiling even when the Account's live Voice host can approve requests.
         await expect(createDefaultActionExecutor().execute('notifications.notify_me', input, {
-            surface: 'voice', serverId,
+            surface: 'voice', serverId, authority: 'account_automation',
         })).resolves.toEqual({ ok: true, result: { attemptedChannels: 1, deliveredChannels: 1 } });
         expect(harness.requestsFor('/v1/actions/notifications.notify_me').map(request =>
             ExternalActionRequestEnvelopeV1Schema.parse(ExternalActionExecutionAuthorizationRequestV1Schema.parse(request.input).envelope).input)).toEqual([input]);
@@ -145,7 +146,7 @@ describe('default Action notification daemon transport', () => {
         const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
         daemonResult = { attemptedChannels: 1, deliveredChannels: 1 };
         await expect(createDefaultActionExecutor().execute('notifications.notify_me', { message: 'Private' }, {
-            surface: 'voice', serverId,
+            surface: 'voice', serverId, authority: 'account_automation',
         })).resolves.toEqual({ ok: true, result: daemonResult });
         expect(otherServerId).not.toBe(serverId);
         expect(harness.requestsFor('/v1/actions/notifications.notify_me').map(request => request.serverId)).toEqual([serverId]);
@@ -172,7 +173,7 @@ describe('default Action notification daemon transport', () => {
         const failure = { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
         daemonResult = failure;
         await expect(createDefaultActionExecutor().execute('notifications.notify_me', { message: 'Hi' }, {
-            surface: 'voice', serverId,
+            surface: 'voice', serverId, authority: 'account_automation',
         })).resolves.toEqual(failure);
     });
 });

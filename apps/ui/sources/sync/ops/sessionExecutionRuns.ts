@@ -1,20 +1,23 @@
 import type {
     ExecutionRunActionRequest,
     ExecutionRunActionResponse,
-    ExecutionRunCancelTurnRequest,
-    ExecutionRunCancelTurnResponse,
     ExecutionRunEnsureRequest,
     ExecutionRunEnsureResponse,
     ExecutionRunEnsureOrStartRequest,
+    ExecutionRunStopRequest} from '@happier-dev/protocol/execution/runs/index';
+import type {
+    ExecutionRunCancelTurnRequest,
+    ExecutionRunCancelTurnResponse} from '@happier-dev/protocol/execution/runs/cancelTurn';
+import type {
     ExecutionRunGetRequest,
     ExecutionRunGetResponse,
     ExecutionRunListRequest,
     ExecutionRunListResponse,
-    ExecutionRunStartRequest,
     ExecutionRunStartResponse,
-    ExecutionRunStopRequest,
     ExecutionRunStopResponse,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/execution/runs/responseSchemas';
+import type {
+    ExecutionRunStartRequest} from '@happier-dev/protocol/execution/runs/startRequest';
 import {
     ExecutionRunGetResponseSchema,
     ExecutionRunListResponseSchema,

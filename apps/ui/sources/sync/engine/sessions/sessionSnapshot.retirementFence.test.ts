@@ -2,10 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import {
-    projectLegacySessionAccessCapabilitiesV1,
-    type AccountEncryptionCurrentnessResponse,
+    projectLegacySessionAccessCapabilitiesV1} from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
+import {
+    type AccountEncryptionCurrentnessResponse} from '@happier-dev/protocol/account/encryptionMode';
+import {
     type V2SessionRecord,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/control/contract';
 
 import { storage } from '@/sync/domains/state/storage';
 import { createDeferred } from '@/dev/testkit';
@@ -364,6 +366,46 @@ describe('fetchAndApplySessions exact-Home retirement fence', () => {
         await initializing;
         expect(encryption.getSessionEncryption('retired-at-initialization')).toBeNull();
         expect(encryption.getSessionEncryption('kept')).not.toBeNull();
+    });
+
+    it('captures keys once for a read and publishes no decrypted content after Account material retirement', async () => {
+        const encryption = await Encryption.create(new Uint8Array(32).fill(4));
+        const row = await encryptedRow(encryption, 'retired-account-row');
+        const started = createDeferred<void>();
+        const release = createDeferred<void>();
+        encryption.configureNativeCryptoWorker({ worker: {
+            async probe() { return { available: true, failureReason: 0, nativeVersion: 1 }; },
+            async decryptDataKeyEnvelopeV1(request) {
+                started.resolve();
+                await release.promise;
+                return { status: 'ok', source: 'native', items: request.items.map(() => encodeBase64(new Uint8Array(32).fill(7), 'base64')) };
+            },
+            async decryptSecretboxJson(request) {
+                return { status: 'ok', source: 'native', items: request.items.map(() => ({ path: '/retired-private', host: 'test' })) };
+            },
+            async decryptAesGcmJson(request) {
+                return { status: 'ok', source: 'native', items: request.items.map(() => ({ path: '/retired-private', host: 'test' })) };
+            },
+        }, routing: { mode: 'require', minPayloadBytes: 0 },
+        scope: { accountId: 'account-a', serverId: 'home-a', generation: 0 } });
+        const captures = vi.spyOn(encryption, 'getCurrentEncryptionGenerationScope');
+        const sessionDataKeys = new Map<string, Uint8Array>();
+        const read = readEncryptedQuery({ encryption, sessionDataKeys,
+            priorityHydrationSessionIds: [row.id], request: async () => queryPage([row]) });
+        try {
+            await Promise.race([started.promise, read.then(() => { throw new Error('Read settled before native decrypt'); })]);
+            encryption.retireAccountMaterial();
+            release.resolve();
+            await read;
+            expect(captures).toHaveBeenCalledTimes(1);
+            expect(sessionDataKeys.size).toBe(0);
+            expect(encryption.getSessionEncryption(row.id)).toBeNull();
+            expect(storage.getState().sessionListRowsByServerId['home-a']?.[row.id]?.metadata?.path).not.toBe('/retired-private');
+        } finally {
+            release.resolve();
+            await Promise.allSettled([read]);
+            captures.mockRestore();
+        }
     });
 
     it('lets independent row-only readers of the same query share Encryption without superseding each other', async () => {

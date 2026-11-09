@@ -73,12 +73,6 @@ function normalizeGroupProfiles(
     }));
 }
 
-function resolveFallbackServerId(activeServerIdRaw: string, availableServerIds: string[]): string {
-    const activeServerId = normalizeId(activeServerIdRaw);
-    if (activeServerId) return activeServerId;
-    return availableServerIds[0] ?? '';
-}
-
 function toServerTarget(serverId: string): ActiveServerSelectionTarget {
     return { kind: 'server', id: serverId, serverId };
 }
@@ -155,6 +149,7 @@ function normalizeResolvedServerIds(ids: ReadonlyArray<string>): string[] {
 export function listServerSelectionTargets(params: Readonly<{
     serverProfiles: ReadonlyArray<ServerProfileLike>;
     groupProfiles: ReadonlyArray<ServerSelectionGroup>;
+    currentServerId?: string;
     /** Homes this device can use (`useUsableHomeServerIds`); unknown while null or absent. */
     usableServerIds?: ReadonlyArray<string> | null;
 }>): ServerSelectionTarget[] {
@@ -172,7 +167,7 @@ export function listServerSelectionTargets(params: Readonly<{
                 kind: 'server' as const,
                 id,
                 serverId: id,
-                name: resolveHomeDisplayLabel(profile, id),
+                name: resolveHomeDisplayLabel(profile, id, params.currentServerId),
                 serverUrl: normalizeId(profile.serverUrl),
             };
         }),
@@ -206,8 +201,6 @@ export function resolveActiveServerSelection(params: Readonly<{
     );
     const availableSet = new Set(availableServerIds);
     const normalizedActiveServerId = normalizeId(params.activeServerId);
-    const activeServerIdIsAvailable = availableSet.has(normalizedActiveServerId);
-    const fallbackServerId = resolveFallbackServerId(params.activeServerId, availableServerIds);
     const groups = normalizeGroupProfiles(params.settings.serverSelectionGroups, availableSet);
     const groupById = new Map(groups.map((group) => [group.id, group]));
 
@@ -230,11 +223,11 @@ export function resolveActiveServerSelection(params: Readonly<{
 
     if (explicitKind === 'group' && isAllHomesSelectionTargetId(explicitId)) {
         const allHomes = resolveAllHomesGroup(availableServerIds, params.usableServerIds);
-        if (allHomes) return resolveGroupSelection(allHomes, fallbackServerId, true);
+        if (allHomes) return resolveGroupSelection(allHomes, normalizedActiveServerId, true);
     } else if (explicitKind === 'group' && explicitId) {
         const group = groupById.get(explicitId);
         if (group && group.serverIds.length > 0) {
-            return resolveGroupSelection(group, fallbackServerId, true);
+            return resolveGroupSelection(group, normalizedActiveServerId, true);
         }
     }
 
@@ -242,13 +235,13 @@ export function resolveActiveServerSelection(params: Readonly<{
     const defaultAllHomes = params.usableServerIds
         ? resolveAllHomesGroup(availableServerIds, params.usableServerIds)
         : null;
-    if (defaultAllHomes) return resolveGroupSelection(defaultAllHomes, fallbackServerId, false);
+    if (defaultAllHomes) return resolveGroupSelection(defaultAllHomes, normalizedActiveServerId, false);
 
-    if (fallbackServerId) {
+    if (normalizedActiveServerId) {
         return {
-            activeTarget: toServerTarget(fallbackServerId),
-            activeServerId: fallbackServerId,
-            allowedServerIds: [fallbackServerId],
+            activeTarget: toServerTarget(normalizedActiveServerId),
+            activeServerId: normalizedActiveServerId,
+            allowedServerIds: [normalizedActiveServerId],
             enabled: false,
             presentation: 'grouped',
             explicit: false,

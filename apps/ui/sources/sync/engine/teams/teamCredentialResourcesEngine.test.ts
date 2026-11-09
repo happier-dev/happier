@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { TEAM_CREDENTIAL_MATERIAL_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import {
     TEAM_CREDENTIAL_ACTION_PATHS_V1,
     TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1,
@@ -84,6 +85,35 @@ afterEach(async () => {
 });
 
 describe('Team credential resource observations', () => {
+    it.each(['list', 'detail', 'catalog'] as const)('refreshes demanded credential %s when material changes on another client', async kind => {
+        const resource = credentialResource('material-resource');
+        const path = kind === 'list' ? LIST : kind === 'detail' ? GET : DISCOVER;
+        const actionId = kind === 'list' ? 'teams.credentials.list' : kind === 'detail' ? 'teams.credentials.get' : 'teams.credentials.entitled.list';
+        await home.requireUiApproval(scope.serverId, actionId);
+        const answer = (displayName: string) => home.answer(scope.serverId, path, { body: kind === 'list'
+            ? { resources: [{ ...resource, displayName }], nextCursor: null, viewer }
+            : kind === 'detail' ? { ...resource, displayName }
+                : { resources: [{ ...catalogResource(resource.id), displayName }], nextCursor: null, failures: [] } });
+        answer('Before material');
+        const release = kind === 'list' ? observeTeamCredentialResources(scope, address)
+            : kind === 'detail' ? observeTeamCredentialResource(scope, address, resource.id)
+                : observeTeamCredentialResourceCatalog(scope, address);
+        const read = () => kind === 'list' ? getTeamCredentialResourcesSnapshot(scope, address)?.data?.[0]
+            : kind === 'detail' ? getTeamCredentialResourceSnapshot(scope, address, resource.id)?.data
+                : getTeamCredentialResourceCatalogSnapshot(scope, address)?.data?.[0];
+        try {
+            await waitForHomeGovernance(() => expect(home.artifacts(scope.serverId).list().length).toBe(1));
+            await decideApprovalAsInbox(scope.serverId, home.artifacts(scope.serverId).list()[0]!.id, 'approve');
+            await waitForHomeGovernance(() => expect(read()?.displayName).toBe('Before material'));
+            answer('After material');
+            publishHomeAccountChange(scope.serverId, [TEAM_CREDENTIAL_MATERIAL_ACCOUNT_CHANGE_ENTITY_ID_V1]);
+            await waitForHomeGovernance(() => expect(home.artifacts(scope.serverId).list().length).toBe(2));
+            await decideApprovalAsInbox(scope.serverId, home.artifacts(scope.serverId).list()[1]!.id, 'approve');
+            await waitForHomeGovernance(() => expect(read()?.displayName).toBe('After material'));
+            expect(home.requestsFor(path)).toHaveLength(2);
+        } finally { release(); }
+    });
+
     it.each(['list', 'detail', 'catalog'] as const)('releases an abandoned Ask-first credential %s before reobservation', async kind => {
         const actionId = kind === 'list' ? 'teams.credentials.list' : kind === 'detail' ? 'teams.credentials.get' : 'teams.credentials.entitled.list';
         const path = kind === 'list' ? LIST : kind === 'detail' ? GET : DISCOVER;
@@ -326,6 +356,7 @@ describe('Team credential resource observations', () => {
             expect(home.requestsFor(LIST)).toHaveLength(2);
             expect(home.requestsFor(DISCOVER)).toHaveLength(2);
             expect(getTeamCredentialResourceCatalogSnapshot(scope, address)?.status).toBe('error');
+            expect(getTeamCredentialResourcesSnapshot(scope, address)?.status).toBe('ready');
         });
         expect(getTeamCredentialResourcesSnapshot(scope, address)).toMatchObject({ status: 'ready', stale: false, data: [{ id: resource.id }] });
         expect(getTeamCredentialResourceCatalogSnapshot(scope, address)).toMatchObject({ status: 'error', stale: true, data: [{ id: resource.id }] });

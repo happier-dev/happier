@@ -83,6 +83,7 @@ export function createDefaultRuntimeActionExecutor(
     });
     // The person's computer controls (choose a window, stop, hand back) go to the machine they name.
     const computer = createComputerRuntimeActionExecutor({
+        executeAgentAction: executeOnMachine,
         fallback: simulator,
         accountLifetime,
         resolveOwnDesktopOnly: resolveComputerOwnDesktopOnly,

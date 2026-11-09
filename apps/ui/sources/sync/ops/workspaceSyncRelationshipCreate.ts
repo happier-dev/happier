@@ -1,5 +1,5 @@
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { WorkspaceSyncRelationshipCreateActionInputV1Schema, WorkspaceSyncRelationshipCreateResultV1Schema, type WorkspaceSyncRelationshipCreateActionInputV1, type WorkspaceSyncRelationshipCreateResultV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { WorkspaceSyncRelationshipWriteActionInputV1Schema, WorkspaceSyncRelationshipCreateResultV1Schema, type WorkspaceSyncRelationshipWriteActionInputV1, type WorkspaceSyncRelationshipCreateResultV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 
@@ -13,7 +13,7 @@ import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExe
  * its operation identity instead of minting a second relationship.
  */
 export type CreateWorkspaceSyncRelationshipRequest = Readonly<{
-    input: WorkspaceSyncRelationshipCreateActionInputV1;
+    input: WorkspaceSyncRelationshipWriteActionInputV1;
     serverId?: string | null;
     actionRequestId: string;
     signal?: AbortSignal;
@@ -65,9 +65,9 @@ function readApprovedCreateResult(raw: unknown): WorkspaceSyncRelationshipCreate
 export async function createWorkspaceSyncRelationship(
     request: CreateWorkspaceSyncRelationshipRequest,
 ): Promise<CreateWorkspaceSyncRelationshipOutcome> {
-    const actionInput = WorkspaceSyncRelationshipCreateActionInputV1Schema.parse(request.input);
+    const actionInput = WorkspaceSyncRelationshipWriteActionInputV1Schema.parse(request.input);
     const executor = createDefaultActionExecutor();
-    const started = await executor.execute('workspace.sync.relationship.create', actionInput, {
+    const started = await executor.execute('replaceRelationshipId' in actionInput ? 'workspace.sync.relationship.replace' : 'workspace.sync.relationship.create', actionInput, {
         serverId: request.serverId ?? undefined,
         surface: 'ui',
         actionRequestId: request.actionRequestId,

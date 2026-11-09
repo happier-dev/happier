@@ -67,7 +67,7 @@ describe('composer skill groups', () => {
             skillRules: { serverId: 'home', assertCurrent: () => {}, readCatalog: async () => ({ catalog: { status: 'ready', rows: [
                 { record: { key: 'skill-rules', value: { v: 1, rules: [] } }, revision: 1 }], tombstones: [], diagnostics: [] } }),
                 listSkills: async () => [], ruleWriteContext: () => ({ nowMs: 1, newId: () => 'rule' }),
-                writeRecord: async () => { throw new Error('read only'); } }, randomId: () => 'id', includeInSession: async () => ({ ok: true }) });
+                writeRecord: async () => { throw new Error('read only'); } }, randomId: () => 'id', includeInSession: async () => ({ ok: true, state: 'on', previous: 'inherit', applyTiming: { t: 'next_turn' } }) });
         const produced = SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.list'].parse(await list('skills.list', {}, { surface: 'ui' }));
         expect(buildSkillComposerGroups({ open: true, query: 'manual', agentId: 'codex', machineId: null, sessionItems: [],
             libraryItems: produced.items, found: null }).flatMap(group => group.rows.map(row => row.name))).toEqual(['manual']);

@@ -2,9 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import {
     deriveExternalSessionAttentionHasUnread,
-    readExternalSessionAttentionV1,
+    readExternalSessionAttentionV1} from '@happier-dev/protocol/sessions/external/linked-metadata';
+import {
     resolveSessionPersonalAttentionV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/personal/attention';
 
 function externalAttention(metadata: unknown): boolean | null {
     return deriveExternalSessionAttentionHasUnread(

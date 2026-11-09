@@ -11,7 +11,7 @@ function params(updateData: ApiUpdateContainer, shouldContinue = () => true): Pa
         getSessionMaterializedMaxSeq: () => 0, markSessionMaterializedMaxSeq: vi.fn(),
         onMessageGapDetected: vi.fn(), assumeUsers: async () => {}, applyTodoSocketUpdates: async () => {},
         invalidateMachines: vi.fn(), invalidateSessions: vi.fn(), invalidateArtifacts: vi.fn(),
-        invalidateFriends: vi.fn(), invalidateFriendRequests: vi.fn(), invalidateFeed: vi.fn(),
+        invalidateFriends: vi.fn(), invalidateFeed: vi.fn(),
         invalidateAutomations: vi.fn(), invalidateTodos: vi.fn(), log: { log: vi.fn() },
     };
 }

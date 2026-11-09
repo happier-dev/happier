@@ -6,7 +6,6 @@ export type { BrowserRecordingAvailabilityInput } from '@happier-dev/protocol/br
 
 export type BrowserRecordingUnavailableReasonCode =
     | BrowserRecordingAvailabilityReason['reasonCode']
-    | 'browser_recording_permission_denied'
     | 'browser_recording_missing'
     | 'browser_recording_not_finalized'
     | 'browser_recording_media_missing'

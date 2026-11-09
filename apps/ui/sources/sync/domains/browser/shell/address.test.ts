@@ -107,4 +107,18 @@ describe('relay preview address display', () => {
         expect(selectBrowserViewDisplayHost(previewView({ target: { kind: 'localServicePreview', targetId: 'p', machineId: 'm' } }))).toBeUndefined();
         expect(selectBrowserViewDisplayHost(null)).toBeUndefined();
     });
+
+    it('uses the retained page title for Ended recovery while the address still names the location', async () => {
+        const { selectBrowserEndedPreviewLastPage, selectBrowserViewAddress } = await import('./address');
+        const view = previewView({ title: '  Project dashboard  ', currentUrl: '/docs/start' });
+
+        expect(selectBrowserEndedPreviewLastPage(view)).toBe('Project dashboard');
+        expect(selectBrowserViewAddress(view)).toBe('localhost:42511/docs/start');
+        expect(selectBrowserEndedPreviewLastPage(previewView({ title: '  ', currentUrl: '/docs/start' })))
+            .toBe('localhost:42511/docs/start');
+        expect(selectBrowserEndedPreviewLastPage(previewView({ title: 'Project dashboard',
+            target: { kind: 'localServicePreview', targetId: 'preview:1', machineId: 'machine_1' } })))
+            .toBe('Project dashboard');
+        expect(selectBrowserEndedPreviewLastPage(null)).toBeNull();
+    });
 });

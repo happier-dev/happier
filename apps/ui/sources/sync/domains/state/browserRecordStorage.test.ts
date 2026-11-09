@@ -4,6 +4,35 @@ import { forceCloseDatabase, IDBFactory } from 'fake-indexeddb';
 import { clearBrowserRecords, deleteBrowserRecord, listBrowserRecords, readBrowserRecord, updateBrowserRecord, writeBrowserRecord } from './browserRecordStorage';
 
 describe('browser large-record transactions', () => {
+    it('indexes existing version-one pictures by kind without replacing their bytes or keys', async () => {
+        vi.stubGlobal('indexedDB', new IDBFactory());
+        let upgraded: IDBDatabase | undefined;
+        try {
+            const legacy = await new Promise<IDBDatabase>((resolve, reject) => {
+                const request = indexedDB.open('happier-atmosphere-pictures', 1);
+                request.onupgradeneeded = () => request.result.createObjectStore('pictures');
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error);
+            });
+            await new Promise<void>((resolve, reject) => {
+                const transaction = legacy.transaction('pictures', 'readwrite');
+                const store = transaction.objectStore('pictures');
+                store.put({ localId: 'kept-user', kind: 'user', createdAtMs: 1, size: 5, data: new Blob(['photo']) }, 'kept-user');
+                store.put({ localId: 'kept-builtin', kind: 'builtin', createdAtMs: 2, size: 7, data: new Blob(['builtin']) }, 'kept-builtin');
+                transaction.oncomplete = () => resolve();
+                transaction.onerror = () => reject(transaction.error);
+            });
+            legacy.close();
+            vi.resetModules();
+            const records = await import('./browserRecordStorage');
+            const { pictureStore } = await import('@/components/atmosphere/pictureStore.web');
+            expect(await pictureStore.list('user')).toEqual([{ localId: 'kept-user', kind: 'user', createdAtMs: 1, size: 5 }]);
+            expect(await (await pictureStore.get('kept-user'))?.data.text()).toBe('photo');
+            expect(await (await pictureStore.get('kept-builtin'))?.data.text()).toBe('builtin');
+            upgraded = await records.openBrowserRecordDatabase('pictures');
+            expect(upgraded.version).toBe(2);
+        } finally { upgraded?.close(); vi.unstubAllGlobals(); }
+    });
     it('reopens an unexpectedly closed connection before clearing durable records', async () => {
         const opening = vi.spyOn(indexedDB, 'open');
         await writeBrowserRecord('closed:draft', 'private draft');

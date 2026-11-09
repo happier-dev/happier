@@ -5,10 +5,12 @@ import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/feature
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { V2SessionListResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
+import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 
 let cleanup: (() => Promise<void>) | null = null;
 
-async function installHarness(options: Readonly<{ includeMachineInventory?: boolean; realClock?: boolean }> = {}) {
+async function installHarness(options: Readonly<{ includeMachineInventory?: boolean; realClock?: boolean;
+    machineRows?: () => readonly ReturnType<typeof createPlainMachineRowFixture>[]; failingPing?: boolean }> = {}) {
     const network = await installSessionOpsNetworkBoundary();
     const homeA = await network.addHome('https://lease-a.example.test', 'account-a');
     const homeB = await network.addHome('https://lease-b.example.test', 'account-b');
@@ -24,6 +26,7 @@ async function installHarness(options: Readonly<{ includeMachineInventory?: bool
     const pendingPings: Array<{ token: string | null; respond(): void }> = [];
     network.setHttpResponder(async (input, init) => {
         const path = new URL(String(input)).pathname;
+        if (path === '/v1/auth/ping' && options.failingPing) return new Response(null, { status: 503 });
         if (path === '/v1/auth/ping') {
             return await new Promise<Response>((resolve) => {
                 pendingPings.push({
@@ -42,6 +45,7 @@ async function installHarness(options: Readonly<{ includeMachineInventory?: bool
         if (path === '/v2/sessions' || path === '/v2/sessions/active' || path === '/v2/sessions/attention') {
             return Response.json(V2SessionListResponseSchema.parse({ sessions: [], nextCursor: null, hasNext: false }));
         }
+        if (path === '/v1/machines' && options.machineRows) return Response.json(options.machineRows());
         if (path === '/v1/machines' && !options.includeMachineInventory) return Response.json([]);
         return null;
     });
@@ -67,7 +71,7 @@ async function installHarness(options: Readonly<{ includeMachineInventory?: bool
     };
     cache.startConcurrentSessionCacheSync();
     if (!options.realClock) await vi.advanceTimersByTimeAsync(1);
-    await vi.waitFor(() => expect(pendingPings).toHaveLength(1));
+    if (!options.failingPing) await vi.waitFor(() => expect(pendingPings).toHaveLength(1));
     return { ...cache, network, homeB, profiles, pool, pendingPings, io };
 }
 
@@ -98,6 +102,52 @@ beforeEach(() => {
 afterEach(resetHarness);
 
 describe('concurrent session cache reachability lease fencing', () => {
+    it('keeps an unreachable secondary Home on one presented phase across failing reachability retries', async () => {
+        const h = await installHarness({ failingPing: true });
+        const { storage } = await import('@/sync/domains/state/storage');
+        const homeId = h.profiles.resolveServerProfileScopeIdForIdentifier(h.homeB.id);
+        const published: string[] = [];
+        const record = () => {
+            const phase = storage.getState().concurrentSessionListCacheByServerId?.[homeId]?.listObservation?.phase;
+            const machines = storage.getState().machineListStatusByServerId?.[homeId];
+            const next = `${phase ?? '-'}/${machines ?? '-'}`;
+            if (published[published.length - 1] !== next) published.push(next);
+        };
+        const unsubscribe = storage.subscribe(record);
+        await vi.advanceTimersByTimeAsync(1_500);
+        record();
+        expect(published[published.length - 1]).toBe('offline/error');
+        const settled = published.length;
+        // Backoff grows from 1s toward 60s; two minutes covers many failing attempts.
+        await vi.advanceTimersByTimeAsync(120_000);
+        unsubscribe();
+        expect(published.slice(settled)).toEqual([]);
+    });
+
+    it('forwards same-content secondary Home census activity without replacing its admitted Machine', async () => {
+        vi.useRealTimers();
+        const fixture = createMachineFixture({ id: 'secondary-activity', activeAt: Date.now() });
+        let row = createPlainMachineRowFixture({ id: fixture.id, accountId: 'account-b', machine: fixture });
+        const h = await installHarness({ realClock: true, machineRows: () => [row] });
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { readMachineActivity } = await import('@/sync/domains/machines/machineActivity');
+        const secondaryHomeId = h.profiles.resolveServerProfileScopeIdForIdentifier(h.homeB.id);
+        storage.setState({ profile: { ...storage.getState().profile, id: 'account-a' },
+            profileScope: { serverId: h.profiles.getActiveServerId(), accountId: 'account-a' } });
+        h.pendingPings[0].respond();
+        await vi.waitFor(() => expect(h.pool.peekServerReachabilityState(h.homeB.serverUrl, h.homeB.token)?.phase).toBe('online'));
+        await h.refreshConcurrentOrdinarySessionList(secondaryHomeId);
+        const retained = storage.getState().machineListByServerId[secondaryHomeId]?.find(machine => machine.id === fixture.id);
+        expect(retained).toBeDefined();
+        const activeMachines = storage.getState().machines;
+        row = { ...row, activeAt: fixture.activeAt + 1 };
+        await h.refreshConcurrentOrdinarySessionList(secondaryHomeId);
+        expect(storage.getState().machineListByServerId[secondaryHomeId]?.find(machine => machine.id === fixture.id)).toBe(retained);
+        expect(readMachineActivity(retained!).activeAt).toBe(row.activeAt);
+        expect(retained?.activeAt).toBe(fixture.activeAt);
+        expect(storage.getState().machines).toBe(activeMachines);
+    });
+
     it('persists a secondary Home inventory only under its captured credential Account', async () => {
         vi.useRealTimers();
         const { prepareWarmCacheStorage, loadMachineDisplayWarmCacheEntries, setWarmCacheAccountScope } = await import('@/sync/domains/state/warmCachePersistence');

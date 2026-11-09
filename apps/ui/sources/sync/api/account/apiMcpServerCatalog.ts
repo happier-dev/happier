@@ -17,8 +17,9 @@ import { loadMcpServerCatalogV1, commitMcpServerCatalogMutationV1, readRetainedM
 import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
-import { classifyAccountStorageReadFailure, resolveAccountStorageContext } from '@/sync/encryption/accountStorageContext';
+import { classifyAccountStorageReadFailure, resolveAccountStorageContext, resolveAccountStorageContextForDisclosure } from '@/sync/encryption/accountStorageContext';
 import { readAccountSettingsBaseline } from '@/sync/engine/settings/accountSettingsBaseline';
+import { readCurrentAccountSettingsRawSnapshot } from '@/sync/engine/settings/accountSettingsRawSnapshot';
 import { normalizeAccountSettingsHistoryAfterTransfer } from '@/sync/engine/settings/accountSettingsHistoryRestore';
 import { classifyHttpMutationRequestFailure } from '@/sync/http/mutationRequestOutcome';
 import { getRandomBytes } from '@/platform/cryptoRandom';
@@ -88,7 +89,7 @@ export function classifyMcpServerCatalogReadFailure(error: unknown, signal?: Abo
 async function checkMcpServerCatalogAccountMode(context: McpServerCatalogAccountContext, mode: 'plain' | 'e2ee',
     snapshot: McpServerCatalogSnapshotV1): Promise<McpServerCatalogSnapshotV1> {
     const { encryption } = await context.resolveAccountEncryption();
-    const current = await resolveAccountStorageContext(context.credentials, { encryption, request: context.request, usage: 'fresh-authority' });
+    const current = await resolveAccountStorageContextForDisclosure(context.credentials, { encryption, request: context.request });
     context.assertCurrent();
     return current.mode === mode ? snapshot : { status: 'unavailable', reason: 'account-mode-mismatch' };
 }
@@ -112,6 +113,17 @@ async function readMcpServerCatalogWithMaintenanceInContext(context: McpServerCa
                 return { raw: source.raw ?? {}, version: source.version };
             };
             let first: McpServerCatalogRowReadResponseV1 | undefined = await readMcpServerCatalogRowInContext(context, signal);
+            // An existing destination only checks whether source maintenance is due, once per pass, from
+            // Sync's current document. Activation and every reread after a source write stay genuine reads.
+            let maintenanceCheckPending = first.status !== 'absent';
+            const readMaintenanceSourceSnapshot = async () => {
+                if (!maintenanceCheckPending) return readSourceSnapshot();
+                maintenanceCheckPending = false;
+                const source = await readCurrentAccountSettingsRawSnapshot({ serverId: context.serverId, accountId: context.accountId },
+                    { credentials: context.credentials, request: context.request, signal, readBaseline: readSourceSnapshot });
+                context.assertCurrent();
+                return source;
+            };
             if (first.status === 'absent') {
                 const retained = readRetainedMcpServerCatalogSourceV1((await readSourceSnapshot()).raw);
                 if (retained.status === 'opened') {
@@ -140,7 +152,7 @@ async function readMcpServerCatalogWithMaintenanceInContext(context: McpServerCa
                     publication?.onReady?.(admitted, context.accountLifetime.isCurrent);
                     finishReady(admitted);
                 }, transfer: {
-                    readSourceSnapshot,
+                    readSourceSnapshot: readMaintenanceSourceSnapshot,
                     initializeCatalog: input => writeMcpServerCatalogInContext(context, input, signal),
                     replaceSource: async input => {
                         context.assertCurrent();

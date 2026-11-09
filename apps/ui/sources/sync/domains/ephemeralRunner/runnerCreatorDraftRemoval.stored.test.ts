@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { SessionDraftDocumentV2 } from '@happier-dev/protocol';
+import type { SessionDraftDocumentV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
 
 import { createRunnerActivationKeyCustody, readRunnerActivationSigningKey } from './runnerActivationKeyCustody';
 import { removeRunnerCreatorCustodyForRemovedDraft } from './runnerCreatorDraftRemoval';

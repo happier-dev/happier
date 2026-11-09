@@ -21,13 +21,14 @@ function findExactArtifact(
     artifact: PluginSelectedArtifactIdentity,
 ): BundledPluginUiAppArtifact | null {
     // Several packaged release occurrences can contain the same immutable bytes.
-    // Selection/admission belongs to the lease, which verifies this file set.
+    // Selection/admission belongs to the lease; these bytes ship inside the app.
     return inventory.find((candidate) => candidate.digest === artifact.digest) ?? null;
 }
 
 /**
  * The app-package byte source: the preseeded file set for the selected digest.
- * It has no selection, currentness, or integrity authority.
+ * Build-owned digest addressing supplies already-admitted internal bytes;
+ * selection and currentness remain with the lease.
  */
 export function createBundledPluginUiAppExactArtifactSourceFromInventory(input: Readonly<{
     inventory: BundledPluginUiAppArtifactInventory;

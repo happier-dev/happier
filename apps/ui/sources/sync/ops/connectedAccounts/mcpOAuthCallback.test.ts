@@ -13,7 +13,7 @@ describe('MCP OAuth callback controller', () => {
             callbackUrl,
             browser: { replaceUrl: path => effects.push(path), close: () => effects.push('closed'),
                 opener: { origin: 'https://app.happier.dev', postMessage: (message, origin) => effects.push({ message, origin }) } },
-            account: { serverId: 'home', expectedAccountId: 'account', assertCurrent() {}, executeAction, readMachines: async () => [] },
+            account: { serverId: 'home', expectedAccountId: 'account', assertCurrent() {}, executeAction },
         });
         expect(outcome).toEqual({ kind: 'opener' });
         expect(effects).toEqual(['/oauth/mcp/callback', { origin: 'https://app.happier.dev', message: {
@@ -61,22 +61,13 @@ describe('MCP OAuth callback controller', () => {
         expect(postMessage).toHaveBeenCalledWith({ type: 'happier.mcp.oauth', code: 'code', state: 'attempt.nonce', iss: '' }, 'https://app.happier.dev');
     });
 
-    it('rejects retired Account custody before inventory or Action work', async () => {
-        const readMachines = vi.fn(async () => []);
+    it('rejects retired Account custody before Action work', async () => {
+        const executeAction = vi.fn();
         await expect(completeMcpOAuthCallback({ callbackUrl, account: {
-            serverId: 'home', expectedAccountId: 'old-account', readMachines,
+            serverId: 'home', expectedAccountId: 'old-account', executeAction,
             assertCurrent: () => { throw new Error('account_retired'); },
         } })).rejects.toThrow('account_retired');
-        expect(readMachines).not.toHaveBeenCalled();
-    });
-
-    it('rechecks Account custody after machine discovery before completing on a successor Account', async () => {
-        let retired = false;
-        await expect(completeMcpOAuthCallback({ callbackUrl, account: {
-            serverId: 'home', expectedAccountId: 'old-account',
-            assertCurrent() { if (retired) throw new Error('account_retired'); },
-            async readMachines() { retired = true; return [{ id: 'machine', active: true }]; },
-        } })).rejects.toThrow('account_retired');
+        expect(executeAction).not.toHaveBeenCalled();
     });
 
 });

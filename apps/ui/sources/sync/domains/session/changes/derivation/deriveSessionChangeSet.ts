@@ -2,7 +2,7 @@ import { excludeRolledBackTurns } from '@happier-dev/protocol/sessions/changes/r
 import { mergeTurnChangeSets } from '@happier-dev/protocol/sessions/changes/mergeTurnChangeSets';
 import { readSessionRollbackRangesV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/sessionRollbackRangesV1';
 
-import type { TurnChangeSet } from '@happier-dev/protocol';
+import type { TurnChangeSet } from '@happier-dev/protocol/sessions/changes/types';
 
 export function deriveSessionChangeSet(params: Readonly<{
     sessionId: string;

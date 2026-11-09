@@ -1,15 +1,23 @@
 import * as React from 'react';
 import { useOptionalPluginUiScrollActivityTracker } from '@happier-dev/plugin-ui/advanced';
 import { useMeasuredNearViewport } from '@/components/widgets/nearViewport';
+import { useShallow } from 'zustand/react/shallow';
+import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
+import { storage } from '@/sync/domains/state/storageStore';
 import { useMachineDaemonReadIdentities } from '../useMachineDaemonReadTarget';
 import { machineResourceStore } from './machineResourceStore';
 import type { MachineResourceKey, MachineVitalsView } from './machineRpc';
+import { readMachineMonitoringMode } from './useMachineMonitoringMode';
 
 type Demand = Readonly<{ binding: NonNullable<ReturnType<typeof useMachineDaemonReadIdentities>[number]['accountBinding']>; release(): void }>;
 
-/** Mounted visible surfaces own demand; passive row readers never start an RPC. */
+/**
+ * Mounted visible surfaces own demand; passive row readers never start an RPC. A machine whose monitoring is
+ * Off is never demanded: Off is the person's choice, so no surface asks it to read while it holds.
+ */
 export function useMachineResourceLiveDemand(machineKeys: readonly MachineResourceKey[], options: Readonly<{ detail: MachineVitalsView; enabled?: boolean }>): void {
-    const identities = useMachineDaemonReadIdentities(machineKeys.map(input => ({ ...input, enabled: options.enabled })));
+    const off = useMachinesMonitoringOff(machineKeys);
+    const identities = useMachineDaemonReadIdentities(machineKeys.map((input, index) => ({ ...input, enabled: options.enabled !== false && !off[index] })));
     const versionsKey = JSON.stringify(identities.map((target, index) => ({ ...target.key,
         daemonStateVersion: machineKeys[index]?.daemonStateVersion })));
     // One demand per machine. A machine that comes or goes changes only its own demand, so its neighbours
@@ -77,4 +85,11 @@ function MeasuredMachineResourceLiveDemand(props: MachineResourceLiveDemandProps
 function PresentedMachineResourceLiveDemand(props: MachineResourceLiveDemandProps): null {
     useMachineResourceLiveDemand(props.machineKeys, { detail: props.detail, ...(props.enabled === undefined ? {} : { enabled: props.enabled }) });
     return null;
+}
+
+/** Which of these machines have monitoring Off. Selects metadata by reference; parses only when one changes. */
+function useMachinesMonitoringOff(machineKeys: readonly MachineResourceKey[]): readonly boolean[] {
+    const metadata = storage(useShallow((state: ReturnType<typeof storage.getState>) =>
+        machineKeys.map(key => resolveServerScopedMachine(state, key.serverId, key.machineId)?.metadata ?? null)));
+    return React.useMemo(() => metadata.map(entry => readMachineMonitoringMode(entry) === 'off'), [metadata]);
 }

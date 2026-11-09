@@ -1,4 +1,5 @@
-import { classifySessionEventDelivery, type SessionMessageV1, type SessionMessageObservationFactsV1 } from '@happier-dev/protocol';
+import { classifySessionEventDelivery, type SessionMessageObservationFactsV1 } from '@happier-dev/protocol/sessions';
+import { type SessionMessageV1} from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 import type { NormalizedMessage, RawMessageNormalizationSequenceState } from "@happier-dev/session-core/raw";
 import { applyTranscriptAccountActorMetadata, qualifyTranscriptAccountActor } from "@happier-dev/session-core/messages";
 import { normalizeRawMessage, normalizeRawMessageInSequence } from "@happier-dev/session-core/raw";
@@ -24,6 +25,7 @@ import {
     applyTranscriptObservationMetadata,
     isRecoveredHistoryTranscriptObservation,
 } from "@happier-dev/session-core/messages";
+import type { TranscriptStreamSegmentAssembler } from '@happier-dev/session-core/live';
 
 type SessionMessageEncryption = {
     decryptMessage: (message: any) => Promise<any>;
@@ -128,6 +130,8 @@ type HandleSessionMessageSocketUpdateParams = {
     applyMessages: (sessionId: string, messages: NormalizedMessage[]) => void;
     /** Shared page/socket row watermark; owned by Sync and advanced only after a direct authoritative apply. */
     sessionReceivedMessages?: SessionReceivedMessages;
+    /** This consumer's streamed-segment text owner: holds durable bases that appends apply to. */
+    transcriptStreamSegmentAssembler?: TranscriptStreamSegmentAssembler;
     enqueueMessages?: (sessionId: string, messages: NormalizedMessage[]) => void;
     onNormalizedMessagesApplied?: (sessionId: string, messages: NormalizedMessage[]) => void;
     rawMessageNormalizationState?: RawMessageNormalizationSequenceState;
@@ -328,7 +332,21 @@ async function handleSessionMessageSocketUpdate(params: HandleSessionMessageSock
     const rawMessage = 'message' in body
         ? (body as { message?: SessionMessageObservation }).message
         : undefined;
-    const isHint = body.delivery === 'hint';
+    // A revision sent as an append applies only onto the exact base this consumer holds (its
+    // revision is the row's `updatedAt`, the same fact the currentness map owns); without that
+    // base it is a bodyless revision fact and the full message is read.
+    const appendBase = body.delivery === 'delta' && body.base && typeof body.base === 'object'
+        ? body.base as { updatedAt: number; length: number }
+        : null;
+    const holdsAppendBase = (): boolean => {
+        if (!appendBase || !rawMessage || typeof rawMessage.localId !== 'string') return false;
+        const heldUpdatedAt = params.sessionReceivedMessages?.get(sessionId)?.get(rawMessage.id);
+        if (heldUpdatedAt !== undefined && heldUpdatedAt !== appendBase.updatedAt) return false;
+        return params.transcriptStreamSegmentAssembler?.holdsTranscriptStreamSegmentDurableBase({
+            sessionId, localId: rawMessage.localId, messageId: rawMessage.id, base: appendBase,
+        }) === true;
+    };
+    const isHint = body.delivery === 'hint' || (appendBase !== null && !holdsAppendBase());
     const isRecoveredHistory = isRecoveredHistoryTranscriptObservation(rawMessage);
     const updateType = inferLifecycle ? 'new-message' : 'message-updated';
     const isCurrentDirectMessageUpdate = (): boolean => {
@@ -441,6 +459,9 @@ async function handleSessionMessageSocketUpdate(params: HandleSessionMessageSock
         if (!isHint && rawMessage && 'content' in rawMessage) {
             params.onTranscriptSkippedDurableMessage?.({ sessionId, rawMessage, updateType });
         }
+        if (appendBase !== null && liveSegments) {
+            syncPerformanceTelemetry.count('sync.sessions.socket.messageAppend.baseMissing', { messageUpdated: 1 });
+        }
         if (isHint && liveSegments) {
             onMessageGapDetected(sessionId, { prevMaterializedMaxSeq, messageSeq: normalizedMessageSeq });
         }
@@ -475,7 +496,7 @@ async function handleSessionMessageSocketUpdate(params: HandleSessionMessageSock
             sessionEncryptionMode: session?.encryptionMode ?? 'e2ee',
             decryptMessage: encryption ? (message) => encryption.decryptMessage(message) : undefined,
         });
-        const decrypted = telemetryFields
+        let decrypted = telemetryFields
             ? await syncPerformanceTelemetry.measureAsync(
                 'sync.sessions.socket.message.readMessage',
                 telemetryFields,
@@ -498,6 +519,28 @@ async function handleSessionMessageSocketUpdate(params: HandleSessionMessageSock
         // before normalization and projection so the stale row has no effects.
         if (!isCurrentDirectMessageUpdate()) return;
         const sessionForApply = sessionAfterRead;
+        const assembler = params.transcriptStreamSegmentAssembler;
+        const revisionUpdatedAt = finiteNumber(rawMessage.updatedAt) ?? finiteNumber(rawMessage.createdAt);
+        if (appendBase) {
+            // An append never becomes a whole message: without an exact rebuild (opened row
+            // identity, held base, sealed binding) it fails closed into one full read.
+            const rebuilt = decrypted && decrypted.localId && decrypted.localId === rawMessage.localId
+                ? assembler?.applyTranscriptStreamSegmentDurableAppend({
+                    sessionId, localId: decrypted.localId, messageId: decrypted.id, base: appendBase,
+                    updatedAt: revisionUpdatedAt ?? appendBase.updatedAt, record: decrypted.content,
+                }) ?? null
+                : null;
+            if (!rebuilt || !decrypted) {
+                params.markSessionTranscriptStale?.(sessionId, { updateType, seq: normalizedMessageSeq, messageId: rawMessage.id });
+                onMessageGapDetected(sessionId, { prevMaterializedMaxSeq, messageSeq: normalizedMessageSeq });
+                return;
+            }
+            decrypted = { ...decrypted, content: rebuilt };
+        } else if (decrypted?.localId && revisionUpdatedAt !== null) {
+            assembler?.noteTranscriptStreamSegmentDurableRevision({
+                sessionId, localId: decrypted.localId, messageId: decrypted.id, updatedAt: revisionUpdatedAt, record: decrypted.content,
+            });
+        }
         if (decrypted) {
             if (isLegacyMemoryArtifactTranscriptRow(decrypted)) {
                 return;

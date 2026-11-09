@@ -10,7 +10,7 @@ export async function readUiPluginRoleSources(account: LazyActionAccountContext,
   const machineId = resolveUiAccountActionFallbackMachineId(account);
   if (!machineId) return [];
   const entry = await loadDaemonMergedProjectionCacheEntry({ machineId, serverId: account.serverId,
-    accountLifetime: account.accountLifetime, reuseFreshReady: true, signal });
+    accountLifetime: account.accountLifetime, reuseFreshReady: true, signal, sections: ['familiesById.roles'] });
   account.assertCurrent();
   signal?.throwIfAborted();
   // An unavailable serving daemon withdraws plugin sources, never Account documents or built-ins.

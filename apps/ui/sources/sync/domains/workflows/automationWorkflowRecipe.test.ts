@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { AutomationStoredWorkflowDefinitionRecipeV2Schema, type WorkflowDefinitionV1 } from '@happier-dev/protocol';
+import { AutomationStoredWorkflowDefinitionRecipeV2Schema} from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
+import { type WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
 import { openAutomationWorkflowRecipeForAuthoring } from './automationWorkflowRecipe';
 
 const definition: WorkflowDefinitionV1 = {

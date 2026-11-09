@@ -237,6 +237,43 @@ function projectionSlot(): ScopedPluginSettingsProjection | null {
 }
 
 describe('useScopedPluginSettingsProjection', () => {
+    it('keeps an unchanged field inventory quiet across parent commits and reads newly consumed fields', async () => {
+        let reads = 0;
+        // Mock only the daemon RPC; keep record inventory, adapter and projection real.
+        const adapter = createScopedPluginSettingsAdapter({
+            daemonGet: async () => {
+                reads++;
+                return { supported: true, snapshot: { protocolVersion: 1, pluginId: 'acme.settings',
+                    scope: { kind: 'daemon' }, revision: String(reads), values: { endpoint: 'current' }, redactedKeys: [] } };
+            },
+            daemonSet: async () => ({ supported: false, reason: 'error' }),
+            accountRead: async () => ({ status: 'unavailable', reason: 'transport' }),
+            accountWrite: async () => ({ status: 'unavailable', reason: 'transport' }),
+        });
+        let projection: ScopedPluginSettingsProjection | null = projectionSlot();
+        const observe = (next: ScopedPluginSettingsProjection) => { projection = next; };
+        const screen = await renderScreen(<Harness fields={[]} adapter={adapter} onProjection={observe} />);
+        const commits = vi.fn();
+        const stop = screen.subscribe(commits);
+        try {
+            for (let publication = 0; publication < 5; publication++) {
+                commits.mockClear();
+                await screen.update(<Harness fields={[]} adapter={adapter} onProjection={observe} />);
+                expect(commits).toHaveBeenCalledTimes(1);
+            }
+            expect(reads).toBe(0);
+            await screen.update(<Harness fields={FIELDS} adapter={adapter} onProjection={observe} />);
+            await flush();
+            expect(projection?.state.values.endpoint).toBe('current');
+            expect(reads).toBe(1);
+            commits.mockClear();
+            await screen.update(<Harness fields={FIELDS.map(field => ({ ...field })).reverse()} adapter={adapter} onProjection={observe} />);
+            expect(commits).toHaveBeenCalledTimes(1);
+            expect(reads).toBe(1);
+            expect(projection?.state.values.endpoint).toBe('current');
+        } finally { stop(); await screen.unmount(); }
+    });
+
     it.each(['pause', 'unmount', 'source replacement'] as const)('cancels a non-replying daemon read on %s and reads afresh on return', async ending => {
         let cancelled = false;
         let calls = 0;

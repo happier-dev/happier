@@ -5,7 +5,7 @@ import * as React from 'react';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SessionListQueryV1 } from '@happier-dev/protocol';
+import type { SessionListQueryV1 } from '@happier-dev/protocol/sessions/listing/query';
 
 // The real store, controller and hook run; only the credential, feature and transport
 // boundaries are stand-ins.

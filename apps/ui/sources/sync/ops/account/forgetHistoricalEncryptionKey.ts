@@ -1,4 +1,5 @@
-import type { AccountHistoricalEncryptionKeyForgetResultV1, ActionExecuteFailure } from '@happier-dev/protocol';
+import type { AccountHistoricalEncryptionKeyForgetResultV1} from '@happier-dev/protocol/auth/accountSecurity';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { getCurrentAuth } from '@/auth/context/currentAuth';
 import { isTokenOnlyAuthCredentials, type AuthCredentials } from '@/auth/storage/tokenStorage';

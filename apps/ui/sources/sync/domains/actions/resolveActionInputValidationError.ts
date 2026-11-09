@@ -1,4 +1,5 @@
-import type { ActionInputFieldHint, ActionSpec } from '@happier-dev/protocol';
+import type { InputFieldHint as ActionInputFieldHint} from '@happier-dev/protocol/inputs/inputFields';
+import type { ActionSpec } from '@happier-dev/protocol/actions';
 
 import { t } from '@/text';
 

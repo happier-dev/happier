@@ -63,6 +63,8 @@ afterAll(() => boundary.dispose());
 describe('machineRpcWithServerScope signal (direct peer route)', () => {
     beforeEach(async () => {
         boundary.resetRequests();
+        // Retained Machine reads (Action schemas, source declarations) belong to one case.
+        (await import('@/sync/ops/machineContributionRegistryProjection')).resetMachineProjectionReadsForTests();
         resetScopedMachineTransportCacheForTests();
         resetServerFeaturesClientForTests();
         clearMachineRequestReachabilityForTest();
@@ -320,6 +322,13 @@ describe('machineRpcWithServerScope signal (direct peer route)', () => {
             })));
             expect(parses).toHaveBeenCalledTimes(1);
             expect(route === 'direct' ? boundary.requests : directRequests).toEqual([]);
+            // A settled answer is kept for the Machine's current projection revision.
+            await expect(call()).resolves.toMatchObject({ supported: true });
+            expect(route === 'direct' ? directRequests : boundary.requests).toHaveLength(1);
+            expect(parses).toHaveBeenCalledTimes(1);
+            // A registry change advances that revision; the next reader decodes one fresh reply.
+            const { publishMachineContributionRegistryProjectionInvalidation } = await import('@/sync/ops/machineContributionRegistryProjection');
+            publishMachineContributionRegistryProjectionInvalidation({ machineId: 'machine_1', serverId: account!.home.id }, 'authority');
             await expect(call()).resolves.toMatchObject({ supported: true });
             expect(route === 'direct' ? directRequests : boundary.requests).toHaveLength(2);
             expect(parses).toHaveBeenCalledTimes(2);

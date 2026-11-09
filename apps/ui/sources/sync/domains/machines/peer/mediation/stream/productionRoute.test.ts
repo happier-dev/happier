@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     FeaturesResponseSchema,
-    PEER_MEDIATION_RECEIPTS,
+    type FeaturesResponse} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import {
+    PEER_MEDIATION_RECEIPTS} from '@happier-dev/protocol/machines/peer/mediation/receipts';
+import {
     MACHINE_LIVE_STREAM_RELAY_AUTHORIZATION_AUDIENCE_V1,
-    type FeaturesResponse,
     type MachineLiveStreamRelayAuthorizationV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 
 const getReadyServerFeaturesSpy = vi.hoisted(() => vi.fn());
 const TOKEN_A = 'header.eyJzdWIiOiJhY2NvdW50LTEifQ.signature';

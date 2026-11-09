@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { computePluginUiArtifactSha256DigestV1 } from '@happier-dev/protocol/plugins/ui';
+import * as platformDigest from '@/platform/digest';
 
 import { PLUGIN_UI_PERSISTENT_ARTIFACT_WEB_BYTE_BUDGET } from './artifactByteCache';
 import { createBrowserPluginUiPersistentArtifactStore } from './artifactByteCache.browser';
@@ -149,7 +150,7 @@ describe('browser Plugin UI persistent artifact store', () => {
         await expect(cache.keys()).resolves.toEqual([]);
     });
 
-    it('evicts a committed record when persisted bytes no longer match its declared digest', async () => {
+    it('reads committed internal bytes without hashing or evicting them', async () => {
         const cacheStorage = createMemoryCacheStorage();
         const store = createBrowserPluginUiPersistentArtifactStore(cacheStorage);
         const bytes = new TextEncoder().encode('// browser persistent bytes');
@@ -171,10 +172,16 @@ describe('browser Plugin UI persistent artifact store', () => {
         const cache = await cacheStorage.open(CACHE_NAME);
         const member = (await cache.keys()).find((request) => request.url.endsWith('/file/0'));
         if (!member) throw new Error('Fixture must contain the cached member.');
-        await cache.put(member, new Response(new Uint8Array(bytes.byteLength).fill(120)));
-
-        await expect(store.read(persistentIdentity)).resolves.toBeNull();
-        await expect(cache.keys()).resolves.toEqual([]);
+        const hashing = vi.spyOn(platformDigest, 'digest');
+        try {
+            await expect(store.read(persistentIdentity)).resolves.toMatchObject({ bytes });
+            await expect(store.read(persistentIdentity)).resolves.toMatchObject({ bytes });
+            const updatedBytes = new Uint8Array(bytes.byteLength).fill(120);
+            await cache.put(member, new Response(updatedBytes));
+            await expect(store.read(persistentIdentity)).resolves.toMatchObject({ bytes: updatedBytes });
+            expect(hashing).toHaveBeenCalledTimes(0);
+            expect(await cache.keys()).toHaveLength(2);
+        } finally { hashing.mockRestore(); }
     });
 });
 

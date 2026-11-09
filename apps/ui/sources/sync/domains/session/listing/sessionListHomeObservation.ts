@@ -75,6 +75,7 @@ export function isSessionListQueryHomeCoverageComplete(input: Readonly<{
         && !state.attentionHasNext
         && (state.metadataUpgradeRequiredCount ?? 0) === 0
         && state.membershipUnavailableReason === undefined
+        && !state.selectionUnavailable
         && (state.appliedSourceKind === 'query'
             || (state.appliedSourceKind === 'ordinary' && input.query !== undefined
                 && canSessionListOrdinaryPageAnswerQuery(input.query)))

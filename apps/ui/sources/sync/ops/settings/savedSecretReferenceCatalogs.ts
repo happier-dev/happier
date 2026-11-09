@@ -30,6 +30,7 @@ import { openPromptLibraryContentV1 } from '@happier-dev/protocol/prompts/librar
 import { readPromptLibraryRowInContext, preparePromptLibraryRecordMutationInContext } from '@/sync/api/account/apiPromptLibraryCatalog';
 import { applyPromptLibraryCatalogAcknowledgedRecord } from '@/sync/store/settings/promptLibraryCatalogSnapshot';
 import { listSavedSecretReferenceCatalogRefsV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
+import type { SharedSavedSecretReferenceSelectionV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 
 export type SavedSecretReferenceCatalogKey = keyof SavedSecretCatalogRevisionsV1;
 export type SavedSecretReferenceCatalogFacets = Pick<SavedSecretReferenceCatalogsV1, SavedSecretReferenceCatalogKey>;
@@ -120,7 +121,7 @@ export function publishAcknowledgedSavedSecretReferenceCatalogsInContext(context
 async function assertAccountMode(context: ProfileAccountContext, mode: 'plain' | 'e2ee') {
     context.assertCurrent();
     const { encryption } = await context.resolveAccountEncryption();
-    const storage = await resolveAccountStorageContext(context.credentials, { encryption, request: context.request });
+    const storage = await resolveAccountStorageContext(context.credentials, { encryption, request: context.request, usage: 'fresh-authority' });
     context.assertCurrent();
     if (storage.mode !== mode) throw new Error('saved_secret_account_mode_changed');
 }
@@ -234,6 +235,7 @@ export async function prepareSavedSecretReferenceCatalogMutationsInContext(conte
     accountMode: 'plain' | 'e2ee';
     sourceSettingsVersion?: number;
     savedSecretRevisions?: readonly SavedSecretReferenceRevisionProof[];
+    selectedSecrets?: readonly SharedSavedSecretReferenceSelectionV1[];
     pendingResourceIds?: readonly string[];
 }>): Promise<SavedSecretCatalogMutationsV1> {
     await assertAccountMode(context, input.accountMode);
@@ -258,7 +260,7 @@ export async function prepareSavedSecretReferenceCatalogMutationsInContext(conte
     const pendingResourceIds = input.pendingResourceIds?.filter(id => references.includes(
         formatSavedSecretCatalogReferenceV1({ kind: 'shared_resource', id })));
     const proofs = await captureSavedSecretReferenceRevisionsInContext(context, { references,
-        savedSecretRevisions: input.savedSecretRevisions, pendingResourceIds });
+        savedSecretRevisions: input.savedSecretRevisions, selectedSecrets: input.selectedSecrets, pendingResourceIds });
     const common = (key: SavedSecretReferenceCatalogKey) => {
         const expectedRevision = input.revisions[key];
         if (expectedRevision === undefined) throw new Error('saved_secret_reference_catalog_currentness_unavailable');

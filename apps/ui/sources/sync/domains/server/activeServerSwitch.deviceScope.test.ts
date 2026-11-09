@@ -62,6 +62,22 @@ afterEach(async () => {
 });
 
 describe('activeServerSwitch device scope', () => {
+    it('switches a full secondary Home without changing the main device Home', async () => {
+        const originId = requireOrigin();
+        const secondaryId = await homes.addHome({ name: 'Secondary', serverUrl: 'https://focus-secondary.test', accountId: 'secondary-account', active: false });
+        vi.stubGlobal('isTauri', true);
+        browser!.reconfigureUrl('https://app.happier.dev/desktop/app-window');
+        const { resolveRoutineServerSelectionScope } = await import('./selection/serverSelectionScope');
+        try {
+            await expect(setActiveServerAndSwitch({ serverId: secondaryId, scope: resolveRoutineServerSelectionScope('web', true) })).resolves.toBe('switched');
+            expect(profiles.getDeviceDefaultServerId()).toBe(originId);
+            expect(profiles.getTabActiveServerId()).toBe(secondaryId);
+            expect(appliedServerId()).toBe(secondaryId);
+        } finally {
+            vi.unstubAllGlobals();
+        }
+    });
+
     it.each(['saved-profile', 'address'] as const)('promotes the current tab Home to the device Home through %s', async entry => {
         requireOrigin();
         const tabId = await homes.addHome({ name: 'Tab', serverUrl: 'https://focus-tab.test', accountId: 'tab-account', active: false });

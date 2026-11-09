@@ -1,4 +1,4 @@
-import type { SessionForkPoint, SessionForkRpcResult } from '@happier-dev/protocol';
+import type { SessionForkPoint, SessionForkRpcResult } from '@happier-dev/protocol/sessions/fork';
 import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
 
 /**

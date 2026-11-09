@@ -15,7 +15,8 @@ import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch'
 import { encodeBase64 } from '@/encryption/base64';
 import { McpServerCatalogRowMutationV1Schema, type McpServerCatalogV1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { PluginProjectionV2Schema } from '@happier-dev/protocol';
+import { PluginProjectionV2Schema, buildDeferredDaemonProjectionSections,
+    DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE } from '@/dev/testkit/fixtures/pluginProviderDaemonProjection';
 import { MCP_SERVER_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/mcp/servers/serverActionsV1';
@@ -97,6 +98,7 @@ async function prepareToolFactsHome(includeMachine = true, installedAgentIds = O
     if (!write) throw new Error('Test Home credentials unavailable');
     credentialWrites.push(write);
     const machines = includeMachine ? [createMachineFixture({ id: 'facts-machine', activeAt: Date.now(),
+        access: { custodian: { accountId: 'tool-owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
         metadata: { ...createMachineFixture().metadata!, agentInventory: { checkedAt: Date.now(), installedAgentIds } } })] : [];
     getStorage().setState({ machines: Object.fromEntries(machines.map(machine => [machine.id, machine])),
         machineListByServerId: { [home.id]: machines }, machineListStatusByServerId: { [home.id]: 'idle' } });
@@ -127,7 +129,10 @@ async function prepareToolFactsHome(includeMachine = true, installedAgentIds = O
 }
 
 describe('UI MCP per-Agent tool facts', () => {
-    it('retains the client refusal across a configuration-only grant echo', async () => {
+    it.each([
+        { code: 'client_refused', view: { state: 'client_refused' } },
+        { code: 'mcp_oauth_discovery_failed', view: { state: 'did_not_finish', diagnosticCode: 'mcp_oauth_discovery_failed' } },
+    ])('retains $code across a configuration-only grant echo', async ({ code, view }) => {
         const server = { id: 'server', name: 'server', transport: 'http' as const,
             remote: { url: 'https://mcp.fixture.test/mcp', headers: {}, auth: { kind: 'oauth' as const } },
             env: {}, createdAt: 1, updatedAt: 1 };
@@ -197,10 +202,10 @@ describe('UI MCP per-Agent tool facts', () => {
             await act(async () => { publishGrant(); });
             await act(async () => {
                 provider.resolve(ConnectedAccountAttemptResponseSchema.parse({ status: 'rejected', attemptId: 'attempt-remove',
-                    code: 'client_refused', diagnostic: { code: 'client_refused', severity: 'error' } }));
+                    code, diagnostic: { code, severity: 'error' } }));
                 await removing;
             });
-            expect(hook.getCurrent().view?.state).toBe('client_refused');
+            expect(hook.getCurrent().view).toEqual(view);
         } finally {
             provider.resolve({ status: 'cancelled', attemptId: 'attempt-remove' });
             await removing;
@@ -236,6 +241,44 @@ describe('UI MCP per-Agent tool facts', () => {
             expect(result).toMatchObject({ ok: true, result: { catalog: { servers: [expect.anything(), { source: {
                 kind: 'plugin', pluginId: 'acme.mcp-facts',
             } }], pluginItemsStatus: 'ready' } } });
+        } finally { account.dispose(); }
+    });
+
+    it('hydrates only the MCP declarations and Agent facts its Actions read from a sectioned projection', async () => {
+        const home = await prepareToolFactsHome();
+        const projection = PluginProjectionV2Schema.parse({ ...toolFactsProjection,
+            familiesById: { ...toolFactsProjection.familiesById, mcp: { family: 'mcp', entriesById: {
+                'server:acme.mcp-facts/fixture': { id: 'server:acme.mcp-facts/fixture', pluginId: 'acme.mcp-facts',
+                    localId: 'fixture', contributionKind: 'server', title: 'Fixture tools', kind: 'dynamic' },
+            } } } });
+        // The daemon's own section producer answers the manifest and every section page.
+        const deferred = buildDeferredDaemonProjectionSections(DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
+            protocolVersion: 1, projection, projectionDigest: 'a'.repeat(64) }));
+        const sectionByIndexDigest = new Map(Object.entries(deferred.manifest.sections).map(([section, digest]) => [digest, section]));
+        const sectionsRead = new Set<string>();
+        projectionRpc.mockImplementation(async request => {
+            if (request.method !== RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+                throw new Error(`Unexpected daemon RPC ${request.method}`);
+            }
+            const read = (request.payload as Readonly<{ sectionRead?: { digest: string; offset: number; includeDigests?: readonly string[] } }>).sectionRead;
+            if (!read) return deferred.manifest;
+            for (const digest of [read.digest, ...read.includeDigests ?? []]) {
+                const section = sectionByIndexDigest.get(digest);
+                if (section) sectionsRead.add(section);
+            }
+            return deferred.read(read.digest, read.offset, read.includeDigests);
+        });
+        const { captureLazyActionAccountContext } = await import('./actionAccountContext');
+        const { createUiMcpServerActionExecuteV1 } = await import('./mcpServerActionDeps');
+        const account = await captureLazyActionAccountContext(home.id);
+        const context = { serverId: home.id, surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const } };
+        try {
+            const execute = createUiMcpServerActionExecuteV1(account);
+            expect(await execute({ actionId: 'mcp.servers.list', input: {}, context })).toMatchObject({ ok: true, result: {
+                catalog: { servers: [expect.anything(), { source: { kind: 'plugin', pluginId: 'acme.mcp-facts' } }], pluginItemsStatus: 'ready' } } });
+            expect(await execute({ actionId: 'mcp.servers.tools.list', input: { serverId: 'server' }, context })).toMatchObject({ ok: true,
+                result: { perAgent: { status: 'ready', machineId: 'facts-machine' } } });
+            expect([...sectionsRead].sort()).toEqual(['agentsById', 'base', 'familiesById.mcp', 'installedPackagesById']);
         } finally { account.dispose(); }
     });
 
@@ -312,6 +355,115 @@ describe('UI MCP per-Agent tool facts', () => {
             expect(await execute(request)).toMatchObject({ ok: false, errorCode: 'no_machine_online' });
             expect(projectionRpc).not.toHaveBeenCalled();
         } finally { account.dispose(); }
+    });
+
+    it('uses the saved second MCP Machine for diagnostics, not the first online presentation row', async () => {
+        const server = { id: 'server', name: 'server', transport: 'http' as const,
+            remote: { url: 'https://mcp.fixture.test/mcp', headers: {}, auth: { kind: 'oauth' as const } },
+            env: {}, createdAt: 1, updatedAt: 1 };
+        const home = await prepareToolFactsHome(true, [], undefined, undefined,
+            { catalog: () => ({ v: 1, bindings: [], servers: [server] }) });
+        const selected = createMachineFixture({ id: 'selected-second', active: true, activeAt: Date.now() });
+        const machines = [...Object.values(getStorage().getState().machines), selected];
+        const scope = { serverId: home.serverIdentityId!, accountId: 'tool-owner' };
+        const grant = QualifiedConnectedAccountProfileV4Schema.parse({
+            ref: { service: MCP_SIGN_IN_CONNECTED_SERVICE_REF_V1, accountId: server.id }, status: 'connected',
+            kind: 'oauth', authenticationModeId: 'oauth', configurationReady: true,
+            configurationRevision: 'configuration-1', revisionSemantics: 'revisioned',
+            credentialRevision: 'csr_1234567890123456789012', scopes: ['read'],
+        });
+        getStorage().setState({ settingsScope: scope, profileScope: scope,
+            profile: { ...getStorage().getState().profile, connectedAccountsV4: [grant] },
+            machines: Object.fromEntries(machines.map(machine => [machine.id, machine])),
+            machineListByServerId: { [home.id]: machines }, settings: { ...getStorage().getState().settings,
+                machineAdministrationTargetsLocalV1: { 'mcpServers.settings': {
+                    serverIdentityId: home.serverIdentityId!, machineId: selected.id,
+                } } } });
+        const observed: Array<{ operation: string; machineId: string }> = [];
+        projectionRpc.mockImplementation(async request => {
+            const command = request.payload.command;
+            observed.push({ operation: command.operation, machineId: request.machineId });
+            if (request.machineId !== selected.id) throw Object.assign(new Error('Wrong Machine cannot read this grant'), { code: 'RPC_FORBIDDEN' });
+            if (command.operation === 'readConfiguration') return ConnectedAccountDaemonControlResponseSchema.parse({
+                status: 'configuration', target: { kind: 'account', account: grant.ref, modeId: 'oauth' },
+                mode: { id: 'oauth', kind: 'oauthAuthorizationCode', callbackUrl: 'https://app.happier.dev/oauth/mcp/callback',
+                    pkce: 'required', outcomeReconciliation: 'none' },
+                configuration: { status: 'ready', revision: grant.configurationRevision,
+                    values: { serverId: server.id, resource: server.remote.url }, configuredSecretFieldIds: [], missingFieldIds: [] },
+                occurrenceId: 'host-selected', sourceCustody: { kind: 'host' },
+            });
+            throw new Error(`Unexpected daemon command: ${command.operation}`);
+        });
+        const { installRealActionExecutorModuleLoader } = await import('@/dev/testkit/harness/actionHomesHttpHarness');
+        const disposeLoader = await installRealActionExecutorModuleLoader();
+        const { useMcpServerSignIn } = await import('@/components/settings/mcpServers/signIn/useMcpServerSignIn');
+        const hook = await renderHook(() => useMcpServerSignIn(server,
+            machines.map(machine => ({ machineId: machine.id, name: machine.id, online: true })), { scope }));
+        try {
+            await vi.waitFor(() => expect(hook.getCurrent().view?.state).toBe('connected'));
+            expect(observed).toEqual([{ operation: 'readConfiguration', machineId: selected.id }]);
+            await act(async () => {
+                const revoked = { ...selected, revokedAt: Date.now() };
+                const current = [machines[0]!, revoked];
+                getStorage().setState({ machines: Object.fromEntries(current.map(m => [m.id, m])),
+                    machineListByServerId: { [home.id]: current } });
+            });
+            // A refused exact target is settled, not an endless loading state
+            // or an invitation to read/revoke on the other online Machine.
+            expect(hook.getCurrent().view?.state).toBe('did_not_finish');
+            await act(async () => { expect(await hook.getCurrent().signOut()).toBe(false); });
+            expect(observed).toEqual([{ operation: 'readConfiguration', machineId: selected.id }]);
+        } finally { await hook.unmount(); disposeLoader(); }
+    });
+
+    it('retries sign-in on the saved MCP Machine after a failed request without rerouting', async () => {
+        const server = { id: 'server', name: 'server', transport: 'http' as const, remote: { url: 'https://mcp.fixture.test/mcp',
+            headers: {}, auth: { kind: 'oauth' as const } }, env: {}, createdAt: 1, updatedAt: 1 };
+        const home = await prepareToolFactsHome(true, [], undefined, undefined, { catalog: () => ({ v: 1, bindings: [], servers: [server] }) });
+        const selected = createMachineFixture({ id: 'mcp-machine', active: true, activeAt: Date.now() });
+        const state = getStorage().getState();
+        const machines = [...Object.values(state.machines), selected];
+        getStorage().setState({ machines: Object.fromEntries(machines.map(machine => [machine.id, machine])),
+            machineListByServerId: { [home.id]: machines }, settings: { ...state.settings,
+                machineAdministrationTargetsLocalV1: { 'mcpServers.settings': {
+                    serverIdentityId: home.serverIdentityId!, machineId: selected.id,
+                } } } });
+        const { recordMachineRequestFailed, clearMachineRequestReachabilityForScope } = await import('@/sync/domains/machines/reachability/machineReachability');
+        const { captureLazyActionAccountContext } = await import('./actionAccountContext');
+        const { createUiMcpServerActionExecuteV1 } = await import('./mcpServerActionDeps');
+        const account = await captureLazyActionAccountContext(home.id);
+        recordMachineRequestFailed({ ...account.accountLifetime.scope, machineId: selected.id });
+        // The actual RPC may still refuse; the person's Retry must receive that
+        // response rather than synthesizing an offline verdict from the last try.
+        projectionRpc.mockResolvedValue({ status: 'unavailable', code: 'connected_account_service_unavailable' });
+        try {
+            const execute = createUiMcpServerActionExecuteV1(account);
+            expect(await execute({ actionId: 'mcp.servers.signIn.start', input: { serverId: 'server' },
+                context: { serverId: home.id, surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } }))
+                .toMatchObject({ ok: false, errorCode: 'mcp_sign_in_not_supported' });
+            expect(projectionRpc.mock.calls.map(([request]) => request.machineId)).toEqual([selected.id]);
+
+            const scope = account.accountLifetime.scope;
+            getStorage().setState({ settingsScope: scope, profileScope: scope,
+                profile: { ...getStorage().getState().profile, connectedAccountsV4: [] },
+                machines: { 'facts-machine': machines[0]! }, machineListByServerId: { [home.id]: [machines[0]!] } });
+            const { useMcpServerSignIn } = await import('@/components/settings/mcpServers/signIn/useMcpServerSignIn');
+            const hook = await renderHook((online: boolean) => useMcpServerSignIn(server,
+                [{ machineId: selected.id, name: 'MCP Machine', online }], { scope }), { initialProps: false });
+            await act(async () => { await hook.getCurrent().start(); });
+            expect(hook.getCurrent().view).toEqual({ state: 'no_machine_online' });
+            expect(projectionRpc).toHaveBeenCalledTimes(1);
+            getStorage().setState({ machines: Object.fromEntries(machines.map(machine => [machine.id, machine])),
+                machineListByServerId: { [home.id]: machines } });
+            await hook.rerender(true);
+            // A past no-machine refusal cannot disable Retry after presence recovers.
+            // Keep its diagnostic while allowing the person to try again; never auto-start OAuth.
+            expect(hook.getCurrent().view).toEqual({ state: 'did_not_finish', diagnosticCode: 'no_machine_online' });
+            expect(projectionRpc).toHaveBeenCalledTimes(1);
+            await act(async () => { await hook.getCurrent().start(); });
+            expect(hook.getCurrent().view).toEqual({ state: 'did_not_finish', diagnosticCode: 'mcp_sign_in_not_supported' });
+            expect(projectionRpc.mock.calls.map(([request]) => request.machineId)).toEqual([selected.id, selected.id]);
+        } finally { clearMachineRequestReachabilityForScope(account.accountLifetime.scope); account.dispose(); }
     });
 
     it.each(['active', 'inactive'] as const)('lists valid neighbors from real %s partial authority while refusing tools', async authority => {

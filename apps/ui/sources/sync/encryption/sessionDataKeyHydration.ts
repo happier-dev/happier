@@ -3,6 +3,7 @@ import { ENCRYPTED_DATA_KEY_V1_BYTES } from '@happier-dev/protocol/crypto/encryp
 import { normalizeSessionAccessProjection } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
 
 import type { EncryptionGenerationScope, EncryptionScopeInput } from './encryption';
+import { isDataKeyOpeningCancelled } from './dataKeyOpenings';
 
 /**
  * Per-Session outcome of opening the current viewer's Session data-key envelope.
@@ -255,11 +256,14 @@ export async function hydrateSessionDataKeys(params: Readonly<{
     sessionDataKeys: Map<string, Uint8Array>;
     sessionDataKeyEnvelopes?: Map<string, string>;
     scope?: EncryptionScopeInput;
+    capturedScope?: EncryptionGenerationScope | null;
     shouldContinue?: () => boolean;
 }>): Promise<SessionDataKeyHydrationResult> {
     const scope = params.scope ?? {};
     const shouldContinue = params.shouldContinue ?? (() => true);
-    const capturedScope = params.encryption.getCurrentEncryptionGenerationScope?.(scope) ?? null;
+    const capturedScope = params.capturedScope === undefined
+        ? params.encryption.getCurrentEncryptionGenerationScope?.(scope) ?? null
+        : params.capturedScope;
     const sessionKeys = new Map<string, Uint8Array | null>();
     const sessionEncryptionClears: string[] = [];
     const states = new Map<string, SessionDataKeyHydrationState>();
@@ -268,13 +272,20 @@ export async function hydrateSessionDataKeys(params: Readonly<{
     }
 
     const decryptEntries = params.plan.entries.filter((entry) => entry.needsDecrypt && entry.envelope);
-    const decryptedKeys = decryptEntries.length > 0
-        ? await decryptBatch({
-            encryption: params.encryption,
-            envelopes: decryptEntries.map((entry) => entry.envelope!),
-            scope,
-        })
-        : [];
+    let decryptedKeys: Array<Uint8Array | null> = [];
+    try {
+        if (decryptEntries.length > 0) {
+            decryptedKeys = await decryptBatch({
+                encryption: params.encryption,
+                envelopes: decryptEntries.map((entry) => entry.envelope!),
+                scope,
+            });
+        }
+    } catch (error) {
+        // A cancelled opening refused nothing: no Session loses its key state.
+        if (isDataKeyOpeningCancelled(error)) return { sessionKeys, sessionEncryptionClears, states, stale: true };
+        throw error;
+    }
 
     if (!isHydrationScopeCurrent({ encryption: params.encryption, capturedScope, shouldContinue })) {
         return { sessionKeys, sessionEncryptionClears, states, stale: true };

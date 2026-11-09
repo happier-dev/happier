@@ -1,4 +1,4 @@
-import type { BrowserRenderEngineKindV1 } from '@happier-dev/protocol';
+import type { BrowserRenderEngineKindV1 } from '@happier-dev/protocol/browser/adapters/kinds';
 
 import type { BrowserAdapterUnavailableReasonCode } from './availability';
 

@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-    sealSavedSecretResourceStoredContentV1,
+    sealSavedSecretResourceStoredContentV1} from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
+import {
     type SavedSecretCatalogEntryV1,
     type SavedSecretResourceMaterialV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 
 import { materializeSavedSecretResources } from './materializeSavedSecretResources';
 
@@ -32,6 +33,54 @@ const entry = {
 } as const satisfies SavedSecretCatalogEntryV1;
 
 describe('materializeSavedSecretResources', () => {
+    it.each(['plain', 'e2ee'] as const)('opens a %s passkey at the resource owner without making it a scalar secret', async mode => {
+        const dataKey = new Uint8Array(32).fill(7);
+        const content = { v: 2 as const, name: 'Example passkey', kind: 'other' as const,
+            source: { kind: 'passkey' as const, rpId: 'example.com', credentialId: 'AQID', userHandle: 'BAUG',
+                privateKey: 'BwgJ', algorithm: -7 as const, signCount: 0, backupEligibility: true, backupState: true } };
+        const passkeyEntry = { ...entry, name: content.name, kind: content.kind, encryptionMode: mode };
+        const decryptDataKeyEnvelope = vi.fn(async () => dataKey.slice());
+        const result = await materializeSavedSecretResources({ resources: [{ resourceId: 'resource-a', encryptionMode: mode,
+            entry: passkeyEntry, recipientEnvelope: mode === 'e2ee' ? { encryptedDataKey: 'key-envelope', recipientContentPublicKeyFingerprint: 'fingerprint' } : null,
+            storedContent: sealSavedSecretResourceStoredContentV1({ resourceId: 'resource-a', mode, content,
+                resourceDataKey: dataKey, randomBytes: length => new Uint8Array(length).fill(3) }) }], decryptDataKeyEnvelope });
+        expect(result.entries).toEqual([passkeyEntry]);
+        expect(result.materializedSecrets).toEqual([]);
+        expect(result.contents.get(entry.ref)).toEqual(content);
+        expect(decryptDataKeyEnvelope).toHaveBeenCalledTimes(mode === 'e2ee' ? 1 : 0);
+    });
+    it('keeps external resource metadata without manufacturing an inline secret value', async () => {
+        const result = await materializeSavedSecretResources({ resources: [{ resourceId: 'resource-a', encryptionMode: 'plain',
+            entry, recipientEnvelope: null, storedContent: { t: 'plain', v: { v: 2, name: 'Team key', kind: 'apiKey',
+                source: { kind: 'external', contribution: { pluginId: 'acme.vault', localId: 'vault' },
+                    account: 'my-account', reference: 'op://vault/item/token' } } } }],
+            decryptDataKeyEnvelope: async () => null });
+        expect(result.entries).toEqual([entry]);
+        expect(result.materializedSecrets).toEqual([]);
+    });
+    it('does not open E2EE content when its caller retires during the key boundary', async () => {
+        const dataKey = new Uint8Array(32).fill(7);
+        const sealed = sealSavedSecretResourceStoredContentV1({ resourceId: 'resource-a', mode: 'e2ee', resourceDataKey: dataKey,
+            content: { v: 1, name: 'Team key', kind: 'apiKey', value: 'must-not-open-after-retirement' },
+            randomBytes: length => new Uint8Array(length).fill(3) });
+        if (sealed.t !== 'encrypted') throw new Error('Expected encrypted fixture');
+        const ciphertext = sealed.c;
+        let bodyCipherReads = 0;
+        const encrypted = {
+            resourceId: 'resource-a', encryptionMode: 'e2ee', entry: { ...entry, encryptionMode: 'e2ee' },
+            storedContent: { t: 'encrypted', get c() { bodyCipherReads++; return ciphertext; } },
+            recipientEnvelope: { encryptedDataKey: 'opaque-envelope', recipientContentPublicKeyFingerprint: 'fingerprint' },
+        } satisfies SavedSecretResourceMaterialV1;
+        let current = true;
+        const result = await materializeSavedSecretResources({ resources: [encrypted], isCurrent: () => current,
+            // The key adapter is the boundary; authenticated body opening remains real.
+            decryptDataKeyEnvelope: async () => { current = false; return dataKey; } });
+        expect(result.materializedSecrets).toEqual([]);
+        expect(bodyCipherReads).toBe(0);
+        expect(JSON.stringify(result)).not.toContain('must-not-open-after-retirement');
+        expect(dataKey.every(byte => byte === 0)).toBe(true);
+    });
+
     it('keeps healthy rows usable while excluding row-local corrupt records from the reference catalog', async () => {
         const healthy = {
             resourceId: 'resource-a',

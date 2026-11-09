@@ -21,7 +21,7 @@ export {
     type MachineIdentityRecord,
 } from '@happier-dev/protocol/machines/identity/canonicalMachineId';
 
-import type { MachineCollection, MachineIdentityRecord } from '@happier-dev/protocol';
+import type { MachineCollection, MachineIdentityRecord } from '@happier-dev/protocol/machines/identity/canonicalMachineId';
 
 /**
  * Materialise the collection for the few resolutions that genuinely have to *scan* — matching a

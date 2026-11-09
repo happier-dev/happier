@@ -1,14 +1,19 @@
 import {
-    PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
+    PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2} from '@happier-dev/protocol/machines/peer/mediation/tunnel/encoding';
+import {
     PEER_TCP_TUNNEL_DEFAULT_INITIAL_WINDOW_BYTES,
     PEER_TCP_TUNNEL_DEFAULT_MAX_FRAME_BYTES,
-    PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT,
-    createFeatureDecision,
-    createEphemeralPeerRouteProofHandleV2,
-    createDirectRouteGrantSigningInputV2,
-    type DirectRouteGrantPayloadV2,
     type PeerTcpTunnelOpenV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/machines/peer/mediation/tunnel/v1';
+import {
+    PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT} from '@happier-dev/protocol/machines/peer/mediation/tunnel/relay';
+import {
+    createFeatureDecision} from '@happier-dev/protocol/features/decision';
+import {
+    createEphemeralPeerRouteProofHandleV2} from '@happier-dev/protocol/machines/peer/mediation/ephemeralPeerRouteProofV2';
+import {
+    createDirectRouteGrantSigningInputV2,
+    type DirectRouteGrantPayloadV2} from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantV2';
 import { describe, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';

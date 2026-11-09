@@ -168,6 +168,33 @@ describe('runNativeCryptoWorkerBatch', () => {
         }
     });
 
+    it('does not blame a healthy worker when a JS long task made the routing deadline fire late', async () => {
+        // The bound detects a hung native worker. A completion waiting behind a blocked JS thread is not one.
+        const timeoutMs = 100;
+        const capabilityKey = {};
+        let settleNative: ((items: string[]) => void) | undefined;
+        let references = 0;
+        const result = runNativeCryptoWorkerBatch({
+            operation: 'decryptSecretboxJson',
+            routing: { mode: 'auto', timeoutMs, minPayloadBytes: 0 },
+            itemCount: 4,
+            payloadBytes: 50_000,
+            capabilityCacheKey: capabilityKey,
+            probe: async () => availableCapability,
+            nativeRun: () => new Promise<string[]>((resolve) => { settleNative = resolve; }),
+            referenceRun: async () => { references += 1; return ['reference']; },
+        });
+        while (!settleNative) await new Promise((resolve) => setTimeout(resolve, 0));
+        // Delivered just after the deadline: both are due when the thread frees, the deadline first.
+        setTimeout(() => settleNative?.(['native']), timeoutMs + 1);
+        const blockedUntil = performance.now() + timeoutMs * 3;
+        while (performance.now() < blockedUntil) { /* the JS thread's long task */ }
+
+        await expect(result).resolves.toEqual({ status: 'ok', source: 'native', items: ['native'] });
+        expect(references).toBe(0);
+        resetNativeCryptoWorkerCapabilityCacheForTests();
+    });
+
     it('does not degrade the capability when a deliberate suspension outlasts the routing timeout', async () => {
         // `timeoutMs` is a dispatch budget, not a wall clock over the app being
         // backgrounded: the queue suspends regular dispatch on purpose, so the

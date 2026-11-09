@@ -91,8 +91,7 @@ describe('private catalog Account admission', () => {
         applyNotificationChannelCatalogSnapshot(scope, { catalog: { status: 'ready', revision: 3, channels: [channel], diagnostics: [] }, rawSettings: {}, sourceSettingsVersion: 0 }, true);
         applyConnectedMetadataCatalogSnapshot(scope, {
             presentation: { status: 'ready', revision: 3, entries: [{ v: 1, subject: { kind: 'account', account: { service, accountId: 'private-account' } }, label: 'Private label' }], diagnostics: [] },
-            acknowledgements: { status: 'ready', revision: 3, entries: [{ v: 1, subject: { kind: 'warning', warningId: 'private-warning', scope: { kind: 'account' } }, acknowledged: true }], diagnostics: [] }, disclosure: [],
-        }, true);
+            acknowledgements: { status: 'ready', revision: 3, entries: [{ v: 1, subject: { kind: 'warning', warningId: 'private-warning', scope: { kind: 'account' } }, acknowledged: true }], diagnostics: [] },         }, true);
         const readPrivateData = () => ({ provider: getProviderCatalogSnapshot(scope)?.data,
             configurations: getConnectedAccountCatalogValue(scope, 'configurations').value,
             purposes: getConnectedAccountCatalogValue(scope, 'purposes').value,

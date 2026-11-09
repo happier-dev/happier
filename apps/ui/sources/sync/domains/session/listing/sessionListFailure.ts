@@ -26,6 +26,7 @@ function readFailureStatus(error: unknown): number | null {
 export function classifySessionListFailure(error: unknown): SessionListFailure {
     const code = readFailureCode(error);
     const status = readFailureStatus(error);
+    if (code === 'cursor_not_advancing') return { reason: 'cursor_not_advancing', code };
     if (code === 'operation_not_supported' || code === 'feature_not_supported' || code === 'filtered_session_listing_unavailable') {
         return { reason: 'unsupported', code };
     }

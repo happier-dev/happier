@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ACCOUNT_SETTING_DEFINITIONS } from '@happier-dev/protocol';
+import { ACCOUNT_SETTING_DEFINITIONS } from '@happier-dev/protocol/account/settings/accountSettings';
 
 import {
     NEW_SESSION_PRESENTATION_MODES,
@@ -31,6 +31,16 @@ describe('account session creation setting definitions', () => {
         expect(schema.parse('docked')).toBe('docked');
         expect(schema.parse('auto')).toBe('auto');
         expect(schema.parse('invalid')).toBe('docked');
+    });
+
+    it('defaults the separate floating New backdrop preference to soft and accepts every strength', () => {
+        const definition = ACCOUNT_SETTING_DEFINITIONS.newSessionBackdropStrengthV1;
+        expect(definition.default).toBe('soft');
+        expect(definition.storageScope).toBe('account');
+        for (const strength of ['subtle', 'soft', 'medium', 'rich']) {
+            expect(definition.schema.parse(strength)).toBe(strength);
+        }
+        expect(definition.schema.parse('unknown')).toBe('soft');
     });
 
     it('stores remembered engine selections as account-scoped session creation settings', () => {

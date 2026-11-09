@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import Fastify from 'fastify';
 import { io, type Socket } from 'socket.io-client';
 import { callSocketRpc } from '@happier-dev/sync-client';
-import { decodeBase64 } from '@happier-dev/protocol';
+import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 import { ExternalActionDaemonDispatchRequestSchema, EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { OpenProjectInputV1Schema, OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openProjectV1';

@@ -6,7 +6,7 @@ import {
     PluginProjectedActionV2Schema,
     PluginProjectionV2Schema,
     type PluginProjectionV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import {
     normalizePluginUiDestinationBindingV1,
     normalizePluginUiInlineSurfaceBindingV1,
@@ -35,7 +35,7 @@ it('preserves external plugin skill declarations through the UI projection', () 
         pluginVersion: '1.0.0', occurrenceId: 'acme-skills-runtime', executionOrigin,
         definition: { id: 'check', directory: './resources/skills/check' } };
     const model = normalizePluginUiProjection(PluginProjectionV2Schema.parse({ v: 2, generation: 1,
-        agentsById: {}, actionsById: {},   resourcesById: {}, settingsById: {}, diagnostics: [],
+        agentsById: {}, actionsById: {}, resourcesById: {}, settingsById: {}, diagnostics: [],
         installedPackagesById: { [entry.pluginId]: { id: entry.pluginId, displayName: 'Acme Skills', version: '1.0.0', enabled: true,
             occurrenceId: entry.occurrenceId, executionOrigin,
             sourceCustody: { kind: 'development', registeredRootId: 'acme-skills-root' },
@@ -119,8 +119,6 @@ function parsePluginUiEntry(
         installedPackagesById: {},
         agentsById: {},
         actionsById: {},
-
-
         resourcesById: {},
         settingsById: {},
         familiesById: {
@@ -212,8 +210,6 @@ function createProjection(): PluginProjectionV2 {
                 available: true,
             },
         },
-
-
         resourcesById: {
             'acme.preview/status': {
                 id: 'status',
@@ -372,6 +368,8 @@ function createProjection(): PluginProjectionV2 {
                             state: 'fallback',
                             reason: 'feature_disabled',
                             diagnostics: ['feature_disabled'],
+                            disabledWhen: { fact: 'project.exists', operator: 'equals', value: true },
+                            disabledReason: { key: 'project.setup', fallback: 'Connect this project.' },
                         },
                     },
                     'surfacePlacement:acme.preview:browser-inspector': {
@@ -1026,6 +1024,8 @@ describe('plugin UI projection normalization', () => {
             },
             availability: {
                 reason: 'feature_disabled',
+                disabledWhen: { fact: 'project.exists', operator: 'equals', value: true },
+                disabledReason: { key: 'project.setup', fallback: 'Connect this project.' },
             },
         });
         expect(model.surfacePlacementsById['surfacePlacement:acme.preview:browser-inspector']).toMatchObject({

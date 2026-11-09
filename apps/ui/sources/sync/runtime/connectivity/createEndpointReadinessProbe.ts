@@ -57,7 +57,7 @@ export function readEndpointReadinessResultFromState(state: ManagedConnectionSta
             ...detail,
         };
     }
-    return { status: 'server_unreachable', ...detail };
+    return { status: 'server_unreachable', ...detail, ...(state.failure ? { failure: state.failure } : {}) };
 }
 
 export function readEndpointReadinessBlockedResult(endpoint: string): EndpointReadinessProbeResult | null {

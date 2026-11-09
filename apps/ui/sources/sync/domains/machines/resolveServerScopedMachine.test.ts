@@ -19,6 +19,32 @@ describe('resolveServerScopedMachine', () => {
     });
     afterEach(() => standardCleanup());
 
+    it('uses the canonical keyed inventory for demanded exact rows without scanning the fleet', () => {
+        const rows = Array.from({ length: 100 }, (_, index) => createMachineFixture({ id: `demand-${index}` }));
+        let rowReads = 0;
+        const inventory = new Proxy(rows, { get(target, key, receiver) {
+            if (typeof key === 'string' && /^\d+$/.test(key)) rowReads += 1;
+            return Reflect.get(target, key, receiver);
+        } });
+        const state = { machines: {}, machineListByServerId: { 'srv_machine_owner': inventory },
+            machineRecordsByServerId: { 'srv_machine_owner': Object.fromEntries(rows.map(row => [row.id, row])) },
+            machineListStatusByServerId: { 'srv_machine_owner': 'idle' as const } };
+        for (const row of rows) expect(resolveServerScopedMachine(state, homeId, row.id)).toBe(row);
+        expect(rowReads).toBe(0);
+        expect(resolveServerScopedMachine(state, homeId, 'absent')).toBeNull();
+        expect(rowReads).toBe(0);
+        let activeEnumerations = 0;
+        const activeRecords = new Proxy(state.machineRecordsByServerId.srv_machine_owner, {
+            ownKeys(target) { activeEnumerations += 1; return Reflect.ownKeys(target); },
+        });
+        const loading = { ...state, machines: activeRecords,
+            machineListStatusByServerId: { 'srv_machine_owner': 'loading' as const } };
+        for (const row of rows) expect(resolveServerScopedMachine(loading, homeId, row.id)).toBe(row);
+        expect(rowReads).toBe(0);
+        // Exact reads must not materialize an active fleet array either.
+        expect(activeEnumerations).toBe(0);
+    });
+
     it('resolves identity and profile routes from either inventory key', () => {
         const machine = createMachineFixture();
         for (const key of ['srv_machine_owner', homeId]) {

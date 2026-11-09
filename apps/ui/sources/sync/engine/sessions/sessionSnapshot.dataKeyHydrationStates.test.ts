@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import type { AccountEncryptionCurrentnessResponse, V2SessionRecord } from '@happier-dev/protocol';
+import type { AccountEncryptionCurrentnessResponse} from '@happier-dev/protocol/account/encryptionMode';
+import type { V2SessionRecord } from '@happier-dev/protocol/sessions/control/contract';
 
 import { fetchAndApplySessions as fetchAndApplySessionsSource, type SessionListEncryption } from './sessionSnapshot';
 import { createCompactSessionListFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';

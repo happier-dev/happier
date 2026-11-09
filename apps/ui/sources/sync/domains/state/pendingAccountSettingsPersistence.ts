@@ -8,7 +8,6 @@ import { parseThemeProfileMigrationIntent } from '@/theme/profiles/themeProfileM
 import type { ThemeProfileMigrationIntent } from '@/theme/profiles/themeProfileTypes';
 import { parseStoredPendingSettings } from './persistence';
 import { getPersistenceStorage } from './persistenceStorage';
-import { migrateMachineAdministrationTargetObservations } from './machineAdministrationUiState';
 import { migrateNewSessionUiState } from './newSessionTargetUiState';
 import { publishPendingAccountSettingsPersistenceMutation } from './accountSettingsPersistenceSubscriptions';
 
@@ -43,7 +42,7 @@ export function loadPendingAccountSettingsState(scope: AccountSettingsScope): Pe
     let parsed: unknown = readPendingRecord(scope);
     const themeProfileMigration = readIntent(parsed as Record<string, unknown>);
     try {
-        const migrated = migrateNewSessionUiState(scope, migrateMachineAdministrationTargetObservations(scope, parsed));
+        const migrated = migrateNewSessionUiState(scope, parsed);
         if (migrated !== parsed) {
             getPersistenceStorage().set(pendingAccountSettingsKey(scope), JSON.stringify(migrated));
             parsed = migrated;

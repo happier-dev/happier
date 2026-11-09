@@ -12,9 +12,32 @@ import { createDeferred, renderScreen, flushHookEffects } from '@/dev/testkit';
 
 const rpc = vi.hoisted(() => ({ machine: vi.fn() }));
 const nativeNotifications = vi.hoisted(() => ({ listener: null as ((response: unknown) => void) | null,
+    pendingResponses: [] as unknown[],
+    desktop: false,
     received: new Set<() => void>(),
     onDismiss: undefined as (() => void) | undefined,
     presented: [] as import('expo-notifications').Notification[], dismissed: [] as string[] }));
+vi.mock('@tauri-apps/plugin-notification', () => ({ isPermissionGranted: async () => true,
+    requestPermission: async () => 'granted', sendNotification: vi.fn() }));
+vi.mock('@/utils/platform/desktopHost', async importOriginal => ({
+    ...await importOriginal<typeof import('@/utils/platform/desktopHost')>(),
+    isDesktopHost: () => nativeNotifications.desktop,
+    desktopHostKind: () => nativeNotifications.desktop ? 'tauri' : null,
+    listenDesktopHostEvent: async (_event: string, listener: (response: unknown) => void) => {
+        nativeNotifications.listener = listener;
+        return () => { nativeNotifications.listener = null; };
+    },
+    invokeDesktopHost: async (command: string, args?: Record<string, unknown>) => {
+        if (command === 'desktop_notification_take_responses') return nativeNotifications.pendingResponses.splice(0);
+        if (command === 'desktop_notification_list') return nativeNotifications.presented;
+        if (command === 'desktop_notification_remove') {
+            nativeNotifications.dismissed.push(String(args?.identifier));
+            nativeNotifications.presented = nativeNotifications.presented.filter(notice => notice.request.identifier !== args?.identifier);
+            return;
+        }
+        throw new Error(`Unexpected native notification command ${command}`);
+    },
+}));
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({ Platform: { OS: 'ios' } }));
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 // Only the OS notification delivery is replaced; parsing, routing and Action admission stay real.
@@ -66,6 +89,8 @@ beforeEach(async () => {
     storage.setState(initialStorage, true);
     await loadSyncSingletonForTests(); rpc.machine.mockReset();
     machineGuardStore.reset(); nativeNotifications.presented = []; nativeNotifications.dismissed = []; nativeNotifications.onDismiss = undefined;
+    nativeNotifications.desktop = false;
+    nativeNotifications.pendingResponses = [];
     savedHomeId = await homes.addHome({ name: 'Process Home', serverUrl: 'https://process-actions.test', serverIdentityId: 'srv_process_actions', accountId: 'owner', currentAccount: true });
     // Harness mutations use their saved registration handle; Actions retain the advertised Home scope.
     serverId = 'srv_process_actions';
@@ -125,6 +150,113 @@ describe('machine process Actions through the captured UI Home', () => {
         expect(rpc.machine).toHaveBeenCalledWith(expect.objectContaining({ serverId, accountId: 'owner', machineId: 'marker-machine' }));
     });
 
+    it('routes direct native service control through the real UI front door and captured Account', async () => {
+        await homes.addHome({ name: 'Unrelated Home', serverUrl: 'https://unrelated-control.test',
+            accountId: 'unrelated-owner', currentAccount: true });
+        const input = { serverId, machineId: 'service-machine', serviceId: 'instance/web',
+            expectedGeneration: 'native-generation', operation: 'restart' };
+        const observed = { kind: 'observed', serviceId: input.serviceId, generation: input.expectedGeneration,
+            state: 'running', operation: { operationId: 'native-control' } };
+        rpc.machine.mockResolvedValue(observed);
+        const confirmation = vi.fn(async () => true);
+        const executor = createDefaultActionExecutor({ presentUserActionConfirmation: confirmation });
+        expect(await executor.execute('machines.services.control', input, {
+            surface: 'ui', serverId, expectedAccountId: 'owner',
+        })).toEqual({ ok: true, result: observed });
+        expect(rpc.machine).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+            method: RPC_METHODS.MACHINES_SERVICE_CONTROL, serverId, accountId: 'owner',
+            machineId: input.machineId, payload: input, operationTimeoutMs: null,
+        }));
+        expect(confirmation).not.toHaveBeenCalled();
+        expect(homes.artifacts(savedHomeId).list()).toHaveLength(0);
+        expect(await executor.execute('machines.services.control', {
+            ...input, scope: { kind: 'machine', machineId: input.machineId },
+        }, { surface: 'ui', serverId, expectedAccountId: 'owner' })).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+        expect(rpc.machine).toHaveBeenCalledTimes(1);
+    });
+
+    it('routes safe service reads and watch intent through the captured Home without an approval artifact', async () => {
+        await homes.addHome({ name: 'Unrelated Home', serverUrl: 'https://unrelated-services.test',
+            accountId: 'unrelated-owner', currentAccount: true });
+        rpc.machine.mockResolvedValue({ kind: 'unavailable', reason: 'denied' });
+        const machine = { serverId, machineId: 'service-machine' };
+        const requests = [
+            ['machines.services.list', machine],
+            ['machines.services.discovery', machine],
+            ['machines.services.detail', { ...machine, serviceId: 'service', expectedGeneration: 'generation' }],
+            ['machines.services.watch', { ...machine, candidateId: 'candidate', expectedRevision: 'native', lifecyclePurpose: 'development' }],
+            ['machines.services.unwatch', { ...machine, watchId: 'watch', expectedRevision: 'watches' }],
+        ] as const;
+        for (const [actionId, input] of requests) {
+            expect(await createDefaultActionExecutor().execute(actionId as never, input, {
+                expectedAccountId: 'owner', surface: 'ui', serverId,
+            })).toEqual({ ok: true, result: { kind: 'unavailable', reason: 'denied' } });
+        }
+        expect(rpc.machine.mock.calls.map(call => ({ method: call[0].method, serverId: call[0].serverId,
+            accountId: call[0].accountId, machineId: call[0].machineId, payload: call[0].payload }))).toEqual(
+            requests.map(([actionId, input]) => ({ method: actionId, serverId, accountId: 'owner',
+                machineId: machine.machineId, payload: input })),
+        );
+        expect(homes.artifacts(savedHomeId).list()).toHaveLength(0);
+    });
+
+    it('recovers a desktop native launch through Guard admission and withdraws its resolved OS occurrence', async () => {
+        nativeNotifications.desktop = true;
+        let stopAt: number | undefined = 300_000;
+        rpc.machine.mockImplementation(async ({ method }: { method: string }) => {
+            if (method === RPC_METHODS.MACHINES_GUARD_GET) return createMachineGuardViewFixture({ idle: stopAt === undefined ? [] : [{
+                sessionRef: 's', title: 'Session', agentId: 'codex', status: 'stops_at', stopAt, idleMs: 0,
+            }] });
+            if (method === RPC_METHODS.MACHINES_GUARD_IDLE_STOP_KEEP_RUNNING) { stopAt = undefined; return { status: 'kept' }; }
+            throw new Error(`Unexpected Guard operation ${method}`);
+        });
+        const data = { ...buildGuardStopWarningPushDataV1({ topic: 'guard_stop_warning', machineId: 'm',
+            sessionId: 's', rule: 'idle_sessions', stopAt: 300_000 }), serverUrl: 'https://process-actions.test' };
+        const notice = { date: 1, request: { identifier: 'desktop-occurrence', trigger: null,
+            content: { title: null, subtitle: null, body: null, data, sound: null, categoryIdentifier: null, accountId: 'owner' } } };
+        nativeNotifications.presented = [notice];
+        nativeNotifications.pendingResponses = [{ actionIdentifier: PUSH_NOTIFICATION_ACTION_IDS.guardKeepRunningV1, notification: notice }];
+        const { useNotificationResponseRouting } = await import('@/activity/notifications/runtime/useNotificationResponseRouting');
+        function Probe() { useNotificationResponseRouting({ enabled: true, refreshAuth: async () => {} }); return null; }
+        const screen = await renderScreen(React.createElement(Probe));
+        await flushHookEffects();
+        expect(nativeNotifications.listener).not.toBeNull();
+        await vi.waitFor(() => expect(nativeNotifications.dismissed).toEqual(['desktop-occurrence']));
+        expect(rpc.machine.mock.calls.map(call => call[0].method)).toEqual([
+            RPC_METHODS.MACHINES_GUARD_GET, RPC_METHODS.MACHINES_GUARD_IDLE_STOP_KEEP_RUNNING, RPC_METHODS.MACHINES_GUARD_GET,
+        ]);
+        rpc.machine.mockClear();
+        stopAt = 400_000;
+        const stale = { ...notice, request: { ...notice.request, identifier: 'desktop-superseded' } };
+        nativeNotifications.presented = [stale];
+        nativeNotifications.pendingResponses.push({ actionIdentifier: PUSH_NOTIFICATION_ACTION_IDS.guardKeepRunningV1, notification: stale });
+        nativeNotifications.listener?.(undefined);
+        await vi.waitFor(() => expect(nativeNotifications.dismissed).toEqual(['desktop-occurrence', 'desktop-superseded']));
+        expect(rpc.machine.mock.calls.map(call => call[0].method)).toEqual([
+            RPC_METHODS.MACHINES_GUARD_GET, RPC_METHODS.MACHINES_GUARD_GET,
+        ]);
+        await screen.unmount();
+        expect(nativeNotifications.listener).toBeNull();
+    });
+
+    it('refuses a recovered desktop warning after the saved Home is rebound to a different Account', async () => {
+        nativeNotifications.desktop = true;
+        const data = { ...buildGuardStopWarningPushDataV1({ topic: 'guard_stop_warning', machineId: 'm',
+            sessionId: 's', rule: 'idle_sessions', stopAt: 300_000 }), serverUrl: 'https://process-actions.test' };
+        const notice = { date: 1, request: { identifier: 'old-account-occurrence', trigger: null,
+            content: { title: null, subtitle: null, body: null, data, sound: null, categoryIdentifier: null, accountId: 'owner' } } };
+        nativeNotifications.presented = [notice];
+        nativeNotifications.pendingResponses = [{ actionIdentifier: PUSH_NOTIFICATION_ACTION_IDS.guardKeepRunningV1, notification: notice }];
+        await homes.switchAccount(savedHomeId, 'replacement');
+        const { useNotificationResponseRouting } = await import('@/activity/notifications/runtime/useNotificationResponseRouting');
+        function Probe() { useNotificationResponseRouting({ enabled: true, refreshAuth: async () => {} }); return null; }
+        const screen = await renderScreen(React.createElement(Probe));
+        await flushHookEffects({ cycles: 20 });
+        await screen.unmount();
+        expect(nativeNotifications.pendingResponses).toEqual([]);
+        expect(rpc.machine).not.toHaveBeenCalled();
+        expect(nativeNotifications.dismissed).toEqual([]);
+    });
     it('retains a newly delivered warning when an already-demanded Guard view still has stale absence', async () => {
         const watching = createDeferred<void>();
         const freshRead = createDeferred<void>();

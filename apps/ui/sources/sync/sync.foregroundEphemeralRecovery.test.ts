@@ -58,11 +58,18 @@ vi.mock('@/sync/api/session/apiSocket', () => ({
             return () => socketStatusHandlers.delete(handler);
         }),
         onConnectionStateChange: vi.fn(() => () => {}),
+        onSessionConsumptionAdmitted: vi.fn(() => () => {}),
         connect: apiSocketConnect,
         disconnect: apiSocketDisconnect,
         initialize: vi.fn(),
         request: vi.fn(async () => new Response('ok', { status: 200 })),
     },
+}));
+
+const fetchSessionListPageCompat = vi.hoisted(() => vi.fn());
+vi.mock('./engine/sessions/sessionHttpCompat', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('./engine/sessions/sessionHttpCompat')>()),
+    fetchSessionListPageCompat,
 }));
 
 vi.mock('@/log', () => ({
@@ -92,6 +99,7 @@ function createSyncUnitStub(): SyncUnitStub {
  */
 async function createResumableSync(
     refreshedByCatchUp: Readonly<{ sessions: boolean; machines: boolean }> = { sessions: false, machines: false },
+    presenceOutcome: 'complete' | 'needs-full' = 'complete',
 ) {
     const { upsertAndActivateServer, getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
     const { storage } = await import('./domains/state/storage');
@@ -125,8 +133,9 @@ async function createResumableSync(
     vi.spyOn(sync as any, 'rearmPendingOutboxForActiveScope').mockResolvedValue(undefined);
     vi.spyOn(sync as any, 'resumeViaChanges').mockResolvedValue({ status: 'ok', refreshedByCatchUp });
     vi.spyOn(sync as any, 'catchUpLoadedExternalSessionsOnResume').mockResolvedValue(undefined);
+    const presenceRefresh = vi.spyOn(sync as any, 'refreshSessionPresenceOnResume').mockResolvedValue(presenceOutcome);
 
-    return { sync, units };
+    return { sync, units, presenceRefresh };
 }
 
 async function foregroundAfterSocketOutage(sync: unknown): Promise<void> {
@@ -157,12 +166,12 @@ describe('sync foreground ephemeral recovery', () => {
         apiSocketDisconnect.mockClear();
     });
 
-    it('refreshes sessions and machines exactly once when foregrounding after a socket outage', async () => {
+    it('recovers presence, not the session list, when foregrounding after a socket outage with a clean changes catch-up', async () => {
         // Gating this on `reason === 'socket-reconnect'` could never fire here: an intentional
         // background disconnect resets apiSocket's reconnect bookkeeping, so `onReconnected` never
         // runs for a background→foreground cycle and the client kept stale session.active /
         // machine-online state until the next keep-alive ephemeral (0–20s).
-        const { sync, units } = await createResumableSync();
+        const { sync, units, presenceRefresh } = await createResumableSync();
 
         const appStateHandler = Array.from(appStateHandlers)[0];
         expect(appStateHandler).toBeTruthy();
@@ -176,8 +185,18 @@ describe('sync foreground ephemeral recovery', () => {
         await (sync as unknown as { resumeInFlight: Promise<void> | null }).resumeInFlight;
         await vi.advanceTimersByTimeAsync(0);
 
-        expect(units.sessionsSync.invalidateCoalesced).toHaveBeenCalledTimes(1);
+        // Rows and membership came from the cursor catch-up; only presence is missing.
+        expect(presenceRefresh).toHaveBeenCalledTimes(1);
+        expect(units.sessionsSync.invalidateCoalesced).not.toHaveBeenCalled();
         expect(units.machinesSync.invalidateCoalesced).toHaveBeenCalledTimes(1);
+    });
+
+    it('falls back to the full session list read when the presence scope is unknown', async () => {
+        const { sync, units } = await createResumableSync({ sessions: false, machines: true }, 'needs-full');
+
+        await foregroundAfterSocketOutage(sync);
+
+        expect(units.sessionsSync.invalidateCoalesced).toHaveBeenCalledTimes(1);
     });
 
     it('does not repeat a sessions or machines refresh the changes catch-up already performed', async () => {
@@ -186,10 +205,11 @@ describe('sync foreground ephemeral recovery', () => {
         // resume tail issues a second complete catch-up wave (session-organization + sessions/active
         // + /v1/machines + /v2/sessions?includeAttention) once the catch-up's awaited hydration
         // finishes.
-        const { sync, units } = await createResumableSync({ sessions: true, machines: true });
+        const { sync, units, presenceRefresh } = await createResumableSync({ sessions: true, machines: true });
 
         await foregroundAfterSocketOutage(sync);
 
+        expect(presenceRefresh).not.toHaveBeenCalled();
         expect(units.sessionsSync.invalidateCoalesced).not.toHaveBeenCalled();
         expect(units.machinesSync.invalidateCoalesced).not.toHaveBeenCalled();
     });
@@ -197,11 +217,12 @@ describe('sync foreground ephemeral recovery', () => {
     it('still refreshes the unit the changes catch-up did not cover', async () => {
         // Partial coverage must stay precise: the catch-up refreshed machines only, so sessions
         // still needs the offline-recovery refresh.
-        const { sync, units } = await createResumableSync({ sessions: false, machines: true });
+        const { sync, units, presenceRefresh } = await createResumableSync({ sessions: false, machines: true });
 
         await foregroundAfterSocketOutage(sync);
 
-        expect(units.sessionsSync.invalidateCoalesced).toHaveBeenCalledTimes(1);
+        expect(presenceRefresh).toHaveBeenCalledTimes(1);
+        expect(units.sessionsSync.invalidateCoalesced).not.toHaveBeenCalled();
         expect(units.machinesSync.invalidateCoalesced).not.toHaveBeenCalled();
     });
 
@@ -212,5 +233,48 @@ describe('sync foreground ephemeral recovery', () => {
 
         expect(units.sessionsSync.invalidateCoalesced).not.toHaveBeenCalled();
         expect(units.machinesSync.invalidateCoalesced).not.toHaveBeenCalled();
+    });
+
+    it('does not withdraw the Account encryption observation again on a foreground resume', async () => {
+        // The socket owner already withdraws it when the transport is lost and when it reconnects.
+        // A third withdrawal from the resume only forces an extra /currentness read with the same answer.
+        const { subscribeAccountEncryptionModeCacheInvalidation } = await import('@/sync/api/account/apiAccountEncryptionMode');
+        const { sync } = await createResumableSync();
+        const withdrawals: unknown[] = [];
+        const unsubscribe = subscribeAccountEncryptionModeCacheInvalidation((event) => { withdrawals.push(event); });
+
+        await foregroundAfterSocketOutage(sync);
+
+        unsubscribe();
+        expect(withdrawals).toEqual([]);
+    });
+
+    it('presence recovery re-reads only rows that are active now or were active locally', async () => {
+        const { sync, presenceRefresh } = await createResumableSync();
+        presenceRefresh.mockRestore();
+        const { storage } = await import('./domains/state/storage');
+        const row = (id: string, active: boolean) => ({ id, active });
+        storage.setState((state) => ({
+            ...state,
+            sessionListRowsByServerId: { 'server-a': {
+                idle: row('idle', false), wasActive: row('wasActive', true), nowActive: row('nowActive', false),
+            } },
+        }) as never, true);
+        vi.spyOn(sync as any, 'getAppliedTransportTarget').mockReturnValue({ serverId: 'server-a', serverUrl: 'http://x', generation: 1 });
+        vi.spyOn(sync as any, 'createAppliedTransportRequest').mockReturnValue(vi.fn());
+        const reread = vi.spyOn(sync as any, 'refreshListedSessionRows').mockResolvedValue(undefined);
+        // `unknownNew` is not a known row: a new Session reaches the list through the changes feed.
+        fetchSessionListPageCompat.mockResolvedValue({ sessions: [{ id: 'nowActive' }, { id: 'unknownNew' }], hasNext: false });
+
+        const outcome = await (sync as any).refreshSessionPresenceOnResume({ shouldContinue: () => true });
+
+        expect(outcome).toBe('complete');
+        expect(reread).toHaveBeenCalledTimes(1);
+        expect(reread.mock.calls[0]![0]).toBe('server-a');
+        expect([...reread.mock.calls[0]![1] as string[]].sort()).toEqual(['nowActive', 'wasActive']);
+
+        fetchSessionListPageCompat.mockResolvedValue({ sessions: [], hasNext: true });
+        expect(await (sync as any).refreshSessionPresenceOnResume({ shouldContinue: () => true })).toBe('needs-full');
+        expect(reread).toHaveBeenCalledTimes(1);
     });
 });

@@ -1,4 +1,4 @@
-import type { UsageLimitRecoverySettingsV1 } from '@happier-dev/protocol';
+import type { UsageLimitRecoverySettingsV1 } from '@happier-dev/protocol/account/settings/accountSettings';
 
 export function normalizeUsageLimitRecoverySettings(
     settings: Partial<UsageLimitRecoverySettingsV1> | null | undefined,

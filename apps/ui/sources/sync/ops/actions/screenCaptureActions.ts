@@ -262,3 +262,4 @@ export function createNativeScreenCaptureAction(options: Readonly<{
         catch (error) { if (error instanceof NativeCaptureError) return failure(error.code); throw error; }
     };
 }
+

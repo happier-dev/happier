@@ -10,7 +10,7 @@ import {
     type TeamCredentialResourceCatalogEntryV1,
 } from '@happier-dev/protocol/teams';
 import { homeDomainFailureFromActionFailure } from '@/sync/api/home/homeDomainActions';
-import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
+import { TEAM_CREDENTIAL_MATERIAL_ACCOUNT_CHANGE_ENTITY_ID_V1, TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import type { ProviderBrokerApplicationBindingV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 
 import { runTeamAction, type HomeDomainFailure } from '@/sync/ops/teams/teamActionClient';
@@ -611,7 +611,8 @@ const credentialResourcesLoader = createScopedSnapshotLoader<TeamCredentialResou
         invalidateTeamCredentialResourcesSnapshot(scope, address, queryKey);
     },
     matchesWake: (event) => event.entityIds === undefined
-        || event.entityIds.includes(TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1),
+        || event.entityIds.includes(TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1)
+        || event.entityIds.includes(TEAM_CREDENTIAL_MATERIAL_ACCOUNT_CHANGE_ENTITY_ID_V1),
 });
 
 type TeamCredentialResourceTarget = ScopedLoadTarget & Readonly<{
@@ -694,40 +695,44 @@ const credentialResourceLoader = createScopedSnapshotLoader<TeamCredentialResour
         invalidateTeamCredentialResourceSnapshot(scope, address, resourceId);
     },
     matchesWake: (event) => event.entityIds === undefined
-        || event.entityIds.includes(TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1),
+        || event.entityIds.includes(TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1)
+        || event.entityIds.includes(TEAM_CREDENTIAL_MATERIAL_ACCOUNT_CHANGE_ENTITY_ID_V1),
 });
 
 type TeamCredentialResourceCatalogTarget = ScopedLoadTarget & Readonly<{
     scope: ServerAccountScope;
     address: TeamAddress;
     application?: ProviderBrokerApplicationBindingV1;
+    executionMachineId?: string;
 }>;
 
 function credentialResourceCatalogTargetFor(
     scope: ServerAccountScope,
     address: TeamAddress,
     application?: ProviderBrokerApplicationBindingV1,
+    executionMachineId?: string,
 ): TeamCredentialResourceCatalogTarget | null {
     if (scope.serverId !== address.serverId) return null;
     return {
-        key: `credential-catalog:${teamCredentialResourceCatalogKey(scope, address, application)}`,
+        key: `credential-catalog:${teamCredentialResourceCatalogKey(scope, address, application, executionMachineId)}`,
         serverId: scope.serverId,
         scope,
         address,
         ...(application ? { application } : {}),
+        ...(executionMachineId ? { executionMachineId } : {}),
     };
 }
 
 const credentialResourceCatalogLoader = createScopedSnapshotLoader<TeamCredentialResourceCatalogTarget>({
-    loadGroupKey: ({ scope, application }) => JSON.stringify([serverAccountScopeKeySuffix(scope), application ?? null]),
+    loadGroupKey: ({ scope, application, executionMachineId }) => JSON.stringify([serverAccountScopeKeySuffix(scope), application ?? null, executionMachineId ?? null]),
     loadMany: async (loads, signal) => {
         const group = loads.filter(load => !load.context.signal.aborted);
         if (group.length === 0) return;
         for (const load of group) {
-            const { scope, address, application } = load.target;
-            beginTeamCredentialResourceCatalogLoad(scope, address, application);
+            const { scope, address, application, executionMachineId } = load.target;
+            beginTeamCredentialResourceCatalogLoad(scope, address, application, executionMachineId);
         }
-        const { scope, application } = group[0]!.target;
+        const { scope, application, executionMachineId } = group[0]!.target;
         const teamIds = [...new Set(group.map(load => load.target.address.teamId))];
         const resourcesByTeam = new Map<string, TeamCredentialResourceCatalogEntryV1[]>();
         const failures = new Map<string, HomeDomainFailure>();
@@ -738,6 +743,7 @@ const credentialResourceCatalogLoader = createScopedSnapshotLoader<TeamCredentia
                 if (!group.some(load => load.context.isCurrent())) return;
                 const outcome = await discoverEntitledTeamCredentialResources({ scope, teamIds,
                     signal,
+                    ...(executionMachineId ? { executionMachineId } : {}),
                     shouldContinue: () => group.some(load => load.context.isCurrent()),
                     ...(application ? { application } : {}), ...(cursor ? { cursor } : {}) });
                 if (outcome.kind === 'failed') {
@@ -763,16 +769,16 @@ const credentialResourceCatalogLoader = createScopedSnapshotLoader<TeamCredentia
             // A later page failure cannot replace an already answered Team refusal.
             const refused = failures.get(address.teamId) ?? failure;
             if (refused) applyTeamCredentialResourceCatalogFailure({
-                scope, address, application, error: toSnapshotError(refused),
+                scope, address, application, executionMachineId, error: toSnapshotError(refused),
             });
             else applyTeamCredentialResourceCatalog({
-                scope, address, application, resources: resourcesByTeam.get(address.teamId) ?? [],
+                scope, address, application, executionMachineId, resources: resourcesByTeam.get(address.teamId) ?? [],
                 observedAt: Date.now(), current: context.isCurrent(),
             });
         }
     },
-    shouldLoadOnObserve: ({ scope, address, application }) => {
-        const current = getTeamCredentialResourceCatalogSnapshot(scope, address, application);
+    shouldLoadOnObserve: ({ scope, address, application, executionMachineId }) => {
+        const current = getTeamCredentialResourceCatalogSnapshot(scope, address, application, executionMachineId);
         if (!current) return true;
         if (current.stale) return true;
         return current.data === null && current.status !== 'loading';
@@ -780,11 +786,12 @@ const credentialResourceCatalogLoader = createScopedSnapshotLoader<TeamCredentia
     invalidateServer: (serverId) => {
         invalidateTeamsSnapshotsForServer(serverId);
     },
-    invalidateTarget: ({ scope, address, application }, reason) => {
-        invalidateTeamCredentialResourceCatalog(scope, address, application, { retainSelection: reason === 'reload' });
+    invalidateTarget: ({ scope, address, application, executionMachineId }, reason) => {
+        invalidateTeamCredentialResourceCatalog(scope, address, application, { retainSelection: reason === 'reload' }, executionMachineId);
     },
     matchesWake: (event) => event.entityIds === undefined
-        || event.entityIds.includes(TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1),
+        || event.entityIds.includes(TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1)
+        || event.entityIds.includes(TEAM_CREDENTIAL_MATERIAL_ACCOUNT_CHANGE_ENTITY_ID_V1),
 });
 
 /** Observes one Team's shared credential resources under its exact Home Account scope. */
@@ -824,8 +831,9 @@ export function observeTeamCredentialResourceCatalog(
     scope: ServerAccountScope,
     address: TeamAddress,
     application?: ProviderBrokerApplicationBindingV1,
+    executionMachineId?: string,
 ): () => void {
-    const target = credentialResourceCatalogTargetFor(scope, address, application);
+    const target = credentialResourceCatalogTargetFor(scope, address, application, executionMachineId);
     return target ? credentialResourceCatalogLoader.observe(target) : () => {};
 }
 
@@ -834,8 +842,9 @@ export async function refreshTeamCredentialResourceCatalog(
     scope: ServerAccountScope,
     address: TeamAddress,
     application?: ProviderBrokerApplicationBindingV1,
+    executionMachineId?: string,
 ): Promise<void> {
-    const target = credentialResourceCatalogTargetFor(scope, address, application);
+    const target = credentialResourceCatalogTargetFor(scope, address, application, executionMachineId);
     if (!target) return;
     await credentialResourceCatalogLoader.refresh(target);
 }

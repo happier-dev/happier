@@ -1,4 +1,4 @@
-import { SESSION_SUBAGENT_STATUS_SOURCES_V1, fromSubagentStatus } from '@happier-dev/protocol';
+import { SESSION_SUBAGENT_STATUS_SOURCES_V1, fromSubagentStatus } from '@happier-dev/protocol/sessions/work/agentActivity/adapters/fromSubagentStatus';
 import { describe, expect, it } from 'vitest';
 
 import type { SessionSubagentStatus } from './types';

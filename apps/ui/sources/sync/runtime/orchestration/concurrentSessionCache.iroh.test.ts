@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-    SessionCurrentProjectionRecordV1Schema, type HomeConnectionDescriptorV1,
-} from '@happier-dev/protocol';
+    SessionCurrentProjectionRecordV1Schema} from '@happier-dev/protocol/sessions/listing/response';
+import { type HomeConnectionDescriptorV1,
+} from '@happier-dev/protocol/auth/accountDirectory';
 
 import { createSessionAccessFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';

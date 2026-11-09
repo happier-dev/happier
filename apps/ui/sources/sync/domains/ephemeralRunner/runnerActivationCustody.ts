@@ -1,4 +1,4 @@
-import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol';
+import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol/auth/accountDirectory';
 import { RunnerActivationBindingV1Schema, type RunnerActivationBindingV1 } from '@happier-dev/protocol/ephemeralRunner/activation';
 import { RunnerActivationProjectionV1Schema, runnerActivationProjectionBindingV1 } from '@happier-dev/protocol/ephemeralRunner/projection';
 import { verifyRunnerClaimV1 } from '@happier-dev/protocol/ephemeralRunner/endpoint';

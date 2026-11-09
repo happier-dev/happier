@@ -1,5 +1,6 @@
 import { MachineLiveStreamPayloadErrorV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/payloadV1';
 
+import { readAccountE2eeCustody } from '@/auth/storage/tokenStorage';
 import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
 import { resolveRunnerMachineContentKeyTrustV1 } from '@/sync/domains/machines/runnerMachineContentKeyTrust';
 import type { ResolvedMachineLiveStreamContent } from '@/sync/domains/machines/peer/mediation/stream/socketTransport';
@@ -11,7 +12,7 @@ import type { ScopedServerRpcContext } from './serverScopedRpcTypes';
 /** Active and scoped streams open the same exact, admitted Machine material on a cold read. */
 export async function resolveMachineLiveStreamContent(
     context: Pick<ScopedServerRpcContext, 'machineId' | 'targetServerId' | 'targetServerUrl' | 'targetAccountId'
-        | 'runtimeOrigin' | 'homeCarrier' | 'token' | 'credentials' | 'encryption' | 'readTransport'> & Readonly<{ timeoutMs?: number }>,
+        | 'runtimeOrigin' | 'homeCarrier' | 'token' | 'credentials' | 'encryption' | 'readTransport' | 'accountEncryptionObservation'> & Readonly<{ timeoutMs?: number }>,
 ): Promise<ResolvedMachineLiveStreamContent> {
     const machineId = context.machineId;
     const credentials = context.credentials ?? { token: context.token };
@@ -22,12 +23,16 @@ export async function resolveMachineLiveStreamContent(
         serverId: context.targetServerId, serverUrl: context.targetServerUrl,
         runtimeOrigin: context.runtimeOrigin, homeCarrier: context.homeCarrier,
         token: context.token, machineId, accountId: context.targetAccountId,
+        accountE2eeCustody: readAccountE2eeCustody(credentials),
         readTransport: context.readTransport,
         readAccountMode: async () => (await fetchAccountEncryptionMode(credentials, {
             request: createServerRequestForExplicitServerScope({
                 serverUrl: context.targetServerUrl, token: context.token,
+                serverId: context.targetServerId, credentials,
+                accountEncryptionObservation: context.accountEncryptionObservation,
                 runtimeOrigin: context.runtimeOrigin, homeCarrier: context.homeCarrier, timeoutMs: context.timeoutMs,
             }),
+            usage: 'identity',
         })).mode,
         expectedRunnerBinding: trust?.expectedRunnerBinding,
         trustedMachineKind: trust?.trustedMachineKind, timeoutMs: context.timeoutMs,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ProviderBoundModelRefSchema } from '@happier-dev/protocol';
+import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/selection/v1';
 
 import {
     buildFavoriteModelAvailabilityById,

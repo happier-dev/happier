@@ -7,7 +7,7 @@ import { CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1, CONNECTED_ACCOUNT_CATALOG_RETA
 import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
-import { classifyAccountStorageReadFailure, resolveAccountStorageContext } from '@/sync/encryption/accountStorageContext';
+import { classifyAccountStorageReadFailure, resolveAccountStorageContext, resolveAccountStorageContextForDisclosure } from '@/sync/encryption/accountStorageContext';
 import { readAccountSettingsBaseline } from '@/sync/engine/settings/accountSettingsBaseline';
 import { normalizeAccountSettingsHistoryAfterTransfer } from '@/sync/engine/settings/accountSettingsHistoryRestore';
 import { getRandomBytes } from '@/platform/cryptoRandom';
@@ -22,6 +22,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { createScopedResolutionSingleFlight } from '@/sync/runtime/orchestration/serverScopedRpc/scopedResolutionSingleFlight';
 import { withActionAccountRequestSignal } from '@/sync/ops/actions/actionAccountContext';
 import { throwIfAborted } from '@/utils/runtime/abortSignals';
+import type { SharedSavedSecretReferenceSelectionV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 
 export type ConnectedAccountCatalogAccountContext = Awaited<ReturnType<typeof import('@/sync/ops/actions/actionAccountContext').captureLazyActionAccountContext>>;
 export type ConnectedAccountCatalogMutationResponseV1 = ReturnType<typeof ConnectedAccountCatalogRowMutationResponseV1Schema.parse>;
@@ -91,7 +92,7 @@ async function readConnectedAccountCatalogWithAdmissionInContext(context: Connec
         return await admit(context, 'identity', async (mode, material) => {
             const project = async (catalog: ConnectedAccountCatalogSnapshotV1): Promise<ConnectedAccountCatalogSnapshotV1> => {
                 const { encryption } = await context.resolveAccountEncryption();
-                const current = await resolveAccountStorageContext(context.credentials, { encryption, request: context.request, usage: 'fresh-authority' });
+                const current = await resolveAccountStorageContextForDisclosure(context.credentials, { encryption, request: context.request });
                 context.assertCurrent();
                 return current.mode === mode ? catalog : { status: 'unavailable', reason: 'account-mode-mismatch' };
             };
@@ -131,11 +132,14 @@ async function readConnectedAccountCatalogWithAdmissionInContext(context: Connec
                         const machineId = sourceAdmission?.sourceMachineId?.trim();
                         if (key === 'purposes' && purpose === 'initialization' && machineId) {
                             const [{ loadDaemonMergedProjectionCacheEntry, readReusableDaemonMergedProjectionCacheEntry },
-                                { getResolvedAgentCatalogEntries }] = await Promise.all([
+                                { getResolvedAgentCatalogEntries }, { DAEMON_AGENT_CATALOG_SECTIONS }] = await Promise.all([
                                     import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs'),
                                     import('@/agents/backendCatalog/agentCatalogProjection'),
+                                    import('@/agents/backendCatalog/agentCatalogSections'),
                                 ]);
-                            const projectionTarget = { machineId, serverId: context.serverId, accountLifetime: context.accountLifetime };
+                            // Purpose defaults read only the Agent catalog.
+                            const projectionTarget = { machineId, serverId: context.serverId, accountLifetime: context.accountLifetime,
+                                sections: DAEMON_AGENT_CATALOG_SECTIONS };
                             await loadDaemonMergedProjectionCacheEntry({ ...projectionTarget, reuseFreshReady: true, signal });
                             context.assertCurrent();
                             const projection = readReusableDaemonMergedProjectionCacheEntry(projectionTarget);
@@ -215,6 +219,7 @@ export type ConnectedAccountCatalogRecordWriteInput = Readonly<{
     }>;
     referencedSavedSecretIds?: ConnectedAccountCatalogRowMutationV1['referencedSavedSecretIds'];
     savedSecretRevisions?: ConnectedAccountCatalogRowMutationV1['savedSecretRevisions'];
+    selectedSecrets?: Readonly<Record<string, SharedSavedSecretReferenceSelectionV1>>;
 }>;
 /** Capture actual resource use/revisions before publishing a configuration reference. */
 export function prepareConnectedAccountCatalogMutationInContext(context: ConnectedAccountCatalogAccountContext,
@@ -237,7 +242,7 @@ export function prepareConnectedAccountCatalogMutationInContext(context: Connect
             }
         }
         const captured = await captureSavedSecretReferenceRevisionsInContext(context, {
-            references, savedSecretRevisions: input.savedSecretRevisions, signal,
+            references, savedSecretRevisions: input.savedSecretRevisions, selectedSecrets: Object.values(input.selectedSecrets ?? {}), signal,
         });
         const mutation = ConnectedAccountCatalogRowMutationV1Schema.parse({ expectedRevision: input.expectedRevision,
             content: sealConnectedAccountCatalogContentV1({ mode, material, record: input.record, randomBytes: getRandomBytes }),
@@ -309,6 +314,7 @@ export function createUiConnectedServiceConfigurationCatalogHost(context: Connec
             const timestamp = Date.now();
             const result = await createSavedSecretResourcesWithCatalogMutationInContext(context, {
                 scope: { serverId: context.serverId, accountId: context.accountId }, catalogKeys: ['connectedConfigurations'],
+                selectedSecrets: Object.values(input.selectedSecrets ?? {}),
                 resources: input.newSecrets.map(secret => ({ id: secret.id, name: `Connected Account ${secret.fieldId}`.slice(0, 100),
                     kind: 'other' as const, encryptedValue: { _isSecretValue: true as const, value: secret.value },
                     createdAt: timestamp, updatedAt: timestamp })),

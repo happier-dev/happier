@@ -1,4 +1,5 @@
 import { machineFilesystemListDirectory } from '@/sync/ops/machineFileBrowser';
+import { readHomeAccountDepartures, subscribeHomeCredentialChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import {
     sortRepositoryDirectoryEntries,
     type ListRepositoryDirectoryEntriesResult,
@@ -10,11 +11,13 @@ import { markWorkspaceRepositoryDirectoryChanged } from './workspaceRepositoryDi
 import {
     clearWorkspaceRepositoryDirectoryCacheEntries,
     getCachedWorkspaceRepositoryDirectoryEntries,
+    getCachedWorkspaceRepositoryDirectoryMetadata,
     getCachedWorkspaceRepositoryGitIgnoreAvailable,
     setCachedWorkspaceRepositoryDirectoryEntries,
 } from './workspaceRepositoryDirectoryCache';
 export {
     getCachedWorkspaceRepositoryDirectoryEntries,
+    getCachedWorkspaceRepositoryDirectoryMetadata,
     getCachedWorkspaceRepositoryGitIgnoreAvailable,
     setCachedWorkspaceRepositoryDirectoryEntries,
 } from './workspaceRepositoryDirectoryCache';
@@ -32,6 +35,17 @@ function getCacheKey(workspaceCacheKey: string, directoryPath: string): string {
 }
 
 const workspaceRepositoryDirectoryWarmInFlight = new Map<string, WarmInFlightRequest<ListRepositoryDirectoryEntriesResult>>();
+
+let accountRetirementSubscribed = false;
+function captureDirectoryReadDepartures(serverId: string | null | undefined): number {
+    if (!accountRetirementSubscribed) {
+        accountRetirementSubscribed = true;
+        subscribeHomeCredentialChange((_event, { accountLeft }) => {
+            if (accountLeft) workspaceRepositoryDirectoryWarmInFlight.clear();
+        });
+    }
+    return readHomeAccountDepartures(serverId);
+}
 
 export function clearCachedWorkspaceRepositoryDirectoryEntries(input: Readonly<{
     workspaceCacheKey: string;
@@ -79,7 +93,9 @@ export async function warmWorkspaceRepositoryDirectoryCache(input: Readonly<{
         directoryPath: input.directoryPath,
     });
     if (cached) {
-        return { ok: true, entries: cached, gitIgnoreAvailable: getCachedWorkspaceRepositoryGitIgnoreAvailable({ workspaceCacheKey, directoryPath: input.directoryPath }) };
+        return { ok: true, entries: cached,
+            truncated: getCachedWorkspaceRepositoryDirectoryMetadata({ workspaceCacheKey, directoryPath: input.directoryPath })?.truncated,
+            gitIgnoreAvailable: getCachedWorkspaceRepositoryGitIgnoreAvailable({ workspaceCacheKey, directoryPath: input.directoryPath }) };
     }
 
     const key = getCacheKey(workspaceCacheKey, input.directoryPath);
@@ -99,6 +115,7 @@ export async function listWorkspaceRepositoryDirectoryEntries(input: Readonly<{
     // The RAW scope path, never the normalized one: `normalizeFileSystemPath` lowercases
     // Windows drive and UNC paths, and this is the daemon's `path` argument.
     const absPath = joinPathAbsolute(input.scope.rootPath, input.directoryPath);
+    const departures = captureDirectoryReadDepartures(input.scope.serverId);
     const response = await machineFilesystemListDirectory(
         input.scope.machineId,
         {
@@ -109,6 +126,7 @@ export async function listWorkspaceRepositoryDirectoryEntries(input: Readonly<{
         { serverId: input.scope.serverId, signal: input.signal },
     );
     input.signal?.throwIfAborted();
+    if (departures !== readHomeAccountDepartures(input.scope.serverId)) return { ok: false, error: 'unknown_error' };
     if (!response.ok) {
         return { ok: false, error: response.error || 'unknown_error' };
     }
@@ -136,6 +154,7 @@ export async function listWorkspaceRepositoryDirectoryEntries(input: Readonly<{
         directoryPath: input.directoryPath,
         entries: sorted,
         gitIgnoreAvailable: response.gitIgnoreAvailable === true,
+        truncated: response.truncated,
     });
-    return { ok: true, entries: sorted, gitIgnoreAvailable: response.gitIgnoreAvailable === true };
+    return { ok: true, entries: sorted, gitIgnoreAvailable: response.gitIgnoreAvailable === true, truncated: response.truncated };
 }

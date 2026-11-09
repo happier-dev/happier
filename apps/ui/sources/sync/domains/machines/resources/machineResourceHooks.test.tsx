@@ -40,6 +40,9 @@ vi.mock('@react-navigation/native', async () => {
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 installDisconnectedServerSocketBoundary();
+// Cold app-entry registration belongs to collection, after installing physical boundaries.
+// Per-case setup below still restores the real singleton after each Home reset.
+await loadSyncSingletonForTests();
 let homeA = '';
 let homeB = '';
 
@@ -66,6 +69,7 @@ describe('machine resource visibility and demand', () => {
         await homes.reset();
         vi.unstubAllGlobals();
     });
+
 
     it('bounds mounted row demand through the physical viewport and withdraws it when scrolled away', async () => {
         const { MachineResourceLiveDemand } = await import('./useMachineResourceLiveDemand');
@@ -153,6 +157,136 @@ describe('machine resource visibility and demand', () => {
         } finally { pending.resolve({ changed: false }); await screen.unmount(); }
     });
 
+    it('reads ceiling Room from the captured Home only while the approval fields are open', async () => {
+        const { ActionApprovalFieldsCard } = await import('@/components/approvals/ActionApprovalFieldsCard');
+        const { describeApprovalActionFields } = await import('@/components/approvals/approvalFieldValues');
+        const { ApprovalRequestV2Schema } = await import('@happier-dev/protocol/approvals/approvalRequestV1');
+        const { renderScreen } = await import('@/dev/testkit/render/renderScreen');
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+        const sampledAt = Date.now();
+        const machine = createMachineFixture({ id: 'machine-a', active: true, activeAt: sampledAt });
+        storage.setState({ machineListByServerId: { [homeA]: [machine] }, machineListStatusByServerId: { [homeA]: 'idle' } });
+        const aborted: string[] = [];
+        boundary.rpc.mockImplementation(async input => {
+            if (input.method === 'daemon.vitals.watch') {
+                const answer = createDeferred<unknown>();
+                input.signal?.addEventListener('abort', () => {
+                    aborted.push(input.method);
+                    answer.resolve({ changed: false });
+                }, { once: true });
+                return answer.promise;
+            }
+            return { state: 'reporting', sample: { v: 1, sampledAt, intervalMs: 15_000,
+                cpu: { reported: true, busyPct: 20 },
+                memory: { reported: true, totalBytes: 2 ** 33, availableBytes: 2 ** 31, usedBytes: 6 * 2 ** 30,
+                    pressure: { level: 'calm', source: 'psi' } },
+                disk: { reported: true, volumes: [] }, network: { reported: true, rxBps: 12, txBps: 3 } },
+                series5m: { cpu: [], memory: [], networkRx: [], networkTx: [] } };
+        });
+        const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+            createdBy: { surface: 'cli' }, actionId: 'machines.guard.sessionCeiling.set', summary: 'Change the ceiling',
+            actionArgs: { machineId: machine.id, sessionId: 'session', bytes: 2 ** 30 },
+            executionOriginV1: { v: 1, authority: 'account_automation', surface: 'cli', caller: { kind: 'host' },
+                serverId: homeA, actionId: 'machines.guard.sessionCeiling.set', requestId: 'ceiling-room' } });
+        const screen = await renderScreen(<ActionApprovalFieldsCard request={request} serverId={homeA} collapsed
+            presentation={describeApprovalActionFields(request)} />);
+        const reads = () => boundary.rpc.mock.calls.filter(([input]) => input.method === 'machines.vitals.get');
+        const watches = () => boundary.rpc.mock.calls.filter(([input]) => input.method === 'daemon.vitals.watch');
+        expect(reads()).toHaveLength(0);
+        expect(watches()).toHaveLength(0);
+        const setExpanded = async (expanded: boolean) => {
+            const disclosure = screen.findAllByTestId('approvals.details-disclosure')
+                .find(node => typeof node.props.onExpandedChange === 'function');
+            if (!disclosure) throw new Error('Missing fields disclosure');
+            await act(async () => disclosure.props.onExpandedChange(expanded));
+        };
+        await setExpanded(true);
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('2 GB free of 8 GB'));
+        expect(reads()).toHaveLength(1);
+        expect(watches()).toHaveLength(1);
+        expect(reads()[0]![0].serverId).toBe(homeA);
+        await setExpanded(false);
+        await waitForHomeGovernance(() => expect(aborted).toContain('daemon.vitals.watch'));
+        expect(reads()).toHaveLength(1);
+        expect(watches()).toHaveLength(1);
+        await screen.unmount();
+    });
+
+    it('joins published core capacity to held sampled load without requesting a second observation', async () => {
+        const { useMachineResourceSummary } = await import('./useMachineResourceSummary');
+        const { machineResourceStore } = await import('./machineResourceStore');
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+        const sampledAt = Date.now();
+        const resources = { v: 1, vitals: { state: 'reporting' },
+            host: { logicalCores: 4, effectiveCores: 0.5, memoryTotalBytes: 100, bootedAt: 1 },
+            attention: { level: 'calm', reasons: [] } };
+        const machine = createMachineFixture({ id: 'cpu-capacity', active: true, activeAt: sampledAt,
+            daemonStateVersion: 1, daemonState: { resources } });
+        storage.setState({ machineListByServerId: { [homeA]: [machine] }, machineListStatusByServerId: { [homeA]: 'idle' } });
+        boundary.rpc.mockResolvedValue({ state: 'reporting', sample: { v: 1, sampledAt, intervalMs: 15_000,
+            cpu: { reported: true, busyPct: 20, load1: 0 }, memory: { reported: false, reason: 'platform' },
+            disk: { reported: false, reason: 'platform' }, network: { reported: false, reason: 'platform' } },
+            series5m: { cpu: [], memory: [], networkRx: [], networkTx: [] } });
+        const key = { serverId: homeA, expectedAccountId: 'owner', machineId: machine.id, view: 'summary' as const };
+        const hook = await renderHook(() => useMachineResourceSummary(key));
+        try {
+            expect(boundary.rpc).not.toHaveBeenCalled();
+            await act(async () => { await machineResourceStore.read(key); });
+            const current = hook.getCurrent();
+            expect(current?.kind === 'reporting' ? current.summary?.cpu : null)
+                .toMatchObject({ load1: 0, logicalCores: 4, effectiveCores: 0.5 });
+            const { host: _host, ...withoutHost } = resources;
+            await act(async () => {
+                storage.setState({ machineListByServerId: { [homeA]: [{ ...machine,
+                    daemonStateVersion: 2, daemonState: { resources: withoutHost } }] } });
+            });
+            const withdrawn = hook.getCurrent();
+            const cpu = withdrawn?.kind === 'reporting' ? withdrawn.summary?.cpu : null;
+            expect(cpu).toMatchObject({ load1: 0 });
+            expect(cpu).not.toHaveProperty('logicalCores');
+            expect(boundary.rpc).toHaveBeenCalledTimes(1);
+        } finally { await hook.unmount(); }
+    });
+
+    it('projects monitoring Off for passive summaries while retaining readings for re-enable', async () => {
+        const { useMachineResourceSummary } = await import('./useMachineResourceSummary');
+        const { machineResourceStore } = await import('./machineResourceStore');
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+        const { MachineResourcesPolicyV1Schema } = await import('@happier-dev/protocol/machines/resources/machineResourcesPolicyV1');
+        const sampledAt = Date.now();
+        const fixture = createMachineFixture({ id: 'off-summary', active: true, activeAt: sampledAt,
+            daemonState: { resources: { v: 1, vitals: { state: 'reporting' },
+                attention: { level: 'calm', reasons: [] } } } });
+        const publish = (mode: 'always' | 'off') => storage.setState({
+            machineListByServerId: { [homeA]: [{ ...fixture, metadata: { ...fixture.metadata!,
+                resourcesPolicyV1: MachineResourcesPolicyV1Schema.parse({ v: 1, monitoring: { mode } }) } }] },
+            machineListStatusByServerId: { [homeA]: 'idle' },
+        });
+        publish('always');
+        boundary.rpc.mockResolvedValue({ state: 'reporting', sample: { v: 1, sampledAt, intervalMs: 15_000,
+            cpu: { reported: true, busyPct: 88 }, memory: { reported: false, reason: 'platform' },
+            disk: { reported: false, reason: 'platform' }, network: { reported: false, reason: 'platform' } },
+            series5m: { cpu: [], memory: [], networkRx: [], networkTx: [] } });
+        const key = { serverId: homeA, expectedAccountId: 'owner', machineId: fixture.id, view: 'summary' as const };
+        await machineResourceStore.read(key);
+        const retained = machineResourceStore.getState(key).summary;
+        const hook = await renderHook(() => useMachineResourceSummary(key));
+        try {
+            expect(hook.getCurrent()).toMatchObject({ kind: 'reporting', summary: { cpu: { busyPct: 88 } } });
+            boundary.rpc.mockClear();
+            await act(async () => { publish('off'); });
+            expect(hook.getCurrent()).toEqual({ kind: 'monitoring_off' });
+            expect(machineResourceStore.getState(key).summary).toBe(retained);
+            await act(async () => { publish('always'); });
+            const resumed = hook.getCurrent();
+            expect(resumed?.kind === 'reporting' ? resumed.summary : null).toBe(retained);
+            expect(boundary.rpc).not.toHaveBeenCalled();
+        } finally { await hook.unmount(); }
+    });
+
     it('reads row-local published availability without creating value reads or live demand', async () => {
         const { useMachineResourceSummary } = await import('./useMachineResourceSummary');
         const { storage } = await import('@/sync/domains/state/storageStore');
@@ -238,7 +372,7 @@ describe('machine resource visibility and demand', () => {
         expect(boundary.rpc).toHaveBeenCalledTimes(reads);
         await act(async () => { storage.setState({ machineListByServerId: { [homeA]: [{ ...machine, daemonStateVersion: 2 }] } }); });
         await flushHookEffects({ cycles: 3, turns: 3 });
-        expect(boundary.rpc).toHaveBeenCalledTimes(reads + 1);
+        await waitForHomeGovernance(() => expect(boundary.rpc).toHaveBeenCalledTimes(reads + 1));
         await hook.unmount();
     });
 
@@ -272,9 +406,11 @@ describe('machine resource visibility and demand', () => {
             });
             await act(async () => { storage.setState({ machineListByServerId: { [homeA]: [{ ...machine, daemonStateVersion: 2 }] } }); });
             await flushHookEffects({ cycles: 3, turns: 3 });
-            expect(boundary.rpc.mock.calls.length).toBeGreaterThan(reads);
-            expect(hook.getCurrent().status).toBe('ready');
-            expect(hook.getCurrent().history?.range).toBe('1h');
+            await waitForHomeGovernance(() => {
+                expect(boundary.rpc.mock.calls.length).toBeGreaterThan(reads);
+                expect(hook.getCurrent().status).toBe('ready');
+                expect(hook.getCurrent().history?.range).toBe('1h');
+            });
         } finally {
             await hook.unmount();
         }
@@ -364,6 +500,46 @@ describe('machine resource visibility and demand', () => {
         pendingFirst.resolve({ state: 'reporting', sample: null, series5m: { cpu: [], memory: [], networkRx: [], networkTx: [] } });
     });
 
+    it('never demands a machine whose monitoring is Off, and demands it again once monitoring is back on', async () => {
+        const { useMachineResourceLiveDemand } = await import('./useMachineResourceLiveDemand');
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+        const { MachineResourcesPolicyV1Schema } = await import('@happier-dev/protocol/machines/resources/machineResourcesPolicyV1');
+        const sampledAt = Date.now();
+        const resources = { v: 1, vitals: { state: 'reporting' }, host: { logicalCores: 4, memoryTotalBytes: 100, bootedAt: 1 }, attention: { level: 'calm', reasons: [] } };
+        const machine = (id: string, mode: 'off' | 'always') => {
+            const fixture = createMachineFixture({ id, activeAt: sampledAt, daemonState: { resources } });
+            return { ...fixture, metadata: { ...fixture.metadata!, resourcesPolicyV1: MachineResourcesPolicyV1Schema.parse({ v: 1, monitoring: { mode } }) } };
+        };
+        const fleet = (quietMode: 'off' | 'always') => {
+            const list = [machine('quiet', quietMode), machine('busy', 'always')];
+            storage.setState({ machines: Object.fromEntries(list.map(entry => [entry.id, entry])),
+                machineListByServerId: { [homeA]: list }, machineListStatusByServerId: { [homeA]: 'idle' } });
+        };
+        fleet('off');
+        boundary.rpc.mockImplementation(async input => {
+            if (input.method === 'daemon.vitals.watch') {
+                const answer = createDeferred<unknown>();
+                input.signal?.addEventListener('abort', () => answer.resolve({ changed: false }), { once: true });
+                return answer.promise;
+            }
+            return { state: 'reporting', sample: { v: 1, sampledAt, intervalMs: 15_000,
+                cpu: { reported: true, busyPct: 30 }, memory: { reported: true, totalBytes: 100, availableBytes: 80, usedBytes: 20, pressure: { level: 'calm', source: 'psi' } },
+                disk: { reported: true, volumes: [] }, network: { reported: true, rxBps: 12, txBps: 3 } },
+                series5m: { cpu: [], memory: [], networkRx: [], networkTx: [] } };
+        });
+        const keys = [{ serverId: homeA, machineId: 'quiet' }, { serverId: homeA, machineId: 'busy' }];
+        const hook = await renderHook(() => useMachineResourceLiveDemand(keys, { detail: 'summary' }));
+        await flushHookEffects({ cycles: 3, turns: 3 });
+        const reads = (machineId: string) => boundary.rpc.mock.calls.filter(([input]) => input.machineId === machineId).length;
+        // Off: not one read or watch for that machine; its neighbour reads as usual.
+        expect(reads('quiet')).toBe(0);
+        expect(reads('busy')).toBeGreaterThan(0);
+        await act(async () => { fleet('always'); });
+        await waitForHomeGovernance(() => expect(reads('quiet')).toBeGreaterThan(0));
+        await hook.unmount();
+    });
+
     it('re-reads only the machines that join the demanded set when another machine comes or goes', async () => {
         const { useMachineResourceLiveDemand } = await import('./useMachineResourceLiveDemand');
         const sampledAt = Date.now();
@@ -389,6 +565,40 @@ describe('machine resource visibility and demand', () => {
         await flushHookEffects({ cycles: 3, turns: 3 });
         expect(reads().sort()).toEqual(['four', 'one', 'three', 'two']);
         await hook.unmount();
+    });
+
+    it('reads a demanded machine again for a daemon version change, never for a rename or a demand that carries no version', async () => {
+        const { useMachineResourceLiveDemand } = await import('./useMachineResourceLiveDemand');
+        const { useMachineResourceSummary } = await import('./useMachineResourceSummary');
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+        const machine = createMachineFixture({ id: 'machine-a', active: true, activeAt: Date.now(), daemonStateVersion: 1 });
+        storage.setState({ machineListByServerId: { [homeA]: [machine] }, machineListStatusByServerId: { [homeA]: 'idle' } });
+        // The daemon cannot answer right now: the held state is a failure, which a real daemon change re-reads.
+        boundary.rpc.mockRejectedValue(new RpcError('Daemon unavailable', RPC_ERROR_CODES.INTERNAL_ERROR));
+        const key = { serverId: homeA, machineId: machine.id };
+        // A row reads the published summary, and its meter demands live values without knowing the daemon version.
+        const hook = await renderHook(() => {
+            const summary = useMachineResourceSummary(key);
+            useMachineResourceLiveDemand([key], { detail: 'summary' });
+            return summary;
+        });
+        try {
+            await flushHookEffects({ cycles: 3, turns: 3 });
+            const reads = () => boundary.rpc.mock.calls.filter(([input]) => input.method === 'machines.vitals.get').length;
+            const before = reads();
+            expect(before).toBeGreaterThan(0);
+            await act(async () => { storage.setState({ machineListByServerId: { [homeA]: [{ ...machine, metadataVersion: 2,
+                metadata: { ...machine.metadata!, displayName: 'Renamed' } }] } }); });
+            await flushHookEffects({ cycles: 3, turns: 3 });
+            expect(reads()).toBe(before);
+            await act(async () => { storage.setState({ machineListByServerId: { [homeA]: [{ ...machine, daemonStateVersion: 2,
+                metadata: { ...machine.metadata!, displayName: 'Renamed' } }] } }); });
+            await flushHookEffects({ cycles: 3, turns: 3 });
+            expect(reads()).toBeGreaterThan(before);
+        } finally {
+            await hook.unmount();
+        }
     });
 
     it('keeps one credential binding and a pending Overview read through detail renders and unrelated Home publications', async () => {
@@ -595,9 +805,11 @@ describe('machine resource visibility and demand', () => {
         expect(boundary.rpc).not.toHaveBeenCalled();
         await act(async () => { boundary.visibility = 'visible'; documentBoundary.dispatchEvent(new Event('visibilitychange')); });
         await flushHookEffects({ cycles: 3, turns: 3 });
-        expect(boundary.rpc.mock.calls.filter(([input]) => input.method === 'machines.vitals.get')).toHaveLength(1);
-        expect(watches).toHaveLength(1);
-        expect(hook.getCurrent()?.kind).toBe('never_sampled');
+        await waitForHomeGovernance(() => {
+            expect(boundary.rpc.mock.calls.filter(([input]) => input.method === 'machines.vitals.get')).toHaveLength(1);
+            expect(watches).toHaveLength(1);
+            expect(hook.getCurrent()?.kind).toBe('never_sampled');
+        });
         const hydrated = hook.getCurrent();
         await act(async () => { boundary.appState?.emit('background'); });
         expect(watches[0].signal?.aborted).toBe(true);
@@ -607,8 +819,10 @@ describe('machine resource visibility and demand', () => {
         expect(hook.getCurrent()).toBe(hydrated);
         await act(async () => { boundary.appState?.emit('active'); });
         await flushHookEffects({ cycles: 3, turns: 3 });
-        expect(boundary.rpc.mock.calls.filter(([input]) => input.method === 'machines.vitals.get')).toHaveLength(2);
-        expect(watches).toHaveLength(2);
+        await waitForHomeGovernance(() => {
+            expect(boundary.rpc.mock.calls.filter(([input]) => input.method === 'machines.vitals.get')).toHaveLength(2);
+            expect(watches).toHaveLength(2);
+        });
         await hook.rerender({ enabled: false });
         expect(watches[1].signal?.aborted).toBe(true);
         const closedCount = boundary.rpc.mock.calls.length;

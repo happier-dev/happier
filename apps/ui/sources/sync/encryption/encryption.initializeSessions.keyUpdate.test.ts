@@ -5,7 +5,7 @@ import { encodeBase64 } from '@/encryption/base64';
 import { Encryption } from './encryption';
 import { createFakeCryptoWorker } from './nativeCryptoWorker/fakeCryptoWorker';
 import type { NativeCryptoWorker } from './nativeCryptoWorker/types';
-import { openSessionSharedDisplayEnvelopeV1, sealSessionSharedDisplayEnvelopeV1 } from '@happier-dev/protocol';
+import { openSessionSharedDisplayEnvelopeV1, sealSessionSharedDisplayEnvelopeV1 } from '@happier-dev/protocol/sessions';
 
 type EncryptionGenerationReader = Readonly<{
   getCurrentGeneration: (accountId?: string, serverId?: string | null) => number;
@@ -144,6 +144,42 @@ describe('Encryption.initializeSessions (key updates)', () => {
     }
   });
 
+  // P03-ENC-GENERATION: a Session key installed, replaced or removed changes no Account material.
+  // It must stop only that Session's retired reader, never unrelated pending pure data-key openings
+  // (live /inbox: Session rows hydrating by id cancelled the Inbox census page's key batch).
+  it('keeps unrelated pending data-key openings when N Session keys are installed, replaced and removed', async () => {
+    const encryption = await Encryption.create(new Uint8Array(32).fill(1));
+    encryption.configureNativeCryptoWorker({ routing: { mode: 'off' } });
+    const scope = { accountId: 'account-a', serverId: 'server-a' };
+    const openings = 400;
+    const sessions = 20;
+    const envelopes = await Promise.all(Array.from({ length: openings }, async (_, index) =>
+      encodeBase64(await encryption.encryptEncryptionKey(new Uint8Array(32).fill((index % 250) + 1)), 'base64')));
+    await encryption.initializeSessions(new Map(Array.from({ length: sessions }, (_, index) => [`s-${index}`, null])), scope);
+    const generationBefore = encryption.getCurrentGeneration('account-a', 'server-a');
+
+    let settled = false;
+    const pending = encryption.decryptEncryptionKeys(envelopes, scope).finally(() => { settled = true; });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(settled).toBe(false);
+    // Each Session's key becomes readable (null → key), then one is replaced and one removed.
+    for (let index = 0; index < sessions; index += 1) {
+      await encryption.initializeSessions(new Map([[`s-${index}`, new Uint8Array(32).fill(100 + index)]]), scope);
+    }
+    await encryption.initializeSessions(new Map([['s-0', new Uint8Array(32).fill(200)]]), scope);
+    encryption.removeSessionEncryption('s-1');
+    expect(settled).toBe(false);
+
+    const keys = await pending.then((values) => values, () => null);
+    const cancelled = keys === null ? openings : keys.filter((key) => key === null).length;
+    console.log('ENC-GENERATION unrelated openings cancelled', JSON.stringify({ openings, sessions, cancelled }));
+    expect({
+      cancelled,
+      opened: keys?.filter((key) => key !== null).length ?? 0,
+      accountGenerationAdvanced: encryption.getCurrentGeneration('account-a', 'server-a') > generationBefore,
+    }).toEqual({ cancelled: 0, opened: openings, accountGenerationAdvanced: false });
+  });
+
   it('updates session encryption when a data key becomes available later', async () => {
     const masterSecret = new Uint8Array(32).fill(1);
     const sessionDataKey = new Uint8Array(32).fill(2);
@@ -193,7 +229,7 @@ describe('Encryption.initializeSessions (key updates)', () => {
     expect(generation.getCurrentGeneration('account-a', 'server-a')).toBe(afterInitial);
   });
 
-  it('increments worker generation when an existing session key fingerprint changes', async () => {
+  it('retires only the replaced reader, not the Account generation, when a session key fingerprint changes', async () => {
     const encryption = await Encryption.create(new Uint8Array(32).fill(1));
     const generation = expectGenerationReader(encryption);
 
@@ -201,17 +237,20 @@ describe('Encryption.initializeSessions (key updates)', () => {
       accountId: 'account-a',
       serverId: 'server-a',
     });
-    expect(generation.getCurrentGeneration('account-a', 'server-a')).toBe(0);
+    const before = encryption.getSessionEncryption('session_1')!;
+    const sealed = await before.encryptMetadata({ path: '/old', host: 'machine' });
 
     await encryption.initializeSessions(new Map([['session_1', new Uint8Array(32).fill(3)]]), {
       accountId: 'account-a',
       serverId: 'server-a',
     });
 
-    expect(generation.getCurrentGeneration('account-a', 'server-a')).toBe(1);
+    expect(generation.getCurrentGeneration('account-a', 'server-a')).toBe(0);
+    expect(encryption.getSessionEncryption('session_1')).not.toBe(before);
+    expect(await before.decryptMetadata(1, sealed)).toBeNull();
   });
 
-  it('does not let a guarded key replacement cancel itself when it advances the owning generation', async () => {
+  it('keeps a guarded key replacement and its captured Account scope current', async () => {
     const encryption = await Encryption.create(new Uint8Array(32).fill(1));
     const generationScope = expectGenerationScopeReader(encryption);
     const scope = { accountId: 'account-a', serverId: 'server-a' } as const;
@@ -232,12 +271,11 @@ describe('Encryption.initializeSessions (key updates)', () => {
     );
 
     expect(encryption.getSessionEncryption('session_1')).not.toBe(before);
-    expect(generationScope.isCurrentEncryptionGenerationScope(captured)).toBe(false);
-    expect(committed).not.toBeNull();
-    expect(generationScope.isCurrentEncryptionGenerationScope(committed!)).toBe(true);
+    expect(generationScope.isCurrentEncryptionGenerationScope(captured)).toBe(true);
+    expect(committed).toEqual(captured);
   });
 
-  it('invalidates the previous owning scope when a session is rebound to a different account or server', async () => {
+  it('retires the previous reader without moving either scope when a session is rebound to a different account or server', async () => {
     const encryption = await Encryption.create(new Uint8Array(32).fill(1));
     const generation = expectGenerationReader(encryption);
     const generationScope = expectGenerationScopeReader(encryption);
@@ -253,17 +291,20 @@ describe('Encryption.initializeSessions (key updates)', () => {
       serverId: 'server-a',
     });
 
+    const previous = encryption.getSessionEncryption('session_1')!;
     await encryption.initializeSessions(new Map([['session_1', sessionDataKey]]), {
       accountId: 'account-b',
       serverId: 'server-b',
     });
 
-    expect(generationScope.isCurrentEncryptionGenerationScope(captured)).toBe(false);
-    expect(generation.getCurrentGeneration('account-a', 'server-a')).toBe(1);
+    expect(encryption.getSessionEncryption('session_1')).not.toBe(previous);
+    expect(await previous.decryptMetadata(1, await previous.encryptMetadata({ path: '/p', host: 'h' }))).toBeNull();
+    expect(generationScope.isCurrentEncryptionGenerationScope(captured)).toBe(true);
+    expect(generation.getCurrentGeneration('account-a', 'server-a')).toBe(0);
     expect(generation.getCurrentGeneration('account-b', 'server-b')).toBe(0);
   });
 
-  it('invalidates an overlapping first initializer displaced while its key was opening', async () => {
+  it('lets the last committing initializer own the reader when an overlapping initializer was opening', async () => {
     const encryption = await Encryption.create(new Uint8Array(32).fill(1));
     const generationScope = expectGenerationScopeReader(encryption);
     const originalOpenEncryption = encryption.openEncryption.bind(encryption);
@@ -275,8 +316,8 @@ describe('Encryption.initializeSessions (key updates)', () => {
     const accountAStart = new Promise<void>((resolve) => {
       accountAStarted = resolve;
     });
-    vi.spyOn(encryption, 'openEncryption').mockImplementation(async (dataKey, scope) => {
-      const opened = await originalOpenEncryption(dataKey, scope);
+    vi.spyOn(encryption, 'openEncryption').mockImplementation(async (dataKey, scope, isReaderCurrent) => {
+      const opened = await originalOpenEncryption(dataKey, scope, isReaderCurrent);
       if (scope?.accountId === 'account-a') {
         accountAStarted();
         await accountAGate;
@@ -293,16 +334,19 @@ describe('Encryption.initializeSessions (key updates)', () => {
       new Map([['session_1', new Uint8Array(32).fill(3)]]),
       { accountId: 'account-b', serverId: 'server-b' },
     );
+    const displaced = encryption.getSessionEncryption('session_1')!;
     releaseAccountA();
     const committedAccountA = await pendingAccountA;
 
     expect(committedAccountA).not.toBeNull();
     expect(committedAccountB).not.toBeNull();
-    expect(generationScope.isCurrentEncryptionGenerationScope(committedAccountB!)).toBe(false);
+    expect(generationScope.isCurrentEncryptionGenerationScope(committedAccountB!)).toBe(true);
     expect(generationScope.isCurrentEncryptionGenerationScope(committedAccountA!)).toBe(true);
+    expect(encryption.getSessionEncryption('session_1')).not.toBe(displaced);
+    expect(await displaced.decryptMetadata(1, await displaced.encryptMetadata({ path: '/p', host: 'h' }))).toBeNull();
   });
 
-  it('isolates worker generation by account and server scope', async () => {
+  it('keeps every Account scope generation when sessions are installed and replaced across scopes', async () => {
     const encryption = await Encryption.create(new Uint8Array(32).fill(1));
     const generation = expectGenerationReader(encryption);
 
@@ -319,12 +363,12 @@ describe('Encryption.initializeSessions (key updates)', () => {
       serverId: 'server-a',
     });
 
-    expect(generation.getCurrentGeneration('account-a', 'server-a')).toBe(1);
+    expect(generation.getCurrentGeneration('account-a', 'server-a')).toBe(0);
     expect(generation.getCurrentGeneration('account-a', 'server-b')).toBe(0);
     expect(generation.getCurrentGeneration('account-b', 'server-a')).toBe(0);
   });
 
-  it('increments worker generation for the owning scope when session encryption is removed', async () => {
+  it('retires the removed reader without moving the owning scope generation', async () => {
     const encryption = await Encryption.create(new Uint8Array(32).fill(1));
     const generation = expectGenerationReader(encryption);
 
@@ -333,9 +377,12 @@ describe('Encryption.initializeSessions (key updates)', () => {
       serverId: 'server-a',
     });
 
+    const removed = encryption.getSessionEncryption('session_1')!;
     encryption.removeSessionEncryption('session_1');
 
-    expect(generation.getCurrentGeneration('account-a', 'server-a')).toBe(1);
+    expect(encryption.getSessionEncryption('session_1')).toBeNull();
+    expect(await removed.decryptMetadata(1, await removed.encryptMetadata({ path: '/p', host: 'h' }))).toBeNull();
+    expect(generation.getCurrentGeneration('account-a', 'server-a')).toBe(0);
     expect(generation.getCurrentGeneration('account-a', 'server-b')).toBe(0);
   });
 

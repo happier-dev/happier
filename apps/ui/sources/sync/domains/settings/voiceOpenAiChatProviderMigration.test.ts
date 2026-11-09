@@ -45,31 +45,6 @@ function legacyAccount(agent: Readonly<{ agentSource: 'session' | 'agent'; agent
 }
 
 describe('legacy Voice OpenAI-compatible Chat Provider migration', () => {
-    it('derives predecessor generation settings only from the acknowledged Provider connection', () => {
-        const id = ProviderConnectionIdSchema.parse('voice-openai-compatible-chat');
-        const target = 'agent:happier.agent.opencode/opencode';
-        const local = readLocalConversationVoiceSettings(voiceSettingsDefaults);
-        const voice = writeLocalConversationVoiceSettings(voiceSettingsDefaults, { ...local, agent: {
-            ...local.agent, agentSource: 'agent', agentId: 'opencode', providerChat: {
-                status: 'configured',
-                chat: { agentTargetKey: target, providerConnectionId: id, modelId: 'chat' },
-                commit: { agentTargetKey: target, providerConnectionId: id, modelId: 'commit' },
-            },
-        } });
-        const providerSettings = ProviderSettingsV1Schema.parse({ ...DEFAULT_PROVIDER_SETTINGS_V1, connections: [{
-            v: 1, id, role: 'named', displayName: 'Voice Chat', displayNameMode: 'custom',
-            revision: 1, createdAt: 0, updatedAt: 0,
-            source: { kind: 'custom', template: normalizeCustomProviderTemplateV1({
-                name: 'Voice Chat', protocol: 'openai-chat', baseUrl: 'https://chat.example.test/v1', catalog: 'manual',
-            }) },
-            modelSettings: { chat: { temperature: 0.4, maxTokens: 2048 }, commit: { temperature: 0.2, maxTokens: 2048 } },
-        }] });
-        expect(normalizeVoiceSettingsServerDelta({ voiceSettingsV1: voice }, undefined, providerSettings))
-            .toMatchObject({ voice: { adapters: { local_conversation: { agent: { openaiCompat: {
-                temperature: 0.4, maxTokens: 2048,
-            } } } } } });
-    });
-
     it('keeps the actual promoted Resource identity with the original pending Chat carrier until Provider acknowledgment', () => {
         const predecessor = legacyAccount({ agentSource: 'agent', agentId: 'opencode' });
         const personal = { ...LEGACY_CHAT_SECRET, id: 'my-existing-chat-key' };
@@ -98,10 +73,8 @@ describe('legacy Voice OpenAI-compatible Chat Provider migration', () => {
                 ...normalizeVoiceSettingsLocalDelta({ voice: changedVoice }, normalized),
             }, normalized);
             expect(readSavedSecretTransferSourceV1(retired).legacyChatCredential).toBeUndefined();
-            expect(JSON.stringify(Reflect.get(retired, 'voice'))).not.toContain('chat_api_key');
-            expect(Reflect.get(retired, 'voice')).toMatchObject({ adapters: { local_conversation: {
-                agent: expect.not.objectContaining({ openaiCompat: expect.anything() }),
-            } } });
+            // The acknowledged import leaves the carrier nothing to hold, so it is retired with the source.
+            expect(retired).not.toHaveProperty('voice');
         }
     });
     it('preserves an unchanged non-Chat inline credential source without publishing a GET annotation', () => {

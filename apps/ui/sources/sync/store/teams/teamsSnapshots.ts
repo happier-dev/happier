@@ -11,7 +11,8 @@ import {
 import type { ProviderBrokerApplicationBindingV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import type { HomeDomainFailure } from '@/sync/ops/teams/teamActionClient';
 import { snapshotReferenceSelectionKey } from '@/sync/domains/scope/snapshotReferenceSelectionKey';
-import { areSnapshotProjectionsEquivalent as areProjectionsEquivalent, preserveUnchangedSnapshotRows } from '@/sync/domains/scope/preserveUnchangedSnapshotRows';
+import { CredentialCatalogPublication } from './credentialCatalogPublication';
+import { areSnapshotProjectionsEquivalent as areProjectionsEquivalent, retainKeyedRows } from '@/sync/domains/state/structuralSharing';
 
 import {
     serverAccountScopeKeySuffix,
@@ -162,6 +163,7 @@ export type TeamCredentialResourceCatalogSnapshot = Readonly<{
     scope: ServerAccountScope;
     address: TeamAddress;
     application?: ProviderBrokerApplicationBindingV1;
+    executionMachineId?: string;
     status: ScopedSnapshotStatus;
     data: readonly TeamCredentialResourceCatalogEntryV1[] | null;
     lastObservedAt: number | null;
@@ -192,11 +194,12 @@ const groupLists = new Map<string, TeamGroupsSnapshot>();
 const memberLists = new Map<string, TeamMembersSnapshot>();
 const groups = new Map<string, TeamGroupSnapshot>();
 const credentialLists = new Map<string, TeamCredentialResourcesSnapshot>();
-const credentialCatalogs = new Map<string, TeamCredentialResourceCatalogSnapshot>();
+const credentialCatalogs = new CredentialCatalogPublication();
 const credentialResources = new Map<string, TeamCredentialResourceSnapshot>();
 const listeners = new Set<() => void>();
 
 function notify(): void {
+    credentialCatalogs.flush();
     for (const listener of [...listeners]) {
         try {
             listener();
@@ -238,12 +241,20 @@ function credentialSnapshotMatches(
 }
 
 /**
- * The one subscription for every Team projection in this owner.
+ * Team projection subscriptions; catalog consumers select their exact admitted demands.
  *
  * A surface subscribes once and reads whichever rows it needs synchronously, so
  * a list of cards never becomes a list of subscriptions.
  */
-export function subscribeTeamsSnapshots(listener: () => void): () => void {
+export function subscribeTeamsSnapshots(listener: () => void, selection?: Readonly<{
+    scope: ServerAccountScope | null | undefined;
+    credentialCatalogs: readonly Readonly<{ address: TeamAddress; application?: ProviderBrokerApplicationBindingV1; executionMachineId?: string }>[];
+}>): () => void {
+    if (selection) {
+        const { scope } = selection;
+        return credentialCatalogs.subscribe(scope ? selection.credentialCatalogs.map(demand =>
+            teamCredentialResourceCatalogKey(scope, demand.address, demand.application, demand.executionMachineId)) : [], listener);
+    }
     listeners.add(listener);
     return () => {
         listeners.delete(listener);
@@ -315,7 +326,7 @@ export function applyTeamMembersPage(params: Readonly<{
     const incoming = params.append ? [...(previous?.data ?? []), ...params.items] : params.items;
     memberLists.set(teamMembersSnapshotKey(params.scope, params.address, params.queryKey), Object.freeze({
         scope: params.scope, address: params.address, queryKey: params.queryKey, status: 'ready',
-        data: preserveUnchangedSnapshotRows(previous?.data ?? null, incoming, row => row.id), nextCursor: params.nextCursor,
+        data: retainKeyedRows(previous?.data ?? null, incoming, row => row.id), nextCursor: params.nextCursor,
         stale: params.current === false, error: null,
     }));
     notify();
@@ -368,18 +379,19 @@ export function getTeamCredentialResourceCatalogSnapshot(
     scope: ServerAccountScope | null | undefined,
     address: TeamAddress | null | undefined,
     application?: ProviderBrokerApplicationBindingV1,
+    executionMachineId?: string,
 ): TeamCredentialResourceCatalogSnapshot | null {
     if (!scope || !address) return null;
-    return credentialCatalogs.get(teamCredentialResourceCatalogKey(scope, address, application)) ?? null;
+    return credentialCatalogs.get(teamCredentialResourceCatalogKey(scope, address, application, executionMachineId)) ?? null;
 }
 
 /** Picker facts exclude observation time; data identities are reconciled on admission below. */
 export function getTeamCredentialResourceCatalogsSelectionKey(
     scope: ServerAccountScope | null | undefined,
-    demands: readonly Readonly<{ address: TeamAddress; application?: ProviderBrokerApplicationBindingV1 }>[],
+    demands: readonly Readonly<{ address: TeamAddress; application?: ProviderBrokerApplicationBindingV1; executionMachineId?: string }>[],
 ): string {
-    return JSON.stringify(demands.map(({ address, application }) => {
-        const snapshot = getTeamCredentialResourceCatalogSnapshot(scope, address, application);
+    return JSON.stringify(demands.map(({ address, application, executionMachineId }) => {
+        const snapshot = getTeamCredentialResourceCatalogSnapshot(scope, address, application, executionMachineId);
         return [snapshotReferenceSelectionKey([snapshot?.data]), snapshot?.status ?? 'none',
             snapshot?.stale === true, snapshot?.selectionCurrent === true,
             snapshot?.error?.kind ?? null, snapshot?.error?.retryable ?? null, snapshot?.error?.code ?? null];
@@ -388,10 +400,10 @@ export function getTeamCredentialResourceCatalogsSelectionKey(
 
 /** One identity shared by the retained snapshot and its in-flight loader. */
 export function teamCredentialResourceCatalogKey(scope: ServerAccountScope, address: TeamAddress,
-    application?: ProviderBrokerApplicationBindingV1): string {
+    application?: ProviderBrokerApplicationBindingV1, executionMachineId?: string): string {
     return JSON.stringify([serverAccountScopedTeamKey(scope, address), application ? [application.agentTargetKey,
         application.implementationIdentity.pluginId, application.implementationIdentity.localId,
-        application.endpointTemplateId, application.protocol] : null]);
+        application.endpointTemplateId, application.protocol] : null, executionMachineId ?? null]);
 }
 
 /** Recipient-safe cached names for an exact Account; display reads confer no resource authority. */
@@ -533,19 +545,6 @@ export function readTeamGroups(
     return getTeamGroupsSnapshot(scope, address, queryKey)?.data ?? null;
 }
 
-/** A recipient-scoped Team name from the detail or directory already read. */
-export function readTeam(scope: ServerAccountScope, address: TeamAddress): TeamSummaryV1 | null {
-    const detail = getTeamSnapshot(scope, address)?.data;
-    if (detail) return detail;
-    if (scope.serverId !== address.serverId) return null;
-    for (const snapshot of directories.values()) {
-        if (snapshot.scope.serverId !== scope.serverId || snapshot.scope.accountId !== scope.accountId) continue;
-        const team = snapshot.data?.find(row => row.id === address.teamId);
-        if (team) return team;
-    }
-    return null;
-}
-
 /**
  * One Group by id, from whichever projection already holds it: its own detail
  * read, or the Groups sequence a surface loaded. A caller that only needs a
@@ -605,11 +604,12 @@ export function applyTeamsDirectoryPage(params: Readonly<{
     const incoming = params.append === true
         ? [...(current?.data ?? []), ...params.items]
         : params.items;
+    const data = retainKeyedRows(current?.data ?? null, incoming, row => row.id);
     directories.set(directoryKey(params.scope, params.queryKey), Object.freeze({
         scope: params.scope,
         queryKey: params.queryKey,
         status: 'ready',
-        data: preserveUnchangedSnapshotRows(current?.data ?? null, incoming, row => row.id),
+        data,
         nextCursor: params.nextCursor ?? null,
         lastObservedAt: params.observedAt,
         stale: params.current === false,
@@ -684,7 +684,7 @@ export function applyTeamGroupsPage(params: Readonly<{
         address: params.address,
         queryKey: params.queryKey,
         status: 'ready',
-        data: preserveUnchangedSnapshotRows(current?.data ?? null, incoming, row => row.id),
+        data: retainKeyedRows(current?.data ?? null, incoming, row => row.id),
         nextCursor: params.nextCursor ?? null,
         lastObservedAt: params.observedAt,
         stale: params.current === false,
@@ -766,7 +766,7 @@ export function applyTeamCredentialResourcesPage(params: Readonly<{
         address: params.address,
         queryKey,
         status: 'ready',
-        data: preserveUnchangedSnapshotRows(current?.data ?? null, resources, row => row.id),
+        data: retainKeyedRows(current?.data ?? null, resources, row => row.id),
         nextCursor: params.nextCursor ?? null,
         viewer: current?.viewer && areProjectionsEquivalent(current.viewer, params.viewer)
             ? current.viewer
@@ -831,14 +831,16 @@ export function beginTeamCredentialResourceCatalogLoad(
     scope: ServerAccountScope,
     address: TeamAddress,
     application?: ProviderBrokerApplicationBindingV1,
+    executionMachineId?: string,
 ): void {
-    const current = getTeamCredentialResourceCatalogSnapshot(scope, address, application);
+    const current = getTeamCredentialResourceCatalogSnapshot(scope, address, application, executionMachineId);
     const status: ScopedSnapshotStatus = current?.data ? 'refreshing' : 'loading';
     if (current && current.status === status && current.error === null) return;
-    credentialCatalogs.set(teamCredentialResourceCatalogKey(scope, address, application), Object.freeze({
+    credentialCatalogs.set(teamCredentialResourceCatalogKey(scope, address, application, executionMachineId), Object.freeze({
         scope,
         address,
         ...(application ? { application } : {}),
+        ...(executionMachineId ? { executionMachineId } : {}),
         status,
         data: current?.data ?? null,
         lastObservedAt: current?.lastObservedAt ?? null,
@@ -854,38 +856,41 @@ export function applyTeamCredentialResourceCatalog(params: Readonly<{
     scope: ServerAccountScope;
     address: TeamAddress;
     application?: ProviderBrokerApplicationBindingV1;
+    executionMachineId?: string;
     resources: readonly TeamCredentialResourceCatalogEntryV1[];
     observedAt: number;
     current?: boolean;
 }>): void {
-    const current = getTeamCredentialResourceCatalogSnapshot(params.scope, params.address, params.application);
-    credentialCatalogs.set(teamCredentialResourceCatalogKey(params.scope, params.address, params.application), Object.freeze({
+    const changed = credentialCatalogs.set(teamCredentialResourceCatalogKey(params.scope, params.address, params.application, params.executionMachineId), Object.freeze({
         scope: params.scope,
         address: params.address,
         ...(params.application ? { application: params.application } : {}),
+        ...(params.executionMachineId ? { executionMachineId: params.executionMachineId } : {}),
         status: 'ready',
-        data: preserveUnchangedSnapshotRows(current?.data ?? null, params.resources, row => row.id),
+        data: params.resources,
         lastObservedAt: params.observedAt,
         stale: params.current === false,
         selectionCurrent: params.current !== false,
         reachability: 'reachable',
         error: null,
     }));
-    notify();
+    if (changed) notify();
 }
 
 export function applyTeamCredentialResourceCatalogFailure(params: Readonly<{
     scope: ServerAccountScope;
     address: TeamAddress;
     application?: ProviderBrokerApplicationBindingV1;
+    executionMachineId?: string;
     error: ScopedSnapshotError;
 }>): void {
-    const current = getTeamCredentialResourceCatalogSnapshot(params.scope, params.address, params.application);
+    const current = getTeamCredentialResourceCatalogSnapshot(params.scope, params.address, params.application, params.executionMachineId);
     const withdrawn = isAuthoritativeScopedSnapshotRefusal(params.error);
-    credentialCatalogs.set(teamCredentialResourceCatalogKey(params.scope, params.address, params.application), Object.freeze({
+    const changed = credentialCatalogs.set(teamCredentialResourceCatalogKey(params.scope, params.address, params.application, params.executionMachineId), Object.freeze({
         scope: params.scope,
         address: params.address,
         ...(params.application ? { application: params.application } : {}),
+        ...(params.executionMachineId ? { executionMachineId: params.executionMachineId } : {}),
         status: 'error',
         data: withdrawn ? null : current?.data ?? null,
         lastObservedAt: withdrawn ? null : current?.lastObservedAt ?? null,
@@ -897,7 +902,7 @@ export function applyTeamCredentialResourceCatalogFailure(params: Readonly<{
         reachability: reachabilityForScopedSnapshotError(params.error),
         error: params.error,
     }));
-    notify();
+    if (changed) notify();
 }
 
 export function invalidateTeamCredentialResourceCatalog(
@@ -905,8 +910,9 @@ export function invalidateTeamCredentialResourceCatalog(
     address: TeamAddress,
     application?: ProviderBrokerApplicationBindingV1,
     options?: Readonly<{ retainSelection: boolean }>,
+    executionMachineId?: string,
 ): boolean {
-    const changed = markTeamCredentialResourceCatalogStale(scope, address, application, options?.retainSelection === true);
+    const changed = markTeamCredentialResourceCatalogStale(scope, address, application, options?.retainSelection === true, executionMachineId);
     if (!changed) return false;
     notify();
     return true;
@@ -917,8 +923,9 @@ function markTeamCredentialResourceCatalogStale(
     address: TeamAddress,
     application?: ProviderBrokerApplicationBindingV1,
     retainSelection = false,
+    executionMachineId?: string,
 ): boolean {
-    const key = teamCredentialResourceCatalogKey(scope, address, application);
+    const key = teamCredentialResourceCatalogKey(scope, address, application, executionMachineId);
     const current = credentialCatalogs.get(key);
     if (!current || (current.stale && (retainSelection || !current.selectionCurrent))) return false;
     credentialCatalogs.set(key, Object.freeze({ ...current, stale: true,

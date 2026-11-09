@@ -15,15 +15,85 @@ import type { ServerAccountRequestAuthority } from '@/sync/runtime/orchestration
 import { runSessionMessagesPagePipeline } from '@/sync/engine/sessions/sessionMessagesPagePipeline';
 
 export type PendingNavigationDetailsResult =
-    | Readonly<{ kind: 'available'; session: Session; messages: readonly Message[]; requests: readonly SessionPendingRequest[];
-        reduction?: ReturnType<typeof createReducer> }>
+    | Readonly<{ kind: 'available'; session: Session; messages: readonly Message[]; requests: readonly SessionPendingRequest[] }>
     | Readonly<{ kind: 'unavailable'; reason: string }>;
+
+/** Reuses a caller's admitted batched snapshot without a second Session read. */
+export async function readPendingNavigationDetailsForAuthority(
+    authority: ServerAccountRequestAuthority,
+    session: Session,
+    options: Readonly<{ signal?: AbortSignal; isCurrent(): boolean }>,
+): Promise<PendingNavigationDetailsResult> {
+    const isCurrent = options.isCurrent;
+    const unavailableReason = () => options.signal?.aborted ? 'cancelled' : 'scope_changed';
+    const request: ServerAccountRequestAuthority['request'] = (path, init, requestOptions) => authority.request(
+        path, { ...init, ...(options.signal ? { signal: options.signal } : {}) }, requestOptions,
+    );
+    const availability = readSessionContentAvailability(session);
+    if (!isSessionContentReadable(availability)) {
+        return { kind: 'unavailable', reason: availability ?? 'content_unavailable' };
+    }
+
+    // Pending state is the cheapest canonical identity source. A full
+    // request snapshot avoids transcript paging independent of its size.
+    const stateRequests = listPendingSessionRequests(session, []);
+    const projectedCount = (session.pendingPermissionRequestCount ?? 0) + (session.pendingUserActionRequestCount ?? 0);
+    const stateComplete = (stateRequests.length > 0 && stateRequests.length >= projectedCount)
+        || (session.metadataLayoutVersion === 1 && projectedCount === 0);
+    if (stateComplete) {
+        return { kind: 'available', session, messages: [], requests: stateRequests };
+    }
+    const reduction = createReducer();
+    const messagesById = new Map<string, Message>();
+    const received = new Map<string, Map<string, number>>();
+    let requests = stateRequests;
+    let beforeSeq: number | undefined;
+    for (;;) {
+        if (!isCurrent()) return { kind: 'unavailable', reason: unavailableReason() };
+        const page = await runSessionMessagesPagePipeline({
+            sessionId: session.id,
+            serverId: authority.scope.serverId,
+            purpose: 'older',
+            page: {
+                direction: 'older', scope: 'all',
+                requestPath: buildSessionMessagesPath({ sessionId: session.id, scope: 'all', ...(beforeSeq !== undefined ? { beforeSeq } : {}) }),
+                ...(beforeSeq !== undefined ? { beforeSeq } : {}),
+            },
+            lifecyclePolicy: 'suppress',
+            sessionEncryptionMode: session.encryptionMode === 'plain' ? 'plain' : 'e2ee',
+            getSessionEncryption: (id) => authority.context.encryption?.getSessionEncryption(id) ?? null,
+            isCurrent,
+            request,
+            sessionReceivedMessages: received,
+            applyMessages: () => {},
+            log: { log: () => {} },
+        });
+        if (!isCurrent()) return { kind: 'unavailable', reason: unavailableReason() };
+        for (const message of reducer(reduction, [...page.normalizedMessages], session.agentState).messages) {
+            messagesById.set(message.id, message);
+        }
+        requests = listPendingSessionRequests(session, Array.from(messagesById.values()));
+        // Known incomplete snapshots need only their missing identities;
+        // legacy snapshots without a count still exhaust the fallback.
+        if (projectedCount > stateRequests.length && requests.length >= projectedCount) break;
+        if (page.page.hasMore !== true) break;
+        const next = page.page.nextBeforeSeq;
+        if (typeof next !== 'number' || next <= 0 || (beforeSeq !== undefined && next >= beforeSeq)) {
+            return { kind: 'unavailable', reason: 'invalid_page_cursor' };
+        }
+        beforeSeq = next;
+    }
+    const messages = Array.from(messagesById.values());
+    if (!isCurrent()) return { kind: 'unavailable', reason: unavailableReason() };
+    return { kind: 'available', session, messages,
+        requests: stateComplete ? stateRequests : requests };
+}
 
 /** Fresh, transient details: a foreign Home never borrows the active Home's bare-ID store. */
 export async function readPendingNavigationDetails(
     address: SessionAddress,
     expectedScope?: ServerAccountScope,
-    options: Readonly<{ signal?: AbortSignal; reuse?: Extract<PendingNavigationDetailsResult, { kind: 'available' }> }> = {},
+    options: Readonly<{ signal?: AbortSignal }> = {},
 ): Promise<PendingNavigationDetailsResult> {
     if (options.signal?.aborted) return { kind: 'unavailable', reason: 'cancelled' };
     const target = normalizeSessionAddress(address.serverId, address.sessionId);
@@ -53,84 +123,9 @@ export async function readPendingNavigationDetails(
             });
             if (!isCurrent()) return { kind: 'unavailable', reason: unavailableReason() };
             const session = snapshot.session;
-            const availability = readSessionContentAvailability(session);
-            if (!isSessionContentReadable(availability)) {
-                return { kind: 'unavailable', reason: availability ?? 'content_unavailable' };
-            }
-
-            // Pending state is the cheapest canonical identity source. A full
-            // request snapshot avoids transcript paging independent of its size.
-            const stateRequests = listPendingSessionRequests(session, []);
-            const projectedCount = (session.pendingPermissionRequestCount ?? 0) + (session.pendingUserActionRequestCount ?? 0);
-            const stateComplete = (stateRequests.length > 0 && stateRequests.length >= projectedCount)
-                || (session.metadataLayoutVersion === 1 && projectedCount === 0);
-            // Legacy/incomplete snapshots can still have transcript-only
-            // identities. Reuse the selected transcript during fresh revalidation
-            // instead of paging it again; completion comes from the new snapshot.
-            const reusable = options.reuse;
-            const sameAddress = reusable?.session.id === session.id && reusable.session.serverId === session.serverId;
-            const reusedReduction = sameAddress ? reusable.reduction : undefined;
-            let reusedMessages = sameAddress ? reusable.messages : null;
-            if (reusedReduction && reusedMessages) {
-                // Reconcile settlement through the same reducer that originally
-                // applied AgentState, not a second stale-message completion rule.
-                const refreshed = new Map(reusedMessages.map(message => [message.id, message]));
-                for (const message of reducer(reusedReduction, [], session.agentState).messages) refreshed.set(message.id, message);
-                reusedMessages = Array.from(refreshed.values());
-            }
-            if (stateComplete) {
-                return { kind: 'available', session, messages: reusedMessages ?? [], requests: stateRequests,
-                    ...(reusedReduction ? { reduction: reusedReduction } : {}) };
-            }
-            if (reusedMessages && reusedMessages.length > 0) {
-                return { kind: 'available', session, messages: reusedMessages,
-                    requests: listPendingSessionRequests(session, reusedMessages),
-                    ...(reusedReduction ? { reduction: reusedReduction } : {}) };
-            }
-            const reduction = createReducer();
-            const messagesById = new Map<string, Message>();
-            const received = new Map<string, Map<string, number>>();
-            let requests = stateRequests;
-            let beforeSeq: number | undefined;
-            for (;;) {
-                if (!isCurrent()) return { kind: 'unavailable', reason: unavailableReason() };
-                const page = await runSessionMessagesPagePipeline({
-                    sessionId: target.sessionId,
-                    serverId: authority.scope.serverId,
-                    purpose: 'older',
-                    page: {
-                        direction: 'older', scope: 'all',
-                        requestPath: buildSessionMessagesPath({ sessionId: target.sessionId, scope: 'all', ...(beforeSeq !== undefined ? { beforeSeq } : {}) }),
-                        ...(beforeSeq !== undefined ? { beforeSeq } : {}),
-                    },
-                    lifecyclePolicy: 'suppress',
-                    sessionEncryptionMode: session.encryptionMode === 'plain' ? 'plain' : 'e2ee',
-                    getSessionEncryption: (id) => authority.context.encryption?.getSessionEncryption(id) ?? null,
-                    isCurrent,
-                    request,
-                    sessionReceivedMessages: received,
-                    applyMessages: () => {},
-                    log: { log: () => {} },
-                });
-                if (!isCurrent()) return { kind: 'unavailable', reason: unavailableReason() };
-                for (const message of reducer(reduction, [...page.normalizedMessages], session.agentState).messages) {
-                    messagesById.set(message.id, message);
-                }
-                requests = listPendingSessionRequests(session, Array.from(messagesById.values()));
-                // Known incomplete snapshots need only their missing identities;
-                // legacy snapshots without a count still exhaust the fallback.
-                if (projectedCount > stateRequests.length && requests.length >= projectedCount) break;
-                if (page.page.hasMore !== true) break;
-                const next = page.page.nextBeforeSeq;
-                if (typeof next !== 'number' || next <= 0 || (beforeSeq !== undefined && next >= beforeSeq)) {
-                    return { kind: 'unavailable', reason: 'invalid_page_cursor' };
-                }
-                beforeSeq = next;
-            }
-            const messages = Array.from(messagesById.values());
-            if (!isCurrent()) return { kind: 'unavailable', reason: unavailableReason() };
-            return { kind: 'available', session, messages, reduction,
-                requests: stateComplete ? stateRequests : requests };
+            return readPendingNavigationDetailsForAuthority({ ...authority, request }, session, {
+                signal: options.signal, isCurrent,
+            });
         });
         // Releasing a leased carrier is asynchronous too; Account retirement
         // during release must not turn a stale read into a navigable result.

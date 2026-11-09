@@ -14,7 +14,6 @@ export async function publishUiSessionStateFieldToMetadata<F extends SessionStat
     updateSessionMetadataWithRetry: (
         sessionId: string,
         updater: (metadata: Metadata) => Metadata,
-        opts?: Readonly<{ maxAttempts?: number }>,
     ) => Promise<unknown>;
     metadataPreprocess?: UiSessionStateMetadataPreprocess;
     metadataPostprocess?: UiSessionStateMetadataPostprocess;

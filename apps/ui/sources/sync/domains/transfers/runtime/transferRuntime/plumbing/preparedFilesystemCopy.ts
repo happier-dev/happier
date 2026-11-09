@@ -80,12 +80,12 @@ async function copyPreparedFilesystemFileBytes(params: OwnedCopyParams): Promise
         if (!session || retainImport) return;
         let cleanupCarrier: MachineCarrierHttpLease | null = null;
         try {
-            let preparedSession: Pick<PreparedDirectImportSession, 'baseUrls' | 'request'> = session;
+            let preparedSession: Pick<PreparedDirectImportSession, 'baseUrls' | 'request' | 'carrierKind'> = session;
             if (params.signal?.aborted) {
                 cleanupCarrier = await params.acquireDestinationCleanupCarrier({ operationId: session.uploadId });
                 if (!cleanupCarrier) return;
                 const endpoint = resolveDirectImportCarrierRequest({ endpointUrl: session.baseUrls[0]!, carrier: cleanupCarrier });
-                preparedSession = { baseUrls: [endpoint.url], request: endpoint.request };
+                preparedSession = { baseUrls: [endpoint.url], request: endpoint.request, carrierKind: endpoint.carrierKind };
             }
             await abortOwnedDirectImportSession({ machineId: input.destination.machineId,
                 serverId: input.destination.serverId, accountId: params.destinationAccount?.accountId, uploadId: session.uploadId,
@@ -97,7 +97,7 @@ async function copyPreparedFilesystemFileBytes(params: OwnedCopyParams): Promise
         const encrypted = await createEncryptedTransferChunkEnvelope({ transferId: session.uploadId, sequence: index,
             payload: buffer.subarray(0, bufferedBytes), recipientPublicKeyBase64: session.recipientPublicKeyBase64 });
         const response = await sendDirectImportChunk({ baseUrl: session.baseUrls[0]!, index, ...encrypted,
-            request: session.request, signal: params.signal });
+            request: session.request, carrierKind: session.carrierKind, signal: params.signal });
         if (!response.success) throw new Error(response.error);
         index += 1;
         bufferedBytes = 0;
@@ -146,7 +146,7 @@ async function copyPreparedFilesystemFileBytes(params: OwnedCopyParams): Promise
                 close: async () => {
                     if (!session || receivedBytes !== session.expectedSizeBytes) throw new Error('Copy source is incomplete');
                     if (bufferedBytes > 0 || index === 0) await sendBufferedChunk();
-                    finalized = await finalizeDirectImportSession({ baseUrl: session.baseUrls[0]!, request: session.request, signal: params.signal });
+                    finalized = await finalizeDirectImportSession({ baseUrl: session.baseUrls[0]!, request: session.request, carrierKind: session.carrierKind, signal: params.signal });
                     retainImport = finalized.success || isDirectImportTerminalFinalizeErrorCode(finalized.errorCode);
                     if (!finalized.success) throw new Error(finalized.error);
                 },
@@ -214,7 +214,7 @@ async function copyPreparedFilesystemEntry(params: OwnedCopyParams): Promise<Fil
             const flush = async () => {
                 const encrypted = await createEncryptedTransferChunkEnvelope({ transferId: session.uploadId, sequence,
                     payload: buffer.subarray(0, buffered), recipientPublicKeyBase64: session.recipientPublicKeyBase64 });
-                const result = await sendDirectImportChunk({ baseUrl: session.baseUrls[0]!, index: sequence, ...encrypted, request: session.request, signal: params.signal });
+                const result = await sendDirectImportChunk({ baseUrl: session.baseUrls[0]!, index: sequence, ...encrypted, request: session.request, carrierKind: session.carrierKind, signal: params.signal });
                 if (!result.success) throw new Error(result.error);
                 sequence += 1; buffered = 0;
             };
@@ -238,7 +238,7 @@ async function copyPreparedFilesystemEntry(params: OwnedCopyParams): Promise<Fil
                     }, close: async () => {
                         if (received !== descriptor.sizeBytes) throw new Error('Entry payload is incomplete');
                         if (buffered > 0 || sequence === 0) await flush();
-                        const finalized = await finalizeDirectImportSession({ baseUrl: session.baseUrls[0]!, request: session.request, signal: params.signal });
+                        const finalized = await finalizeDirectImportSession({ baseUrl: session.baseUrls[0]!, request: session.request, carrierKind: session.carrierKind, signal: params.signal });
                         if (!finalized.success) { retainImports = isDirectImportTerminalFinalizeErrorCode(finalized.errorCode);
                             throw Object.assign(new Error(finalized.error), { errorCode: finalized.errorCode }); }
                     } } });

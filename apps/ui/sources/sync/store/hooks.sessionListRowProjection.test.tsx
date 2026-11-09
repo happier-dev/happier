@@ -303,6 +303,59 @@ describe('useSessionListRenderableWithServerScope row projection', () => {
         }
     });
 
+    it('keeps allocating row selectors stable between real inputs, including pending archive progress', async () => {
+        const previous = storage.getState();
+        const address = { serverId: 'allocating-selector-home', sessionId: 'allocating-selector-row' };
+        const row = buildActiveRenderable({ id: address.sessionId });
+        storage.setState({ sessionArchiveOperations: {}, sessionListRowsByServerId: {
+            [address.serverId]: { [row.id]: row }, 'other-home': { [row.id]: row },
+        } });
+        let selections = 0;
+        let renders = 0;
+        const select = (rows: ReturnType<typeof storage.getState>['sessionListRowsByServerId']) => {
+            selections += 1;
+            return { homes: Object.entries(rows).map(([serverId, bucket]) => ({ serverId, rows: Object.values(bucket) })),
+                byId: new Map(Object.values(rows).flatMap(bucket => Object.values(bucket).map(value => [value.id, value] as const))) };
+        };
+        const alternate = (_rows: ReturnType<typeof storage.getState>['sessionListRowsByServerId']): ReturnType<typeof select> => ({ homes: [], byId: new Map() });
+        const hook = await renderHook((mode: 'rows' | 'empty' | 'alternate') => {
+            renders += 1;
+            return useSessionListRowsByServerId(mode === 'empty' ? [] : [address.serverId], mode === 'alternate' ? alternate : select);
+        }, { initialProps: 'rows' });
+        let operation: ReturnType<ReturnType<typeof storage.getState>['beginSessionArchive']> = null;
+        try {
+            const initial = hook.getCurrent();
+            expect(initial.byId.get(row.id)).toBe(row);
+            const initialSelections = selections;
+            await act(async () => { storage.setState(state => ({ isDataReady: !state.isDataReady })); });
+            await hook.rerender();
+            expect(hook.getCurrent()).toBe(initial);
+            expect(selections).toBe(initialSelections);
+            await act(async () => { operation = storage.getState().beginSessionArchive(address); });
+            const pending = hook.getCurrent();
+            expect(pending).not.toBe(initial);
+            expect(pending.byId.get(row.id)).toMatchObject({ archiving: true, keepVisibleWhenInactive: true });
+            const pendingSelections = selections;
+            const pendingRenders = renders;
+            await act(async () => {
+                const other = storage.getState().beginSessionArchive({ ...address, serverId: 'other-home' });
+                if (other) storage.getState().finishSessionArchive(other);
+            });
+            expect(hook.getCurrent()).toBe(pending);
+            expect(selections).toBe(pendingSelections);
+            expect(renders).toBe(pendingRenders);
+            await act(async () => { if (operation) storage.getState().finishSessionArchive(operation); });
+            expect(hook.getCurrent().byId.get(row.id)).toBe(row);
+            const changed = { ...row, metadata: { ...row.metadata!, summaryText: 'Changed' } };
+            await act(async () => { storage.setState({ sessionListRowsByServerId: { [address.serverId]: { [row.id]: changed } } }); });
+            expect(hook.getCurrent().byId.get(row.id)).toBe(changed);
+            expect((await hook.rerender('alternate')).byId.size).toBe(0);
+            expect((await hook.rerender('rows')).byId.get(row.id)).toBe(changed);
+            expect((await hook.rerender('empty')).homes).toEqual([]);
+            expect((await hook.rerender('rows')).byId.get(row.id)).toBe(changed);
+        } finally { await hook.unmount(); storage.setState(previous); }
+    });
+
     it('projects shared archive progress locally without changing unrelated Home rows or attention flags', async () => {
         const previous = storage.getState();
         const address = { serverId: 'archive-projection-home', sessionId: 'archive-projection-session' };
@@ -714,6 +767,7 @@ describe('session list row subscription cost across three Homes', () => {
                 const sessionId = `row-subscription-session-${home}-${index}`;
                 rows[sessionId] = buildActiveRenderable({
                     id: sessionId,
+                    serverId,
                     seq: index,
                     latestTurnStatus: 'in_progress',
                     metadata: { path: '/repo', host: 'localhost', externalSessionV1: {

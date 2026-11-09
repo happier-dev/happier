@@ -1,4 +1,5 @@
-import type { BrowserCommandV1, BrowserViewTargetV1 } from '@happier-dev/protocol';
+import type { BrowserCommandV1} from '@happier-dev/protocol/browser/control/v1';
+import type { BrowserViewTargetV1 } from '@happier-dev/protocol/browser/target/v1';
 import { describe, expect, it, vi } from 'vitest';
 
 import { dispatchBrowserControlCommand } from './commands';

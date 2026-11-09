@@ -66,7 +66,7 @@ export const ACCOUNT_DISPLAY_SETTING_ANALYTICS = defineAccountSettingAnalytics({
         serializeCurrent: (value: number) => bucketBytes(value, 10 * 1024 * 1024, 50 * 1024 * 1024),
     },
     sessionTagsEnabled: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
-    sessionListWorkingStatusAnimatedTextEnabled: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
+    sessionListHiddenTagIdsWhileRecording: { trackCurrentState: false, trackChanges: false, valueKind: 'presence', privacy: 'forbidden', identityScope: 'person' },
     mobileWorkspaceExperienceV1: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
     workspaceTabsSyncEnabled: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
     sessionCockpitSwipeNavigationEnabled: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },

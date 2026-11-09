@@ -1,4 +1,7 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// Import-time defaults (Account service, Cloud identity) also model an unconfigured source build.
+vi.hoisted(() => vi.stubEnv('EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON', ''));
 import { MMKV } from 'react-native-mmkv';
 import * as React from 'react';
 import { renderHook, standardCleanup } from '@/dev/testkit';
@@ -131,6 +134,10 @@ describe('serverProfiles', () => {
     const previousPreconfigured = process.env.EXPO_PUBLIC_HAPPY_PRECONFIGURED_SERVERS;
     const previousBuildFeaturesDeny = process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
 
+    // This owner's cases model an unconfigured source build; the UI test env otherwise
+    // carries the official build profile. Cases needing a profile stub their own.
+    beforeEach(() => { vi.stubEnv('EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON', ''); });
+
     afterEach(() => {
         standardCleanup();
         vi.unstubAllGlobals();
@@ -150,6 +157,115 @@ describe('serverProfiles', () => {
         if (previousBuildFeaturesDeny === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
         else process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = previousBuildFeaturesDeny;
         profiles.resetServerProfilesRuntimeForTests();
+    });
+
+    it('withholds the baked Home while an explicit new Home awaits admission', () => {
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = randomScope();
+        process.env.EXPO_PUBLIC_HAPPIER_SERVER_URL = 'https://baked-default.example.test';
+        stubWebRuntime('https://ui.example.test');
+        Object.assign(window.location, { href: 'https://ui.example.test/?server=https%3A%2F%2Fnew-home.example.test' });
+
+        expect(profiles.getActiveServerSnapshot()).toMatchObject({ serverId: '', serverUrl: '' });
+        expect(profiles.getActiveServerUrl()).toBe('');
+        expect(profiles.listServerProfiles().some((profile) => profile.serverUrl === 'https://new-home.example.test')).toBe(false);
+        Object.assign(window.location, { href: 'https://ui.example.test/' });
+        expect(profiles.getActiveServerUrl()).toBe('https://baked-default.example.test');
+    });
+
+    it('retains the admitted entry origin after query cleanup and descriptor reconciliation, until another Home is selected', async () => {
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = randomScope();
+        stubWebRuntime('https://ui.example.test');
+        const selectedUrl = 'http://happier-qa.localhost:3033';
+        const home = await profiles.upsertServerProfile({ serverUrl: selectedUrl, source: 'url' });
+        await profiles.setActiveServerId(home.id, { scope: 'tab' });
+        await profiles.setServerProfileIdentityForUrl(selectedUrl, 'srv_entry_qa');
+        Object.assign(window.location, { href: `https://ui.example.test/?server=${encodeURIComponent(selectedUrl)}` });
+        Object.assign(window, { history: { state: null,
+            replaceState: (_state: unknown, _title: string, relativeUrl: string) => {
+                Object.assign(window.location, { href: new URL(relativeUrl, window.location.href).href });
+            } } });
+        const { commitWebServerUrlOverride } = await import('./url/bootstrapActiveServerFromWebLocation');
+        await commitWebServerUrlOverride({ action: { kind: 'cleanup_only', serverUrl: selectedUrl },
+            refreshAuth: async () => {}, switchServer: async () => {} });
+        await profiles.reconcileServerProfileHomeConnectionDescriptor({ serverUrl: selectedUrl,
+            observedServerIdentityId: 'srv_entry_qa', observation: 'exact', descriptor: {
+                v: 1, homeServerIdentityId: 'srv_entry_qa', canonicalServerUrl: selectedUrl, revision: 1,
+                endpoints: [{ kind: 'https', url: 'https://historical-qa.example.test:9443' }],
+            } });
+        expect(profiles.getActiveServerSnapshot()).toMatchObject({ serverUrl: selectedUrl, runtimeOrigin: selectedUrl });
+        expect(profiles.getSavedHomeConnectionSnapshot({ serverIdentityId: 'srv_entry_qa', canonicalServerUrl: selectedUrl }))
+            .toMatchObject({ runtimeOrigin: selectedUrl });
+        const other = await profiles.upsertServerProfile({ serverUrl: 'https://other-home.example.test', source: 'manual' });
+        await profiles.setActiveServerId(other.id, { scope: 'tab' });
+        expect(profiles.getActiveServerSnapshot().serverUrl).toBe(other.serverUrl);
+        await profiles.setActiveServerId(home.id, { scope: 'tab' });
+        expect(profiles.getActiveServerSnapshot().runtimeOrigin).toBeUndefined();
+    });
+
+    it.each([true, false])('publishes an admitted supplied address with useCanonical=%s', async (useCanonical) => {
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = randomScope();
+        stubWebRuntime('https://ui.example.test');
+        const enteredUrl = 'https://entered-home.example.test';
+        const canonicalServerUrl = 'https://canonical-home.example.test';
+        const serverIdentityId = 'srv_admitted_entry';
+        Object.assign(window.location, { href: `https://ui.example.test/?server=${encodeURIComponent(enteredUrl)}` });
+        const home = await profiles.adoptHomeProfile({
+            descriptor: { serverUrl: canonicalServerUrl, canonicalServerUrl, homeServerIdentityId: serverIdentityId },
+            source: 'url',
+            addressSelection: { serverIdentityId, enteredUrl, canonicalServerUrl, useCanonical },
+        });
+        await profiles.setActiveServerId(home.id, { scope: 'tab' });
+        const snapshot = profiles.getActiveServerSnapshot();
+        expect(snapshot).toMatchObject({
+            serverId: serverIdentityId,
+            serverUrl: canonicalServerUrl,
+        });
+        expect(snapshot.runtimeOrigin ?? snapshot.serverUrl).toBe(useCanonical ? canonicalServerUrl : enteredUrl);
+        await profiles.reconcileServerProfileHomeConnectionDescriptor({
+            serverUrl: canonicalServerUrl,
+            observedServerIdentityId: serverIdentityId,
+            descriptor: {
+                v: 1, homeServerIdentityId: serverIdentityId, canonicalServerUrl, revision: 1,
+                endpoints: [{ kind: 'https', url: canonicalServerUrl }],
+            },
+            observation: 'exact',
+        });
+        profiles.resetServerProfilesRuntimeForTests();
+        expect(profiles.getSavedHomeConnectionAddress({ serverIdentityId, canonicalServerUrl }))
+            .toBe(useCanonical ? canonicalServerUrl : enteredUrl);
+    });
+
+    it('retains an admitted URL connection when the first authenticated descriptor establishes a different canonical audience', async () => {
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = randomScope();
+        const enteredUrl = 'http://192.0.2.55:3035';
+        const canonicalServerUrl = 'http://configured-home.localhost:3035';
+        const serverIdentityId = 'srv_admitted_url_descriptor';
+        const home = await profiles.upsertServerProfile({ serverUrl: enteredUrl, source: 'url' });
+        await profiles.setActiveServerId(home.id, { scope: 'device' });
+        await profiles.setServerProfileIdentityForUrl(enteredUrl, serverIdentityId);
+        const descriptor = {
+            v: 1 as const, homeServerIdentityId: serverIdentityId, canonicalServerUrl, revision: 2,
+            endpoints: [{ kind: 'https' as const, url: canonicalServerUrl }],
+        };
+
+        const reconciled = await profiles.reconcileServerProfileHomeConnectionDescriptor({
+            serverUrl: enteredUrl,
+            observedServerIdentityId: serverIdentityId,
+            descriptor,
+            observation: 'exact',
+        });
+
+        expect(reconciled.kind).toBe('applied');
+        expect(profiles.getServerProfileById(serverIdentityId)).toMatchObject({
+            serverUrl: canonicalServerUrl, canonicalServerUrl, homeConnectionDescriptor: descriptor,
+            addressSelection: { serverIdentityId, enteredUrl, canonicalServerUrl, useCanonical: false },
+        });
+        const target = { serverIdentityId, canonicalServerUrl };
+        expect(profiles.getSavedHomeConnectionAddress(target)).toBe(enteredUrl);
+        profiles.resetServerProfilesRuntimeForTests();
+        expect(profiles.getActiveServerSnapshot()).toMatchObject({ serverId: serverIdentityId, serverUrl: canonicalServerUrl });
+        expect(profiles.getSavedHomeConnectionAddress(target)).toBe(enteredUrl);
+        expect(profiles.buildHomeConnectionDescriptorForProfile(profiles.getServerProfileById(serverIdentityId)!)).toEqual(descriptor);
     });
 
     it('migrates focused Home selection into device-global state once', async () => {
@@ -3622,7 +3738,7 @@ describe('serverProfiles', () => {
         expect(profiles.listServerProfiles().some((p) => p.serverUrl === 'https://api.happier.dev')).toBe(false);
 
         expect(profiles.getActiveServerUrl()).toBe('');
-        expect(profiles.getResetToDefaultServerId()).toBe('');
+        expect(profiles.getResetToDefaultServerId()).toBeNull();
         expect(profiles.listServerProfiles().some((p) => p.serverUrl === 'https://api.happier.dev')).toBe(false);
     });
 
@@ -3669,7 +3785,7 @@ describe('serverProfiles', () => {
         const resetId = profiles.getResetToDefaultServerId();
         expect(resetId).toBeTruthy();
 
-        await profiles.setActiveServerId(resetId, { scope: 'device' });
+        await profiles.setActiveServerId(resetId!, { scope: 'device' });
         expect(profiles.getActiveServerUrl()).toBe('http://localhost:3013');
     });
 

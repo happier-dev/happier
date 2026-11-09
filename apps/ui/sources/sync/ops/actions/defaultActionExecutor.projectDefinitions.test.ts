@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProjectManifestUpdateInputSchema } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
 import { ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
-import { readProjectManifestDocument } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestDocument';
+import { readProjectManifestDocument, ProjectManifestFileSnapshotSchema } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestDocument';
 import { createPlainMachineRowFixture } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
@@ -21,7 +21,7 @@ const { createProjectManifestEditorModel } = await import('@/components/projects
 
 const initialBytes = '{ "version": 1, "future": {"keep":true} }\n';
 const present = (bytes: string, hash: string) => ({ basis: { kind: 'present' as const, hash }, document: readProjectManifestDocument(bytes) });
-const detection = { entries: [], environments: [], devcontainers: [], coverage: 'complete' as const, diagnostics: [] };
+const detection = { entries: [], toolchains: [], devcontainers: [], coverage: 'complete' as const, diagnostics: [] };
 let workspace = { serverId: 'home', workspaceId: 'workspace', machineId: 'machine', rootPath: '/project' };
 let workspaceSequence = 0;
 let inspectionReply: unknown;
@@ -72,10 +72,10 @@ describe('Project definition Actions through the UI executor', () => {
         const definition = present(initialBytes, 'a'.repeat(64));
         inspectionReply = { definition, detection, importCandidates: [] };
         const client = createProjectManifestActionClient({ workspace, expectedAccountId: 'alice', signal, execute: createFrontDoorActionExecute(createDefaultActionExecutor()) });
-        const inspected = await client.inspect();
-        const model = createProjectManifestEditorModel({ workspace, expectedAccountId: 'alice', definition: inspected.definition, actions: client });
+        const inspected = await client.inspect({ kind: 'editor' });
+        const model = createProjectManifestEditorModel({ workspace, expectedAccountId: 'alice', definition: ProjectManifestFileSnapshotSchema.parse(inspected.definition), actions: client });
         model.importNative({ usage: 'script', name: 'build', source: { kind: 'pluginNative', adapter: { pluginId: 'example.pixi', localId: 'tasks' }, file: 'pixi.toml', target: 'build' } });
-        model.importEnvironment({ kind: 'pluginToolchain', adapter: { pluginId: 'example.pixi', localId: 'environment' }, configPath: 'pixi.toml' });
+        model.importToolchain({ kind: 'pluginToolchain', adapter: { pluginId: 'example.pixi', localId: 'toolchain' }, configPath: 'pixi.toml' });
         const bytes = model.getSnapshot().draft.bytes;
         const document = readProjectManifestDocument(bytes);
         if (document.status !== 'valid') throw new Error('Expected valid imported document');
@@ -89,7 +89,7 @@ describe('Project definition Actions through the UI executor', () => {
         ]);
         expect(ProjectManifestUpdateInputSchema.parse(rpc.machine.mock.calls[0][0].payload).bytes).toBe(bytes);
         expect(ExternalActionRequestEnvelopeV1Schema.parse(harness.requestsFor('/v1/actions/projects.inspect')[0].input).input)
-            .toEqual({ workspace: { ...workspace, serverId: 'srv_project_home' } });
+            .toEqual({ workspace: { ...workspace, serverId: 'srv_project_home' }, read: { kind: 'editor' } });
     });
 
     it('rejects extra mutation authority fields before transport and retains real conflict and refusal outcomes', async () => {
@@ -118,8 +118,8 @@ describe('Project definition Actions through the UI executor', () => {
         const client = createProjectManifestActionClient({ workspace, expectedAccountId: 'alice', execute: createFrontDoorActionExecute(createDefaultActionExecutor()) });
         const definition = present(initialBytes, 'a'.repeat(64));
         inspectionReply = { definition, detection, importCandidates: [] };
-        const inspected = await client.inspect();
-        const model = createProjectManifestEditorModel({ workspace, expectedAccountId: 'alice', definition: inspected.definition, actions: client });
+        const inspected = await client.inspect({ kind: 'editor' });
+        const model = createProjectManifestEditorModel({ workspace, expectedAccountId: 'alice', definition: ProjectManifestFileSnapshotSchema.parse(inspected.definition), actions: client });
         model.setRaw('{"version":1,"future":"Alice draft"}');
         await harness.switchAccount(workspace.serverId, 'bob');
         expect(await model.save()).toBeNull();

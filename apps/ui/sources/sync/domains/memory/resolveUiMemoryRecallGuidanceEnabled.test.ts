@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { MemoryStatusV1 } from '@happier-dev/protocol';
+import type { MemoryStatusV1 } from '@happier-dev/protocol/memory/memoryStatus';
 
 import { resolveUiMemoryRecallGuidanceEnabled } from './resolveUiMemoryRecallGuidanceEnabled';
 

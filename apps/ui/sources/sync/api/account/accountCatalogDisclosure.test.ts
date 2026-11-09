@@ -194,7 +194,8 @@ it.each((['plain', 'e2ee'] as const).flatMap(mode => (['cold', 'warm'] as const)
     // This is the production scope entry, not a manually branded test context.
     await expect(readRemoteHostCatalog({ serverId, accountId })).resolves.toMatchObject({ status: 'ready', hosts: [] });
     expect(initialAuthority).toEqual(warmth === 'warm' ? [] : ['/v1/account/encryption', '/v1/account/encryption/currentness']);
-    expect(finalAuthority).toEqual(['/v1/account/encryption/currentness']);
+    // Read-only disclosure borrows the connection's admitted observation; cold reads admit over HTTP.
+    expect(finalAuthority).toEqual(warmth === 'warm' ? [] : ['/v1/account/encryption/currentness']);
 });
 
 it.each(['none', 'pending', 'cleanup'] as const)('reuses the last RemoteHost publication admission for its return (%s publication)', async publication => {
@@ -363,10 +364,15 @@ it.each([...disclosureCases, ...encryptedCases])('admits privately opened $kind 
             socket!.connect();
         }
         bodyReady.resolve(undefined);
+        // A read-only catalog row discloses under the connection's admitted observation: a revocation
+        // committed but not yet delivered takes effect at the next boundary (a delivered push, a
+        // reconnect, or the next request). Saved Secret plaintext keeps its fresh authority point.
+        const nextBoundary = kind === 'remote-host' && transport === 'connected';
         await expect(read).resolves.toMatchObject(authority === 'matching' ? { ok: true, value: 'must-stay-private', revision: 1 }
-            : kind !== 'remote-host' ? { ok: false } : { status: 'unavailable' });
-        expect(published).toBe(false);
-        if (encrypted) expect(authorityAfterCommit).toEqual(['/v1/account/encryption/currentness']);
+            : kind !== 'remote-host' ? { ok: false } : nextBoundary ? { status: 'ready' } : { status: 'unavailable' });
+        expect(published).toBe(nextBoundary);
+        if (nextBoundary) expect(authorityAfterCommit).toEqual([]);
+        else if (encrypted) expect(authorityAfterCommit).toEqual(['/v1/account/encryption/currentness']);
         else expect(authorityAfterCommit).toContain(kind === 'saved-secret' ? '/v1/account/encryption' : '/v1/account/encryption/currentness');
     } finally { bodyReady.resolve(undefined); lifetime.abort(); captured.dispose(); }
 });

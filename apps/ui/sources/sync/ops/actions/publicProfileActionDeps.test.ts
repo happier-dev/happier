@@ -10,6 +10,7 @@ import { PublicProfileUpdateBodyV1Schema } from '@happier-dev/protocol/account/p
 import { preparePublicProfileAtmosphere } from '@/components/atmosphere/preparePublicProfileAtmosphere';
 import type { PictureStore } from '@/components/atmosphere/pictureStore.types';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { standardCleanup } from '@/dev/testkit';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
@@ -62,7 +63,7 @@ describe('public-profile UI captured Account binding', () => {
     publishAppliedActiveServerSnapshot({ serverId: focused.id, serverUrl: focused.serverUrl, generation: 0 });
     await expect(createDefaultActionExecutor().execute('account.public_profile.update', { appearance }, {
       surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: focused.id, expectedAccountId: 'account-a',
-    })).resolves.toMatchObject({ ok: true, result: { kind: 'updated', refresh: 'not_needed' } });
+    })).resolves.toMatchObject({ ok: true, result: { kind: 'updated' } });
     const writes = home.requests.filter(request => request.path.startsWith('/v1/account/public-profile') && request.method !== 'GET');
     expect(writes).toHaveLength(1);
     expect(writes[0]).toMatchObject({ method: 'PUT', path: '/v1/account/public-profile/policy' });
@@ -148,13 +149,20 @@ describe('public-profile UI captured Account binding', () => {
     expect(home.requests.filter(request => request.path.startsWith('/v1/account/public-profile') && request.method !== 'GET')).toEqual([]);
   });
 
-  it.each([['off', true], ['default', false], ['default', true]] as const)('honors SCM Action %s while preparing selected public projects (native cancellation: %s)', async (setting, native) => {
+  it.each([
+    ['off', true, false], ['default', false, false], ['default', true, false], ['default', true, true],
+  ] as const)('honors SCM Action %s while preparing selected public projects (native signal: %s, cancelled: %s)', async (setting, native, cancelled) => {
     const policy = { ...DEFAULT_PUBLIC_PROFILE_POLICY_V1, fields: { ...DEFAULT_PUBLIC_PROFILE_POLICY_V1.fields, projects: true } };
     const owner = PublicProfileOwnerReadV1Schema.parse({ kind: 'ready', context: { handle: 'ada', identity: {}, service: null, urls: null },
       record: { state: 'published', policy, metadata: {}, projectSelections: [], query: normalizeUsageQuery({}), snapshot: null,
         layout: { v: 1, items: [] }, appearance: DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1,
         updatedAtMs: 1, publishedAtMs: 1, restriction: null } });
-    machineRpc.mockResolvedValue({ success: true, kind: 'public', repository: { label: 'team/repo', url: 'https://forge.test/team/repo' } });
+    const controller = new AbortController();
+    if (native) Object.defineProperty(controller.signal, 'throwIfAborted', { value: undefined });
+    machineRpc.mockImplementation(async () => {
+      if (cancelled) controller.abort();
+      return { success: true, kind: 'public', repository: { label: 'team/repo', url: 'https://forge.test/team/repo' } };
+    });
     home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://profile-home.test', accountId: 'account-a',
       settings: { actionsSettingsV1: { v: 1, actions: setting === 'off'
         ? { 'scm.hostingRepository.get': { disabledSurfaces: ['ui'] } } : {} } } }],
@@ -167,13 +175,25 @@ describe('public-profile UI captured Account binding', () => {
       } });
     const focused = home.homes.a!;
     publishAppliedActiveServerSnapshot({ serverId: focused.id, serverUrl: focused.serverUrl, generation: 0 });
-    const controller = new AbortController();
-    if (native) Object.defineProperty(controller.signal, 'throwIfAborted', { value: undefined });
-    const result = await createDefaultActionExecutor().execute('account.public_profile.update', { metadataSelection: {
+    const { storage } = await import('@/sync/domains/state/storage');
+    // Connection restoration starts Settings sync; invoke only after the fixture's policy is loaded.
+    await waitForHomeGovernance(() => {
+      expect(storage.getState().settingsScope).toEqual({ serverId: focused.id, accountId: 'account-a' });
+      if (setting === 'off') expect(storage.getState().settings.actionsSettingsV1.actions['scm.hostingRepository.get'])
+        .toMatchObject({ disabledSurfaces: ['ui'] });
+    });
+    const execution = createDefaultActionExecutor().execute('account.public_profile.update', { metadataSelection: {
       projectSelections: [{ provider: { id: 'example/forge', kind: 'custom', displayName: 'Forge', baseUrl: 'https://forge.test' },
         repository: { nameWithOwner: 'team/repo' }, protocol: 'https' }],
     } }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: focused.id,
       expectedAccountId: 'account-a', defaultSessionMachineId: 'machine', signal: controller.signal });
+    if (cancelled) {
+      await expect(execution).resolves.toMatchObject({ ok: false, errorCode: 'cancelled' });
+      expect(machineRpc).toHaveBeenCalled();
+      expect(home.requests.some(request => request.path === '/v1/account/public-profile/policy' && request.method === 'PUT')).toBe(false);
+      return;
+    }
+    const result = await execution;
     const write = home.requests.find(request => request.path === '/v1/account/public-profile/policy' && request.method === 'PUT');
     expect(result.ok || result.errorCode !== 'action_failed', result.ok ? undefined : result.error).toBe(true);
     if (setting === 'off') {
@@ -209,7 +229,7 @@ describe('public-profile UI captured Account binding', () => {
     publishAppliedActiveServerSnapshot({ serverId: focused.id, serverUrl: focused.serverUrl, generation: 0 });
     await expect(createDefaultActionExecutor().execute('account.public_profile.update', { layout }, {
       surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: focused.id, expectedAccountId: 'account-a',
-    })).resolves.toMatchObject({ ok: true, result: { kind: 'updated', refresh: 'not_needed' } });
+    })).resolves.toMatchObject({ ok: true, result: { kind: 'updated' } });
     expect(applied).toEqual([{ layout }]);
     expect(home.requests.some(request => request.path === '/v2/usage/query')).toBe(false);
   });

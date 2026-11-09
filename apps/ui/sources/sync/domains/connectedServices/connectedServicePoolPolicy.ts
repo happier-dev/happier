@@ -1,4 +1,4 @@
-import type { ConnectedServiceAuthGroupPolicyV1 } from '@happier-dev/protocol';
+import type { ConnectedServiceAuthGroupPolicyV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { t } from '@/text';
 
 /** Shared copy for pool details and collection summaries; selection remains daemon-owned. */

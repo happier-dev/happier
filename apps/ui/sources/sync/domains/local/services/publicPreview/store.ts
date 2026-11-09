@@ -1,9 +1,10 @@
 import type {
     LocalServicePublicExposureV1,
     LocalServicePublicPolicyV1,
-    LocalServicePublicPreviewSnapshotV1,
+    LocalServicePublicPreviewSnapshotV1} from '@happier-dev/protocol/local/services/public/v1';
+import type {
     LocalServicePreviewDiagnosticV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/local/services/preview/diagnostics/v1';
 
 import { readLocalServicePreviewDiagnostics } from '../preview/diagnostics';
 
@@ -96,16 +97,28 @@ export function applyLocalServicePublicPreviewSnapshot(
                 : exposure,
         );
     }
+    const sameIds = state.exposureIds.length === exposureIds.length
+        && exposureIds.every((id, index) => id === state.exposureIds[index]);
+    const sameRows = sameIds && exposureIds.every(id => exposuresById.get(id) === state.exposuresById.get(id));
+    const normalizedDiagnostics = readLocalServicePreviewDiagnostics(snapshot.diagnostics);
+    const diagnostics = JSON.stringify(state.diagnostics) === JSON.stringify(normalizedDiagnostics)
+        ? state.diagnostics : normalizedDiagnostics;
+    const policy = JSON.stringify(state.policy) === JSON.stringify(snapshot.policy) ? state.policy : snapshot.policy;
+    const sessionId = snapshot.sessionId ?? null;
+    const previewId = snapshot.previewId ?? null;
+    if (state.machineId === snapshot.machineId && state.sessionId === sessionId && state.previewId === previewId
+        && state.generatedAt === snapshot.generatedAt && state.refreshState === snapshot.refreshState
+        && sameRows && policy === state.policy && diagnostics === state.diagnostics) return state;
     return {
         machineId: snapshot.machineId,
-        sessionId: snapshot.sessionId ?? null,
-        previewId: snapshot.previewId ?? null,
+        sessionId,
+        previewId,
         generatedAt: snapshot.generatedAt,
         refreshState: snapshot.refreshState,
-        policy: snapshot.policy,
-        exposureIds,
-        exposuresById,
-        diagnostics: readLocalServicePreviewDiagnostics(snapshot.diagnostics),
+        policy,
+        exposureIds: sameIds ? state.exposureIds : exposureIds,
+        exposuresById: sameRows ? state.exposuresById : exposuresById,
+        diagnostics,
     };
 }
 

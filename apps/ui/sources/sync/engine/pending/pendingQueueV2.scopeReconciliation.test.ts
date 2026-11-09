@@ -14,7 +14,7 @@ import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
 import { scopedSessionLocalStateKey } from '@/sync/domains/state/sessionLocalStateKeys';
 import { setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { getPendingMessageVisualState } from '@/components/sessions/pending/pendingMessageVisualState';
-import { SessionStoredMessageContentSchema } from '@happier-dev/protocol';
+import { SessionStoredMessageContentSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { switchConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
 import { settingsParse } from '@/sync/domains/settings/settings';

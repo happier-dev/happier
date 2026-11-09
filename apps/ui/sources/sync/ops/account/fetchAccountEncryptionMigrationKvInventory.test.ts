@@ -3,8 +3,9 @@ import { fetchAccountEncryptionMigrationKvInventory } from './fetchAccountEncryp
 
 describe('Account encryption migration KV inventory', () => {
     const scope = { scope: { serverId: 'home', accountId: 'account' }, isCurrent: () => true };
-    it.each(['todo', 'workspace'] as const)('reads the exact complete %s inventory beyond the existing list page boundary', async namespace => {
-        const prefix = namespace === 'todo' ? 'todo.' : 'workspace:';
+    it('reads the exact complete Workspace inventory beyond the existing list page boundary', async () => {
+        const namespace = 'workspace';
+        const prefix = 'workspace:';
         const rows = Array.from({ length: 1001 }, (_, index) => ({ key: `${prefix}${String(index).padStart(4, '0')}`, value: 'record', version: index }));
         const request = vi.fn(async (path: string) => {
             const query = new URL(path, 'https://home').searchParams;
@@ -14,6 +15,16 @@ describe('Account encryption migration KV inventory', () => {
         const inventory = await fetchAccountEncryptionMigrationKvInventory({ namespace, credentials: { token: 'captured' }, request, scope });
         expect(inventory).toHaveLength(rows.length);
         expect(inventory).toEqual(rows);
+    });
+    it('uses the owner-only complete Todo transition inventory rather than the generic KV reader', async () => {
+        const rows = [{ key: 'todo.index', value: 'legacy-index', version: 2 }, { key: 'todo.shared', value: 'resource-content', version: 3,
+            resource: { ownerAccountId: 'account', encryptionMode: 'plain', access: 'owner', dataEncryptionKey: null, callerDataEncryptionKey: null, recipients: [] } }];
+        const request = vi.fn(async (path: string) => {
+            expect(path).toBe('/v1/account/encryption/migrate/todos/inventory');
+            return Response.json({ items: rows });
+        });
+        expect(await fetchAccountEncryptionMigrationKvInventory({ namespace: 'todo', credentials: { token: 'captured' }, request, scope })).toEqual(rows);
+        expect(request).toHaveBeenCalledTimes(1);
     });
     it('refuses an old server that ignores the cursor before claiming complete migration inventory', async () => {
         const rows = Array.from({ length: 1000 }, (_, index) => ({ key: `workspace:${String(index).padStart(4, '0')}`, value: 'record', version: 2 }));

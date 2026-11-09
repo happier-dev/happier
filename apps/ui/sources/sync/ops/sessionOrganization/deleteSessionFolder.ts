@@ -1,7 +1,9 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { deleteSessionOrganizationFolder as deleteSessionOrganizationFolderApi } from '@/sync/api/session/sessionOrganizationApi';
 import { getStorage } from '@/sync/domains/state/storageStore';
-import type { DeleteSessionOrganizationFolderRequest, DeleteSessionOrganizationFolderResponse } from '@happier-dev/protocol';
+import { sessionOrganizationStoreFor } from './sessionOrganizationAccountStore';
+import type { DeleteSessionOrganizationFolderRequest, DeleteSessionOrganizationFolderResponse } from '@happier-dev/protocol/sessions/organization/mutations';
+import { buildSessionOrganizationServerKey } from '@/sync/domains/session/organization/keys';
 
 export async function deleteSessionFolder(params: Readonly<{
     credentials: AuthCredentials;
@@ -12,7 +14,9 @@ export async function deleteSessionFolder(params: Readonly<{
     request: DeleteSessionOrganizationFolderRequest;
 }>): Promise<DeleteSessionOrganizationFolderResponse> {
     params.assertCurrent?.();
-    const recordId = getStorage().getState().deleteSessionOrganizationFolderOptimistic(params.serverId, params.request.folderId);
+    const previousFolder = sessionOrganizationStoreFor(params).sessionOrganizationFoldersByFolderKey[
+        buildSessionOrganizationServerKey(params.serverId, params.request.folderId)];
+    const recordId = sessionOrganizationStoreFor(params).deleteSessionOrganizationFolderOptimistic(params.serverId, params.request.folderId);
     try {
         const response = await deleteSessionOrganizationFolderApi({
             credentials: params.credentials,
@@ -21,18 +25,17 @@ export async function deleteSessionFolder(params: Readonly<{
             request: params.request,
         });
         params.assertCurrent?.();
-        getStorage().getState().commitSessionOrganizationOptimistic(recordId);
+        sessionOrganizationStoreFor(params).commitSessionOrganizationOptimistic(recordId);
         for (const folderId of response.deletedFolderIds) {
-            const reconcileRecordId = getStorage().getState().deleteSessionOrganizationFolderOptimistic(params.serverId, folderId);
-            getStorage().getState().commitSessionOrganizationOptimistic(reconcileRecordId);
+            const reconcileRecordId = sessionOrganizationStoreFor(params).deleteSessionOrganizationFolderOptimistic(params.serverId, folderId);
+            sessionOrganizationStoreFor(params).commitSessionOrganizationOptimistic(reconcileRecordId);
         }
-        if (response.affectedAssignmentCount > 0) {
-            getStorage().getState().reconcileSessionOrganizationFolderDelete(
-                params.serverId,
-                response.deletedFolderIds,
-                response.assignmentTargetFolderId,
-            );
-        }
+        sessionOrganizationStoreFor(params).reconcileSessionOrganizationFolderDelete(
+            params.serverId,
+            response.deletedFolderIds,
+            response.assignmentTargetFolderId,
+            previousFolder?.parentFolderId === response.assignmentTargetFolderId ? previousFolder.parentFolderKey : undefined,
+        );
         return response;
     } catch (error) {
         try {

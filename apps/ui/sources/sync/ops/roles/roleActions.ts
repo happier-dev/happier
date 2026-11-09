@@ -1,9 +1,11 @@
 import type {
-    ActionExecuteResult,
-    RoleArtifactV1,
+    ActionExecuteResult} from '@happier-dev/protocol/actions/actionExecutionResult';
+import type {
+    RoleArtifactV1} from '@happier-dev/protocol/prompts/roles/roleArtifactV1';
+import type {
     RoleInstructionsOverrideV1,
     RoleOverrideV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/prompts/roles/rolesV1';
 
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { getStorage } from '@/sync/domains/state/storageStore';

@@ -1,11 +1,14 @@
-import { InvalidateSync } from '@/utils/sessions/sync';
-import { createDeferred } from '@/dev/testkit';
 import { describe, expect, it, vi } from 'vitest';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { applyPlannedChangeActions } from './changesApplier';
-import { planSyncActionsFromChanges, type PlannedChangeActions } from './changesPlanner';
+import { planSyncActionsFromChanges, plannedChangesAffectUsageQuery, type PlannedChangeActions } from './changesPlanner';
+import { buildSessionFollowReceiverChangeEntityIdV1 } from '@happier-dev/protocol/sessions/follow/changes';
 import type { ApiChangeEntry } from '@/sync/api/types/apiTypes';
 import { buildConnectedServicesAccountChangeV1, TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
+import { InvalidateSync } from '@/utils/sessions/sync';
+import { createDeferred } from '@/dev/testkit';
+import { getFriendsList } from '@/sync/api/social/apiFriends';
+import type { UserProfile } from '@/sync/domains/social/friendTypes';
 
 const credentials: AuthCredentials = { token: 't', secret: 's' };
 
@@ -27,7 +30,7 @@ function buildPlanned(partial: {
     unsupportedChanges?: PlannedChangeActions['unsupportedChanges'];
     invalidate?: Partial<ExtendedPlannedChangeActions['invalidate']>;
     kv?: PlannedChangeActions['kv'];
-    sessionDraftAddresses?: PlannedChangeActions['sessionDraftAddresses'];
+    sessionDrafts?: PlannedChangeActions['sessionDrafts'];
 }): ExtendedPlannedChangeActions {
     return {
         changes: partial.changes ?? [],
@@ -48,6 +51,7 @@ function buildPlanned(partial: {
             artifacts: false,
             settings: false,
             profile: false,
+            publicProfile: false,
             friends: false,
             feed: false,
             automations: false,
@@ -56,7 +60,7 @@ function buildPlanned(partial: {
             ...(partial.invalidate ?? {}),
         },
         kv: partial.kv ?? { type: 'none' },
-        sessionDraftAddresses: partial.sessionDraftAddresses ?? [],
+        sessionDrafts: partial.sessionDrafts ?? [],
     };
 }
 
@@ -313,6 +317,43 @@ describe('changesApplier', () => {
         expect(await apply()).toMatchObject({ status: 'complete', safeAdvanceCursor: '1' });
     });
 
+    it('acknowledges receiver-only Follow demand without Account reads and retains Session and unknown-domain freshness', async () => {
+        let settingsReads = 0;
+        let profileReads = 0;
+        const rowReads: Array<readonly string[]> = [];
+        const apply = (planned: PlannedChangeActions) => applyPlannedChangeActions({
+            planned, credentials, isSessionMessagesLoaded: () => false,
+            invalidate: {
+                settings: async () => { settingsReads++; },
+                profile: async () => { profileReads++; },
+                sessionRows: async ids => { rowReads.push(ids); },
+            },
+            invalidateMessagesForSession: async () => {}, invalidateScmStatusForSession: () => {},
+            applyTodoSocketUpdates: async () => {}, kvBulkGet: async () => ({ values: [] }),
+        });
+        const receiverId = 'follow-receiver';
+        const receiverChange = (cursor: number) => buildChange({ cursor, kind: 'account',
+            entityId: buildSessionFollowReceiverChangeEntityIdV1(receiverId) });
+        for (let cursor = 1; cursor <= 100; cursor++) {
+            expect(await apply(planSyncActionsFromChanges([receiverChange(cursor)])))
+                .toMatchObject({ status: 'complete', safeAdvanceCursor: String(cursor) });
+        }
+        expect({ settingsReads, profileReads, rowReads }).toEqual({ settingsReads: 0, profileReads: 0, rowReads: [] });
+        expect(plannedChangesAffectUsageQuery(planSyncActionsFromChanges([receiverChange(100)]))).toBe(false);
+        const sessionChange = buildChange({ cursor: 101, kind: 'session', entityId: receiverId, hint: { lastMessageSeq: 1 } });
+        const mixed = planSyncActionsFromChanges([receiverChange(100), sessionChange], {
+            isSessionListMember: id => id === receiverId,
+        });
+        expect(await apply(mixed)).toMatchObject({ status: 'complete', safeAdvanceCursor: '101' });
+        expect(rowReads).toEqual([[receiverId]]);
+        expect({ settingsReads, profileReads }).toEqual({ settingsReads: 0, profileReads: 0 });
+        expect(plannedChangesAffectUsageQuery(mixed)).toBe(true);
+        const unknown = planSyncActionsFromChanges([buildChange({ cursor: 102, kind: 'account', entityId: 'unknown-domain' })]);
+        expect(await apply(unknown)).toMatchObject({ status: 'complete', safeAdvanceCursor: '102' });
+        expect({ settingsReads, profileReads }).toEqual({ settingsReads: 1, profileReads: 1 });
+        expect(plannedChangesAffectUsageQuery(unknown)).toBe(true);
+    });
+
     it('holds a Follow change cursor until Session relevance refresh succeeds', async () => {
         const planned = planSyncActionsFromChanges([buildChange({
             cursor: 1,
@@ -348,7 +389,7 @@ describe('changesApplier', () => {
         const materializeSessionDraft = vi.fn(async () => {});
 
         const result = await applyPlannedChangeActions({
-            planned: buildPlanned({ changes: [change], sessionDraftAddresses: [address] }),
+            planned: buildPlanned({ changes: [change], sessionDrafts: [{ address, revision: 2 }] }),
             credentials,
             isSessionMessagesLoaded: () => false,
             invalidate: {},
@@ -359,7 +400,7 @@ describe('changesApplier', () => {
             kvBulkGet: async () => ({ values: [] }),
         });
 
-        expect(materializeSessionDraft).toHaveBeenCalledWith(address);
+        expect(materializeSessionDraft).toHaveBeenCalledWith(address, 2);
         expect(result).toMatchObject({ status: 'complete', safeAdvanceCursor: '1' });
     });
 
@@ -397,7 +438,7 @@ describe('changesApplier', () => {
         });
 
         const result = await applyPlannedChangeActions({
-            planned: buildPlanned({ changes: [change], sessionDraftAddresses: [address] }),
+            planned: buildPlanned({ changes: [change], sessionDrafts: [{ address, revision: 2 }] }),
             credentials,
             isSessionMessagesLoaded: () => false,
             invalidate: {},
@@ -448,26 +489,41 @@ describe('changesApplier', () => {
         expect(result).toMatchObject({ status: 'complete', safeAdvanceCursor: '1' });
     });
 
-    it('invalidates friend requests when friends invalidation is planned', async () => {
-        const invalidateFriends = vi.fn(async () => {});
-        const invalidateFriendRequests = vi.fn(async () => {});
+    it('refreshes pending and accepted relationships with one Friends acquisition and no separate request task', async () => {
+        const pending: UserProfile = { id: 'pending-person', name: 'Pending', firstName: 'Pending', lastName: null,
+            username: 'pending', avatar: null, bio: null, badges: [], status: 'pending', publicKey: null };
+        const accepted: UserProfile = { ...pending, id: 'friend-person', name: 'Friend', firstName: 'Friend',
+            username: 'friend', status: 'friend' };
+        let reads = 0;
+        let separateRequestTasks = 0;
+        let relationships: UserProfile[] = [];
+        const invalidate = {
+            friends: async () => {
+                relationships = await getFriendsList(credentials, { retry: 'none', request: async path => {
+                    expect(path).toBe('/v1/friends');
+                    reads++;
+                    return Response.json({ friends: [pending, accepted] });
+                } });
+            },
+            // Structural legacy input detects the obsolete extra scheduled task;
+            // the HTTP adapter, response parser and change applier remain real.
+            friendRequests: async () => { separateRequestTasks++; },
+        };
 
         await applyPlannedChangeActions({
             planned: buildPlanned({ invalidate: { friends: true } }),
             credentials,
             isSessionMessagesLoaded: () => false,
-            invalidate: {
-                friends: invalidateFriends,
-                friendRequests: invalidateFriendRequests,
-            },
+            invalidate,
             invalidateMessagesForSession: async () => {},
             invalidateScmStatusForSession: () => {},
             applyTodoSocketUpdates: async () => {},
             kvBulkGet: async () => ({ values: [] }),
         });
 
-        expect(invalidateFriends).toHaveBeenCalledTimes(1);
-        expect(invalidateFriendRequests).toHaveBeenCalledTimes(1);
+        expect(relationships).toEqual([pending, accepted]);
+        expect(reads).toBe(1);
+        expect(separateRequestTasks).toBe(0);
     });
 
     it('invalidates account pets when pet invalidation is planned', async () => {

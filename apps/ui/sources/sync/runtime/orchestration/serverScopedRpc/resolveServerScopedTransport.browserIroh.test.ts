@@ -116,6 +116,10 @@ describe('resolveServerScopedTransport on a browser host', () => {
         vi.resetModules();
         mockHost(true);
         acquireBrowserCarrierSpy.mockRejectedValue(new IrohError('unavailable', 'worker unavailable'));
+        const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+        setRuntimeFetch(async (input) => new Response(JSON.stringify(String(input).endsWith('/v1/features')
+            ? { features: {}, capabilities: { serverIdentity: { serverIdentityId: 'srv_first' } } }
+            : { ok: true }), { status: 200, headers: { 'content-type': 'application/json' } }));
 
         const { resolveServerScopedTransport } = await import('./resolveServerScopedTransport');
         const resolved = await resolveServerScopedTransport({

@@ -1,4 +1,7 @@
-import type { JsonValue, WorkflowDefinitionV1, WorkflowInvocationCompleteReviewResultV1, WorkflowRunAcceptedContextV1, WorkflowRunStartResultV1, WorkflowRunSummaryV1 } from '@happier-dev/protocol';
+import type { JsonValue} from '@happier-dev/protocol/json/strictJsonValue';
+import type { WorkflowDefinitionV1} from '@happier-dev/protocol/workflows/workflowV1';
+import type { WorkflowInvocationCompleteReviewResultV1, WorkflowRunAcceptedContextV1, WorkflowRunStartResultV1} from '@happier-dev/protocol/workflows/actionsV1';
+import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { deriveWorkflowPlanRunIdV1 } from '@happier-dev/protocol/workflows';
 import { WorkflowActionInputSchemasV1, WorkflowActionOutputSchemasV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import { setWorkflowStepText } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';

@@ -1,0 +1,88 @@
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { buildDeferredDaemonProjectionSections, demandedDaemonProjectionSections,
+    DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { standardCleanup } from '@/dev/testkit';
+import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+});
+
+// The daemon RPC behind the real network boundary is the only substitute; Sync, the
+// projection loader, its section reader and the spawn selection Action dependency stay real.
+const network = await installSessionOpsNetworkBoundary();
+await loadSyncSingletonForTests();
+const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
+const { DAEMON_AGENT_CATALOG_SECTIONS } = await import('@/agents/backendCatalog/agentCatalogSections');
+const { storage } = await import('@/sync/domains/state/storage');
+const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+const { restoreConnectionToActiveServer, disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
+const { serverScopedRpcSocketPool } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool');
+const { resetScopedMachineTransportCacheForTests } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool');
+const { resolveSessionSpawnAgentInventorySelectionForActions } = await import('./agentInventoryActionDeps');
+afterAll(async () => { await network.dispose(); });
+
+const projection = {
+    v: 2 as const, generation: 3,
+    installedPackagesById: { 'acme.agents': { id: 'acme.agents', displayName: 'Agents', version: '1.0.0', enabled: true,
+        source: { kind: 'path' as const, locator: '/plugins/acme.agents' } } },
+    actionsById: { 'acme.agents/ship': { id: 'acme.agents/ship', pluginId: 'acme.agents', occurrenceId: 'occurrence-a', title: 'Ship it',
+        scopes: ['global'], surfaces: ['agent'], execution: { target: 'daemon' }, dangerLevel: 'safe', available: true } },
+    agentsById: { 'acme.agents/coder': { id: 'acme.agents/coder', identity: { pluginId: 'acme.agents', localId: 'coder' }, title: 'Coder' } },
+    familiesById: {},
+};
+
+describe('resolveSessionSpawnAgentInventorySelectionForActions', () => {
+    let serverId: string;
+    const sectionsRead = new Set<string>();
+    let deferred: ReturnType<typeof buildDeferredDaemonProjectionSections>;
+
+    beforeEach(async () => {
+        network.resetRequests();
+        storage.setState(storage.getInitialState(), true);
+        sectionsRead.clear();
+        deferred = buildDeferredDaemonProjectionSections(DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
+            protocolVersion: 1, projection, projectionDigest: 'c'.repeat(64) }));
+        const sectionByIndexDigest = new Map(Object.entries(deferred.manifest.sections).map(([section, digest]) => [digest, section]));
+        network.setHttpResponder(async (input) => new URL(String(input)).pathname === '/v1/account/encryption'
+            ? Response.json({ mode: 'plain', updatedAt: 1 }) : null);
+        const home = await network.addHome('https://agent-inventory-sections.example.test', 'account-a');
+        serverId = home.id;
+        network.setRpcAckResponder(async (request) => {
+            if (request.method !== RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+                return { ok: false, error: 'Unsupported fixture RPC', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND };
+            }
+            const read = (request.payload as Readonly<{ sectionRead?: { digest: string; offset: number; includeDigests?: readonly string[] } }>).sectionRead;
+            if (!read) return { ok: true, result: deferred.manifest };
+            for (const digest of [read.digest, ...read.includeDigests ?? []]) {
+                const section = sectionByIndexDigest.get(digest);
+                if (section) sectionsRead.add(section);
+            }
+            return { ok: true, result: deferred.read(read.digest, read.offset, read.includeDigests) };
+        });
+        await upsertAndActivateServer({ serverUrl: home.serverUrl });
+        await restoreConnectionToActiveServer({ token: home.token });
+        clearDaemonMergedProjectionCacheForTests();
+    });
+    afterEach(async () => {
+        standardCleanup();
+        clearDaemonMergedProjectionCacheForTests();
+        await disconnectActiveServerConnection();
+        await serverScopedRpcSocketPool.stopAll();
+        serverScopedRpcSocketPool.resetForTests();
+        resetScopedMachineTransportCacheForTests();
+    });
+
+    it('resolves an installed Agent while hydrating only the Agent catalog sections, not the whole catalogue', async () => {
+        const selection = await resolveSessionSpawnAgentInventorySelectionForActions({
+            agentTarget: { kind: 'agent', identity: { pluginId: 'acme.agents', localId: 'coder' } },
+            machineId: 'machine-1', serverId,
+        });
+        expect(selection?.agentId).toBe('acme.agents/coder');
+        expect([...sectionsRead].sort()).toEqual([...demandedDaemonProjectionSections(deferred.manifest, DAEMON_AGENT_CATALOG_SECTIONS)].sort());
+        expect(sectionsRead.has('actionsById')).toBe(false);
+    });
+});

@@ -1,4 +1,4 @@
-import { FeaturesResponseSchema, type FeaturesResponse } from '@happier-dev/protocol';
+import { FeaturesResponseSchema, type FeaturesResponse } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { describe, expect, it } from 'vitest';
 
 function createServerFeaturesResponse(partial?: Readonly<{

@@ -8,7 +8,7 @@ import type { AcpCatalogCleanupV1 } from '@happier-dev/protocol/acp/catalog/cata
 import { BUNDLED_CANONICAL_AGENT_DECLARATIONS } from '@/agents/registry/generatedBundledPluginEntries';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
-import { classifyAccountStorageReadFailure, resolveAccountStorageContext } from '@/sync/encryption/accountStorageContext';
+import { classifyAccountStorageReadFailure, resolveAccountStorageContext, resolveAccountStorageContextForDisclosure } from '@/sync/encryption/accountStorageContext';
 import { readAccountSettingsBaseline } from '@/sync/engine/settings/accountSettingsBaseline';
 import { classifyHttpMutationRequestFailure } from '@/sync/http/mutationRequestOutcome';
 import { getRandomBytes } from '@/platform/cryptoRandom';
@@ -80,7 +80,7 @@ export async function readAcpCatalogInContext(context: AcpCatalogAccountContext,
             if (row.status === 'present') {
                 const opened = openAcpCatalogContentV1({ mode, material, content: row.content });
                 catalog = opened.status === 'opened' ? { status: 'ready', record: opened.record, revision: row.revision }
-                    : opened.status === 'partial' ? { ...opened, revision: row.revision } : opened;
+                    : { ...opened, revision: row.revision };
             } else if (row.status === 'absent') {
                 const { encryption } = await context.resolveAccountEncryption();
                 const baseline = await readAccountSettingsBaseline({ credentials: context.credentials, encryption, accountMode: mode,
@@ -101,7 +101,7 @@ export async function readAcpCatalogInContext(context: AcpCatalogAccountContext,
             } else if (row.status === 'deleted') catalog = { status: 'ready', record: { v: 1, definitions: [] }, revision: row.revision };
             else catalog = { status: 'unavailable', reason: row.status };
             const { encryption } = await context.resolveAccountEncryption();
-            const current = await resolveAccountStorageContext(context.credentials, { encryption, request: context.request, usage: 'fresh-authority' });
+            const current = await resolveAccountStorageContextForDisclosure(context.credentials, { encryption, request: context.request });
             context.assertCurrent();
             if (current.mode !== mode) return { catalog: { status: 'unavailable', reason: 'account-mode-mismatch' } };
             const projection = { catalog, ...(capturedSource ? { source: capturedSource } : {}) };

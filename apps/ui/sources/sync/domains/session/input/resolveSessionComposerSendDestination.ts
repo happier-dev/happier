@@ -1,4 +1,4 @@
-import type { ComposerAgentContinuationIntentV1 } from '@happier-dev/protocol';
+import type { ComposerAgentContinuationIntentV1 } from '@happier-dev/protocol/sessions/agentTransition';
 
 /**
  * Where one true composer send goes (section 3.3).

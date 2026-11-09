@@ -21,6 +21,7 @@ export async function executeMachineAccessHttpAction(params: Readonly<{
     isCurrent?: () => boolean; signal?: AbortSignal;
 }>): Promise<unknown> {
     const family = MachineAccessActionIdSchema.safeParse(params.actionId);
+    console.info('FIX30 access family', params.actionId, family.success);
     if (!family.success) throw new MachineAccessApiError('unsupported_action');
     const actionId = family.data;
     const spec = getActionSpec(actionId);

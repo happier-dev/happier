@@ -1,4 +1,3 @@
-import { PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import type { EphemeralUpdate } from '@happier-dev/protocol/updates';
 
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
@@ -18,6 +17,16 @@ export function applyUsageSocketUpdate(
         invalidateProviderConnectionUsage({ ...scope, connectionId: update.providerConnectionId,
             ...(update.machineId ? { machineId: update.machineId } : {}) });
     }
-    // Preserve the existing Account accounting/source-capture reader wake.
-    publishHomeAccountChange(serverId, [PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1]);
+    // Usage changes Account accounting, not configuration or Session membership.
+    // Actual allowance writes retain their own durable Account-change key;
+    // the ephemeral payload is never admitted as a second accounting projection.
+    // Source capture/status settles independently of accounting. Ingest already
+    // publishes its own usage event; a source-only wake changes no query answer.
+    publishHomeAccountChange(serverId, [], { changeKinds: ['account'], usageQueryAffects: update.type === 'usage',
+        sessionReadinessChanges: { sessionIds: [], machineIds: [] },
+        ...(update.type === 'usage' && update.accountingChange ? { usageAccountingChange: update.accountingChange } : {}),
+        ...(update.type === 'usage-sources-invalidated' ? { usageSourcesMachineIds: [update.machineId] } : {}),
+        machineResourcesAffect: false,
+        accountSettingsAffects: false, profileCatalogAffects: false, publicProfileAffects: false, sessionListQueryAffects: false,
+        discussionAffects: false, savedSecretCatalogAffects: false });
 }

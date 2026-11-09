@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 
 import { readCurrentMachineIrohEndpoint, resolveMachineCarrierPreselection } from './resolveMachineCarrierPreselection';
 
@@ -20,6 +20,21 @@ const features = FeaturesResponseSchema.parse({
 });
 
 describe('resolveMachineCarrierPreselection', () => {
+    it('preserves a required Home fallback on native hosts, including Standard-only mode', () => {
+        for (const applicationCarrierEligibility of ['automatic', 'standard_only'] as const) {
+            const input = { applicationCarrierEligibility, serverFeatures: features, targetEndpoint: null,
+                host: { kind: 'native' as const, lifecycleAvailable: false },
+                finiteTransferApplicationSupported: true, irohApplicationSupported: false };
+            expect(resolveMachineCarrierPreselection({ ...input, homeRpcFallback: 'required' })).toEqual({ kind: 'server_rpc' });
+            expect(resolveMachineCarrierPreselection(input)).toEqual({ kind: 'unavailable' });
+            expect(resolveMachineCarrierPreselection({ ...input, homeRpcFallback: 'required',
+                finiteTransferApplicationSupported: false })).toEqual({ kind: 'unavailable' });
+        }
+        expect(resolveMachineCarrierPreselection({ homeRpcFallback: 'required', serverFeatures: features,
+            targetEndpoint: { endpointId: 'a'.repeat(64) }, host: { kind: 'native', lifecycleAvailable: true },
+            finiteTransferApplicationSupported: true, irohApplicationSupported: true }))
+            .toMatchObject({ kind: 'iroh_peer', carrierKind: 'native_http' });
+    });
     it('uses the encrypted server route in browser Standard mode', () => {
         const common = {
             applicationCarrierEligibility: 'standard_only' as const,

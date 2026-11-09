@@ -1,5 +1,6 @@
 import {
     PluginUiArtifactsManifestEntryV2Schema,
+    type PluginUiArtifactArchiveOpenedV1,
     type PluginUiArtifactDigestV1,
     type PluginUiArtifactFileV1,
     type PluginUiArtifactsManifestEntryV2,
@@ -28,7 +29,6 @@ import {
     derivePluginUiPersistentArtifactKey,
 } from '@/sync/domains/plugins/ui/artifactByteCache';
 import type {
-    PluginUiPersistentArtifactFile,
     PluginUiPersistentArtifactIdentity,
     PluginUiPersistentArtifactRecord,
     PluginUiPersistentArtifactStore,
@@ -118,12 +118,16 @@ export class PluginArtifactSourceError extends Error {
  * The one byte-source interface. Every source (app preseed, device cache,
  * daemon, Account hosting) returns the complete file set for the requested
  * digest or `null` for a miss. Safe failures may throw PluginArtifactSourceError.
- * Integrity is verified once by the
- * lease; a source has no admission, selection, or currentness authority.
+ * External bytes are verified once: by the lease for a raw file set, or by
+ * the archive opener for an opened archive. App bytes and retained verified
+ * bytes are internal data. The lease checks correspondence to the selected
+ * graph; a source has no admission, selection, or currentness authority.
  */
 export type PluginArtifactSourceCandidate = Readonly<{
     kind: PluginArtifactSourceKind;
-    fetch: (request: PluginArtifactByteRequest) => Promise<PluginArtifactFileSet | null>;
+    fetch: (request: PluginArtifactByteRequest) => Promise<
+        PluginArtifactFileSet | PluginUiArtifactArchiveOpenedV1 | null
+    >;
     /**
      * Persistent byte custody can atomically remove one verified-entry key
      * when the lease proves that its complete declared file graph is invalid.
@@ -241,6 +245,20 @@ function orderedSources(
     return Object.freeze([...byKind.values()].sort((left, right) => (
         SOURCE_ORDER.indexOf(left.kind) - SOURCE_ORDER.indexOf(right.kind)
     )));
+}
+
+/** Metadata correspondence between two graphs for the same digest; hashes nothing. */
+function declaresSameFiles(
+    declared: readonly PluginUiArtifactFileV1[],
+    verified: readonly PluginUiArtifactFileV1[],
+): boolean {
+    const verifiedByPath = new Map(verified.map((file) => [file.relativePath, file] as const));
+    return declared.length === verified.length
+        && new Set(declared.map((file) => file.relativePath)).size === verifiedByPath.size
+        && declared.every((file) => {
+            const match = verifiedByPath.get(file.relativePath);
+            return match?.digest === file.digest && match.byteSize === file.byteSize;
+        });
 }
 
 function cloneFile(file: PluginUiArtifactFileV1): PluginUiArtifactFileV1 {
@@ -561,49 +579,14 @@ export function createPluginArtifactPersistentSource(input: Readonly<{
     });
 }
 
-export async function persistVerifiedPluginArtifactLease(input: Readonly<{
-    lease: PluginSelectedArtifactLease;
-    persistent: PluginArtifactLeasePersistentScope;
-}>): Promise<void> {
-    if (!input.persistent.isCurrent() || !input.lease.isCurrent()) return;
-    const files: PluginUiPersistentArtifactFile[] = [];
-    for (const declared of input.lease.files) {
-        const result = await input.lease.readFile(declared.relativePath);
-        if (result.kind !== 'available' || !input.persistent.isCurrent() || !input.lease.isCurrent()) return;
-        files.push(Object.freeze({
-            relativePath: result.file.relativePath,
-            digest: result.file.digest,
-            byteSize: result.file.byteSize,
-            bytes: new Uint8Array(result.bytes),
-        }));
-    }
-    const entry = files.find((file) => file.relativePath === input.lease.artifactGraph.entry);
-    if (!entry || !input.persistent.isCurrent() || !input.lease.isCurrent()) return;
-    const persistentIdentity = persistentIdentityFor({
-        scope: input.persistent.scope,
-        artifact: input.lease.artifact,
-    });
-    try {
-        await input.persistent.store.write(Object.freeze({
-            persistentIdentity,
-            bytes: new Uint8Array(entry.bytes),
-            entryRelativePath: input.lease.artifactGraph.entry,
-            files: Object.freeze(files),
-        }));
-    } catch {
-        return;
-    }
-    // A write that lands is retained. Account/scope custody is fenced inside the
-    // persistent store owner, which refuses a retired scope outright, so undoing
-    // the write here could only fire on ordinary lease currentness loss — and
-    // would throw away bytes this acquisition just paid for.
-}
+export { persistVerifiedPluginArtifactLease } from './persistVerifiedArtifact';
 
 /**
  * The one verified-source materializer. It walks already-ordered candidates,
  * fetches each one's file set for the selected digest, and admits a source
- * only when each declared file and the complete file set pass canonical
- * integrity. It owns no lease,
+ * only when its declared files are present. Raw Home/daemon ingress passes
+ * canonical integrity here; app bytes and previously verified device bytes
+ * need no per-load hashing. It owns no lease,
  * lifetime, cache custody, or result vocabulary: callers keep their own
  * currentness owner and map the outcome to their own typed codes.
  */
@@ -622,7 +605,7 @@ export async function materializeVerifiedPluginArtifactSource(input: Readonly<{
     let failureCode: PluginArtifactSourceFailureCode | undefined;
     for (const source of input.sources) {
         if (!isCurrent()) return Object.freeze({ kind: 'notCurrent' });
-        let fetched: PluginArtifactFileSet | null;
+        let fetched: Awaited<ReturnType<PluginArtifactSourceCandidate['fetch']>>;
         try {
             fetched = await awaitArtifactWork(source.fetch({
                 artifact: input.artifact,
@@ -637,6 +620,25 @@ export async function materializeVerifiedPluginArtifactSource(input: Readonly<{
         }
         if (!isCurrent()) return Object.freeze({ kind: 'notCurrent' });
         if (!fetched) continue;
+        if ('artifactGraph' in fetched) {
+            if (
+                fetched.artifactGraph.digest !== input.artifact.digest
+                || !declaresSameFiles(input.graph.files, fetched.artifactGraph.files)
+            ) {
+                sawIntegrityFailure = true;
+                continue;
+            }
+            const { files } = fetched;
+            return Object.freeze({
+                kind: 'available',
+                source,
+                files: Object.freeze(input.graph.files.map((declared) => Object.freeze({
+                    file: cloneFile(declared),
+                    bytes: files.get(declared.relativePath)!,
+                }))),
+            });
+        }
+        const verifyIngress = source.kind === 'accountHosted' || source.kind === 'daemon';
         const materialized: PluginArtifactVerifiedSourceFile[] = [];
         let sourceUsable = true;
         for (const declared of input.graph.files) {
@@ -651,12 +653,14 @@ export async function materializeVerifiedPluginArtifactSource(input: Readonly<{
                 break;
             }
             const bytes = new Uint8Array(fetchedBytes);
-            const digest = await computePluginUiArtifactSha256Digest(bytes);
-            if (!isCurrent()) return Object.freeze({ kind: 'notCurrent' });
-            if (digest !== declared.digest) {
-                sawIntegrityFailure = true;
-                sourceUsable = false;
-                break;
+            if (verifyIngress) {
+                const digest = await computePluginUiArtifactSha256Digest(bytes);
+                if (!isCurrent()) return Object.freeze({ kind: 'notCurrent' });
+                if (digest !== declared.digest) {
+                    sawIntegrityFailure = true;
+                    sourceUsable = false;
+                    break;
+                }
             }
             materialized.push(Object.freeze({ file: cloneFile(declared), bytes }));
         }
@@ -664,14 +668,16 @@ export async function materializeVerifiedPluginArtifactSource(input: Readonly<{
             await discardInvalidPersistentSource(source);
             continue;
         }
-        const setDigest = await computePluginUiArtifactFileSetSha256Digest(
-            materialized.map(({ file, bytes }) => ({ relativePath: file.relativePath, bytes })),
-        );
-        if (!isCurrent()) return Object.freeze({ kind: 'notCurrent' });
-        if (setDigest !== input.artifact.digest) {
-            sawIntegrityFailure = true;
-            await discardInvalidPersistentSource(source);
-            continue;
+        if (verifyIngress) {
+            const setDigest = await computePluginUiArtifactFileSetSha256Digest(
+                materialized.map(({ file, bytes }) => ({ relativePath: file.relativePath, bytes })),
+            );
+            if (!isCurrent()) return Object.freeze({ kind: 'notCurrent' });
+            if (setDigest !== input.artifact.digest) {
+                sawIntegrityFailure = true;
+                await discardInvalidPersistentSource(source);
+                continue;
+            }
         }
         return Object.freeze({
             kind: 'available',
@@ -1008,14 +1014,7 @@ export async function acquirePluginSelectedArtifactLease(input: Readonly<{
     // Digest reuse never admits a contradictory graph supplied by another
     // occurrence. Check its declared metadata against the verified file set
     // without hashing or copying those immutable bytes again.
-    if (
-        graph.data.files.length !== materializedSource.files.length
-        || new Set(graph.data.files.map((file) => file.relativePath)).size !== files.size
-        || graph.data.files.some((declared) => {
-            const verified = files.get(declared.relativePath)?.file;
-            return verified?.digest !== declared.digest || verified.byteSize !== declared.byteSize;
-        })
-    ) {
+    if (!declaresSameFiles(graph.data.files, materializedSource.files.map(({ file }) => file))) {
         stopObserving();
         return Object.freeze({ kind: 'unavailable', code: 'artifact_source_integrity_invalid' });
     }

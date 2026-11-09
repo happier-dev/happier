@@ -4,7 +4,8 @@ import {
     type PeerDirectRouteGrantStatus,
     type PeerRouteViabilityRecord,
 } from '@happier-dev/peer-mediation';
-import type { FeaturesResponse, MachineLiveStreamRelayCaps } from '@happier-dev/protocol';
+import type { FeaturesResponse} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import type { MachineLiveStreamRelayCaps } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 
 export type MachineLiveStreamAvailability =
     | Readonly<{

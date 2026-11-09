@@ -190,7 +190,7 @@ describe('plugin-management Actions in the UI host', () => {
         expect(homes.requestsFor('/v1/actions/approval.request.create')).toHaveLength(1);
         expect(homes.requestsFor('/v1/actions/plugins.install')).toHaveLength(0);
     });
-    it('does not install a registry Agent plugin without an admitted Machine', async () => {
+    it('allows a registry Agent plugin to reach target selection without installing in the Agent picker', async () => {
         const home = homes.findByServerUrl('https://plugin-actions.test');
         if (!home?.token) throw new Error('Expected authenticated Home');
         // Keep restoration cold so unrelated full-Sync hydration cannot add a Machine.
@@ -242,7 +242,7 @@ describe('plugin-management Actions in the UI host', () => {
             await waitForHomeGovernance(() => expect(registryRead.current?.item?.payload.kind).toBe('plugin'));
             const { config, row } = readRow();
             expect(administration.getCurrent().executionTarget).toBeNull();
-            expect(config.detailFooter(row).primary.disabledReason).toBeTruthy();
+            expect(config.detailFooter(row).primary.disabledReason).toBeUndefined();
             expect(await config.detailFooter(row).primary.onPress()).toBeNull();
             expect(config.detailFooter(row).afterAdd).toBeUndefined();
             expect(onOpenDefinition).not.toHaveBeenCalled();

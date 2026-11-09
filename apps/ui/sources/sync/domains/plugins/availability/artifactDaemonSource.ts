@@ -4,10 +4,10 @@ import {
     type DaemonPluginUiArtifactBytesReadResponse,
 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { PluginUiArtifactDigestV1 } from '@happier-dev/protocol/plugins/ui';
-import { isRpcMethodNotFoundResult, RPC_METHODS } from '@happier-dev/protocol/rpc';
-
 import { decodeBase64 } from '@/encryption/base64';
-import { callGuardedMachineRpcWithPolicy } from '@/sync/runtime/orchestration/serverScopedRpc/guardedMachineRpc';
+import { downloadBulkPayloadViaDirectExportToDestination } from '@/sync/domains/transfers/runtime/transferRuntime/plumbing/directTransferExportDownload';
+import { resolveMachineCarrierRoute } from '@/sync/domains/transfers/runtime/transferRuntime/plumbing/machineCarrierHttpLease';
+import { logPluginSurfaceDiagnostic, readPluginSurfaceTransferFailureCodes } from '@/components/plugins/shared/pluginSurfaceDiagnosticLog';
 
 import type {
     PluginArtifactDaemonTransport,
@@ -34,29 +34,53 @@ function unavailableArtifactBytes(diagnostic: string): DaemonPluginUiArtifactByt
     });
 }
 
-/** The daemon byte RPC: machine route plus the selected digest, nothing else. */
-export const fetchPluginArtifactBytesViaMachineRpc: PluginArtifactDaemonByteFetcher = async (input) => {
+/** The incumbent finite carrier owns route selection, encrypted chunks and cleanup. */
+export const fetchPluginArtifactBytesViaMachineTransfer: PluginArtifactDaemonByteFetcher = async (input) => {
+    const unavailableTransfer = (failure: unknown) => {
+        logPluginSurfaceDiagnostic({ pluginId: null, contributionId: null, surfaceId: null }, {
+            artifactFailure: 'artifact_bytes_fetch_failed',
+            artifactDigest: input.digest,
+            artifactFamily: input.family,
+            transferFailure: readPluginSurfaceTransferFailureCodes(failure),
+        });
+        return unavailableArtifactBytes('artifact_bytes_fetch_failed');
+    };
     try {
         const payload = DaemonPluginUiArtifactBytesReadRequestSchema.parse({
             artifactFamily: input.family,
             machineId: input.transport.machineId,
             cacheIdentity: { artifactDigest: input.digest },
         });
-        const raw = await callGuardedMachineRpcWithPolicy<unknown, typeof payload>({
+        const route = await resolveMachineCarrierRoute(input.transport.machineId, input.transport.serverId, { homeRpcFallback: 'required' });
+        if (route.kind === 'unavailable') return unavailableArtifactBytes('artifact_bytes_rpc_unavailable');
+        let bytes = new Uint8Array(0);
+        let offset = 0;
+        const downloaded = await downloadBulkPayloadViaDirectExportToDestination({
             machineId: input.transport.machineId,
-            serverId: input.transport.serverId,
-            method: RPC_METHODS.DAEMON_PLUGIN_UI_ARTIFACT_BYTES_READ,
-            payload,
-            // Artifact work follows the requesting surface's lifetime. A slow
-            // read is still pending; only connection/setup uses the RPC budget.
-            operationTimeoutMs: null,
+            serverId: route.serverId,
+            request: { t: 'plugin_ui_artifact_download_v1', request: payload },
+            // Artifact JSON is an exact byte set, not a file preview. The
+            // prepared transfer's declared size owns allocation and validation.
+            onInit: async ({ sizeBytes }) => { bytes = new Uint8Array(sizeBytes); offset = 0; },
+            destination: {
+                writeBytes: async chunk => { bytes.set(chunk, offset); offset += chunk.byteLength; },
+                close: async () => {},
+                cleanup: async () => { bytes = new Uint8Array(0); offset = 0; },
+            },
+            acquirePreparedCarrier: async ({ operationId }) => await route.acquire({
+                operationId, ...(input.signal ? { signal: input.signal } : {}),
+            }),
             ...(input.signal ? { signal: input.signal } : {}),
         });
-        if (isRpcMethodNotFoundResult(raw)) return unavailableArtifactBytes('artifact_bytes_rpc_unavailable');
-        const parsed = DaemonPluginUiArtifactBytesReadResponseSchema.safeParse(raw);
-        return parsed.success ? parsed.data : unavailableArtifactBytes('artifact_bytes_response_invalid');
-    } catch {
-        return unavailableArtifactBytes('artifact_bytes_fetch_failed');
+        if (!downloaded.ok) return unavailableTransfer(downloaded);
+        try {
+            const parsed = DaemonPluginUiArtifactBytesReadResponseSchema.safeParse(JSON.parse(new TextDecoder().decode(bytes)));
+            return parsed.success ? parsed.data : unavailableArtifactBytes('artifact_bytes_response_invalid');
+        } catch {
+            return unavailableArtifactBytes('artifact_bytes_response_invalid');
+        }
+    } catch (error) {
+        return unavailableTransfer(error);
     }
 };
 
@@ -99,7 +123,7 @@ export function createPluginArtifactDaemonSource(input: Readonly<{
     | { transport: PluginArtifactDaemonTransport; transports?: never }
     | { transports: readonly PluginArtifactDaemonTransport[]; transport?: never }
 )>): PluginArtifactSourceCandidate {
-    const fetchArtifactBytes = input.fetchArtifactBytes ?? fetchPluginArtifactBytesViaMachineRpc;
+    const fetchArtifactBytes = input.fetchArtifactBytes ?? fetchPluginArtifactBytesViaMachineTransfer;
     return Object.freeze({
         kind: 'daemon' as const,
         fetch: async ({ artifact, signal }) => {

@@ -1,4 +1,4 @@
-import { WorkspaceSyncRelationshipCreateActionInputV1Schema, WorkspaceSyncRelationshipCreateRpcRequestV1Schema, type WorkspaceSyncRelationshipCreateActionInputV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { WorkspaceSyncRelationshipWriteActionInputV1Schema, WorkspaceSyncRelationshipCreateRpcRequestV1Schema, type WorkspaceSyncRelationshipWriteActionInputV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import type { HandoffTargetReplacementApprovalV1 } from '@happier-dev/protocol/sessions/control/handoff/handoffTargetReplacementApprovalV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
@@ -22,7 +22,7 @@ import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountC
  */
 export async function createWorkspaceSyncRelationshipOnController(
     request: Readonly<{
-        input: WorkspaceSyncRelationshipCreateActionInputV1;
+        input: WorkspaceSyncRelationshipWriteActionInputV1;
         operationId: string;
         serverId?: string | null;
         targetReplacementApproval?: HandoffTargetReplacementApprovalV1;
@@ -30,7 +30,7 @@ export async function createWorkspaceSyncRelationshipOnController(
         signal?: AbortSignal;
     }>,
 ): Promise<unknown> {
-    const input = WorkspaceSyncRelationshipCreateActionInputV1Schema.parse(request.input);
+    const input = WorkspaceSyncRelationshipWriteActionInputV1Schema.parse(request.input);
     const state = getStorage().getState();
     if (state.projectAccountRows?.status !== 'ready' || state.projectAccountRows.coverage !== 'complete') {
         throw Object.assign(new Error('workspace_ref_not_ready'), { code: 'workspace_ref_not_ready' });
@@ -63,7 +63,7 @@ export async function createWorkspaceSyncRelationshipOnController(
 }
 
 export async function observeWorkspaceSyncRelationshipCreationOnController(
-    request: Readonly<{ input: WorkspaceSyncRelationshipCreateActionInputV1; operationId: string; serverId: string;
+    request: Readonly<{ input: WorkspaceSyncRelationshipWriteActionInputV1; operationId: string; serverId: string;
         account: LazyActionAccountContext | undefined; signal?: AbortSignal }>,
 ) {
     const { account, signal } = request;

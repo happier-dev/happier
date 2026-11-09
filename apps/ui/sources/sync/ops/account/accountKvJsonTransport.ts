@@ -6,6 +6,7 @@ import { createUiAccountKvCipher } from '@/sync/encryption/accountKvCipher';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import { isRawAccountStorageEncryption, resolveAccountStorageContext, type AccountStorageContext } from '@/sync/encryption/accountStorageContext';
 import type { ServerFetch } from '@/sync/http/client';
+import type { AccountEncryptionIdentity } from '@happier-dev/sync-client';
 
 export type AccountKvJsonSnapshot = Readonly<{ value: unknown | null; version: number; tombstone?: true }>;
 export type AccountKvJsonCompareAndSetResult = Readonly<{ success: true; version: number }>
@@ -70,6 +71,8 @@ export function createAccountKvJsonTransport(params: Readonly<{
     request: ServerFetch;
     shouldContinue: () => boolean;
     encryption?: AccountStorageContext['encryption'];
+    /** Share the containing read's identity; CAS and legacy re-sealing always acquire fresh authority. */
+    readIdentity?: () => Promise<AccountEncryptionIdentity>;
 }>): AccountKvJsonTransport {
     const checkCurrent = () => {
         if (!params.shouldContinue()) throw new AccountKvScopeRetiredError();
@@ -87,6 +90,7 @@ export function createAccountKvJsonTransport(params: Readonly<{
         async read() {
             checkCurrent();
             const context = await whileCurrent(() => resolveAccountStorageContext(params.credentials, { request: params.request, usage: 'identity',
+                ...(params.readIdentity ? { readIdentity: params.readIdentity } : {}),
                 ...(params.encryption !== undefined ? { encryption: params.encryption } : {}) }));
             checkCurrent();
             const item = await kvGet(params.credentials, params.key, requestOptions);
@@ -96,7 +100,7 @@ export function createAccountKvJsonTransport(params: Readonly<{
         },
         async compareAndSet(value, version) {
             checkCurrent();
-            const context = await whileCurrent(() => resolveAccountStorageContext(params.credentials, { ...requestOptions,
+            const context = await whileCurrent(() => resolveAccountStorageContext(params.credentials, { ...requestOptions, usage: 'fresh-authority',
                 ...(params.encryption !== undefined ? { encryption: params.encryption } : {}) }));
             checkCurrent();
             const encoded = await whileCurrent(() => encodeAccountStoredJsonContent({

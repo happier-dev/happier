@@ -29,17 +29,22 @@ describe('dynamic model probe cache', () => {
         persistedValues.clear();
     });
 
-    it.each([false, true])('never schedules unknown outcomes after cooldown (retained data: %s)', (retainGood) => {
+    it.each([
+        [false, { reason: 'outcomeUnknown', requestDisposition: 'outcomeUnknown' }],
+        [true, { reason: 'outcomeUnknown', requestDisposition: 'outcomeUnknown' }],
+        [false, { reason: 'error', errorCode: 'agent_isolation_unavailable', retryable: false }],
+        [true, { reason: 'error', errorCode: 'agent_isolation_unavailable', retryable: false }],
+    ] as const)('never schedules unknown or nonretryable outcomes after cooldown (retained: %s, failure: %j)', (retainGood, failure) => {
         vi.useFakeTimers();
         vi.setSystemTime(2_500);
         resetDynamicModelProbeCacheForTests();
         if (retainGood) writeDynamicModelProbeCacheSuccess('unknown', {
             availableModels: [{ id: 'native', name: 'Native' }], supportsFreeform: false,
         }, 1_000);
-        writeDynamicModelProbeCacheError('unknown', 2_000, undefined, { reason: 'outcomeUnknown', requestDisposition: 'outcomeUnknown' });
+        writeDynamicModelProbeCacheError('unknown', 2_000, undefined, failure);
         vi.setSystemTime(100_000_000);
         const entry = readDynamicModelProbeCache('unknown');
-        expect(entry).toMatchObject({ reason: 'outcomeUnknown', requestDisposition: 'outcomeUnknown' });
+        expect(entry).toMatchObject(failure);
         expect(dynamicModelProbeRetryAt(entry)).toBeNull();
         expect(isDynamicModelProbeCacheFresh(entry)).toBe(true);
         if (retainGood) expect(entry).toMatchObject({ updatedAt: 1_000, value: { availableModels: [{ id: 'native' }] } });
@@ -199,4 +204,30 @@ describe('dynamic model probe cache', () => {
         expect(entry.value.availableModels[0]?.capabilities).not.toHaveProperty('retired');
     });
 
+});
+
+describe('dynamic model probe cache across an Account change on one Home', () => {
+    afterEach(() => { persistedValues.clear(); });
+
+    it('withdraws a list probed for the previous Account from memory and device storage', async () => {
+        // One module graph: earlier reload cases leave this file's static imports on a previous one.
+        vi.resetModules();
+        const { readDynamicModelProbeCache, resetDynamicModelProbeCacheForTests, writeDynamicModelProbeCacheSuccess } = await import('./dynamicModelProbeCache');
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const { createAccountTokenForTests } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+        const home = { serverUrl: 'https://account-change-models', serverId: 'account-change-models' };
+        expect(await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.serverId },
+            { token: createAccountTokenForTests('models-account-a') })).toBe(true);
+        resetDynamicModelProbeCacheForTests();
+        writeDynamicModelProbeCacheSuccess('shared-machine-key', { availableModels: [{ id: 'a-private', name: 'A private' }], supportsFreeform: false }, Date.now());
+        const before = readDynamicModelProbeCache('shared-machine-key');
+        expect(before?.kind === 'success' ? before.value.availableModels[0]?.id : null).toBe('a-private');
+
+        expect(await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.serverId },
+            { token: createAccountTokenForTests('models-account-b') })).toBe(true);
+
+        const after = readDynamicModelProbeCache('shared-machine-key');
+        expect(after?.kind === 'success' ? after.value : null).toBeNull();
+        expect([...persistedValues.values()].join('')).not.toContain('a-private');
+    });
 });

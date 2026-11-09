@@ -5,8 +5,12 @@ import { buildPendingChangedSessionPatch } from '@/sync/engine/socket/pendingCha
 import type { Session } from './storageTypes';
 import { buildSessionListCacheEntryFromRenderable, buildSessionListRenderableFromCacheEntry } from './warmCacheAdapters';
 import { SessionListCacheEntryV1Schema } from './warmCachePersistence';
+import { areStoredSessionsEqual } from '@/sync/store/domains/areStoredSessionsEqual';
+import { resolvePendingActivationBanner } from '@/components/sessions/pending/resolvePendingActivationBanner';
 
 const authorization = { requestId: 'pending-1', requestedAt: 200, status: 'waiting' as const };
+const failureDetails = { reason: 'spawn-rejected' as const, spawnErrorCode: 'SPAWN_VALIDATION_FAILED' as const,
+    runtimeReason: 'no_eligible_member' as const };
 
 function createSession(): Session {
     return {
@@ -18,6 +22,25 @@ function createSession(): Session {
 }
 
 describe('pending activation Session projection', () => {
+    it('keeps a failed activation cause visible after a socket update and warm restoration', () => {
+        const failedAuthorization = { ...authorization, status: 'failed' as const, failureCode: 'runtime_start_failed' as const };
+        const patch = buildPendingChangedSessionPatch({ pendingCount: 1, pendingVersion: 2,
+            pendingActivationAuthorization: failedAuthorization, pendingActivationFailureDetails: failureDetails });
+        const failedSession = { ...createSession(), ...patch };
+        const cacheEntry = SessionListCacheEntryV1Schema.parse(buildSessionListCacheEntryFromRenderable(
+            buildSessionListRenderableFromSession(failedSession)));
+        const restored = buildSessionListRenderableFromCacheEntry(cacheEntry);
+        expect(resolvePendingActivationBanner({ authorization: restored.pendingActivationAuthorization,
+            failureDetails: restored.pendingActivationFailureDetails, activeAt: 100, active: false,
+            machineReachable: true, canWrite: true, pendingMessages: [] })).toMatchObject({
+            kind: 'failed', titleKey: 'connectedServices.diagnostics.title.no_eligible_group_member',
+        });
+        expect(areStoredSessionsEqual({ ...failedSession, pendingActivationFailureDetails: null }, failedSession)).toBe(false);
+        expect(buildPendingChangedSessionPatch({ pendingCount: 1, pendingVersion: 3,
+            pendingActivationFailureDetails: null })).toHaveProperty('pendingActivationFailureDetails', null);
+        expect(buildPendingChangedSessionPatch({ pendingCount: 1, pendingVersion: 4 }))
+            .not.toHaveProperty('pendingActivationFailureDetails');
+    });
     it('round-trips the protocol shape through Session renderable and warm cache', () => {
         const renderable = buildSessionListRenderableFromSession(createSession());
         expect(renderable.pendingActivationAuthorization).toEqual(authorization);

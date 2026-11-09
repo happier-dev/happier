@@ -2,6 +2,7 @@ import type { Message } from '@happier-dev/session-core/messages';
 import { readStoredSessionMessages } from '@happier-dev/session-core/messages';
 import type { AgentState } from '@happier-dev/session-core/state';
 import type { Session } from '@/sync/domains/state/storageTypes';
+import { readSessionFullPublicationUpdatedAt } from '../sessionRuntimeObservation';
 import { readRegisteredStorageState } from '@/sync/domains/state/storageStateReaderBridge';
 import { buildStableJsonSignature } from '@/sync/domains/session/metadata/sessionMetadataStability';
 import { readSessionPresentationCompletedRequests } from '@/sync/domains/session/presentation/readSessionPresentationCompletedRequests';
@@ -47,7 +48,7 @@ export function readPendingRequestFactsFromSession(session: Session): PendingReq
             permissionCount: session.pendingPermissionRequestCount ?? null,
             userActionCount: session.pendingUserActionRequestCount ?? null,
             observedAt: readProjectedPendingRequestObservedAt(session),
-            referenceAt: Number.isFinite(session.updatedAt) ? Math.trunc(session.updatedAt) : null,
+            referenceAt: Number.isFinite(session.updatedAt) ? Math.trunc(readSessionFullPublicationUpdatedAt(session)) : null,
         },
     };
 }

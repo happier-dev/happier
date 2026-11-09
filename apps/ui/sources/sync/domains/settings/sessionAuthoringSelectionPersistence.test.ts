@@ -9,7 +9,7 @@ import {
     mergeCurrentRememberedEngineSelectionsIntoRaw,
 } from './sessionAuthoringSelectionPersistence';
 import { authoringMemoryDefaults, projectAuthoringMemory } from '@/sync/store/domains/authoringMemory';
-import { LegacyRememberedEngineSelectionsByScopeV1Schema } from '@happier-dev/protocol';
+import { LegacyRememberedEngineSelectionsByScopeV1Schema } from '@happier-dev/protocol/account/settings/legacyAuthoringMemorySettingsV1';
 
 function attachCurrentSessionAuthoringSelectionsRuntimeProjection<T extends object>(value: T) {
     const raw = value as Record<string, unknown>;

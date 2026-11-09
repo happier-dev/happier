@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { AutomationDefinitionDetail } from '@happier-dev/protocol';
+import type { AutomationDefinitionDetail } from '@happier-dev/protocol/automations/automationApiV3';
 
 import { createAutomationDefinitionFromDetail } from './automationDefinitionProjection';
 import type { AutomationDefinition } from './automationTypes';

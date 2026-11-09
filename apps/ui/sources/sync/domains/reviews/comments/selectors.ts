@@ -1,7 +1,7 @@
 import type {
     ReviewCommentStateV1,
     ReviewCommentV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/reviews/comments/v1';
 
 import type { ReviewCommentsState } from './store';
 

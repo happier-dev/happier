@@ -1,4 +1,4 @@
-import { openQualifiedConnectedAccountContentEnvelope, sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
+import { openQualifiedConnectedAccountContentEnvelopeResult, sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
 import type { StoredJsonContentEnvelope } from '@happier-dev/protocol';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { resolveAccountStorageContext } from '@/sync/encryption/accountStorageContext';
@@ -10,6 +10,12 @@ type AccountMode = 'plain' | 'e2ee';
 
 /** The captured Account's existing mode admission and connected-content codec. */
 export function createUiConnectedAccountContent(account: LazyActionAccountContext) {
+    function openResult(kind: ContentKind, accountMode: AccountMode, envelope: StoredJsonContentEnvelope) {
+        return accountMode === 'plain'
+            ? openQualifiedConnectedAccountContentEnvelopeResult({ kind, accountMode, envelope })
+            : openQualifiedConnectedAccountContentEnvelopeResult({ kind, accountMode, envelope,
+                material: resolveAccountScopedCryptoMaterialFromCredentials(account.credentials) });
+    }
     return {
         async resolveAccountMode(usage: 'identity' | 'fresh-authority' = 'identity'): Promise<AccountMode> {
             const { encryption } = await account.resolveAccountEncryption();
@@ -24,10 +30,9 @@ export function createUiConnectedAccountContent(account: LazyActionAccountContex
                     material: resolveAccountScopedCryptoMaterialFromCredentials(account.credentials) });
         },
         open(kind: ContentKind, accountMode: AccountMode, envelope: StoredJsonContentEnvelope): unknown {
-            return accountMode === 'plain'
-                ? openQualifiedConnectedAccountContentEnvelope({ kind, accountMode, envelope })
-                : openQualifiedConnectedAccountContentEnvelope({ kind, accountMode, envelope,
-                    material: resolveAccountScopedCryptoMaterialFromCredentials(account.credentials) });
+            const result = openResult(kind, accountMode, envelope);
+            return result.status === 'opened' ? result.value ?? null : null;
         },
+        openResult,
     };
 }

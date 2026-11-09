@@ -103,6 +103,7 @@ vi.mock('@/sync/api/session/apiSocket', () => ({
             return () => socketStatusHandlers.delete(handler);
         }),
         onConnectionStateChange: vi.fn(() => () => {}),
+        onSessionConsumptionAdmitted: vi.fn(() => () => {}),
         connect: apiSocketConnect,
         disconnect: apiSocketDisconnect,
         initialize: vi.fn(),
@@ -279,7 +280,6 @@ describe('sync AppState pause/resume', () => {
             'automationsSync',
             'todosSync',
             'friendsSync',
-            'friendRequestsSync',
             'feedSync',
             'nativeUpdateSync',
         ]) {
@@ -301,7 +301,7 @@ describe('sync AppState pause/resume', () => {
         expect(rearm).toHaveBeenCalledTimes(2);
     });
 
-    it('resumes a paused bootstrap and starts artifacts after core readiness when draft hydration is unavailable', async () => {
+    it('resumes a paused bootstrap after core readiness when draft hydration is unavailable', async () => {
         const { InvalidateSync } = await import('@/utils/sessions/sync');
         await loadSyncSingletonForTests();
         const { sync } = await import('./sync');
@@ -328,7 +328,6 @@ describe('sync AppState pause/resume', () => {
             'automationsSync',
             'todosSync',
             'friendsSync',
-            'friendRequestsSync',
             'feedSync',
             'nativeUpdateSync',
         ]) {
@@ -344,9 +343,9 @@ describe('sync AppState pause/resume', () => {
         pauseController.resume();
         await bootstrap;
 
-        expect(events).toContain('artifacts');
+        // This isolated bootstrap harness has no mounted Artifact inventory consumer.
+        // The real HTTP count contract lives in sync.artifactInventoryDemand.test.tsx.
         expect(events).toContain('ready');
-        expect(events.indexOf('ready')).toBeLessThan(events.indexOf('artifacts'));
     });
 
     it('pauses on background and resumes on active (disconnect/connect socket)', async () => {

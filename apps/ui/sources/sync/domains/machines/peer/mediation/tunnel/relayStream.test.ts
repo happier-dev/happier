@@ -1,15 +1,18 @@
 import {
     decodePeerTcpTunnelBinaryFrameV2,
-    encodeBase64,
-    encodePeerApplicationEncryptedFrameV1,
-    encodePeerTcpTunnelBinaryFrameV2,
-    PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
+    encodePeerTcpTunnelBinaryFrameV2} from '@happier-dev/protocol/machines/peer/mediation/tunnel/v2';
+import {
+    encodeBase64} from '@happier-dev/protocol/crypto/base64';
+import {
+    PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2} from '@happier-dev/protocol/machines/peer/mediation/tunnel/encoding';
+import {
     PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT,
     PeerTcpTunnelRelayBinaryEnvelopeV2Schema,
     PeerTcpTunnelRelayEnvelopeSchema,
-    type PeerTcpTunnelOpenV1,
     type PeerTcpTunnelRelayEnvelope,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/machines/peer/mediation/tunnel/relay';
+import {
+    type PeerTcpTunnelOpenV1} from '@happier-dev/protocol/machines/peer/mediation/tunnel/v1';
 import type { PeerTcpTunnelFrame } from '@happier-dev/peer-transport/duplexFrames';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -299,13 +302,8 @@ describe('openPeerTcpTunnelRelayStream', () => {
         }) as TestStream;
         const seen: unknown[] = [];
         stream.onSubstreamFrame?.((event) => seen.push(event));
-        const encryptedPayload = encodePeerApplicationEncryptedFrameV1({
-            v: 1,
-            kind: 'install',
-            nonceBase64Url: encodeBase64(new Uint8Array(12).fill(1), 'base64url'),
-            ciphertextBase64Url: encodeBase64(new Uint8Array(16).fill(2), 'base64url'),
-            encryptedDataKeyEnvelopeBase64Url: encodeBase64(new Uint8Array([3]), 'base64url'),
-        });
+        // An opaque stream-key ciphertext (or PCM): the relay reader only forwards bytes.
+        const encryptedPayload = new Uint8Array(28).fill(2);
         const binaryFrame = encodePeerTcpTunnelBinaryFrameV2({
             header: {
                 version: 2,

@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import * as nativeCrypto from 'rn-encryption';
 import tweetnacl from 'tweetnacl';
-import { sealEncryptedDataKeyEnvelopeV1, projectLegacySessionAccessCapabilitiesV1, type AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol';
+import { sealEncryptedDataKeyEnvelopeV1} from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { projectLegacySessionAccessCapabilitiesV1} from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
+import { type AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
 
 import { createDeferred, createSessionFixture, createSessionAccessFixture } from '@/dev/testkit';
 import { encodeBase64 } from '@/encryption/base64';
@@ -573,7 +575,7 @@ describe('Session hydration publication', () => {
             getSessionMaterializedMaxSeq: () => 0, markSessionMaterializedMaxSeq: () => {},
             onMessageGapDetected: () => {}, assumeUsers: async () => {}, applyTodoSocketUpdates: async () => {},
             invalidateMachines: () => {}, invalidateSessions: () => {}, invalidateArtifacts: () => {},
-            invalidateFriends: () => {}, invalidateFriendRequests: () => {}, invalidateFeed: () => {},
+            invalidateFriends: () => {}, invalidateFeed: () => {},
             invalidateAutomations: () => {}, invalidateTodos: () => {}, log: params.log,
         });
         await started.promise;

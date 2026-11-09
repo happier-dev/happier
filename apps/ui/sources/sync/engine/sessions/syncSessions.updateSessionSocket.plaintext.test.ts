@@ -49,7 +49,20 @@ function createDeferred<T>(): {
 }
 
 describe('buildUpdatedSessionFromSocketUpdate (plaintext)', () => {
-
+  it('applies a key-only publication to locked list rows without opening metadata or reopening the Session', async () => {
+    const renderable = createSessionListRenderableSessionFixture({ id: 'accepted-key', metadata: null,
+      encryptedContentAvailability: 'encrypted_content_unavailable', projectKey: null });
+    const params = { renderable, updateBody: { projectKey: 'anchor' }, updateSeq: 2, updateCreatedAt: 2, sessionEncryption: null };
+    const patch = await buildUpdatedSessionListRenderablePatchFromSocketUpdate(params);
+    expect({ ...renderable, ...patch }).toMatchObject({ projectKey: 'anchor', metadata: null });
+    const { buildSessionListViewData } = await import('@/sync/domains/session/listing/sessionListViewData');
+    const projected = { ...renderable, ...patch };
+    const index = buildSessionListViewData({ [projected.id]: projected }, {}, { layoutV1: 'projects', serverScope: { serverId: 'home-a' } });
+    expect(index.find(item => item.type === 'header' && item.headerKind === 'project')?.groupKey)
+      .toBe(JSON.stringify(['project', 'home-a', 'anchor']));
+    const omitted = await buildUpdatedSessionListRenderablePatchFromSocketUpdate({ ...params, renderable: projected, updateBody: {} });
+    expect({ ...projected, ...omitted }.projectKey).toBe('anchor');
+  });
   it('retains the same observed presence in detail and list projections across durable active updates', async () => {
     for (const presence of ['online', 123, undefined] as const) {
       const session = createSessionFixture({ encryptionMode: 'plain', active: true, presence });
@@ -276,6 +289,7 @@ describe('buildUpdatedSessionFromSocketUpdate (plaintext)', () => {
         metadata: {
           version: 2,
           value: JSON.stringify({
+            agentRuntimeCapabilitiesV1: { backend: { session: { media: { acceptsImageInput: { supported: false } } } } },
             sessionAgentActivityHeadlineV1: {
               v: 1, backendId: 'claude', updatedAt: 2,
               activeEntries: [{ entryId: 'workflow_agent:wf_1:toolu_1', kind: 'workflow_agent', title: 'Home A', status: 'running', updatedAt: 2 }],
@@ -292,6 +306,7 @@ describe('buildUpdatedSessionFromSocketUpdate (plaintext)', () => {
       updatedAt: 2,
       activeEntries: [expect.objectContaining({ title: 'Home A' })],
     }));
+    expect(patch.imageInputAvailability).toEqual({ available: false, reason: 'image_input_unsupported' });
   });
 
   it.each(['wrong_key', 'unsupported', 'ready'] as const)('uses authenticated metadata outcome for socket availability (%s)', async (kind) => {
@@ -351,7 +366,7 @@ describe('buildUpdatedSessionFromSocketUpdate (plaintext)', () => {
   it('never installs an Account fallback reader for an unopenable new-session envelope', async () => {
     const { Encryption } = await import('@/sync/encryption/encryption');
     const { encodeBase64 } = await import('@/encryption/base64');
-    const { sealEncryptedDataKeyEnvelopeV1 } = await import('@happier-dev/protocol');
+    const { sealEncryptedDataKeyEnvelopeV1} = await import('@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1');
     const encryption = await Encryption.create(new Uint8Array(32).fill(7));
     const otherRecipient = await Encryption.create(new Uint8Array(32).fill(8));
     const envelope = sealEncryptedDataKeyEnvelopeV1({

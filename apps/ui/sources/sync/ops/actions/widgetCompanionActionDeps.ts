@@ -1,4 +1,4 @@
-import type { ActionExecutorDeps } from '@happier-dev/protocol';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { readSessionPresentationAdapterAtAddress } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
 import { isUnreadableSessionCompanionPreference, normalizeSessionCompanionPreference } from '@/components/sessions/companion/state/sessionCompanionPreference';
 import { readSessionCompanionPreferenceSlotFromState, storage } from '@/sync/domains/state/storage';

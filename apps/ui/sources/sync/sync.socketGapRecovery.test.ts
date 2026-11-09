@@ -1,5 +1,6 @@
-import { type SessionMessageV1 } from '@happier-dev/protocol';
+import { type SessionMessageV1 } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { selectActiveTestHomeForTests } from '@/dev/testkit/fixtures/persistedHomeProfiles';
 import { createDeferred, createSessionFixture } from '@/dev/testkit';
 
 vi.mock('react-native', async () => {
@@ -307,3 +308,6 @@ describe('sync socket gap recovery', () => {
         expect(sync.getSessionViewport(SESSION_ID)).toMatchObject({ isPinned: false, offsetY: 420 });
     });
 });
+
+// P03-TESTKIT-SERVER: the unconfigured test build seeds no Home; select one through the real owner.
+beforeEach(async () => { await selectActiveTestHomeForTests(); });

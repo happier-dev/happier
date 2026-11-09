@@ -1,11 +1,12 @@
 import { openSessionOwnerMetadataEnvelopeV1, openSessionOwnerMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
-import { projectAdmittedSessionOwnerCompatibilityViewV1, validateSessionOwnerMetadataEnvelopeForAccountModeV1, type SessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { projectAdmittedSessionOwnerCompatibilityViewV1, StoredSessionSharedMetadataV1Schema, validateSessionOwnerMetadataEnvelopeForAccountModeV1, type SessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
 import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
-import { projectAccountEncryptionIdentity, sameAccountEncryptionIdentity } from '@happier-dev/sync-client';
+import { projectAccountEncryptionIdentity, sameAccountEncryptionIdentity, type AccountEncryptionIdentity } from '@happier-dev/sync-client';
 
 import { isSessionAccessOwner, type NormalizedSessionAccessProjection } from './normalizeSessionAccessProjection';
 import { ComposerOptionsInputV1Schema, projectComposerOptionsInputV1, type ComposerOptionsInputV1 } from '@happier-dev/protocol/embed';
+import type { ApiTokenGrantV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 
 import { isDataKeyAuthCredentials, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { MetadataSchema, type Metadata } from '@happier-dev/session-core/state';
@@ -116,12 +117,13 @@ export function projectSessionLayout1LockedOwnerVisibility(
 export function readSessionLayout1OwnerMetadata(params: Readonly<{
     access: NormalizedSessionAccessProjection | null;
     accountMode?: AccountEncryptionCurrentnessResponse['mode'];
-    accountCurrentness?: AccountEncryptionCurrentnessResponse;
+    accountCurrentness?: AccountEncryptionCurrentnessResponse | AccountEncryptionIdentity;
     /** The containing finite Account read has already bound this material to its identity. */
     readAccountMaterial?: () => AccountScopedCryptoMaterial | null;
     ownerMetadataEnvelope: unknown;
     credentials: AuthCredentials;
     composerOptionsInput?: ComposerOptionsInputV1 | null;
+    composerOptionsGrant?: ApiTokenGrantV1 | null;
     previousProjection?: SessionOwnerMetadataProjection | null;
 }>): SessionLayout1OwnerMetadataRead {
     if (!params.access) return { kind: 'unavailable', reason: 'access_unavailable' };
@@ -138,7 +140,7 @@ export function readSessionLayout1OwnerMetadata(params: Readonly<{
         }
         const opened = openSessionOwnerMetadataEnvelopeV1({ accountMode: 'plain', envelope: params.ownerMetadataEnvelope, material: null });
         if (!opened.ok) return { kind: 'unavailable', reason: opened.reason };
-        return { kind: 'composer', ownerMetadataView: null, composerOptionsInput: projectComposerOptionsInputV1(opened.ownerMetadata.runtime) };
+        return { kind: 'composer', ownerMetadataView: null, composerOptionsInput: projectComposerOptionsInputV1(opened.ownerMetadata.runtime, params.composerOptionsGrant ?? null) };
     }
     if (params.access.role === 'recipient') {
         return { kind: 'recipient' };
@@ -194,7 +196,9 @@ export function readSessionLayout1OwnerMetadata(params: Readonly<{
     const secret = 'secret' in credentials ? credentials.secret : undefined;
     const machineKey = isDataKeyAuthCredentials(credentials) ? credentials.encryption.machineKey : undefined;
     const publicKey = isDataKeyAuthCredentials(credentials) ? credentials.encryption.publicKey : undefined;
-    const accountEncryptionIdentity = params.accountCurrentness ? projectAccountEncryptionIdentity(params.accountCurrentness) : undefined;
+    const accountEncryptionIdentity = params.accountCurrentness
+        ? 'version' in params.accountCurrentness ? projectAccountEncryptionIdentity(params.accountCurrentness) : params.accountCurrentness
+        : undefined;
     const matchesCredentials = (candidate: AuthCredentials) => candidate.token === token
         && ('secret' in candidate ? candidate.secret : undefined) === secret
         && (isDataKeyAuthCredentials(candidate) ? candidate.encryption.machineKey : undefined) === machineKey
@@ -258,4 +262,36 @@ export function projectSessionLayout1OwnerMetadata(params: Readonly<{
         ownerMetadataView: ownerMetadataView.data,
         composerOptionsInput: projectComposerOptionsInputV1(ownerMetadataView.data),
     };
+}
+
+/**
+ * A layout-1 tuple frame leaves out an owner envelope it did not change (docs/protocol.md,
+ * `update-session`). The retained owner read then stays exact for the next shared revision:
+ * re-project it with the frame's shared metadata instead of re-reading the Session.
+ * Only the immediately following revision qualifies; a gap, a present envelope or any
+ * unreadable input returns null and the caller keeps its canonical targeted re-read.
+ */
+export function carrySessionLayout1OwnerProjection(params: Readonly<{
+    previous: Readonly<{
+        metadataLayoutVersion?: unknown;
+        metadataVersion: number;
+        [SESSION_OWNER_METADATA_PROJECTION]?: SessionOwnerMetadataProjection | null;
+    }>;
+    frame: Readonly<{ ownerMetadata?: unknown; metadataLayoutVersion?: unknown; metadataVersion: number }>;
+    sharedMetadata: unknown;
+}>): Extract<SessionLayout1OwnerProjection, { kind: 'owner' }> | null {
+    const retained = params.previous[SESSION_OWNER_METADATA_PROJECTION];
+    if (params.frame.ownerMetadata !== undefined || !retained?.ownerMetadataView
+        || readSessionMetadataLayoutVersion(params.previous.metadataLayoutVersion) !== 1
+        || readSessionMetadataLayoutVersion(params.frame.metadataLayoutVersion) !== 1
+        || retained.admittedMetadataVersion !== params.previous.metadataVersion
+        || params.frame.metadataVersion !== params.previous.metadataVersion + 1) return null;
+    const sharedMetadata = StoredSessionSharedMetadataV1Schema.safeParse(params.sharedMetadata);
+    if (!sharedMetadata.success) return null;
+    const carried = projectSessionLayout1OwnerMetadata({
+        sharedMetadata: sharedMetadata.data,
+        ownerMetadataRead: retained,
+        metadataVersion: params.frame.metadataVersion,
+    });
+    return carried.kind === 'owner' ? carried : null;
 }

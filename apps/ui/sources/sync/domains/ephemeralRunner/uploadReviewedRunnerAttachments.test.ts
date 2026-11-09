@@ -9,16 +9,33 @@ function sourceName(file: Parameters<UploadFile>[0]['file']): string {
 }
 
 describe('uploadReviewedRunnerAttachments', () => {
+    it('reuploads a retained path-only checkpoint from staged custody and checkpoints its issued handle', async () => {
+        const sha256 = 'd'.repeat(64);
+        const attachmentHandle = { v: 1 as const, sessionId: 'session-1', id: 'issued-recovered' };
+        const onVerifiedUpload = vi.fn();
+        const uploadFile = vi.fn<UploadFile>(async () => ({ success: true, path: 'uploads/recovered.txt', sizeBytes: 8, sha256, attachmentHandle }));
+        const uploaded = await uploadReviewedRunnerAttachments({ sessionId: 'session-1', messageLocalId: 'message-1',
+            reviewedFiles: [{ id: 'file-1', name: 'notes.txt', mimeType: 'text/plain', sizeBytes: 8, sha256 }],
+            stagedFiles: [{ id: 'file-1', source: { kind: 'memory', name: 'notes.txt', bytes: new Uint8Array(8) } }],
+            resumedUploads: [{ id: 'file-1', name: 'notes.txt', mimeType: 'text/plain', path: 'uploads/old.txt', sizeBytes: 8, sha256 }],
+            destination: { uploadLocation: 'workspace', workspaceRelativeDir: '.happier/uploads', vcsIgnoreStrategy: 'none', vcsIgnoreWritesEnabled: false },
+            maxFileBytes: 1024, admitInitialPrompt: () => {}, onVerifiedUpload, uploadFile,
+        });
+        expect(uploaded).toMatchObject([{ path: 'uploads/recovered.txt', attachmentHandle }]);
+        expect(onVerifiedUpload).toHaveBeenCalledWith(expect.objectContaining({ path: 'uploads/recovered.txt', attachmentHandle }));
+        expect(uploadFile).toHaveBeenCalledOnce();
+    });
     it('keeps the reviewed tray identity on rebuilt image input after checkpoint recovery', async () => {
         const sha256 = 'd'.repeat(64);
+        const attachmentHandle = { v: 1 as const, sessionId: 'session-1', id: 'issued-image-1' };
         const uploaded = await uploadReviewedRunnerAttachments({ sessionId: 'session-1', messageLocalId: 'message-1',
             reviewedFiles: [{ id: 'image-1', name: 'screen.png', mimeType: 'image/png', sizeBytes: 8, sha256 }],
             stagedFiles: [{ id: 'image-1', source: { kind: 'memory', name: 'screen.png', mimeType: 'image/png', bytes: new Uint8Array(8) } }],
-            resumedUploads: [{ id: 'image-1', name: 'screen.png', mimeType: 'image/png', path: 'uploads/screen.png', sizeBytes: 8, sha256 }],
+            resumedUploads: [{ id: 'image-1', name: 'screen.png', mimeType: 'image/png', path: 'uploads/screen.png', sizeBytes: 8, sha256, attachmentHandle }],
             destination: { uploadLocation: 'workspace', workspaceRelativeDir: '.happier/uploads', vcsIgnoreStrategy: 'none', vcsIgnoreWritesEnabled: false },
             maxFileBytes: 1024, admitInitialPrompt: () => {},
         });
-        expect(uploaded[0]).toMatchObject({ id: 'image-1', structuredInput: { id: 'image-1' } });
+        expect(uploaded[0]).toMatchObject({ id: 'image-1', attachmentHandle, structuredInput: { id: 'image-1' } });
     });
     it('does not admit the prompt when a later ordinary upload returns a different reviewed size', async () => {
         const digest = 'a'.repeat(64);
@@ -28,6 +45,7 @@ describe('uploadReviewedRunnerAttachments', () => {
             path: `.happier/uploads/${sourceName(file)}`,
             sizeBytes: sourceName(file) === 'second.txt' ? 7 : 8,
             sha256: digest,
+            attachmentHandle: { v: 1, sessionId: 'session-1', id: sourceName(file) },
         }));
 
         await expect(uploadReviewedRunnerAttachments({
@@ -63,6 +81,7 @@ describe('uploadReviewedRunnerAttachments', () => {
             path: '.happier/uploads/reviewed.txt',
             sizeBytes: 8,
             sha256: 'b'.repeat(64),
+            attachmentHandle: { v: 1, sessionId: 'session-1', id: 'issued-reviewed' },
         }));
 
         await expect(uploadReviewedRunnerAttachments({
@@ -106,6 +125,7 @@ describe('uploadReviewedRunnerAttachments', () => {
             path: '.happier/uploads/reviewed.txt',
             sizeBytes: 8,
             sha256: digest,
+            attachmentHandle: { v: 1, sessionId: 'session-1', id: 'issued-reviewed' },
         }));
 
         const uploaded = await uploadReviewedRunnerAttachments({
@@ -146,6 +166,7 @@ describe('uploadReviewedRunnerAttachments', () => {
             path: '.happier/uploads/reviewed.txt',
             sizeBytes: 8,
             sha256: digest,
+            attachmentHandle: { v: 1, sessionId: 'session-1', id: 'issued-reviewed' },
         }]);
         expect(admitInitialPrompt).toHaveBeenCalledWith(uploaded);
         expect(uploadFile).toHaveBeenCalledWith(expect.objectContaining({
@@ -162,6 +183,7 @@ describe('uploadReviewedRunnerAttachments', () => {
             path: `.happier/uploads/${sourceName(file)}`,
             sizeBytes: 9,
             sha256: secondDigest,
+            attachmentHandle: { v: 1, sessionId: 'session-1', id: 'issued-second' },
         }));
 
         await uploadReviewedRunnerAttachments({
@@ -182,6 +204,7 @@ describe('uploadReviewedRunnerAttachments', () => {
                 path: '.happier/uploads/first.txt',
                 sizeBytes: 8,
                 sha256: firstDigest,
+                attachmentHandle: { v: 1, sessionId: 'session-1', id: 'issued-first' },
             }],
             destination: {
                 uploadLocation: 'workspace',

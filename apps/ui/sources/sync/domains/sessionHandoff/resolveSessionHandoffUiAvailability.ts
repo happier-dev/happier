@@ -1,4 +1,4 @@
-import type { SessionHandoffTransportStrategy } from '@happier-dev/protocol';
+import type { SessionHandoffTransportStrategy } from '@happier-dev/protocol/sessions/control/handoff/handoffTypes';
 
 import { storage } from '@/sync/domains/state/storage';
 import {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { SessionPublicLinkSettingsV1 } from '@happier-dev/protocol';
+import type { SessionPublicLinkSettingsV1 } from '@happier-dev/protocol/sessions/access/sessionAccessActionsV1';
 
 import {
     mergeSessionPublicLinkWithCachedBearer,

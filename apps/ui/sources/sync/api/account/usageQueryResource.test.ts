@@ -3646,6 +3646,7 @@ describe('usage query captured Resource adapter', () => {
 
   it('reads only the changed allowance record and keeps unscoped recovery full', async () => {
     const now = Date.now();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
     let changes: ApiChangeEntry[] = [];
     let cursor = 0;
     const refs = ['one', 'two', 'three'].map(accountId => ({
@@ -3699,8 +3700,25 @@ describe('usage query captured Resource adapter', () => {
     await expect.poll(() => quotaContexts.every(quotaContext => getQualifiedQuotaSnapshotEntry(buildQualifiedQuotaSnapshotScopeKey(quotaContext)).read)).toBe(true);
     const query = normalizeUsageQuery({ includeQuotaHistory: false, includeAccounting: false,
       includeSessionEvidence: false, includeWorkEvidence: false });
-    const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({ queries: [query] }) });
-    const release = entry.subscribe(() => {}, true);
+    const chartQuery = normalizeUsageQuery({ period: { startMs: now - 600_000, endMs: now }, includeQuota: false,
+      includeSessionEvidence: false, includeWorkEvidence: false, includeComparison: false, includeCoach: false });
+    const privateChartQuery = normalizeUsageQuery({ ...chartQuery, includeSessionEvidence: true });
+    const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({ queries: [query, chartQuery, privateChartQuery] }) });
+    const chartKey = getUsageQueryKey(chartQuery);
+    const privateChartKey = getUsageQueryKey(privateChartQuery);
+    let chartChanges = 0;
+    let privateChartChanges = 0;
+    let shownChart: ReturnType<typeof decodeUsageQueryResource>['results'][number] | undefined;
+    let shownPrivateChart: typeof shownChart;
+    const release = entry.subscribe(() => {
+      const content = entry.getSnapshot().value;
+      if (!content) return;
+      const slices = decodeUsageQueryResource(content).results;
+      const chart = slices.find(slice => slice.key === chartKey);
+      if (chart !== shownChart) { shownChart = chart; chartChanges++; }
+      const privateChart = slices.find(slice => slice.key === privateChartKey);
+      if (privateChart !== shownPrivateChart) { shownPrivateChart = privateChart; privateChartChanges++; }
+    }, true);
     const counts = () => refs.map((ref, index) => ({
       resolves: home!.requests.filter(request => request.path === '/v4/connect/qualified/provider-account-usage/sources/resolve'
         && JSON.parse(request.url.searchParams.get('source')!).ref.accountId === ref.accountId).length,
@@ -3729,6 +3747,9 @@ describe('usage query captured Resource adapter', () => {
         generation: basis.generation, credentialScope });
       // A concurrent provider surface publishes through the real shared cache.
       // Its known row change must retain the same scope as a focused Home push.
+      chartChanges = 0;
+      privateChartChanges = 0;
+      clock.mockReturnValue(now + 1);
       snapshots[1] = { ...snapshots[1]!, observedAtMs: now + 1 };
       updateProviderAccountUsageCacheEntries(providerScope, entries => ({ ...entries, [snapshots[1]!.recordId]: {
         snapshot: snapshots[1]!, loading: false, hadError: false, nextFetchAtMs: now + 600_000,
@@ -3738,6 +3759,8 @@ describe('usage query captured Resource adapter', () => {
       expect(counts(), 'A local cache change reacquires only its admitted record').toEqual(before.map((count, index) => ({
         resolves: count.resolves + (index === 1 ? 1 : 0), records: count.records + (index === 1 ? 1 : 0),
       })));
+      expect(chartChanges, 'provider read status and observation clocks change no accounting chart facts').toBe(0);
+      expect(privateChartChanges, 'an allowance read changes no admitted Session chart facts').toBe(0);
       before = counts();
       const remappedKey = { ...snapshots[1]!.recordKey, accountSubjectId: 'two-remapped' };
       snapshots[1] = ProviderAccountUsageSnapshotV1Schema.parse({ ...snapshots[1], recordKey: remappedKey,
@@ -8080,6 +8103,40 @@ describe('Usage compact fact publication', () => {
 
 
 describe('Usage projected batch settlement', () => {
+  it('leaves unread history retryable after a request-level 503 without failing every selected Session', async () => {
+    const nowMs = Date.UTC(2026, 10, 9);
+    vi.spyOn(Date, 'now').mockReturnValue(nowMs);
+    const ids = ['request-unread-a', 'request-unread-b', 'request-unread-c'];
+    let unavailable = true;
+    const transcriptRequests: string[][] = [];
+    const captured = await context(request => {
+      if (request.path === '/v2/usage/query') return Response.json(value);
+      if (request.method === 'PUT' && /^\/v2\/sessions\/[^/]+\/system-records$/.test(request.path)) return successfulUsageFactWrite(request.body);
+      if (request.path !== USAGE_SESSION_EVIDENCE_PATH) return undefined;
+      const demand = UsageSessionEvidenceRequestSchema.parse(request.body).requests[0]!;
+      const requested = demand.sessionIds ?? ids;
+      if (demand.query.includeTranscriptEvidence) {
+        transcriptRequests.push([...requested]);
+        if (unavailable) return Response.json({ error: 'database_transaction_timeout' }, { status: 503 });
+      }
+      return Response.json({ requests: [{ query: demand.query, sessionIds: requested }], results: requested.map(id => ({ sessionId: id,
+        detail: { status: 200, body: { session: createPlainSessionCurrentProjectionRecordFixture({ id, seq: 1, active: false,
+          createdAt: nowMs - 1000, updatedAt: nowMs - 100 }) } },
+        turns: { status: 200, body: { v: 1 as const, sessionId: id, updatedAt: nowMs - 100, turns: [] } },
+        ...(demand.query.includeTranscriptEvidence ? { messageEvidence: { acceptedInputs: [] }, messagesComplete: true } : {}),
+      })) } satisfies UsageSessionEvidenceResponse);
+    });
+    const query = normalizeUsageQuery({ period: { relative: '90days' }, includeWorkEvidence: false, includeComparison: false });
+    const { readUiUsageHistory } = await import('./usageQueryResource');
+    await readUiUsageQueryBatch(captured, { queries: [query] });
+    expect(await readUiUsageHistory(captured, { query })).toMatchObject({ status: 'partial',
+      errorCode: 'database_transaction_timeout', progress: { selected: 3, notRead: 3, completed: 0, failed: 0 } });
+    unavailable = false;
+    expect(await readUiUsageHistory(captured, { query })).toMatchObject({ status: 'complete',
+      progress: { selected: 3, notRead: 0, completed: 3, failed: 0 } });
+    expect(transcriptRequests).toEqual([ids, ids]);
+  });
+
   it.each(['detail-forbidden', 'transcript-forbidden', 'unavailable-detail', 'transient-detail'] as const)(
     'settles per-Session history coverage with its typed reason and retries only transient failure (%s)', async failure => {
       const nowMs = Date.UTC(2026, 10, 6);

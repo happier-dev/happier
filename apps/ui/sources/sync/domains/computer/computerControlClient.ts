@@ -95,18 +95,7 @@ export function createComputerControlClient(scope: ComputerScope, execute: Compu
             'computer.capture', { ...machine, ...identity }, ComputerCaptureResponseV1Schema),
         stopSharing: async (): Promise<ComputerOutcome<ComputerActionResultV1>> => {
             const result = await run<ComputerActionResultV1>('computer.target.close', machine, ComputerActionResultV1Schema);
-            if (!result.ok || result.value.status !== 'dispatched') return result;
-            // A dispatched close is not permission to hide a still-selected source.
-            // Both the viewer and picker consume this same canonical confirmation.
-            const confirmed = await run<ComputerSelectedTargetResponseV1>('computer.target.get', machine, ComputerSelectedTargetResponseV1Schema);
-            if (!confirmed.ok) return confirmed;
-            if (confirmed.value.sourceId || confirmed.value.selectedTarget || confirmed.value.consentGranted
-                || !confirmed.value.approvalDisplay.requiresTargetSelection) {
-                return { ok: false, code: 'control_not_drained' };
-            }
-            for (const projection of mountedProjections.get(computerScopeKey(scope)) ?? []) {
-                projection.applySelection(confirmed.value);
-            }
+            if (result.ok) applyComputerCloseAnswer(scope, result.value);
             return result;
         },
     };
@@ -128,6 +117,12 @@ export function computerScopeKey(scope: ComputerScope): string {
     return JSON.stringify([scope.serverId || null, scope.machineId, computerSourceIdentityKeyV1(sourceIdentity(scope))]);
 }
 
+function applyComputerCloseAnswer(scope: ComputerScope, answer: ComputerActionResultV1): void {
+    if (answer.status !== 'dispatched') return;
+    for (const projection of mountedProjections.get(computerScopeKey(scope)) ?? []) {
+        projection.applyClosedSource(answer.sourceId);
+    }
+}
 
 /** A refreshable projection of Action answers, never a computer controller. */
 function createComputerSessionProjection(scope: ComputerScope, execute: ComputerActionExecute, accountLifetime?: ServerAccountScopeLifetime | null) {
@@ -152,6 +147,14 @@ function createComputerSessionProjection(scope: ComputerScope, execute: Computer
         publish({ ...snapshot, selection, status: selection.sourceId === snapshot.status?.sourceId ? snapshot.status : null,
             failure: !invalidate && selection.sourceId === snapshot.selection?.sourceId && captureRequired() ? snapshot.failure : null });
     }
+    function applyClosedSource(sourceId: string): void {
+        const selection = snapshot.selection;
+        if (!client.isCurrent() || selection?.sourceId !== sourceId) return;
+        if (flight) invalidated = true;
+        publish({ ...snapshot, selection: { consentGranted: false, approvalDisplay: {
+            machineDisplayName: selection.approvalDisplay.machineDisplayName, requiresTargetSelection: true,
+        } }, status: null, failure: null });
+    }
     function captureRequired(): boolean {
         return snapshot.failure !== null && resolveComputerRecovery({ kind: 'failed', code: snapshot.failure }, 'use')?.action === 'capture';
     }
@@ -175,6 +178,14 @@ function createComputerSessionProjection(scope: ComputerScope, execute: Computer
                 [recovery.permission]: cause === 'permission_denied' ? 'denied' as const : 'unknown' as const }
             : snapshot.grants;
         publish({ ...snapshot, selection, grants, status: null, failure: code });
+    }
+    function applySelectionFailure(code: string): void {
+        if (!client.isCurrent()) return;
+        // Unlike a capture/status refusal, this selection-read refusal proves
+        // the daemon has no selected source and no default display connection.
+        if (code === 'computer_display_unavailable') {
+            publish({ ...snapshot, selection: null, status: null, failure: code });
+        } else applyFailure(code);
     }
     function readinessPatch(grants: ComputerTargetsListResponseV1['grants']) {
         return { grants, failure: grants.capture !== 'granted'
@@ -205,7 +216,7 @@ function createComputerSessionProjection(scope: ComputerScope, execute: Computer
                 const selection = await client.getTarget();
                 if (!hasDemand()) break;
                 if (invalidated) continue;
-                if (!selection.ok) { applyFailure(selection.code); continue; }
+                if (!selection.ok) { applySelectionFailure(selection.code); continue; }
                 const previousStatus = selection.value.sourceId === snapshot.selection?.sourceId ? snapshot.status : null;
                 // Retain the release affordance while status is pending. The retained
                 // source reads grants directly; refreshing never needs picker thumbnails.
@@ -227,9 +238,11 @@ function createComputerSessionProjection(scope: ComputerScope, execute: Computer
         accountLifetime,
         getSnapshot: () => client.isCurrent() ? snapshot : EMPTY_PROJECTION,
         applySelection,
+        applyClosedSource,
         applyStatus,
         applyReadiness,
         applyFailure,
+        applySelectionFailure,
         applySourceFailure,
         confirmCapture,
         refresh,
@@ -321,8 +334,13 @@ export function publishComputerActionAnswer(scope: ComputerScope, actionId: stri
             projection.applySelection(selected.data);
             void projection.refresh(true);
         }
+    } else if (actionId === 'computer.target.close') {
+        const result = ComputerActionResultV1Schema.safeParse(answer);
+        if (!result.success) return;
+        if (result.data.status === 'dispatched') applyComputerCloseAnswer(scope, result.data);
+        else for (const projection of mounted) void projection.refresh(true);
     } else if (actionId === 'computer.control.interrupt' || actionId === 'computer.control.handBack'
-        || actionId === 'computer.target.close' || actionId === 'computer.capture') {
+        || actionId === 'computer.capture') {
         if (actionId === 'computer.capture') {
             const capture = ComputerCaptureResponseV1Schema.safeParse(answer);
             if (capture.success && capture.data.status === 'captured') {

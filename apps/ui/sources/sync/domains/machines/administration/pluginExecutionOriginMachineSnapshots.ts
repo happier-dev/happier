@@ -86,6 +86,8 @@ type InventoryPublication = Readonly<{
     snapshots: readonly ServerMachineInventorySnapshotV1[];
     readMachineFact: PluginExecutionOriginMachineFactReader;
     pendingHomes: ReadonlySet<string>;
+    /** Settled Homes pending only while these online Machines open newer content. */
+    contentPendingHomes: ReadonlyMap<string, ReadonlySet<string>>;
     state: StorageState;
     reachabilityRevision: number;
     homes: ReadonlyMap<string, InventoryHome>;
@@ -94,6 +96,23 @@ type InventoryPublication = Readonly<{
     activeServerIdentityId: string;
 }>;
 type InventoryMachineFact = ReturnType<PluginExecutionOriginMachineFactReader>;
+
+/**
+ * An unread census pends its whole Home. A settled Home whose online Machines
+ * are still opening newer content pends only the demands those Machines can
+ * answer (their targets or remembered target); a demand with no targets yet
+ * cannot tell, so it keeps the Home-wide answer. One Machine's content
+ * opening must not re-elect and wake every plugin demand on the Home.
+ */
+function isInventoryPendingFor(demand: Readonly<{ targets: readonly PluginExecutionOriginContextualTarget[] }>,
+    inventory: InventoryPublication, serverIdentityId: string | null | undefined,
+    target: MachineAdministrationTargetV1 | null | undefined): boolean {
+    if (!serverIdentityId || !inventory.pendingHomes.has(serverIdentityId)) return false;
+    const opening = inventory.contentPendingHomes.get(serverIdentityId);
+    if (!opening || demand.targets.length === 0) return true;
+    if (target && target.serverIdentityId === serverIdentityId && opening.has(target.machineId)) return true;
+    return demand.targets.some(candidate => candidate.serverIdentityId === serverIdentityId && opening.has(candidate.machineId));
+}
 type InventoryRow = Readonly<{
     machine: ServerMachineInventorySnapshotV1['machines'][number];
     displayIndex: number;
@@ -122,6 +141,7 @@ type Demand = {
         inputs: ExecutionOriginMachineSnapshotInputs;
         key: string;
         eligibilityKey: string;
+        inventoryPending: boolean;
         storedTarget: MachineAdministrationTargetV1 | null;
         lastUsedTarget: MachineAdministrationTargetV1 | null;
         value: PluginExecutionOriginDescriptiveSelection;
@@ -407,7 +427,7 @@ export function createExecutionOriginMachineSnapshotPublication(dependencies: Pu
                 && inventory.homes.get(state.origin.serverIdentityId)?.snapshot.executionPendingMachineIds
                     ?.includes(getPluginMachineExecutionOriginRef(state.origin).machineId) === true;
             return spec.availabilityNotLoaded === true || selectedContentPending
-                || ((inventory.pendingHomes.has(readinessHome ?? '') && state.kind !== 'selected') || projectionPending);
+                || ((isInventoryPendingFor(demand, inventory, readinessHome, rememberedTarget) && state.kind !== 'selected') || projectionPending);
         };
         if (!demand.candidatePublication) {
             for (const other of demand.context.demands) {
@@ -421,7 +441,10 @@ export function createExecutionOriginMachineSnapshotPublication(dependencies: Pu
             demand.candidatePublication ??= createCandidatePublication(demand.inputs, inventory, demand.description?.value.candidates);
         }
         const candidates = demand.candidatePublication.read(inventory);
+        const inventoryPending = isInventoryPendingFor(demand, inventory,
+            rememberedTarget?.serverIdentityId ?? spec.homeServerIdentityId, rememberedTarget);
         const matches = (description: NonNullable<Demand['description']>) => description.key === key
+            && description.inventoryPending === inventoryPending
             && description.value.candidates === candidates
             && sameSelectionInputs(description.inputs, demand.inputs) && sameTarget(description.storedTarget, storedTarget)
             && sameTarget(description.lastUsedTarget, lastUsedTarget)
@@ -441,7 +464,7 @@ export function createExecutionOriginMachineSnapshotPublication(dependencies: Pu
             ...readPluginExecutionOriginAutomaticHints(demand.inputs.pluginId, candidates, inventory.snapshots,
                 demand.inputs.materializations, spec.installedPlugins),
             lastUsedTarget,
-            inventoryPending: inventory.pendingHomes.has(rememberedTarget?.serverIdentityId ?? spec.homeServerIdentityId ?? ''),
+            inventoryPending,
         };
         const resolved = resolvePluginMachineExecutionOriginState(selectionInputs);
         const state = retainDescriptiveState(previous?.value.state, resolved);
@@ -453,7 +476,7 @@ export function createExecutionOriginMachineSnapshotPublication(dependencies: Pu
         const value = previous?.value.candidates === candidates && previous.value.state === state
             && previous.value.projectionTarget === projectionTarget && previous.value.loading === loading
             ? previous.value : Object.freeze({ candidates, state, projectionTarget, loading });
-        demand.description = { inputs: demand.inputs, key, eligibilityKey, storedTarget, lastUsedTarget, value };
+        demand.description = { inputs: demand.inputs, key, eligibilityKey, inventoryPending, storedTarget, lastUsedTarget, value };
         return value;
     }
 
@@ -483,7 +506,10 @@ export function createExecutionOriginMachineSnapshotPublication(dependencies: Pu
             const readinessHome = inputs.readinessServerIdentityId
                 ?? readPluginMachineExecutionTargetPreference(inventory.state.settings.machineAdministrationTargetsLocalV1, inputs.pluginId)?.serverIdentityId
                 ?? inventory.activeServerIdentityId;
-            const prefix = `${context.key}\u0000${readinessHome}\u0000${inventory.pendingHomes.has(readinessHome)}\u0000`;
+            // Census/content pending is not a Machine fact: the description
+            // compares it per demand, so a pending flip wakes a consumer only
+            // when its election or loading answer actually changes.
+            const prefix = `${context.key}\u0000${readinessHome}\u0000`;
             const eligibilityKey = `${prefix}${demand.facts!.eligibilityKey}`;
             // Activity ranks an initial/replacement Auto choice. A heartbeat
             // alone must not republish or replace an eligible mounted choice.
@@ -519,6 +545,7 @@ export function createExecutionOriginMachineSnapshotPublication(dependencies: Pu
                 machineListByServerId: state.machineListByServerId, machineListStatusByServerId: state.machineListStatusByServerId,
                 accountScopesByServerId: context.scopes, nowMs, loadWarmEntries: loadMachineDisplayWarmCacheEntries });
             const pendingHomes = new Set<string>();
+            const contentPendingHomes = new Map<string, ReadonlySet<string>>();
             const homes = new Map<string, InventoryHome>();
             // One entry per changed Machine, however many demands hold it: every
             // demand walks this list, so a repeat would cost demands × demands.
@@ -533,7 +560,12 @@ export function createExecutionOriginMachineSnapshotPublication(dependencies: Pu
             };
             const resolveScopeId = captureServerProfileScopeResolver();
             for (const snapshot of snapshots) {
-                if ('serverIdentityId' in snapshot && isMachineInventoryPending(snapshot)) pendingHomes.add(snapshot.serverIdentityId);
+                if ('serverIdentityId' in snapshot && isMachineInventoryPending(snapshot)) {
+                    pendingHomes.add(snapshot.serverIdentityId);
+                    if (snapshot.kind === 'resolved' && snapshot.settled === true) {
+                        contentPendingHomes.set(snapshot.serverIdentityId, new Set(snapshot.executionPendingMachineIds));
+                    }
+                }
                 if (snapshot.kind !== 'resolved') continue;
                 const profile = context.inputs.profiles.find(entry => entry.id === snapshot.profileId);
                 const sourceMachines = resolveServerScopedMachineInventory({
@@ -586,7 +618,7 @@ export function createExecutionOriginMachineSnapshotPublication(dependencies: Pu
                     for (const target of demand.targets) if (target.serverIdentityId === serverIdentityId) markChanged(target);
                 }
             }
-            context.inventory = { snapshots, pendingHomes, state, homes, changedTargets, fullRefresh: !previous,
+            context.inventory = { snapshots, pendingHomes, contentPendingHomes, state, homes, changedTargets, fullRefresh: !previous,
                 activeServerIdentityId: getServerProfileById(context.inputs.activeServerId)?.serverIdentityId ?? '',
                 reachabilityRevision: revision,
                 readMachineFact: target => readInventoryMachineFact(homes, target) };

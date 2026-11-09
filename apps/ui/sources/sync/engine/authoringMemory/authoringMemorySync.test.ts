@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createAuthoringMemorySync, importLegacyAuthoringMemory, type AuthoringMemoryTransport } from './authoringMemorySync';
-import type { AuthoringMemoryContentV1 } from '@happier-dev/protocol';
+import type { AuthoringMemoryContentV1 } from '@happier-dev/protocol/account/authoringMemory';
 import { createAuthoringMemoryCipher } from '@/sync/encryption/authoringMemoryEncryption';
 import { buildProjectLastOpenedMemoryKeyV1 } from '@happier-dev/protocol/account/authoringMemory';
 

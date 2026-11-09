@@ -21,8 +21,9 @@ import {
     drainRetainedHomeCarrierReleases,
 } from './homeCarrierPolicy';
 import { createIrohHomeTunnelSupervisor } from './nativeIrohTunnels/supervisor';
-import { getStorage } from '@/sync/domains/state/storageStore';
 import type { IrohHomeTunnelAcquireInput } from './nativeIrohTunnels/types';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { resetServerReachabilitySupervisors } from './connectivity/serverReachabilitySupervisorPool';
 
 const TAURI_INTERNALS_KEY = '__TAURI_INTERNALS__';
 const BROWSER_USER_AGENT =
@@ -47,7 +48,6 @@ function setHost(kind: 'browser' | 'desktop' | 'no_shared_worker'): void {
 const endpoint = { endpointId: 'a'.repeat(64), relayUrls: ['https://relay.example.test/'] };
 const baseInput = {
     acquireNative: (input: IrohHomeTunnelAcquireInput) => acquireNativeSpy(input),
-    mode: 'initial_selection' as const,
     applicationCarrierEligibility: 'automatic' as const,
     descriptor: {
         v: 1 as const,
@@ -62,31 +62,128 @@ const baseInput = {
     verification: { kind: 'authenticated' as const, token: 'home-token' },
 };
 
+/** A declared origin at the fetch boundary: public identity plus readiness, recording every credential. */
+function serveHome(options: Readonly<{ identity?: string; readinessStatus?: number }> = {}): Array<{ url: string; authorization: string | null }> {
+    const requests: Array<{ url: string; authorization: string | null }> = [];
+    setRuntimeFetch(async (input, init) => {
+        const url = String(input);
+        requests.push({ url, authorization: new Headers(init?.headers).get('Authorization') });
+        return url.endsWith('/v1/features')
+            ? new Response(JSON.stringify({
+                features: {},
+                capabilities: { serverIdentity: { serverIdentityId: options.identity ?? baseInput.descriptor.homeServerIdentityId } },
+            }), { status: 200, headers: { 'content-type': 'application/json' } })
+            : new Response('{}', { status: options.readinessStatus ?? 200, headers: { 'content-type': 'application/json' } });
+    });
+    return requests;
+}
+
 describe('acquireEligibleHomeCarrier', () => {
     beforeEach(() => {
         acquireBrowserSpy.mockReset();
         acquireNativeSpy.mockReset();
         setHost('browser');
+        setRuntimeFetch(async () => new Response('{}', { status: 503 }));
     });
 
-    afterEach(() => {
+    afterEach(async () => {
+        await resetServerReachabilitySupervisors();
+        resetRuntimeFetch();
         Reflect.deleteProperty(globalThis, TAURI_INTERNALS_KEY);
         Reflect.deleteProperty(globalThis, 'navigator');
         Reflect.deleteProperty(globalThis, 'SharedWorker');
     });
 
-    it('uses device-local Standard only even when a caller requests automatic selection', async () => {
+    it('prefers verified declared HTTPS in browsers without acquiring the relay carrier', async () => {
+        acquireBrowserSpy.mockResolvedValue({
+            leaseId: 'working-browser-relay', homeServerIdentityId: baseInput.descriptor.homeServerIdentityId,
+            endpointId: endpoint.endpointId, release: async () => {},
+        });
+        const requests = serveHome();
+
+        await expect(acquireEligibleHomeCarrier(baseInput)).resolves.toEqual({
+            kind: 'https', runtimeOrigin: 'https://public.example.test',
+        });
+        expect(requests).toEqual([
+            { url: 'https://public.example.test/v1/features', authorization: null },
+            { url: 'https://public.example.test/v1/auth/ping', authorization: 'Bearer home-token' },
+        ]);
+        expect(acquireBrowserSpy).not.toHaveBeenCalled();
+        expect(acquireNativeSpy).not.toHaveBeenCalled();
+    });
+
+    it.each(['auth', 'identity'])('stops browser selection on a declared HTTPS %s refusal', async (refusal) => {
+        const requests = serveHome(refusal === 'auth' ? { readinessStatus: 401 } : { identity: 'wrong-home' });
+
+        await expect(acquireEligibleHomeCarrier(baseInput)).resolves.toMatchObject({ kind: 'fail_closed', fallbackAllowed: false });
+        if (refusal === 'identity') expect(requests.every((request) => request.authorization === null)).toBe(true);
+        expect(acquireBrowserSpy).not.toHaveBeenCalled();
+        expect(acquireNativeSpy).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ['after a relay outage', () => acquireNativeSpy.mockRejectedValue(new IrohError('home_unreachable', 'relay unavailable'))],
+        ['after a degraded lease', () => acquireNativeSpy.mockResolvedValue({
+            leaseId: 'degraded', homeServerIdentityId: baseInput.descriptor.homeServerIdentityId, endpointId: endpoint.endpointId,
+            runtimeOrigin: 'http://127.0.0.1:43123', status: 'degraded', release: async () => {},
+        })],
+    ])('publishes native HTTPS %s only for the same Home, and sends a wrong Home no credential', async (_name, arrange) => {
+        setHost('desktop');
+        arrange();
+
+        serveHome();
+        await expect(acquireEligibleHomeCarrier(baseInput)).resolves.toEqual({
+            kind: 'https', runtimeOrigin: 'https://public.example.test',
+        });
+
+        const wrongHome = serveHome({ identity: 'wrong-home' });
+        await expect(acquireEligibleHomeCarrier(baseInput)).resolves.toMatchObject({ kind: 'fail_closed', fallbackAllowed: false });
+        expect(wrongHome.map((request) => request.authorization)).toEqual([null]);
+    });
+
+    it('settles unavailable when the declared HTTPS origin cannot prove its Home after a native outage', async () => {
+        setHost('desktop');
+        acquireNativeSpy.mockRejectedValue(new IrohError('unavailable', 'relay unavailable'));
+
+        await expect(acquireEligibleHomeCarrier(baseInput)).resolves.toMatchObject({ kind: 'unavailable' });
+    });
+
+    it('proves the Home once when Standard only reaches declared HTTPS without the browser preference', async () => {
+        const { getStorage } = await import('@/sync/domains/state/storageStore');
         const store = getStorage();
         const previous = store.getState().localSettings;
         store.setState({ localSettings: { ...previous, homeApplicationCarrierEligibility: 'standard_only' } });
         try {
-            const acquired = await acquireEligibleHomeCarrier(baseInput);
-            expect(acquired).toEqual({ kind: 'https', runtimeOrigin: 'https://public.example.test' });
+            const sameHome = serveHome();
+            await expect(acquireEligibleHomeCarrier(baseInput)).resolves.toEqual({
+                kind: 'https', runtimeOrigin: 'https://public.example.test',
+            });
+            expect(sameHome.filter((request) => request.url.endsWith('/v1/features'))).toHaveLength(1);
+
+            serveHome({ identity: 'wrong-home' });
+            await expect(acquireEligibleHomeCarrier(baseInput)).resolves.toMatchObject({ kind: 'fail_closed', fallbackAllowed: false });
             expect(acquireBrowserSpy).not.toHaveBeenCalled();
             expect(acquireNativeSpy).not.toHaveBeenCalled();
         } finally {
             store.setState({ localSettings: previous });
         }
+    });
+
+    it('verifies the browser preference once rather than twice', async () => {
+        const requests = serveHome();
+
+        await acquireEligibleHomeCarrier(baseInput);
+        expect(requests.filter((request) => request.url.endsWith('/v1/features'))).toHaveLength(1);
+    });
+
+    it('leaves a Standard Home with no Iroh endpoint unprobed', async () => {
+        const requests = serveHome();
+
+        await expect(acquireEligibleHomeCarrier({
+            ...baseInput,
+            descriptor: { ...baseInput.descriptor, endpoints: [{ kind: 'https', url: 'https://public.example.test' }] },
+        })).resolves.toEqual({ kind: 'https', runtimeOrigin: 'https://public.example.test' });
+        expect(requests).toEqual([]);
     });
 
     it('returns only the acquired browser carrier when the browser carrier is eligible', async () => {
@@ -168,26 +265,28 @@ describe('acquireEligibleHomeCarrier', () => {
         expect(release).toHaveBeenCalledTimes(1);
     });
 
-    it('fails closed and releases a native carrier that is not verified ready', async () => {
+    it('releases a native carrier that is not ready and uses declared HTTPS', async () => {
         const release = vi.fn(async () => {});
         setHost('desktop');
+        serveHome();
         acquireNativeSpy.mockResolvedValue({
             leaseId: 'not-ready-native',
+            homeServerIdentityId: baseInput.descriptor.homeServerIdentityId,
             endpointId: endpoint.endpointId,
             runtimeOrigin: 'http://127.0.0.1:43123',
             status: 'degraded',
             release,
         });
 
-        await expect(acquireEligibleHomeCarrier(baseInput)).resolves.toMatchObject({
-            kind: 'fail_closed',
-            fallbackAllowed: false,
+        await expect(acquireEligibleHomeCarrier(baseInput)).resolves.toEqual({
+            kind: 'https', runtimeOrigin: 'https://public.example.test',
         });
         expect(release).toHaveBeenCalledTimes(1);
     });
 
     it('returns independently trusted HTTPS only for an allowed Iroh fallback', async () => {
         setHost('desktop');
+        serveHome();
         acquireNativeSpy.mockRejectedValue(new IrohError('unavailable', 'native unavailable'));
 
         await expect(acquireEligibleHomeCarrier({
@@ -205,8 +304,9 @@ describe('acquireEligibleHomeCarrier', () => {
         });
     });
 
-    it('fails closed after the native supervisor starts a tunnel whose health probe fails', async () => {
+    it('uses declared HTTPS after the native supervisor starts a tunnel whose health probe fails', async () => {
         setHost('desktop');
+        serveHome();
         const releaseHomeTunnel = vi.fn(async () => undefined);
         const supervisor = createIrohHomeTunnelSupervisor({
             native: {
@@ -247,7 +347,7 @@ describe('acquireEligibleHomeCarrier', () => {
             },
         });
 
-        expect(result).toMatchObject({ kind: 'fail_closed', fallbackAllowed: false });
+        expect(result).toEqual({ kind: 'https', runtimeOrigin: 'https://public.example.test' });
         expect(releaseHomeTunnel).toHaveBeenCalledTimes(1);
         expect(releaseHomeTunnel).toHaveBeenCalledWith('native-started-before-health-failure');
         expect(supervisor.listTunnels().leases).toEqual([]);
@@ -255,6 +355,7 @@ describe('acquireEligibleHomeCarrier', () => {
 
     it('does not let unavailable cleanup mask a post-acquisition health failure', async () => {
         setHost('desktop');
+        serveHome();
         const releaseHomeTunnel = vi.fn()
             .mockRejectedValueOnce(new IrohError('unavailable', 'desktop stop command unavailable'))
             .mockResolvedValueOnce(undefined);
@@ -297,7 +398,7 @@ describe('acquireEligibleHomeCarrier', () => {
             },
         });
 
-        expect(result).toMatchObject({ kind: 'fail_closed', fallbackAllowed: false });
+        expect(result).toEqual({ kind: 'https', runtimeOrigin: 'https://public.example.test' });
         expect(releaseHomeTunnel).toHaveBeenCalledTimes(1);
         expect(supervisor.listTunnels().leases).toEqual([
             expect.objectContaining({ status: 'failed' }),
@@ -308,6 +409,9 @@ describe('acquireEligibleHomeCarrier', () => {
 
     it('treats missing browser carrier capability as unavailable without attempting the native carrier', async () => {
         setHost('no_shared_worker');
+        setRuntimeFetch(async (input) => new Response(JSON.stringify(String(input).endsWith('/v1/features')
+            ? { features: {}, capabilities: { serverIdentity: { serverIdentityId: baseInput.descriptor.homeServerIdentityId } } }
+            : { ok: true }), { status: 200, headers: { 'content-type': 'application/json' } }));
 
         await expect(acquireEligibleHomeCarrier(baseInput)).resolves.toEqual({
             kind: 'https',
@@ -328,8 +432,7 @@ describe('acquireEligibleHomeCarrier', () => {
         });
 
         expect(result).toMatchObject({
-            kind: 'fail_closed',
-            fallbackAllowed: true,
+            kind: 'unavailable',
             error: { name: 'IrohError', code: 'unavailable' },
         });
         expect(acquireBrowserSpy).not.toHaveBeenCalled();
@@ -348,8 +451,7 @@ describe('acquireEligibleHomeCarrier', () => {
         });
 
         expect(result).toMatchObject({
-            kind: 'fail_closed',
-            fallbackAllowed: true,
+            kind: 'unavailable',
             error: { name: 'IrohError', code: 'unavailable' },
         });
         expect(acquireBrowserSpy).not.toHaveBeenCalled();
@@ -385,7 +487,7 @@ describe('acquireEligibleHomeCarrier', () => {
         });
     });
 
-    it('fails closed as unavailable when an allowed fallback has no trusted HTTPS destination', async () => {
+    it('settles unavailable when an allowed fallback has no trusted HTTPS destination', async () => {
         const error = new IrohError('unavailable', 'native unavailable');
         setHost('desktop');
         acquireNativeSpy.mockRejectedValue(error);
@@ -400,9 +502,8 @@ describe('acquireEligibleHomeCarrier', () => {
                 ],
             },
         })).resolves.toEqual({
-            kind: 'fail_closed',
+            kind: 'unavailable',
             error,
-            fallbackAllowed: true,
         });
     });
 });

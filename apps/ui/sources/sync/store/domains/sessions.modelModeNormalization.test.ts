@@ -1,4 +1,4 @@
-import { buildBackendTargetKeyV2 } from '@happier-dev/protocol';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent-ids';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -24,6 +24,7 @@ function createHarness(initialState: Record<string, unknown> = {}) {
         machines: {},
         machineDisplayById: {},
         sessionMessages: {},
+        sessionMessageToolVersion: 0,
         settings: {},
         ...initialState,
     };

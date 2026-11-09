@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { clearPersistenceStorage, getPersistenceStorage } from './persistenceStorage';
 import { loadAccountSettings } from './accountSettingsPersistence';
-import { loadLocalSettings } from './settingsPersistence';
 import { accountSettingsScopeKeySuffix } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { serverAccountScopedResourceKey } from '@/sync/domains/scope/serverAccountScope';
+import { loadPendingAccountSettingsState, pendingAccountSettingsKey } from './pendingAccountSettingsPersistence';
+import { readMachineAdministrationTargetObservation, rememberMachineAdministrationTargetObservation } from './machineAdministrationUiState';
 import { writePersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
 afterEach(() => { vi.restoreAllMocks(); clearPersistenceStorage(); });
@@ -37,56 +38,18 @@ describe('Machine navigation state migration', () => {
         expect(writes).not.toHaveBeenCalled();
     });
 
-    it.each(['plugin.lastRunOn:acme.plugin', 'machines.managed'])('moves %s last-use history into exact device/Account/Home observations without consuming named defaults', (historyKey) => {
+    it.each(['plugin.lastRunOn:acme.plugin', 'machines.managed'])('does not import never-shipped %s Settings observations', (historyKey) => {
         const device = getPersistenceStorage();
-        const current = { ...target, machineId: 'newer-machine' };
-        const namedDefaults = { 'plugin.runOn:acme.plugin': target, 'machines.managed.default': target };
-        const historyDestination = `ui-state:machine-target-observations-v1:${serverAccountScopedResourceKey(scope, historyKey)}`;
-        device.set(sourceKey, JSON.stringify({ version: 7, settings: { machineAdministrationTargetsLocalV1: {
-            ...namedDefaults, [historyKey]: target,
-        } } }));
-        device.set(historyDestination, JSON.stringify(current));
-        expect(loadAccountSettings(scope)).toMatchObject({ version: 7, settings: { machineAdministrationTargetsLocalV1: {
-            ...namedDefaults,
-        } } });
-        expect(Reflect.get(Reflect.get(loadAccountSettings(scope).settings as object, 'machineAdministrationTargetsLocalV1'), historyKey)).toBeUndefined();
-        expect(JSON.parse(device.getString(historyDestination)!)).toEqual(current);
-        expect(JSON.parse(device.getString(sourceKey)!).settings.machineAdministrationTargetsLocalV1).toEqual(namedDefaults);
-        const writes = vi.spyOn(device, 'set');
+        const source = { machineAdministrationTargetsLocalV1: { [historyKey]: target } };
+        device.set(sourceKey, JSON.stringify({ version: 7, settings: source }));
+        device.set(pendingAccountSettingsKey(scope), JSON.stringify(source));
         loadAccountSettings(scope);
-        expect(writes).not.toHaveBeenCalled();
-        expect(loadAccountSettings({ ...scope, accountId: 'bob' }).settings).toEqual({});
+        loadPendingAccountSettingsState(scope);
+        expect(readMachineAdministrationTargetObservation(scope, historyKey)).toBeNull();
+        expect(device.getString(`ui-state:machine-target-observations-v1:${serverAccountScopedResourceKey(scope, historyKey)}`)).toBeUndefined();
+        rememberMachineAdministrationTargetObservation(scope, historyKey, target);
+        expect(readMachineAdministrationTargetObservation(scope, historyKey)).toEqual(target);
+        expect(readMachineAdministrationTargetObservation({ ...scope, accountId: 'bob' }, historyKey)).toBeNull();
     });
 
-    it.each(['plugin.lastRunOn:acme.plugin', 'machines.managed'])('retains %s source on a refused destination write and safely retries', (historyKey) => {
-        const device = getPersistenceStorage();
-        const raw = JSON.stringify({ version: 7, settings: { machineAdministrationTargetsLocalV1: {
-            'plugin.runOn:acme.plugin': target, [historyKey]: target,
-        } } });
-        device.set(sourceKey, raw);
-        const write = device.set.bind(device);
-        const refused = vi.spyOn(device, 'set').mockImplementation((key, value) => {
-            if (key.startsWith('ui-state:machine-target-observations-v1:')) throw new Error('device full');
-            write(key, value);
-        });
-        vi.spyOn(console, 'warn').mockImplementation(() => {});
-        expect(() => loadAccountSettings(scope)).not.toThrow();
-        expect(device.getString(sourceKey)).toBe(raw);
-        refused.mockRestore();
-        loadAccountSettings(scope);
-        const historyDestination = `ui-state:machine-target-observations-v1:${serverAccountScopedResourceKey(scope, historyKey)}`;
-        expect(JSON.parse(device.getString(historyDestination)!)).toEqual(target);
-        expect(JSON.parse(device.getString(sourceKey)!).settings.machineAdministrationTargetsLocalV1).toEqual({ 'plugin.runOn:acme.plugin': target });
-    });
-
-    it('moves unscoped rail observations out of settings without giving its global cursor authority over any Account', () => {
-        const device = getPersistenceStorage();
-        const seen = { look: { '["srv_navigation","machine-a"]': ['disk:data'] }, guardSeenAt: 100 };
-        device.set('local-settings', JSON.stringify({ themePreference: 'dark', machinesRailSeenV1: seen }));
-        expect(loadLocalSettings().themePreference).toBe('dark');
-        const persisted = JSON.parse(device.getString('local-settings')!);
-        expect(persisted).toMatchObject({ themePreference: 'dark' });
-        expect(persisted).not.toHaveProperty('machinesRailSeenV1');
-        expect(JSON.parse(device.getString('ui-state:machines-rail-seen-v1:legacy-unscoped')!)).toEqual(seen);
-    });
 });

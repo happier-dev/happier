@@ -16,7 +16,7 @@ import { sessionPendingRoutes } from '../../../../../server/sources/app/api/rout
 import { changesRoutes } from '../../../../../server/sources/app/api/routes/changes/changesRoutes';
 import { registerSessionListingRoutes } from '../../../../../server/sources/app/api/routes/session/registerSessionListingRoutes';
 import { startSocket } from '../../../../../server/sources/app/api/socket';
-import { setMachineAccessGrantInTx } from '../../../../../server/sources/app/machines/machineAccess';
+import { removeMachineAccessGrantInTx, setMachineAccessGrantInTx } from '../../../../../server/sources/app/machines/machineAccess';
 import { db } from '../../../../../server/sources/storage/db';
 import { inTx } from '../../../../../server/sources/storage/inTx';
 import { createSessionMachineAccessKeyInTx } from '../../../../../server/sources/app/accessKeys/sessionMachineAccessKeyMutations';
@@ -215,6 +215,21 @@ it.each(['secondary', 'focused'] as const)('delivers real grant and activation-f
             expect(h.storage.getState().sessions[session.id]!.pendingActivationAuthorization!.requestedAt).toBeGreaterThan(requestedAt);
         }
         expect((await db.session.findUniqueOrThrow({ where: { id: session.id } })).pendingCount).toBe(1);
+        // Real grant loss publishes AccountChange, then the access-filtered
+        // complete census withdraws the unrevoked Machine from either Home.
+        expect(machines().some(row => row.id === machine.id)).toBe(true);
+        const removed = await inTx(tx => removeMachineAccessGrantInTx(tx, {
+            actorAccountId: custodian.id, machineId: machine.id,
+            principal: { kind: 'account', accountId: requester.id },
+        }));
+        expect(removed.kind).toBe('removed');
+        await vi.waitFor(() => expect(machines().some(row => row.id === machine.id)).toBe(false));
+        expect((await db.machine.findUniqueOrThrow({ where: { id: machine.id } })).revokedAt).toBeNull();
+        expect(machines().some(row => row.id === controller.id)).toBe(true);
+        if (mode === 'focused') {
+            expect(h.storage.getState().machines[machine.id]).toBeUndefined();
+            expect(h.storage.getState().machineDisplayById[machine.id]).toBeUndefined();
+        }
     } finally {
         releaseOlderRead?.(); releaseOlderSessionRead?.(); releaseConsumer();
         if (client) { client.disconnect(); await (app.machineDaemonPresence as Server).close(); eventRouter.clearIo(); }

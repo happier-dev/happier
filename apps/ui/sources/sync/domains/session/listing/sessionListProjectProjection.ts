@@ -17,11 +17,14 @@ export function projectSessionListAcceptedProjects(input: Readonly<{
     viewerAccountId?: string;
     layoutV1?: 'projects' | 'recent_activity';
     previousIndex?: readonly SessionListIndexItem[] | null;
+    /** The caller's retained resolver for these exact `workspaceRefs`, when it holds one. */
+    sessionProjectKeyResolver?: ReturnType<typeof createSessionProjectKeyResolverV1>;
     resolveSessionRow(serverId: string | null | undefined, sessionId: string): SessionListRenderableSession | null;
 }>): readonly SessionListIndexItem[] {
     if (!input.workspaceRefs || !input.censusServerId) return input.source;
     const inHome = (serverId: string | undefined) => Boolean(serverId && areServerProfileIdentifiersEquivalent(serverId, input.censusServerId));
-    const resolveProject = createSessionProjectKeyResolverV1(input.workspaceRefs, workspaceRefResolutionContextV1());
+    const resolveProject = input.sessionProjectKeyResolver
+        ?? createSessionProjectKeyResolverV1(input.workspaceRefs, workspaceRefResolutionContextV1());
     const rows: Record<string, SessionListRenderableSession> = {};
     const executionWorkspaces = new Map<string, Extract<SessionListIndexItem, { type: 'session' }>['workspace']>();
     const machines: Record<string, MachineDisplayRenderable> = {};

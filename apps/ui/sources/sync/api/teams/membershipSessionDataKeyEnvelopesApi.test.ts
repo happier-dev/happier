@@ -3,7 +3,7 @@ import tweetnacl from 'tweetnacl';
 import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions/actionExecutor';
 import { executeMembershipHistoryActionForScope } from './membershipSessionDataKeyEnvelopesApi';
 import { createDeferred, createRootLayoutFeaturesResponse } from '@/dev/testkit';
-import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol';
+import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
 import { primeServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { isHomeDomainActionIdV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
@@ -86,7 +86,7 @@ async function setup(options?: Readonly<{ accountEncryption?: 'plain' | 'e2ee' }
 async function createRecipient() {
     const { encodeBase64 } = await import('@/encryption/base64');
     const { encodeHex } = await import('@/encryption/hex');
-    const { signAccountContentKeyBindingV1 } = await import('@happier-dev/protocol');
+    const { signAccountContentKeyBindingV1} = await import('@happier-dev/protocol/crypto/accountContentKeyBindingV1');
     const content = tweetnacl.box.keyPair();
     const signing = tweetnacl.sign.keyPair();
     return {
@@ -420,7 +420,7 @@ describe('membership history envelope exact-Account transport', () => {
             .toBe(`Bearer ${env.token('target-account')}`);
 
         env.request.mockClear();
-        const { encodeMembershipSessionDataKeyEnvelopeCursorV1 } = await import('@happier-dev/protocol');
+        const { encodeMembershipSessionDataKeyEnvelopeCursorV1} = await import('@happier-dev/protocol/sessions/encryption/membershipSessionDataKeyEnvelopes');
         const cursor = encodeMembershipSessionDataKeyEnvelopeCursorV1('session-3');
         await createMembershipSessionDataKeyEnvelopeClient({ ...args, target: GROUP_TARGET })
             .fetchPage(cursor);
@@ -506,7 +506,7 @@ describe('membership history preparation host', () => {
         const env = await setup({ accountEncryption: 'e2ee' });
         const { encodeBase64, decodeBase64 } = await import('@/encryption/base64');
         const { encryptDataKeyForRecipientV0 } = await import('@/sync/encryption/directShareEncryption');
-        const { openEncryptedDataKeyEnvelopeV1 } = await import('@happier-dev/protocol');
+        const { openEncryptedDataKeyEnvelopeV1} = await import('@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1');
         const recipient = await createRecipient();
 
         // Two historical Sessions, each with its own DEK already sealed to the manager.

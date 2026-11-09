@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { SessionDraftDocumentV1, StrictJsonValue } from '@happier-dev/protocol';
+import type { SessionDraftDocumentV1} from '@happier-dev/protocol/drafts/sessionDrafts';
+import type { JsonValue  as StrictJsonValue} from '@happier-dev/protocol/json/strictJsonValue';
 import { NewSessionDraftDocumentV2Schema, DiscussionDraftDocumentV2Schema } from '@happier-dev/protocol/drafts/sessionDraftsV2';
 import { SessionDraftStoredContentEnvelopeV1Schema } from '@happier-dev/protocol/drafts/sessionDrafts';
 
@@ -204,6 +205,22 @@ describe('sessionDraftEncryption', () => {
         expect(accountEnvelope).toMatchObject({ t: 'encrypted' });
         await expect(cipher.open(newAddress, accountEnvelope)).resolves.toEqual(document('newSession'));
         expect(sessionEncryption.encryptRaw).toHaveBeenCalledOnce();
+    });
+
+    it('derives the Account draft key once for a page of encrypted Account drafts', async () => {
+        // Legacy material derives the machine key from the recovery secret; count those derivations.
+        let secretReads = 0;
+        const secret = new Uint8Array(32).fill(9);
+        const material = { type: 'legacy' as const, get secret() { secretReads += 1; return secret; } };
+        const cipher = createSessionDraftCipher({ accountMode: 'e2ee', accountCryptoMaterial: material,
+            getSessionContext: () => null, randomBytes: length => new Uint8Array(length).fill(3) });
+        const addresses = Array.from({ length: 20 }, (_, index) => ({ kind: 'newSession' as const,
+            draftId: `00000000-0000-4000-8000-${String(index + 100).padStart(12, '0')}` }));
+        const envelopes = await Promise.all(addresses.map(address => cipher.seal(address, document('newSession'))));
+        secretReads = 0;
+        const opened = await Promise.all(addresses.map((address, index) => cipher.open(address, envelopes[index])));
+        expect(opened).toEqual(addresses.map(() => document('newSession')));
+        expect(secretReads).toBe(1);
     });
 
     it('distinguishes unavailable Session context from invalid encrypted content', async () => {

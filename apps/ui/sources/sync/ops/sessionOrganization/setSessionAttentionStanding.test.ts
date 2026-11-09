@@ -2,10 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createDeferred } from '@/dev/testkit';
 import { SetSessionAttentionStandingResponseSchema } from '@happier-dev/protocol/sessions/organization/standings';
-import { resetRuntimeFetch, setRuntimeFetch, type RuntimeFetch } from '@/utils/system/runtimeFetch';
+import type { RuntimeFetch } from '@/utils/system/runtimeFetch';
 import { storage } from '@/sync/domains/state/storageStore';
 import { buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization';
-import { resetServerReachabilitySupervisors } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
 
 // HTTP is the boundary: response parsing, optimistic writes and reconciliation stay real.
 const transport = vi.fn<RuntimeFetch>();
@@ -15,6 +14,7 @@ function response(value: unknown): Response {
     });
 }
 const serverUrl = 'https://standing-op.test';
+const requestAtEndpoint = (path: string, init?: RequestInit) => transport(new URL(path, serverUrl).href, init);
 
 const credentials = { token: 'token-a', secret: 'secret-a' };
 const SERVER_ID = 'server-standing-op';
@@ -24,22 +24,13 @@ const SESSION_KEY = buildSessionOrganizationSessionKey(SERVER_ID, SESSION_ID);
 describe('setSessionAttentionStanding op', () => {
     let previousState: ReturnType<typeof storage.getState>;
 
-    beforeEach(async () => {
+    beforeEach(() => {
         transport.mockReset();
-        await resetServerReachabilitySupervisors();
-        setRuntimeFetch(async (input, init) => {
-            if (new URL(String(input)).pathname === '/v1/auth/ping') {
-                return new Response(JSON.stringify({ ok: true }), { headers: { 'Content-Type': 'application/json' } });
-            }
-            return transport(input, init);
-        });
         previousState = storage.getState();
     });
 
-    afterEach(async () => {
+    afterEach(() => {
         storage.setState(previousState, true);
-        await resetServerReachabilitySupervisors();
-        resetRuntimeFetch();
     });
 
     it('writes optimistically and then reconciles to the value the server stored', async () => {
@@ -49,6 +40,7 @@ describe('setSessionAttentionStanding op', () => {
         }));
 
         await setSessionAttentionStanding({
+            requestAtEndpoint,
             credentials,
             serverUrl,
             serverId: SERVER_ID,
@@ -87,6 +79,7 @@ describe('setSessionAttentionStanding op', () => {
         transport.mockRejectedValueOnce(new Error('offline'));
 
         await expect(setSessionAttentionStanding({
+            requestAtEndpoint,
             credentials,
             serverUrl,
             serverId: SERVER_ID,
@@ -109,8 +102,8 @@ describe('setSessionAttentionStanding op', () => {
             .mockReturnValueOnce(first.promise)
             .mockReturnValueOnce(second.promise);
 
-        const older = setSessionAttentionStanding({ credentials, serverUrl, serverId: SERVER_ID, sessionId: SESSION_ID, remindAt: 2_000 });
-        const newer = setSessionAttentionStanding({ credentials, serverUrl, serverId: SERVER_ID, sessionId: SESSION_ID, remindAt: 5_000 });
+        const older = setSessionAttentionStanding({ credentials, serverUrl, requestAtEndpoint, serverId: SERVER_ID, sessionId: SESSION_ID, remindAt: 2_000 });
+        const newer = setSessionAttentionStanding({ credentials, serverUrl, requestAtEndpoint, serverId: SERVER_ID, sessionId: SESSION_ID, remindAt: 5_000 });
 
         second.resolve(response({ standing: { sessionId: SESSION_ID, standing: false, remindAt: 5_000, updatedAt: 9 } }));
         await newer;
@@ -130,8 +123,8 @@ describe('setSessionAttentionStanding op', () => {
             .mockReturnValueOnce(failing.promise)
             .mockResolvedValueOnce(response({ standing: { sessionId: otherSessionId, standing: true, updatedAt: 7 } }));
 
-        const rejected = setSessionAttentionStanding({ credentials, serverUrl, serverId: SERVER_ID, sessionId: SESSION_ID, standing: true });
-        await setSessionAttentionStanding({ credentials, serverUrl, serverId: SERVER_ID, sessionId: otherSessionId, standing: true });
+        const rejected = setSessionAttentionStanding({ credentials, serverUrl, requestAtEndpoint, serverId: SERVER_ID, sessionId: SESSION_ID, standing: true });
+        await setSessionAttentionStanding({ credentials, serverUrl, requestAtEndpoint, serverId: SERVER_ID, sessionId: otherSessionId, standing: true });
         expect(storage.getState().sessionOrganizationAttentionStandingsBySessionKey[otherKey])
             .toEqual({ sessionId: otherSessionId, standing: true, updatedAt: 7 });
 
@@ -152,8 +145,8 @@ describe('setSessionAttentionStanding op', () => {
             .mockReturnValueOnce(older.promise)
             .mockResolvedValueOnce(response({ standing: { sessionId: SESSION_ID, standing: false, remindAt: 5_000, updatedAt: 9 } }));
 
-        const rejected = setSessionAttentionStanding({ credentials, serverUrl, serverId: SERVER_ID, sessionId: SESSION_ID, remindAt: 2_000 });
-        await setSessionAttentionStanding({ credentials, serverUrl, serverId: SERVER_ID, sessionId: SESSION_ID, remindAt: 5_000 });
+        const rejected = setSessionAttentionStanding({ credentials, serverUrl, requestAtEndpoint, serverId: SERVER_ID, sessionId: SESSION_ID, remindAt: 2_000 });
+        await setSessionAttentionStanding({ credentials, serverUrl, requestAtEndpoint, serverId: SERVER_ID, sessionId: SESSION_ID, remindAt: 5_000 });
         expect(storage.getState().sessionOrganizationAttentionStandingsBySessionKey[SESSION_KEY])
             .toMatchObject({ remindAt: 5_000 });
 
@@ -172,8 +165,8 @@ describe('setSessionAttentionStanding op', () => {
             .mockResolvedValueOnce(response({ standing: { sessionId: SESSION_ID, standing: true, remindAt: 2_000, updatedAt: 2 } }))
             .mockResolvedValueOnce(response({ standing: { sessionId: SESSION_ID, standing: true, updatedAt: 3 } }));
 
-        await setSessionAttentionStanding({ credentials, serverUrl, serverId: SERVER_ID, sessionId: SESSION_ID, remindAt: 2_000 });
-        await setSessionAttentionStanding({ credentials, serverUrl, serverId: SERVER_ID, sessionId: SESSION_ID, remindAt: null });
+        await setSessionAttentionStanding({ credentials, serverUrl, requestAtEndpoint, serverId: SERVER_ID, sessionId: SESSION_ID, remindAt: 2_000 });
+        await setSessionAttentionStanding({ credentials, serverUrl, requestAtEndpoint, serverId: SERVER_ID, sessionId: SESSION_ID, remindAt: null });
 
         expect(transport.mock.calls.map(([, init]) => JSON.parse(String(init?.body))))
             .toEqual([{ remindAt: 2_000 }, { remindAt: null }]);

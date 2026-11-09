@@ -1,4 +1,4 @@
-import type { WorkflowDefinitionGetResultV1 } from '@happier-dev/protocol';
+import type { WorkflowDefinitionGetResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { getTempData, storeTempData } from '@/utils/sessions/tempDataStore';
 

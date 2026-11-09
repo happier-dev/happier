@@ -124,6 +124,18 @@ describe('projects.list forge identity', () => {
         expect(result.items[0]?.forge).toBeUndefined();
     });
 
+    it('does not revive retained identity disproven by an authoritative checkout observation', async () => {
+        stateWith({ refs: [workspaceRef({ repositoryIdentity: { kind: 'github', deployment: 'https://github.com', repository: 'old/repo' } })],
+            snapshotByRoot: { '/repos/web': { hostingProvider: hostingProvider({ nameWithOwner: undefined }), repo: {} } } });
+        expect((await listProjectsForActions({})).items[0]?.forge).toBeUndefined();
+    });
+
+    it('uses retained identity when the addressed checkout has never been observed', async () => {
+        const repositoryIdentity = { kind: 'github' as const, deployment: 'https://github.com', repository: 'owner/repo' };
+        stateWith({ refs: [workspaceRef({ repositoryIdentity })], snapshotByRoot: {} });
+        expect((await listProjectsForActions({})).items[0]?.forge).toEqual(repositoryIdentity);
+    });
+
     /** An unusable base URL cannot produce a deployment, so it produces no identity. */
     it('reports no forge when the provider base URL cannot be read', async () => {
         stateWith({

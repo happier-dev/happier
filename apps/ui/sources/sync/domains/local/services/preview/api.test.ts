@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { LocalServicePreviewResourceV1 } from '@happier-dev/protocol';
+import type { LocalServicePreviewResourceV1 } from '@happier-dev/protocol/local/services/preview/v1';
 
 import { normalizeLocalServicePreviewSnapshotPayload } from './api';
 

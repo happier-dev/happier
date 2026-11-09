@@ -104,6 +104,33 @@ describe('bindEndpointConnectivityStateToRealtimeStore', () => {
         await supervisor.stop();
     });
 
+    describe('backoff retry of a presented outage', () => {
+        function publishStates(states: ReadonlyArray<{ phase: string; attempt: number }>): string[] {
+            const published: string[] = [];
+            let emit: ((state: any) => void) | undefined;
+            const detach = bindEndpointConnectivityStateToRealtimeStore({
+                subscribe: (listener) => { emit = listener as (state: any) => void; return () => {}; },
+            });
+            for (const state of states) {
+                emit?.({ ...state, reason: null, nextRetryAt: null, lastConnectedAt: null, lastDisconnectedAt: null, lastErrorMessage: null });
+                published.push(storage.getState().endpointStatus);
+            }
+            detach();
+            return published;
+        }
+
+        it('does not re-present the timer-driven connecting phase of an offline endpoint', () => {
+            expect(publishStates([
+                { phase: 'offline', attempt: 1 }, { phase: 'connecting', attempt: 2 }, { phase: 'offline', attempt: 2 },
+            ])).toEqual(['offline', 'offline', 'offline']);
+        });
+
+        it('still presents a start or explicit retry (attempt zero) as connecting', () => {
+            expect(publishStates([{ phase: 'offline', attempt: 1 }, { phase: 'connecting', attempt: 0 }]))
+                .toEqual(['offline', 'connecting']);
+        });
+    });
+
     describe('teardown (shutting_down) is not a claim about the server', () => {
         // `shutting_down` is published whenever WE stop supervision — backgrounding, a server switch, the
         // stop/start pair inside an explicit invalidation. Letting it reach the store rendered a red

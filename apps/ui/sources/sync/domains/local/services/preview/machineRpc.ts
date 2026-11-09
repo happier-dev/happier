@@ -32,10 +32,9 @@ export type LocalServicePreviewSnapshotRpcResult =
     | Readonly<{ ok: true; protocolSnapshot: LocalServicePreviewSnapshotV1; snapshot: LocalServicePreviewSnapshot }>
     | Extract<LocalServicePreviewSnapshotClientResult, { ok: false }>;
 
-// The daemon lifecycle handler throws `local_service_preview_lifecycle_refused:<reasonCode>`
-// for an honest domain refusal (wrong machine, unknown inventory entry, non-loopback target).
-// Recover that reason code so the executor reports a stable `preview_<reason>` disabled code
-// instead of a generic transport failure.
+// Typed daemon refusals and legacy uncoded RPC errors retain this message. Read
+// both returned payloads and transport exceptions through the same presentation
+// projection instead of sending honest refusals to the success DTO parser.
 const LIFECYCLE_REFUSAL_PATTERN = /local_service_preview_lifecycle_refused:([\w.-]+)/;
 
 function readLifecycleRefusalReason(value: unknown): string | null {
@@ -43,7 +42,9 @@ function readLifecycleRefusalReason(value: unknown): string | null {
         ? value.message
         : typeof value === 'string'
             ? value
-            : null;
+            : value && typeof value === 'object' && 'error' in value && typeof value.error === 'string'
+                ? value.error
+                : null;
     const match = message ? LIFECYCLE_REFUSAL_PATTERN.exec(message) : null;
     return match ? match[1] : null;
 }
@@ -109,6 +110,8 @@ export async function openOrCreateLocalServicePreviewViaMachineRpc(
         if (isRpcMethodNotFoundResult(raw)) {
             return { ok: false, reason: 'unavailable' };
         }
+        const refusal = readLifecycleRefusalReason(raw);
+        if (refusal) return { ok: false, reason: `refused:${refusal}` };
         const parsed = DaemonLocalServicePreviewOpenOrCreateResponseV1Schema.safeParse(raw);
         return parsed.success
             ? { ok: true, response: parsed.data }
@@ -136,6 +139,8 @@ export async function revokeLocalServicePreviewViaMachineRpc(
         if (isRpcMethodNotFoundResult(raw)) {
             return { ok: false, reason: 'unavailable' };
         }
+        const refusal = readLifecycleRefusalReason(raw);
+        if (refusal) return { ok: false, reason: `refused:${refusal}` };
         const parsed = DaemonLocalServicePreviewRevokeResponseV1Schema.safeParse(raw);
         return parsed.success
             ? { ok: true, response: parsed.data }

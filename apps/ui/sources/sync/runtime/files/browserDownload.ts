@@ -2,7 +2,7 @@ import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/
 import type { BrowserInteractionStateV1 } from '@happier-dev/protocol';
 import type { BrowserInteractionResultV1 } from '@happier-dev/protocol/browser/automation/v1';
 import type { BrowserViewerInputEvent } from '@/components/browser/adapters/BrowserStreamedTarget';
-import { readRegisteredBrowserRuntimeControlAdapter } from '@/sync/domains/browser/actions/runtimeControlRegistry';
+import { readRegisteredBrowserRuntimeDownloadSaver } from '@/sync/domains/browser/actions/runtimeControlRegistry';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { decodeBase64 } from '@/encryption/base64';
 import { throwIfAborted } from '@/utils/runtime/abortSignals';
@@ -16,12 +16,12 @@ type SaveBrowserDownloadArgs = Parameters<NonNullable<ActionExecutorDeps['saveCl
 export async function saveBrowserDownload(input: SaveBrowserDownloadArgs, scope: ServerAccountScope): ReturnType<NonNullable<ActionExecutorDeps['saveClientBrowserDownload']>> {
     throwIfAborted(input.signal);
     const { reference } = input;
-    const control = readRegisteredBrowserRuntimeControlAdapter(reference.browserSessionId, reference.viewId, scope);
-    if (!control?.saveDownload) {
+    const saveDownload = readRegisteredBrowserRuntimeDownloadSaver(reference.browserSessionId, reference.viewId, scope);
+    if (!saveDownload) {
         return { ok: false, errorCode: 'browser_download_unavailable', error: 'browser_download_unavailable' };
     }
     try {
-        return await control.saveDownload({ machineId: reference.machineId, viewId: reference.viewId, downloadId: reference.downloadId,
+        return await saveDownload({ machineId: reference.machineId, viewId: reference.viewId, downloadId: reference.downloadId,
             fileName: input.fileName, ...(input.signal ? { signal: input.signal } : {}) });
     } catch (error) {
         throwIfAborted(input.signal);

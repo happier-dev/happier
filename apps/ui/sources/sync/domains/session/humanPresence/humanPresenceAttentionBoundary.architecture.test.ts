@@ -40,7 +40,7 @@ describe('human presence attention boundary', () => {
             .filter((path) => !/\.(test|spec)\.tsx?$/.test(path))
             // The access editor and public-link sections are separate Session-access
             // owners that legitimately reach other domains; presence is the boundary here.
-            .filter((path) => /humanPresence|SessionPresence|SessionViewerFacepile|SessionCollaborationHeaderEntry/.test(path));
+            .filter((path) => /humanPresence|SessionPresence|SessionViewerFacepile/.test(path));
         expect(files.length).toBeGreaterThan(0);
         for (const file of files) {
             const imports = readFileSync(file, 'utf8')

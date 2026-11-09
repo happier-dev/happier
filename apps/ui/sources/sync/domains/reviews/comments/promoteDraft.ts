@@ -4,9 +4,10 @@ import {
     reviewCommentTextSnapshotIsLikelyMinifiedV1,
 } from '@happier-dev/protocol/reviews/comments/snapshots';
 import type {
-    ReviewCommentCreateRequestV1,
+    ReviewCommentCreateRequestV1} from '@happier-dev/protocol/reviews/comments/v1';
+import type {
     ReviewCommentCreateResponseV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/reviews/comments/actions';
 
 import { mapReviewCommentDraftAnchorToDurableV1Target } from '@/sync/domains/input/reviewComments/anchors/reviewCommentDraftAnchor';
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';

@@ -1,4 +1,5 @@
-import type { BackendTargetRefV1, BackendTargetRefV2 } from '@happier-dev/protocol';
+import type { BackendTargetRefV1} from '@happier-dev/protocol/backends/targets/backendTargetRef';
+import type { BackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { buildProviderCliCapabilityId } from '@/capabilities/cliCapabilityId';
 import { machineCapabilitiesInvoke } from '@/sync/ops/capabilities';
 import {
@@ -17,6 +18,7 @@ import { invokeAgentInventoryProbeAction } from './actions/agentInventoryActionD
 import type { MachineCapabilitiesInvokeResult } from './capabilities';
 import { SpawnFailureV1Schema, type SpawnFailureV1 } from '@happier-dev/protocol/machines/processes/spawnFailureV1';
 import type { ProbedResourceFailure } from '@/sync/runtime/probedResources/createPersistentProbedResourceCache';
+import { readCapabilityInvokeFailure } from '@happier-dev/protocol/capabilities';
 
 /** Shared discovery lifecycle for model pickers and voice catalog requests. */
 type MachineModelDiscoveryParams = Readonly<{
@@ -67,7 +69,12 @@ async function discoverMachineModelsWithTransport(params: MachineModelDiscoveryP
             if (!response.supported) failure = {
                 reason: response.reason,
                 ...(response.errorCode ? { errorCode: response.errorCode } : {}),
+                ...(response.retryable === undefined ? {} : { retryable: response.retryable }),
                 ...(response.requestDisposition ? { requestDisposition: response.requestDisposition } : {}),
+            };
+            if (response.supported && !response.response.ok) failure = {
+                reason: 'error',
+                ...readCapabilityInvokeFailure({ ...response.response.error, errorCode: response.response.error.code }),
             };
             if (response.supported && response.response.ok) {
                 const result = response.response.result;
@@ -107,7 +114,8 @@ async function discoverMachineModelsWithTransport(params: MachineModelDiscoveryP
                     }
                 }
             }
-        } catch {
+        } catch (error) {
+            failure = { reason: 'error', ...readCapabilityInvokeFailure(error) };
             // Transport failures are visible through the resource error state, including retained data.
         }
         if (signal.aborted) return readDynamicModelProbeCache(params.cacheKey, params.successMaxAgeMs);

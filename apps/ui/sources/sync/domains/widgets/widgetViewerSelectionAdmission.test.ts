@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { AccountProfileSchema, QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol';
+import { AccountProfileSchema} from '@happier-dev/protocol/account/profile';
+import { QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import { type WidgetInstanceRefV1, type WidgetInstanceV1 } from '@happier-dev/protocol/widgets';
 import { admitWidgetViewerSelectionMetadataV1 } from './widgetViewerSelectionAdmission';
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';

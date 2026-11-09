@@ -3,9 +3,10 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
-import { ApprovalRequestV2Schema, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { ApprovalRequestV2Schema} from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { type ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
-import { requiresExactDaemonApprovalReplay } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { resolveApprovalExecutor } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
@@ -190,7 +191,7 @@ it.each(['available', 'rate_limited', 'account_changed', 'home_changed', 'machin
     const app = createDefaultActionExecutor();
     const input = getActionSpec('session.spawn_new').inputSchema.parse({ creationKey: 'approval-stale-fixture',
       executionTarget: { serverId: homeId, machineId: 'spawn-machine' }, directory: { kind: 'path', path },
-      organizationPlacement: { folderId: null, tagIds: [] },
+      organizationPlacement: { sectionId: 'section-1', tagIds: [] },
       agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
       initialInput: { text: 'Fixture' },
     });
@@ -202,7 +203,7 @@ it.each(['available', 'rate_limited', 'account_changed', 'home_changed', 'machin
     const stored = () => ApprovalRequestV2Schema.parse(JSON.parse(homes.artifacts(homeId).readPlainBody(artifactId) ?? 'null'));
     expect(stored()).toMatchObject({ status: 'open', executionOriginV1: { surface: 'ui', authority: 'present_user',
       caller: { kind: 'host' }, accountId: 'spawn-account', machineId: 'spawn-machine' } });
-    expect(requiresExactDaemonApprovalReplay(stored())).toBe(true);
+    expect(resolveApprovalExecutor(stored())).toEqual({ kind: 'daemon', machineId: 'spawn-machine' });
     if (scenario === 'missing_directory') expect(stored().sessionCreationDirectoryApproval).toEqual({
       v: 1, executionTarget: input.executionTarget, directory: targetPreparation.directory,
     });
@@ -216,8 +217,9 @@ it.each(['available', 'rate_limited', 'account_changed', 'home_changed', 'machin
     });
     expect(tokenManagement).not.toHaveBeenCalled();
     if (scenario !== 'available' && scenario !== 'rate_limited' && scenario !== 'missing_directory' && scenario !== 'settings_advanced') {
-      expect(stored()).toMatchObject({ status: 'failed', execution: { ok: false, errorCode: 'approval_stale' } });
-      expect(approved).toMatchObject({ ok: true, result: { status: 'failed' } });
+      expect(stored()).toMatchObject({ status: 'approved', decision: { kind: 'approve' } });
+      expect(stored().execution).toBeUndefined();
+      expect(approved).toMatchObject({ ok: false, errorCode: 'approval_stale', effectAttempted: false });
       expect(spawned).toEqual([]);
       return;
     }

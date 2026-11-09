@@ -2,9 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
     decryptSecretValueV1,
-    encryptSecretStringV1,
+    encryptSecretStringV1} from '@happier-dev/protocol/crypto/settingsSecretStringsV1';
+import {
     sealAccountScopedBlobCiphertext,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 
 vi.mock('expo-constants', () => ({

@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { selectActiveTestHomeForTests } from '@/dev/testkit/fixtures/persistedHomeProfiles';
 import * as React from 'react';
 import { act, createMachineFixture, renderScreen } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storageStore';
@@ -54,6 +55,55 @@ function operation(overrides: Partial<ActionOperationSnapshotV1> = {}): ActionOp
 }
 
 describe('action operation observation runtime', () => {
+    it('retains saved decisions while the mounted machine inventory is pending and prunes after settlement', async () => {
+        const { actionOperationStore } = await import('./actionOperationStore');
+        const previous = storage.getState();
+        const serverId = getActiveServerSnapshot().serverId;
+        const success = operation({ state: 'succeeded', settledAt: 2000 });
+        const first = createActionOperationStore();
+        first.mergeSnapshots({ serverId, snapshots: [success] });
+        first.dismissRecentSucceeded();
+        actionOperationStore.reset();
+        storage.setState({ profileScope: { serverId, accountId: scope.accountId }, machines: {},
+            machineListByServerId: { [serverId]: null }, machineListStatusByServerId: { [serverId]: 'loading' } });
+        const screen = await renderScreen(React.createElement(ActionOperationRuntime));
+        const replay = () => {
+            const store = createActionOperationStore();
+            store.mergeSnapshots({ serverId, snapshots: [success] });
+            return createActionOperationSelectors().selectAll(store.getSnapshot());
+        };
+        try {
+            expect(replay()).toEqual([]);
+            await act(async () => storage.setState({ machineListByServerId: { [serverId]: [] },
+                machineListStatusByServerId: { [serverId]: 'idle' } }));
+            expect(replay()).toHaveLength(1);
+        } finally {
+            await screen.unmount(); storage.setState(previous, true); actionOperationStore.reset();
+        }
+    });
+
+
+    it('does not reobserve a lost Machine reboot from a managed-resource-only read', async () => {
+        const store = createActionOperationStore();
+        const reboot = ActionOperationSnapshotV1Schema.parse({ ...operation(), actionId: 'machines.reboot', state: 'running', startedAt: 1000,
+            domainRef: { kind: 'machineReboot', serverId: scope.serverId, machineId: scope.machineId, installationId: 'installation',
+                task: { id: 'task', taskKind: 'machine.reboot.v1' }, basis: { bootedAt: 1000,
+                    expectedRunningServiceIds: [], expectedRunningServicesKnown: true, dispatchStarted: true } } });
+        store.mergeSnapshots({ serverId: scope.serverId, snapshots: [reboot] });
+        store.reconcileMachineProjection({ ...scope, snapshots: [], knownOperationKeys: new Set([
+            actionOperationAddressKey({ serverId: scope.serverId, operationId: reboot.operationId }),
+        ]) });
+        let reads = 0;
+        const rpc = (async () => ({ items: [], nextCursor: null })) as ActionOperationRpc;
+        const params = { scope, store, managedId: 'another-resource',
+            list: (input: Parameters<typeof listActionOperations>[0]) => listActionOperations({ ...input, rpc }),
+            readRebootFacts: async () => { reads++; return { installationId: 'installation', bootedAt: 2000, services: [] }; } };
+        await reconcileActionOperationsOnce(params);
+        expect(reads).toBe(0);
+        expect(createActionOperationSelectors().selectById(store.getSnapshot(), {
+            serverId: scope.serverId, operationId: reboot.operationId,
+        })?.snapshot).toBe(reboot);
+    });
     it('settles the surviving reboot holder from changed boot and restored healthless services, without polling or losing its result', async () => {
         const store = createActionOperationStore();
         const reboot = ActionOperationSnapshotV1Schema.parse({ ...operation(), actionId: 'machines.reboot', state: 'running', startedAt: 1000,
@@ -83,7 +133,7 @@ describe('action operation observation runtime', () => {
         expect(facts).toHaveBeenCalledTimes(1);
         release();
     });
-    it.each(['missing-service', 'different-installation', 'same-boot', 'unknown-current-boot', 'unknown-before-facts', 'failed-service', 'not-ready', 'unavailable-facts'] as const)(
+    it.each(['missing-service', 'different-installation', 'same-boot', 'unknown-before-facts', 'failed-service', 'not-ready', 'unavailable-facts'] as const)(
         'keeps lost reboot outcome explicitly unknown for %s and equal observations publish nothing', async condition => {
             const store = createActionOperationStore();
             const reboot = ActionOperationSnapshotV1Schema.parse({ ...operation(), actionId: 'machines.reboot', state: 'running', startedAt: 1000,
@@ -98,7 +148,7 @@ describe('action operation observation runtime', () => {
             const rpc = (async () => ({ items: [], nextCursor: null })) as ActionOperationRpc;
             const params = { scope, store, list: (input: Parameters<typeof listActionOperations>[0]) => listActionOperations({ ...input, rpc }),
                 readRebootFacts: async () => ({ installationId: condition === 'different-installation' ? 'replacement' : 'installation',
-                    bootedAt: condition === 'unknown-current-boot' ? null : condition === 'same-boot' ? 1000 : 2000,
+                    bootedAt: condition === 'same-boot' ? 1000 : 2000,
                     services: condition === 'missing-service' ? [] : condition === 'unavailable-facts' ? null : [row] }) };
             await reconcileActionOperationsOnce(params);
             const retained = () => createActionOperationSelectors().selectById(store.getSnapshot(), { serverId: scope.serverId, operationId: reboot.operationId });
@@ -110,6 +160,18 @@ describe('action operation observation runtime', () => {
             release();
         },
     );
+    it('reconciles exact managed discovery without withdrawing other operations on the controller', async () => {
+        const store = createActionOperationStore();
+        const exact = operation({ operationId: 'managed', actionId: 'machines.managed.acquire',
+            domainRef: { kind: 'managedMachine', id: 'exact' } });
+        const unrelated = operation({ operationId: 'other-managed', actionId: 'machines.managed.acquire', state: 'succeeded',
+            settledAt: 2_000, domainRef: { kind: 'managedMachine', id: 'other' } });
+        store.mergeSnapshots({ serverId: scope.serverId, snapshots: [exact, unrelated] });
+        const params = { scope, store, managedId: 'exact', list: async () => ({ items: [exact], nextCursor: null }) };
+        await reconcileActionOperationsOnce(params);
+        expect([...store.getSnapshot().operationsByKey.values()].map(value => value.snapshot.operationId).sort())
+            .toEqual(['managed', 'other-managed']);
+    });
     it('hydrates retained setup after a pushed Machine recovery, sharing bursts and stopping retired reads without polling', async () => {
         const { actionOperationStore } = await import('./actionOperationStore');
         actionOperationStore.reset();
@@ -334,3 +396,6 @@ describe('action operation observation runtime', () => {
         expect(store.getSnapshot().operationsByKey.size).toBe(0);
     });
 });
+
+// P03-TESTKIT-SERVER: the unconfigured test build seeds no Home; select one through the real owner.
+beforeEach(async () => { await selectActiveTestHomeForTests(); });

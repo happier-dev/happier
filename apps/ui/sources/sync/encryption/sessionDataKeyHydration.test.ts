@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { projectLegacySessionAccessCapabilitiesV1 } from '@happier-dev/protocol';
+import { projectLegacySessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 
 import {
     createSessionDataKeyHydrationPlan,

@@ -9,6 +9,7 @@ import {
     startServerReachabilitySupervisor,
     stopServerReachabilitySupervisor,
     subscribeServerReachabilityState,
+    waitForServerReachable,
 } from './serverReachabilitySupervisorPool';
 
 afterEach(async () => {
@@ -52,6 +53,30 @@ async function runProbe(params: Readonly<{
 }
 
 describe('serverReachabilitySupervisorPool (readiness probe)', () => {
+    it('wakes a readiness waiter with the closed redirect code and never re-polls it', async () => {
+        vi.useFakeTimers();
+        // Browser manual redirects hide status and Location from Fetch callers.
+        const opaqueRedirect = new Response(null);
+        Object.defineProperties(opaqueRedirect, { status: { value: 0 }, type: { value: 'opaqueredirect' } });
+        const physicalRequests = vi.fn(async () => opaqueRedirect);
+        setRuntimeFetch(physicalRequests);
+        const controller = new AbortController();
+        const outcome = waitForServerReachable({
+            serverUrl: 'https://redirected-home.example.test', token: 'synthetic-token', signal: controller.signal,
+        }).catch((error: unknown) => error);
+        try {
+            await vi.advanceTimersByTimeAsync(0);
+            const state = peekServerReachabilityState('https://redirected-home.example.test', 'synthetic-token');
+            expect(state).toMatchObject({ phase: 'offline', nextRetryAt: null });
+            await expect(outcome).resolves.toMatchObject({ code: 'credential_request_redirect_refused', retryable: false, status: 0 });
+            await vi.runOnlyPendingTimersAsync();
+            expect(physicalRequests).toHaveBeenCalledTimes(1);
+        } finally {
+            controller.abort();
+            await outcome;
+        }
+    });
+
     it('isolates authenticated readiness for different credentials at the same canonical URL', async () => {
         vi.useFakeTimers();
         setRuntimeFetch(vi.fn(async (_input, init) => {

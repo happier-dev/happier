@@ -230,7 +230,7 @@ export async function sessionSetManualReadStateWithServerScope(
                 : outcome.error };
         }
         const parsed = outcome.value;
-        sync.invalidateSessionListSnapshot(targetServerId);
+        sync.retireSessionListSnapshot(targetServerId);
         applyReadStateToLocalState({
             sessionId,
             readState: parsed.state === 'empty' ? undefined : parsed.state,

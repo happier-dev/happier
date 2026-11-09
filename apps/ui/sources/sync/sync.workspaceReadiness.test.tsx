@@ -34,7 +34,7 @@ describe('Sync workspace readiness', () => {
         const cipher = createSessionDraftCipher({ accountMode: 'plain', accountCryptoMaterial: null,
             getSessionContext: () => ({ mode: 'plain' }), randomBytes: length => new Uint8Array(length) });
         const author = createSessionDraftRepository({ scope, cipher, syncEnabled: false, storage: {
-            getString: key => values.get(key), set: (key, value) => { values.set(key, value); }, delete: key => { values.delete(key); },
+            getString: key => values.get(key), getAllKeys: () => [...values.keys()], set: (key, value) => { values.set(key, value); }, delete: key => { values.delete(key); },
         } });
         author.writeExistingSessionDraft({ scope, sessionId: address.sessionId, patch: { text: 'Recovered draft' } });
         const document = author.getSessionDraftSnapshot(scope, address)!.document;
@@ -173,7 +173,7 @@ describe('Sync workspace readiness', () => {
                     viewer: createSessionOwnerViewerFixture(createSessionFixture({ id: 'opened' })),
                 } });
             }
-            if (['/v1/machines', '/v1/artifacts', '/v1/kv', '/v1/feed'].includes(path)) {
+            if (['/v1/machines', '/v1/kv', '/v1/feed'].includes(path)) {
                 pendingSnapshotPaths.add(path);
                 snapshotBurst = Math.max(snapshotBurst, pendingSnapshotPaths.size);
                 peripheralStarted.resolve();
@@ -265,7 +265,7 @@ describe('Sync workspace readiness', () => {
             }
             await peripheralStarted.promise;
             if (!supersede && !failSessions && !failSettings) {
-                await vi.waitFor(() => expect(snapshotBurst).toBe(4));
+                await vi.waitFor(() => expect(snapshotBurst).toBe(3));
             }
         } finally {
             clearTimeout(release);
@@ -344,8 +344,9 @@ describe('Sync workspace readiness', () => {
         const { workspaceLayoutScopeKey } = await import('@/components/appShell/workspace/workspacePersistence');
         const tab = { id: 'retained', target: { kind: 'settings', params: {} }, pinned: true, preview: false } satisfies WorkspaceTab;
         const scope = { serverId: home.id, accountId: home.accountId };
-        storage.setState({ isDataReady: false, isSessionDraftsReady: false, localSettings: { ...storage.getState().localSettings,
-            workspaceLayoutV1: { [workspaceLayoutScopeKey({ ...scope, windowId: 'ready-window' })]: createWorkspaceState(tab) } } });
+        const { workspaceLayoutsState } = await import('./domains/state/filePaneUiState');
+        workspaceLayoutsState.set(workspaceLayoutScopeKey({ ...scope, windowId: 'ready-window' }), createWorkspaceState(tab));
+        storage.setState({ isDataReady: false, isSessionDraftsReady: false });
         await savePendingOutboxMessage({ sessionId: 'retained-outbox', localId: 'retained-input', createdAt: 1,
             text: 'Retained input', rawRecord: { role: 'user' }, request: { v: 1,
                 body: JSON.stringify({ localId: 'retained-input', content: { t: 'plain', v: { role: 'user' } }, messageRole: 'user' }) } }, scope);

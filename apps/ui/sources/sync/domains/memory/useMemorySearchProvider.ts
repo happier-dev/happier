@@ -160,7 +160,7 @@ export function useMemorySearchProvider(
         : daemonTargetSelection.selectedTarget?.serverIdentityId ?? null;
     const selectedDaemonMachineId = target.kind === 'exact' && target.machineId
         ? target.machineId : daemonTargetSelection.selectedTarget?.machineId ?? null;
-    const daemonTarget = daemonTargetEnabled
+    const resolvedDaemonTarget = daemonTargetEnabled
         ? requestedServerId
             ? target.kind === 'exact' && target.machineId
                 ? resolveDaemonMemorySearchTarget(
@@ -175,6 +175,11 @@ export function useMemorySearchProvider(
                 })()
             : resolveDaemonMemorySearchTarget(daemonTargetSelection)
         : null;
+    const daemonTarget = target.kind === 'exact' && Boolean(target.machineId)
+        ? resolvedDaemonTarget
+        : daemonTargetSelection.state.kind === 'online'
+            ? resolvedDaemonTarget
+            : null;
     const daemonServerId = daemonTarget?.serverId ?? null;
     const daemonMachineId = daemonTarget?.machineId ?? null;
 

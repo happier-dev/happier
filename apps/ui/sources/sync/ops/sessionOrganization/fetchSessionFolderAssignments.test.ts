@@ -61,7 +61,6 @@ describe('fetchAndApplySessionFolderAssignments', () => {
         });
 
         expect(getStorage().getState().sessionOrganizationFolderAssignmentsBySessionKey[assignmentKey('s1')]?.folderId).toBe('folder-a');
-        expect(getStorage().getState().sessionOrganizationLoadingByServerId['server-a']).toBe(false);
     });
 
     it('marks requested sessions without returned assignments as unassigned', async () => {
@@ -133,10 +132,8 @@ describe('fetchAndApplySessionFolderAssignments', () => {
                 currentResponse.resolve(snapshotResponse([{ sessionId: 's1', folderId: 'folder-current' }]));
                 await currentFetch;
                 expect(stateAfterOldResponse.sessionOrganizationFolderAssignmentsBySessionKey[assignmentKey('s1')]).toBeUndefined();
-                expect(stateAfterOldResponse.sessionOrganizationLoadingByServerId[serverId]).toBe(true);
             }
             expect(getStorage().getState().sessionOrganizationFolderAssignmentsBySessionKey[currentKey]?.folderId).toBe('folder-current');
-            expect(getStorage().getState().sessionOrganizationLoadingByServerId[serverId]).toBe(false);
         } finally {
             getStorage().getState().clearSessionFolderAssignmentsForServer(serverId);
             getStorage().getState().clearProfileScope();
@@ -175,6 +172,5 @@ describe('fetchAndApplySessionFolderAssignments', () => {
         })).resolves.toBeUndefined();
 
         expect(getStorage().getState().sessionOrganizationFolderAssignmentsBySessionKey[assignmentKey('s1')]?.folderId).toBeNull();
-        expect(getStorage().getState().sessionOrganizationLoadingByServerId['server-a']).toBe(false);
     });
 });

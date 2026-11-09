@@ -2,7 +2,7 @@ import {
     SESSION_METADATA_LAYOUT_VERSION_V1,
     type SessionMetadataInactiveModelIntentOwnerPatchV1,
     type SessionMetadataTuplePatchV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const emitWithAckSpy = vi.hoisted(() => vi.fn());
@@ -59,6 +59,8 @@ const sharedEditorPatch: SessionMetadataTuplePatchV1 = {
         expectedVersion: 3,
     },
 };
+const usageTimingV1 = { v: 1 as const,
+    metadata: { v: 1 as const, minMs: 123, maxMs: 123 }, agentState: null };
 
 const ownerMetadataCiphertext =
     'oRoBAgMEBQYHCAkKCwwNDg8QERITFBUWFxh8aC0+8+YDECLScN6uQTItPyWVR7XbQA==';
@@ -211,6 +213,7 @@ describe('emitSessionMetadataUpdateWithServerScope', () => {
             expectedVersion: 3,
             metadata: 'ciphertext',
             timeoutMs: 4000,
+            usageTimingV1,
         })).resolves.toEqual({
             result: 'success',
             version: 4,
@@ -223,6 +226,7 @@ describe('emitSessionMetadataUpdateWithServerScope', () => {
                 sid: 'session-1',
                 expectedVersion: 3,
                 metadata: 'ciphertext',
+                usageTimingV1,
             },
             { timeoutMs: null, signal: expect.any(AbortSignal) },
         );
@@ -521,6 +525,7 @@ describe('emitSessionMetadataUpdateWithServerScope', () => {
             metadata: 'ciphertext',
             sessionExpectation: { kind: 'inactive_model_intent' },
             timeoutMs: 4000,
+            usageTimingV1,
         })).resolves.toEqual({
             result: 'session-active',
         });
@@ -534,19 +539,16 @@ describe('emitSessionMetadataUpdateWithServerScope', () => {
             {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    inactiveModelIntent: {
-                        metadata: {
-                            ciphertext: 'ciphertext',
-                            expectedVersion: 3,
-                        },
-                        sessionExpectation: {
-                            kind: 'inactive_model_intent',
-                        },
-                    },
-                }),
+                body: expect.any(String),
             },
         );
+        expect(JSON.parse(String(resolvedRequestSpy.mock.calls[0][1].body))).toEqual({
+            usageTimingV1,
+            inactiveModelIntent: {
+                metadata: { ciphertext: 'ciphertext', expectedVersion: 3 },
+                sessionExpectation: { kind: 'inactive_model_intent' },
+            },
+        });
         expect(emitWithAckSpy).not.toHaveBeenCalled();
         expect(createSocketSpy).not.toHaveBeenCalled();
     });

@@ -143,6 +143,7 @@ export function readSessionRuntimeObservation<T extends Readonly<{
             input.presence === 'online' && observed.activeAt > (input.activeAt ?? 0)
                 ? undefined : input.presence
         )
-            : typeof input.presence === 'number' ? input.presence : observed.activeAt,
+            : typeof input.presence === 'number' ? input.presence
+                : typeof observed.presence === 'number' ? observed.presence : undefined,
     };
 }

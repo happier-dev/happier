@@ -4,7 +4,8 @@ import { localSettingsDefaults } from '../settings/localSettings';
 
 const values = vi.hoisted(() => new Map<string, string>());
 
-vi.mock('./persistenceStorage', () => ({
+vi.mock('./persistenceStorage', async importOriginal => ({
+    ...await importOriginal<typeof import('./persistenceStorage')>(),
     getPersistenceStorage: () => ({
         getString: (key: string) => values.get(key),
         set: (key: string, value: string) => values.set(key, value),

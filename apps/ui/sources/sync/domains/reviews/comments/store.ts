@@ -1,7 +1,8 @@
 import type {
-    ReviewCommentListResponseV1,
+    ReviewCommentListResponseV1} from '@happier-dev/protocol/reviews/comments/actions';
+import type {
     ReviewCommentV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/reviews/comments/v1';
 
 export type ReviewCommentsState = Readonly<{
     byId: Readonly<Record<string, ReviewCommentV1>>;

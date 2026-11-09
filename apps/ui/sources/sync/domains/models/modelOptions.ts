@@ -1,10 +1,10 @@
 import type { ModelMode } from '../permissions/permissionTypes';
-import type { ProviderModelDescriptorV1 } from '@happier-dev/protocol';
+import type { ProviderModelDescriptorV1 } from '@happier-dev/protocol/models/descriptor';
 import { t } from '@/text';
 import { isBundledAgentId } from '@/agents/catalog/catalog';
 import { readAgentUniverseBackendTargetKey } from '@/agents/catalog/agentUniverse';
 import type { ComposerOptionsInputV1 } from '@happier-dev/protocol/embed';
-import { computeSessionConfigOptionControlsFromOverride, normalizeAcpConfigOptionsArray, resolveSessionConfigOptionOverridesFromMetadata, type AcpConfigOption, type SessionConfigOptionControl } from '@/sync/domains/sessionControl/configOptionsControl';
+import { applySessionConfigOptionOverrideRules, computeSessionConfigOptionControls, computeSessionConfigOptionControlsFromOverride, normalizeAcpConfigOptionsArray, resolveSessionConfigOptionOverridesFromMetadata, type AcpConfigOption, type SessionConfigOptionControl } from '@/sync/domains/sessionControl/configOptionsControl';
 import { readSessionModelsState } from '@/sync/domains/sessionControl/readSessionControlMetadata';
 import {
     getAgentStaticModels,
@@ -65,8 +65,7 @@ function dedupeModelOptionsByValue(options: readonly ModelOption[]): readonly Mo
 
 export function readExtendedContextModelId(value: unknown): string | undefined {
     if (typeof value !== 'string') return undefined;
-    const trimmed = value.trim();
-    return trimmed.length > 0 ? trimmed : undefined;
+    return value.trim().length > 0 ? value : undefined;
 }
 
 function mergeDynamicModelOptionWithCatalog(
@@ -137,7 +136,7 @@ function readSelectedModelOverrideId(agentType: AgentType, metadata: ComposerOpt
         metadata,
         targetKey,
     );
-    return typeof intent?.selection?.modelId === 'string' ? intent.selection.modelId.trim() : '';
+    return typeof intent?.selection?.modelId === 'string' ? intent.selection.modelId : '';
 }
 
 function supportsDynamicSessionModelList(agentType: AgentType): boolean {
@@ -161,9 +160,9 @@ function isPreflightListCurrentForTarget(params: Readonly<{
 export function getModelOptionsForPreflightModelList(list: PreflightModelList): readonly ModelOption[] {
     const dynamic = (list.availableModels ?? [])
         .flatMap((m) => {
-            const value = typeof m?.id === 'string' ? m.id.trim() : '';
-            const label = typeof m?.name === 'string' ? m.name.trim() : '';
-            if (!value || !label) return [];
+            const value = typeof m?.id === 'string' ? m.id : '';
+            const label = typeof m?.name === 'string' ? m.name : '';
+            if (!value.trim() || !label.trim()) return [];
             return [{
                 value,
                 label,
@@ -338,7 +337,7 @@ function resolveModelOptionsForSession(
     const list = resolveSessionModelList(agentType, metadata, context);
     const options = getModelOptionsForAgentTypeOrPreflight({ agentType, preflight: list });
     if (options.length === 0) return options;
-    const selectedModelId = context?.selectedModelId?.trim() || readSelectedModelOverrideId(agentType, metadata);
+    const selectedModelId = context?.selectedModelId || readSelectedModelOverrideId(agentType, metadata);
     return appendRequestedModelOption(options, selectedModelId);
 }
 
@@ -347,8 +346,8 @@ export function getSelectableModelIdsForSession(agentType: AgentType, metadata: 
 }
 
 export function isModelSelectableForSession(agentType: AgentType, metadata: ComposerOptionsInputV1 | null | undefined, modelId: string, context?: SessionModelOptionsContext): boolean {
-    const normalized = typeof modelId === 'string' ? modelId.trim() : '';
-    if (!normalized) return false;
+    const normalized = typeof modelId === 'string' ? modelId : '';
+    if (!normalized.trim()) return false;
     const options = resolveModelOptionsForSession(agentType, metadata, context);
     if (findModelOptionForEffectiveModelId(options, normalized)) return true;
     if (!supportsFreeformModelSelectionForSession(agentType, metadata, context)) return false;
@@ -372,11 +371,16 @@ export function computeSessionModelConfigOptionControls(params: Readonly<{
         params.modelId,
     );
     const configOptions = model?.modelOptions ?? null;
-    return computeSessionConfigOptionControlsFromOverride({
+    const controls = computeSessionConfigOptionControlsFromOverride({
         agentId: params.agentId,
         configOptions,
         overrides: resolveSessionConfigOptionOverridesFromMetadata({ metadata: params.metadata, configOptions }),
     });
+    if (!controls) return null;
+    const sessionControls = computeSessionConfigOptionControls({ agentId: params.agentId, metadata: params.metadata });
+    return sessionControls
+        ? applySessionConfigOptionOverrideRules(controls, [...sessionControls, ...controls])
+        : controls;
 }
 
 /**
@@ -391,8 +395,8 @@ export function findModelOptionForEffectiveModelId<T extends Readonly<{
     options: readonly T[],
     effectiveModelId: string | null | undefined,
 ): T | null {
-    const raw = typeof effectiveModelId === 'string' ? effectiveModelId.trim() : '';
-    if (!raw) return null;
+    const raw = typeof effectiveModelId === 'string' ? effectiveModelId : '';
+    if (!raw.trim()) return null;
     const exact = options.find((option) => option.value === raw);
     if (exact) return exact;
     const extendedContext = options.find((option) => option.extendedContextModelId === raw);
@@ -429,7 +433,7 @@ export function resolveSessionModelLabel(
     modelId: string | null | undefined,
 ): string | null {
     const option = findModelOptionForEffectiveModelId(getModelOptionsForSession(agentType, metadata), modelId);
-    return option?.label.trim() || null;
+    return option?.label.trim() ? option.label : null;
 }
 
 export function resolveCanonicalModelOptionId<T extends Readonly<{
@@ -438,10 +442,12 @@ export function resolveCanonicalModelOptionId<T extends Readonly<{
 }>>(
     options: readonly T[],
     effectiveModelId: string | null | undefined,
+    preflight?: PreflightModelList | null,
 ): string {
-    const raw = typeof effectiveModelId === 'string' ? effectiveModelId.trim() : '';
-    if (!raw) return raw;
+    const raw = typeof effectiveModelId === 'string' ? effectiveModelId : '';
+    if (!raw.trim()) return raw;
     const matched = findModelOptionForEffectiveModelId(options, raw);
+    if (!matched && raw !== 'default' && preflight && preflight.unavailable !== true && !preflight.supportsFreeform) return 'default';
     if (!matched || matched.value === raw || matched.extendedContextModelId === raw) return raw;
     return matched.value;
 }

@@ -1,13 +1,21 @@
 import {
     createPlainSessionOwnerMetadataEnvelopeV1,
-    projectLegacySessionAccessCapabilitiesV1,
     projectSessionSharedMetadataV1,
-    SessionOwnerMetadataV1Schema,
+    SessionOwnerMetadataV1Schema} from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import {
+    projectLegacySessionAccessCapabilitiesV1} from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
+import {
     tryWriteServerEnabledBitInPlace,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/features/serverEnabledBit';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, renderHook } from '@/dev/testkit';
+import * as React from 'react';
+import { act, renderHook, renderScreen } from '@/dev/testkit';
+import type { AppRailBadgeSignal } from '@/components/navigation/shell/appRail/AppRailBadge';
 import { SessionReadBatchResponseV1Schema } from '@happier-dev/protocol/sessions/read/sessionReadBatchV1';
+import type { PublicActionInputById } from '@happier-dev/protocol/actions/actionSpecs';
+
+// The person's dialog is a system boundary; an unexpected second question is declined, never left waiting.
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: false }).module);
 
 // Imported from their owning testkit modules, never the `@/dev/testkit` barrel:
 // the harness installs its network boundaries with `vi.doMock`, which only
@@ -38,6 +46,8 @@ installHomeGovernanceBoundaries(harness);
 // The app entry owns engine registration; this source-only suite supplies the
 // same real singleton after its transport boundaries have been installed.
 await loadSyncSingletonForTests();
+// Loading the executable graph is collection setup, not the reviewed command's behavior deadline.
+await import('./defaultActionExecutor');
 
 const ACCOUNT_ID = 'account-a';
 const SESSION_ID = 'session-one';
@@ -183,36 +193,68 @@ describe('Session Board Action access gate', () => {
         let count = 2;
         const countPath = `/v2/sessions/${SESSION_ID}/system-records?owner=host&namespace=surface&kind=item.v1&projection=count`;
         harness.answer(serverId, countPath, { select: () => ({ body: { count } }) });
-        const { useSessionBoardHasItems } = await import('@/sync/domains/sessionSystemRecords/useSessionSystemRecordBinding');
+        const { useSessionBoardHasItems, useSessionBoardItemCount } = await import('@/sync/domains/sessionSystemRecords/useSessionSystemRecordBinding');
+        const { SessionBoardRailBadge } = await import('@/components/sessions/panes/SessionResourceRailBadge');
+        const { TabBadge } = await import('@/components/ui/navigation/tabBadge/TabBadge');
         const { getSyncSingleton } = await import('@/sync/runtime/getSyncSingleton');
         const options = { ...address, enabled: true };
         const first = await renderHook(() => useSessionBoardHasItems(options));
-        const second = await renderHook(() => useSessionBoardHasItems(options));
-        await vi.waitFor(() => expect([first.getCurrent(), second.getCurrent()]).toEqual([true, true]));
+        const second = await renderHook(() => useSessionBoardItemCount(options));
+        let overflowSignal: AppRailBadgeSignal | null = null;
+        let signalComputations = 0;
+        const badges = await renderScreen(React.createElement(React.Fragment, null,
+            React.createElement(SessionBoardRailBadge, options),
+            React.createElement(SessionBoardRailBadge, { ...options, renderSignal: signal => {
+                signalComputations++;
+                overflowSignal = signal;
+                return null;
+            } }),
+        ));
+        await vi.waitFor(() => expect([first.getCurrent(), second.getCurrent()]).toEqual([true, 2]));
+        expect(badges.findAllByType(TabBadge).map(badge => badge.props.value)).toEqual([2]);
+        expect(overflowSignal).toEqual({ kind: 'count', value: 2, tone: 'neutral' });
         const requests = () => harness.requests.filter(request => request.path.includes('projection=count'));
         expect(requests()).toHaveLength(1);
         let commits = 0;
         const stop = first.subscribe(() => { commits++; });
+        let countCommits = 0;
+        const stopCount = second.subscribe(() => { countCommits++; });
         count = 9;
         await act(async () => {
             await getSyncSingleton().withSessionSystemRecordRuntime(address, runtime => runtime.repository.fetchBoardItemCount(address));
         });
         expect(first.getCurrent()).toBe(true);
         expect(commits).toBe(0);
+        expect(second.getCurrent()).toBe(9);
+        expect(countCommits).toBe(1);
+        expect(badges.findAllByType(TabBadge).map(badge => badge.props.value)).toEqual([9]);
+        expect(overflowSignal).toEqual({ kind: 'count', value: 9, tone: 'neutral' });
+        const computationsBeforeEqualCount = signalComputations;
+        await act(async () => {
+            await getSyncSingleton().withSessionSystemRecordRuntime(address, runtime => runtime.repository.fetchBoardItemCount(address));
+        });
+        expect(commits).toBe(0);
+        expect(countCommits).toBe(1);
+        expect(signalComputations).toBe(computationsBeforeEqualCount);
         count = 0;
         await act(async () => {
             await getSyncSingleton().withSessionSystemRecordRuntime(address, runtime => runtime.repository.fetchBoardItemCount(address));
         });
         expect(first.getCurrent()).toBe(false);
         expect(commits).toBe(1);
-        stop(); await first.unmount(); await second.unmount();
-        const remounted = await renderHook(() => useSessionBoardHasItems(options));
-        expect(remounted.getCurrent()).toBe(false);
-        expect(requests()).toHaveLength(3); // Initial acquisition plus the two explicit owner reads above.
+        expect(second.getCurrent()).toBe(0);
+        expect(countCommits).toBe(2);
+        expect(badges.findAllByType(TabBadge)).toHaveLength(0);
+        expect(overflowSignal).toBeNull();
+        await badges.unmount();
+        stopCount(); stop(); await first.unmount(); await second.unmount();
+        const remounted = await renderHook(() => useSessionBoardItemCount(options));
+        expect(remounted.getCurrent()).toBe(0);
+        expect(requests()).toHaveLength(4); // Initial acquisition plus three explicit owner reads, including the unchanged reply.
         await remounted.unmount();
     });
 
-    it('honors the owner Account approval policy and rejects without writing shared layout', async () => {
+    it('rejects an explicit UI proposal without writing shared layout', async () => {
         const serverId = await addBoardHome();
         const artifactId = await createUiApprovalRequest({
             serverId,
@@ -321,6 +363,33 @@ describe('Session Board Action access gate', () => {
         expect(JSON.parse(harness.artifacts(serverId).readPlainBody(artifactId) ?? 'null')).toEqual(stored);
     });
 
+    it('commits the reviewed snapshot before command loading without asking for default confirmation again', async () => {
+        const serverId = await addBoardHome({ serverUrl: 'https://snapshot-command-confirmed.example', uiApproval: [] });
+        const itemId = 'confirmed-snapshot';
+        harness.answer(serverId, `/v2/sessions/${SESSION_ID}/system-records/record?owner=host&namespace=surface&kind=item.v1&localId=${itemId}`, {
+            body: { record: null },
+        });
+        harness.answer(serverId, `PUT ${BOARD_PATH}`, { body: { operation: 'upsert_item', itemId, outcome: 'created',
+            itemRevision: REVISION, layoutRevision: REVISION } });
+        const { runWidgetDefinitionCommand } = await import('@/components/widgets/definitions/widgetDefinitionCommands');
+        const preview = { v: 1 as const, document: { version: 1 as const, root: { kind: 'text' as const, text: 'Reviewed snapshot' } },
+            asOf: '2026-10-05T01:00:00.000Z', provenance: [{ label: 'Checks summary' }] };
+        const input: PublicActionInputById['widgets.snapshot.post'] = {
+            surface: { serverId, accountId: ACCOUNT_ID, owner: { kind: 'sessionBoard', sessionId: SESSION_ID } },
+            itemId, title: 'Checks', preview, placement: { tabId: 'overview', width: 'wide' },
+        };
+        const pending = runWidgetDefinitionCommand('widgets.snapshot.post', input, { serverId, accountId: ACCOUNT_ID },
+            undefined, undefined, { confirmed: true });
+        preview.document.root.text = 'Changed after confirmation';
+        const result = await pending;
+        expect(result, JSON.stringify(result)).toMatchObject({ kind: 'applied' });
+        expect(boardWrites()).toHaveLength(1);
+        expect(boardWrites()[0]?.input).toMatchObject({ itemContent: { t: 'plain', v: {
+            source: { kind: 'declarative', document: { root: { kind: 'text', text: 'Reviewed snapshot' } } },
+        } } });
+        expect(harness.artifacts(serverId).list()).toHaveLength(0);
+    });
+
     it('publishes only the approved frozen snapshot through the real sealed Board writer', async () => {
         const serverId = await addBoardHome({ serverUrl: 'https://snapshot-board-home.example' });
         const itemId = 'checks-snapshot';
@@ -358,7 +427,7 @@ describe('Session Board Action access gate', () => {
         const { act } = await import('react-test-renderer');
         const { renderScreen } = await import('@/dev/testkit/render/renderScreen');
         const { WidgetSnapshotConfirmPanel } = await import('@/components/widgets/definitions/WidgetSnapshotConfirmPanel');
-        const { PluginDeclarativeDocumentV1Schema } = await import('@happier-dev/protocol');
+        const { PluginDeclarativeDocumentV1Schema} = await import('@happier-dev/protocol/plugins/contributions/ui/declarative-document-authoring');
         const document = PluginDeclarativeDocumentV1Schema.parse({ version: 1, root: { kind: 'metric', label: 'Checks',
             data: { kind: 'value', value: 7 }, value: { path: [], type: 'number' } } });
         const capture = () => ({ document, current: true, readIdentity: 'checks', readAuthorized: true, digests: [], refresh: async () => {}, frozenByPath: new Map() });
@@ -382,13 +451,13 @@ describe('Session Board Action access gate', () => {
         await act(async () => { screen.tree.unmount(); });
     });
 
-    it('posts exactly the numbers the confirm previewed, through the approval policy, from the confirm panel', async () => {
+    it('posts exactly the numbers the confirm previewed when Account policy requires confirmation', async () => {
         const serverId = await addBoardHome({ serverUrl: 'https://snapshot-confirm-home.example' });
         const { createElement } = await import('react');
         const { act } = await import('react-test-renderer');
         const { renderScreen } = await import('@/dev/testkit/render/renderScreen');
         const { WidgetSnapshotConfirmPanel } = await import('@/components/widgets/definitions/WidgetSnapshotConfirmPanel');
-        const { PluginDeclarativeDocumentV1Schema, freezePluginDeclarativeDataNodeV1 } = await import('@happier-dev/protocol');
+        const [{ PluginDeclarativeDocumentV1Schema}, { freezePluginDeclarativeDataNodeV1}] = await Promise.all([import('@happier-dev/protocol/plugins/contributions/ui/declarative-document-authoring'), import('@happier-dev/protocol/plugins/contributions/ui/declarativeDataV1')]);
         const document = PluginDeclarativeDocumentV1Schema.parse({ version: 1, root: { kind: 'metric', label: 'Checks',
             data: { kind: 'resource', resource: { pluginId: 'acme.checks', localId: 'summary' },
                 inputSchema: { type: 'object', additionalProperties: false }, outputSchema: { type: 'object', properties: { passed: { type: 'number' } } } },
@@ -399,6 +468,9 @@ describe('Session Board Action access gate', () => {
         let shown = 7;
         const capture = () => ({ document, current: true, readIdentity: 'checks', readAuthorized: true, digests: ['source-version-1'], refresh: async () => {},
             frozenByPath: new Map([['root', freezePluginDeclarativeDataNodeV1(root, { passed: shown, secret: 'never' })]]) });
+        harness.answer(serverId, `GET /v2/sessions/${SESSION_ID}/system-records/record`, { body: { record: null } });
+        harness.answer(serverId, `PUT ${BOARD_PATH}`, { select: input => ({ body: { operation: 'upsert_item',
+            itemId: (input as { itemId: string }).itemId, outcome: 'created', itemRevision: REVISION, layoutRevision: REVISION } }) });
         let done = 0;
         const screen = await renderScreen(createElement(WidgetSnapshotConfirmPanel, {
             surface: { serverId, accountId: ACCOUNT_ID, owner: { kind: 'sessionBoard', sessionId: SESSION_ID } },
@@ -406,28 +478,10 @@ describe('Session Board Action access gate', () => {
         }));
         shown = 99;
         await act(async () => { await screen.pressByTestIdAsync('snap.primary'); });
-        await act(async () => {});
-        const { t } = await import('@/text');
-        expect(screen.getTextContent()).toContain(t('widgetDefinition.snapshotAwaitingApproval'));
-        expect(done).toBe(0);
-        expect(boardWrites()).toHaveLength(0);
-
-        // The approval request holds the exact frozen payload the confirm showed, not a live source.
-        const pending = harness.artifacts(serverId).list().map((row) => ({ id: row.id, body: harness.artifacts(serverId).readPlainBody(row.id) ?? '' }))
-            .find((row) => row.body.includes('widgets.snapshot.post'));
-        expect(pending, observed(harness.artifacts(serverId).list().map((row) => row.id))).toBeDefined();
-        expect(pending!.body).toContain('"value":7');
-        expect(pending!.body).not.toContain('"value":99');
-        const itemId = /"itemId":"([^"]+)"/u.exec(pending!.body)?.[1];
-        expect(typeof itemId).toBe('string');
-        const approvalId = pending!.id;
-        harness.answer(serverId, `/v2/sessions/${SESSION_ID}/system-records/record?owner=host&namespace=surface&kind=item.v1&localId=${itemId}`, {
-            body: { record: null },
-        });
-        harness.answer(serverId, `PUT ${BOARD_PATH}`, { body: { operation: 'upsert_item', itemId, outcome: 'created',
-            itemRevision: REVISION, layoutRevision: REVISION } });
-        const decided = await decideApprovalAsInbox(serverId, approvalId, 'approve');
-        expect(decided, observed(decided)).toMatchObject({ ok: true, result: { status: 'executed' } });
+        // The panel is the person's completed review, including an explicit
+        // Account Ask. Publication still uses its original frozen payload.
+        await vi.waitFor(() => expect(done, screen.getTextContent()).toBe(1));
+        expect(harness.artifacts(serverId).list()).toHaveLength(0);
         expect(boardWrites()).toHaveLength(1);
         const written = JSON.stringify(boardWrites()[0]?.input);
         expect(written).toContain('"value":7');

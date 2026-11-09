@@ -6,7 +6,7 @@ import { decryptBox, encryptBox } from '@/encryption/libsodium';
 import {
     createHomeCredentialDestinationDigestV1,
     HomeLoginRedemptionResultV1Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/auth/accountDirectory';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createReactNativeNativeMock } from '@/dev/testkit/mocks/reactNative';
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';

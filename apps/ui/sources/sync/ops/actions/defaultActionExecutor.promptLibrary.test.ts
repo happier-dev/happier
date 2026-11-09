@@ -3,23 +3,36 @@ import * as React from 'react';
 import { act, flushHookEffects, renderHook } from '@/dev/testkit';
 import {
     ApprovalRequestSchema,
-    FeaturesResponseSchema,
-    MACHINE_PLAIN_DATA_KEY_MARKER,
-    encodePlainMachineStoredContent,
-    DIRECT_ROUTE_GRANT_AUDIENCE_V1,
-    DIRECT_ROUTE_GRANT_TTL_MS,
-    DirectRouteGrantRequestV2Schema,
-    SignedDirectRouteGrantV2Schema,
-    tryWriteServerEnabledBitInPlace,
-    buildApprovalRequestArtifactHeaderV1,
-    decodePlainArtifactStoredContent,
-    SessionMetadataInactiveModelIntentPatchV1Schema,
-    ProviderBoundModelRefSchema,
-    V2SessionRecordSchema,
-    type ActionId,
-    type ActionExecutorContext,
     type ApprovalRequest,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/approvals/approvalRequestV1';
+import {
+    FeaturesResponseSchema} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import {
+    MACHINE_PLAIN_DATA_KEY_MARKER,
+    encodePlainMachineStoredContent} from '@happier-dev/protocol/machines/machineStoredContent';
+import {
+    DIRECT_ROUTE_GRANT_AUDIENCE_V1} from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantV1';
+import {
+    DIRECT_ROUTE_GRANT_TTL_MS} from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantCachePolicyV1';
+import {
+    DirectRouteGrantRequestV2Schema,
+    SignedDirectRouteGrantV2Schema} from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantV2';
+import {
+    tryWriteServerEnabledBitInPlace} from '@happier-dev/protocol/features/serverEnabledBit';
+import {
+    buildApprovalRequestArtifactHeaderV1} from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import {
+    decodePlainArtifactStoredContent} from '@happier-dev/protocol/storage/artifactStoredContent';
+import {
+    SessionMetadataInactiveModelIntentPatchV1Schema} from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import {
+    ProviderBoundModelRefSchema} from '@happier-dev/protocol/providers/selection/v1';
+import {
+    V2SessionRecordSchema} from '@happier-dev/protocol/sessions/control/contract';
+import {
+    type ActionId} from '@happier-dev/protocol/actions/actionIds';
+import {
+    type ActionExecutorContext} from '@happier-dev/protocol/actions/executor/types';
 import { RegistryFetchRequestV1Schema, RegistryFetchResponseV1Schema } from '@happier-dev/protocol/registries';
 import { ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { installPromptRegistryItemInLibrary, projectLegacySkillRegistryInstallActionResultV1 } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
@@ -169,7 +182,8 @@ async function admitBrowserAutomation() {
 }
 
 /** Stateful Home Session HTTP boundary. The real Sync tuple owner handles retries/currentness. */
-function serveSession(session: Session, beforeWrite?: (input: unknown) => void, beforeRead?: () => Promise<void>) {
+function serveSession(session: Session, beforeWrite?: (input: unknown) => void, beforeRead?: () => Promise<void>,
+    wireProjection?: Partial<Pick<ReturnType<typeof V2SessionRecordSchema.parse>, 'share' | 'effectiveAccess' | 'ownerAccountId' | 'projectKey'>>) {
     const encodeCurrent = (metadata: NonNullable<Session['metadata']>) => {
         const owner = createSessionOwnerMetadataV1({ metadata });
         if (!owner.ok) throw new Error(`Invalid current Session fixture: ${owner.unsupportedFields.join(', ')}`);
@@ -184,6 +198,7 @@ function serveSession(session: Session, beforeWrite?: (input: unknown) => void, 
         agentState: null, agentStateVersion: 1, share: null,
         responsibleAccountId: null, responsibleAccount: null,
         effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }], capabilities: session.access?.capabilities },
+        ...wireProjection,
     });
     const writes: unknown[] = [];
     const read = { select: async () => {
@@ -219,6 +234,7 @@ function serveSession(session: Session, beforeWrite?: (input: unknown) => void, 
                     sharedMetadata: { version: row.metadataVersion }, agentState: { version: row.agentStateVersion } } };
             }
             row = { ...row, metadata: patch.sharedMetadata.ciphertext, ownerMetadata: patch.ownerMetadata,
+                displayProjectionV1: patch.displayProjectionV1,
                 metadataVersion: row.metadataVersion + 1, agentState: patch.agentState.ciphertext,
                 agentStateVersion: (row.agentStateVersion ?? 0) + 1, updatedAt: row.updatedAt + 1, seq: row.seq + 1 };
             return { body: SessionMetadataTuplePatchSuccessV1Schema.parse({ success: true, metadataLayoutVersion: 1,
@@ -266,6 +282,7 @@ const registryPointer = { sourceId: registryItem.summary.sourceId, itemId: regis
 /** Stateful row HTTP/CAS boundary; Action policy, catalog loading and transfer logic remain real. */
 function servePromptLibraryCatalog(outcome: 'updated' | 'unavailable', options?: Readonly<{
     publicSource?: boolean; refuseSkillRules?: boolean;
+    coding?: Extract<PromptLibraryRecordV1, { key: 'coding' }>;
 }>) {
     const record: Extract<PromptLibraryRecordV1, { key: 'external-links' }> = {
         key: 'external-links', value: { v: 1, links: [{ id: 'neighbor-link', artifactId: 'neighbor-doc',
@@ -276,7 +293,7 @@ function servePromptLibraryCatalog(outcome: 'updated' | 'unavailable', options?:
         sources: [{ id: registryPointer.sourceId, title: 'Private skills', format: 'git', kinds: ['skill'],
             url: 'https://catalog.test/skills.git', enabled: true, addedAt: 1,
             ...(options?.publicSource ? {} : { token: { secretRef: 'registry-token' } }) }] } });
-    const catalog = createPromptLibraryCatalogBoundary({ records: [record, sources], revision: 4 });
+    const catalog = createPromptLibraryCatalogBoundary({ records: [record, sources, ...(options?.coding ? [options.coding] : [])], revision: 4 });
     homes.answer(serverId, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture() });
     homes.answer(serverId, 'GET /v2/account/settings', { body: { content: { t: 'plain', v: {} }, version: 7 } });
     homes.answer(serverId, 'POST /v2/account/settings', { body: { success: true, version: 8 } });
@@ -450,10 +467,11 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
         await homes.reset();
         storage.setState(baseline, true);
         for (const boundary of Object.values(rpc)) boundary.mockReset();
-        serverId = await homes.addHome({ name: 'Prompt Home', serverUrl: 'https://prompt-actions.test', serverIdentityId: 'srv_prompt-actions', accountId: 'account-a', currentAccount: true });
+        serverId = await homes.addHome({ name: 'Prompt Home', serverUrl: 'https://prompt-actions.test', serverIdentityId: 'srv_prompt-actions', accountId: 'account-a', currentAccount: true, botsEnabled: true });
         homes.answer(serverId, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture() });
         connection = await restoreServerAccountForTest({ serverUrl: 'https://prompt-actions.test', accountId: 'account-a',
-            credentials: { token: homes.findByServerUrl('https://prompt-actions.test')!.token! } });
+            credentials: { token: homes.findByServerUrl('https://prompt-actions.test')!.token! },
+            request: (input, init) => homes.request(input, init) });
         installHomeGovernanceBoundaries(homes);
         const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
         const scopeServerId = resolveServerProfileScopeIdForIdentifier(connection.home.id);
@@ -478,6 +496,65 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
         standardCleanup();
         webLocks.restore();
         installHomeGovernanceBoundaries(homes);
+    });
+
+    it('reviews and applies template instructions through Account content and private Session transports', async () => {
+        const { BotTemplateReleaseV1Schema, projectBotTemplateArtifactHeaderV1 } = await import('@happier-dev/protocol/bots/templates/botTemplateV1');
+        const { BotTemplateUpdateDiffResultV1Schema } = await import('@happier-dev/protocol/bots/templates/botTemplateActionsV1');
+        const { createPlainArtifactHttpFixture } = await import('@/dev/testkit/harness/artifactStoreBoundary');
+        const { computeActionInputApprovalDigestV1 } = await import('@happier-dev/protocol/actions/decisionAuthority');
+        const { default: nacl } = await import('tweetnacl');
+        const machine = { ...createPlainMachineRowFixture({ id: 'machine_1', accountId: 'account-a' }),
+            installationId: 'template-update-installation', installationPublicKey: Buffer.from(nacl.box.keyPair().publicKey).toString('base64') };
+        homes.answer(serverId, '/v1/machines', { body: [machine] });
+        homes.answer(serverId, '/v1/machines/machine_1', { body: { machine } });
+        vi.stubGlobal('fetch', (url: RequestInfo | URL, init?: RequestInit) => homes.request(url, init));
+        const sourceId = '80f7dabe-1f05-44b7-8e44-d98f2127f523';
+        const baseId = '70f7dabe-1f05-44b7-8e44-d98f2127f523';
+        const base = BotTemplateReleaseV1Schema.parse({ v: 1, version: '1.0.0', changelog: '', releasedAtMs: 1,
+            content: { v: 1, identity: { name: 'Helper', description: '' }, instructions: { markdown: 'one\ntwo\nthree\n' },
+                memoryRules: [], skills: [], needs: { software: [], connectedAccounts: [], mcpServers: [] } } });
+        const upstream = { ...base, version: '1.1.0', content: { ...base.content, instructions: { markdown: 'one\ntwo\nnew three\n' } } };
+        for (const [id, release] of [[sourceId, upstream], [baseId, base]] as const) {
+            const envelope = { v: 1 as const, state: 'released' as const, release };
+            homes.artifacts(serverId).replaceStoredRow(createPlainArtifactHttpFixture({ id, isDecrypted: true, title: release.content.identity.name,
+                header: projectBotTemplateArtifactHeaderV1(envelope), body: JSON.stringify(envelope),
+                headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 }, 'account-a'));
+        }
+        const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId };
+        const executor = createDefaultActionExecutor();
+        const created = await executor.execute('prompt_doc.create', { title: 'Instructions', markdown: 'mine\ntwo\nthree\n' }, context);
+        expect(created).toMatchObject({ ok: true });
+        if (!created.ok || !created.result || typeof created.result !== 'object'
+            || !('artifactId' in created.result) || typeof created.result.artifactId !== 'string') throw new Error('Instructions creation failed');
+        const instructionsId = created.result.artifactId;
+        const instance = BotTemplateUpdateDiffResultV1Schema.shape.instance.parse({ v: 1, source: { kind: 'artifact', serverId, artifactId: sourceId },
+            acceptedVersion: '1.0.0', acceptedBase: { serverId, artifactId: baseId }, skillIds: {}, mcpServerIds: {}, follow: true });
+        const session = seedSession(false, { work: { templateInstance: instance, promptStack: [{ id: 'session.instructions',
+            ref: { kind: 'doc', serverId, artifactId: instructionsId }, enabled: true, placement: 'system_append' }] } });
+        const persisted = serveSession(session);
+        const sessionRef = { serverId, sessionId: session.id };
+        const { ensureSessionDisplayProjectionsForRead } = await import('@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority');
+        const account = await captureLazyActionAccountContext(serverId);
+        try {
+            expect(await ensureSessionDisplayProjectionsForRead({ serverId, credentials: account.credentials,
+                request: account.request, sessionIds: [session.id], isCurrent: account.accountLifetime.isCurrent })).toBe(true);
+        } finally { account.dispose(); }
+        const reviewed = await executor.execute('template.updates.diff', { sessionRef }, context);
+        if (!reviewed.ok) throw new Error(`Template review failed: ${reviewed.errorCode}: ${reviewed.error}`);
+        const review = BotTemplateUpdateDiffResultV1Schema.parse(reviewed.result);
+        expect(review.instructions?.comparison.text).toBe('mine\ntwo\nnew three\n');
+        const input = { sessionRef, expectedVersion: '1.1.0', expectedRevision: review.upstream.revision,
+            instructions: { expectedRevision: review.instructions!.revision } };
+        const applied = await executor.execute('template.updates.apply', input, { ...context,
+            presentUserConfirmation: { actionId: 'template.updates.apply', inputDigest: computeActionInputApprovalDigestV1('template.updates.apply', input) } });
+        if (!applied.ok) throw new Error(`Template apply failed: ${JSON.stringify(applied)}`);
+        expect(applied).toMatchObject({ ok: true, result: { acceptedVersion: '1.1.0' } });
+        expect(homes.requestsFor('/v1/actions/template.updates.apply/execution-authorization')).toHaveLength(0);
+        expect(await executor.execute('prompt_doc.get', { artifactId: instructionsId }, context))
+            .toMatchObject({ ok: true, result: { markdown: 'mine\ntwo\nnew three\n' } });
+        expect(persisted.readMetadata().work).toMatchObject({ templateInstance: { acceptedVersion: '1.1.0' },
+            promptStack: [{ ref: { artifactId: instructionsId } }] });
     });
 
     it.each(['completed', 'cancelled_after_ack'] as const)('lists registries without a Machine and retains the acknowledged Account CAS receipt: %s', async outcome => {
@@ -588,6 +665,143 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
         });
     });
 
+    it('keeps Session-target memory owner-only for legacy recipients even with a published Project key', async () => {
+        servePromptLibraryCatalog('updated', { coding: { key: 'coding', value: { v: 1, scope: { kind: 'coding' }, entries: [] } } });
+        const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        const features = createRootLayoutFeaturesResponse();
+        if (!tryWriteServerEnabledBitInPlace(features, 'sharing.session', false)) throw new Error('Missing sharing feature fixture');
+        primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
+        const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+        const canonicalHome = resolveServerProfileScopeIdForIdentifier(serverId);
+        let privateProjectReads = 0;
+        homes.answer(serverId, `POST ${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`, { select: () => {
+            privateProjectReads += 1;
+            return { body: createPlainProjectAccountRowListFixture({ workspaceRefs: [{ id: 'checkout', serverId: canonicalHome,
+                projectKey: 'anchor', machineId: 'machine', rootPath: '/repo', createdAtMs: 1 }] }) };
+        } });
+        const session = createSessionFixture({ id: 'legacy-memory-owner', serverId, active: false, metadataLayoutVersion: 0,
+            ownerAccountId: undefined, metadata: MetadataSchema.parse({ path: '/repo', host: 'host', machineId: 'machine',
+                workspaceId: 'checkout', work: { memoryEnabled: true } }) });
+        const execute = (sessionId: string, text: string) => createDefaultActionExecutor().execute('memory.remember', {
+            sessionRef: { serverId, sessionId }, expectedMetadataRevision: session.metadataVersion, text,
+        }, { serverId, surface: 'ui' });
+        // Provenance: 0.2 HEAD 413054f V2 own rows have share:null and no immutable owner id/current access.
+        serveSession(session, undefined, undefined, { share: null, effectiveAccess: undefined, ownerAccountId: undefined });
+        const owned = await execute(session.id, 'Owned convention');
+        expect(owned, JSON.stringify(owned)).toMatchObject({ ok: true, result: { artifactId: expect.any(String) } });
+        expect(privateProjectReads).toBeGreaterThan(0);
+        for (const projectKey of [undefined, 'anchor']) {
+            const recipient = { ...session, id: projectKey ? 'published-recipient' : 'legacy-recipient' };
+            serveSession(recipient, undefined, undefined, { effectiveAccess: undefined, ownerAccountId: undefined,
+                share: { accessLevel: 'view', canApprovePermissions: false }, projectKey });
+            const before = privateProjectReads;
+            const refused = await execute(recipient.id, 'Must not reach private memory');
+            expect(privateProjectReads).toBe(before);
+            expect(refused, JSON.stringify(refused)).toMatchObject({ ok: false, errorCode: 'session_target_unavailable' });
+        }
+    });
+
+    it('renames and resets the Project organization with captured revision through real UI Action and HTTP wiring', async () => {
+        const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+        const projectServerId = resolveServerProfileScopeIdForIdentifier(serverId);
+        const key = { kind: 'project-organization' as const, serverId: projectServerId, projectKey: 'project' };
+        const original = ProjectAccountOrganizationV1Schema.parse({ pinned: true, hidden: true, atmosphere: 'home', promptStack: [
+            { id: 'instructions', ref: { kind: 'doc', artifactId: 'instructions' }, enabled: true, placement: 'system_append' },
+        ] });
+        let value = original;
+        let revision = 4;
+        let writes = 0;
+        const refs = [{ id: 'checkout', serverId: projectServerId, machineId: 'machine', rootPath: '/repo',
+            projectKey: 'project', createdAtMs: 1, label: 'Checkout label' }];
+        homes.answer(serverId, `POST ${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`, { select: () => ({ body:
+            createPlainProjectAccountRowListFixture({ workspaceRefs: refs, organizations: [{ key, value, revision }] }) }) });
+        homes.answer(serverId, `POST ${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/mutate`, { select: input => {
+            const request = ProjectAccountRowMutationRequestV1Schema.parse(input);
+            expect(request.mutations).toHaveLength(1);
+            const mutation = request.mutations[0]!;
+            expect(mutation.key).toEqual(key);
+            expect(mutation.expectedRevision).toBe(revision);
+            if (mutation.content?.t !== 'plain' || !mutation.content.v || typeof mutation.content.v !== 'object'
+                || !('value' in mutation.content.v)) throw new Error('Missing plain organization value');
+            value = ProjectAccountOrganizationV1Schema.parse(mutation.content.v.value);
+            writes += 1;
+            return { body: { status: 'updated', rows: [{ key, content: mutation.content, revision: ++revision }], cursor: revision } };
+        } });
+        const executor = createDefaultActionExecutor();
+        const projectRef = { serverId: projectServerId, projectKey: 'project' };
+        expect(await executor.execute('projects.organization.update', { projectRef, expectedRevision: 4, label: 'Project title' }, { surface: 'ui' }))
+            .toEqual({ ok: true, result: { ok: true, row: { ...original, label: 'Project title' }, revision: 5 } });
+        expect(await executor.execute('projects.organization.update', { projectRef, expectedRevision: 4, label: 'Stale' }, { surface: 'ui' }))
+            .toMatchObject({ ok: true, result: { ok: false, errorCode: 'project_organization_conflict', currentRevision: 5 } });
+        expect(await executor.execute('projects.organization.update', { projectRef, expectedRevision: 5, label: null }, { surface: 'ui' }))
+            .toEqual({ ok: true, result: { ok: true, row: original, revision: 6 } });
+        expect(writes).toBe(2);
+        expect(refs[0]?.label).toBe('Checkout label');
+
+        // Drive the mounted header intent through the real Action and CAS owners too.
+        const { Modal } = await import('@/modal');
+        const { useSessionListWorkspaceHeaderActions } = await import('@/components/sessions/shell/useSessionListWorkspaceHeaderActions');
+        const legacyWorkspaceKey = JSON.stringify(['project', projectServerId, 'project']);
+        const header = { legacyWorkspaceKey, scopeHint: { serverId: projectServerId, machineId: 'machine', rootPath: '/repo' } };
+        vi.mocked(Modal.prompt).mockResolvedValueOnce('Header title');
+        await useSessionListWorkspaceHeaderActions({
+            projectOrganizations: [{ key, value, revision }], toggleCollapsedGroup: () => {},
+        }).handleRenameWorkspace({ ...header, currentLabel: 'Checkout label' });
+        expect(value).toEqual({ ...original, label: 'Header title' });
+        await useSessionListWorkspaceHeaderActions({
+            projectOrganizations: [{ key, value, revision }], toggleCollapsedGroup: () => {},
+        }).handleResetWorkspaceName(header);
+        expect(value).toEqual(original);
+        expect(writes).toBe(4);
+        expect(refs[0]?.label).toBe('Checkout label');
+    });
+
+    it('keeps private fallback paths out of workspace items and Session sibling order scopes on the actual wire', async () => {
+        const { resolveSessionOrganizationMutationScope, writeSessionOrganizationWorkspaceOrder,
+            writeSessionOrganizationGroupOrder } = await import('@/sync/ops/sessionOrganization/sessionOrganizationMutationOwner');
+        const { buildSessionWorkspaceOrderScopeKey } = await import('@/sync/domains/session/listing/sessionWorkspaceOrderStateV1');
+        const admitted = await resolveSessionOrganizationMutationScope(serverId);
+        if (!admitted.ok) throw new Error(`Missing fixture Account: ${admitted.reason}`);
+        const homeId = admitted.scope.serverId;
+        const privatePath = '/private/never-in-order-transport';
+        const session = createSessionFixture({ id: 'private-order-session', serverId: homeId, projectKey: null,
+            metadata: { machineId: 'machine-private-order', path: privatePath, host: 'fixture-host' } });
+        storage.getState().applySessions([session]);
+        storage.getState().applyServerScopedSessionListRows(homeId,
+            [storage.getState().sessionListRowsByServerId[homeId]![session.id]!], { source: 'ordinary', mode: 'replace' });
+        const source = storage.getState().sessionListIndexByServerId[homeId];
+        const item = source?.find(item => item.type === 'session' && item.sessionId === session.id);
+        if (!item?.groupKey) throw new Error('Missing admitted fallback group');
+        expect(item.groupKey).toContain(privatePath); // Internal exact identity remains truthful and unchanged.
+        const requests: unknown[] = [];
+        homes.answer(serverId, 'PUT /v2/session-organization/order', { select: input => {
+            requests.push(input);
+            return { body: { orderEntries: [] } };
+        } });
+        await writeSessionOrganizationWorkspaceOrder({ scope: admitted.scope,
+            next: { [buildSessionWorkspaceOrderScopeKey(homeId)]: [item.groupKey,
+                JSON.stringify([homeId, 'unseen-machine', `${privatePath}/unseen`]),
+                JSON.stringify(['foreign-home', 'unseen-machine', `${privatePath}/foreign`]),
+            ] } });
+        await writeSessionOrganizationGroupOrder({ scope: admitted.scope,
+            next: { [item.groupKey]: [session.id],
+                [JSON.stringify(['folder-group', homeId, `workspaceScope:${homeId}:machine:${privatePath}`, null])]: [session.id],
+                [JSON.stringify(['folder-group', homeId, `workspaceScope:${homeId}:machine:${privatePath}`, 'section-private-order'])]: [session.id],
+            }, orderItemAddressByItemKey: {
+                [session.id]: { serverId: homeId, itemKind: 'session', sessionId: session.id },
+            } });
+        expect(requests).toHaveLength(3);
+        expect(JSON.stringify(requests)).not.toContain(privatePath);
+        expect(requests).toEqual([
+            expect.objectContaining({ scopeKind: 'workspace', entries: [
+                expect.objectContaining({ itemKey: expect.stringMatching(/^wl_[0-9a-f]{8}$/) }),
+                expect.objectContaining({ itemKey: expect.stringMatching(/^wl_[0-9a-f]{8}$/) }),
+            ] }),
+            expect.objectContaining({ scopeKind: 'group', scopeKey: expect.stringMatching(/:project:[0-9a-f]{8}$/) }),
+            expect.objectContaining({ scopeKind: 'group', scopeKey: JSON.stringify(['session-section', homeId, 'section-private-order']) }),
+        ]);
+    });
+
     it('creates personal Project memory without a Session and preserves the captured row siblings', async () => {
         const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
         const projectServerId = resolveServerProfileScopeIdForIdentifier(serverId);
@@ -647,9 +861,11 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
 
     it.each([false, true])('migrates a workspace label from its organization owner without retiring a newer label (renamed: %s)', async (renamed) => {
         const { buildSessionOrganizationLabelKey } = await import('@/sync/domains/session/organization/keys');
+        const { buildSessionListProjectHeaderViewModels } = await import('@/components/sessions/shell/sessionListProjectHeaderViewModels');
         const scope = storage.getState().settingsScope;
         if (!scope) throw new Error('Expected captured Account scope');
-        const legacyKey = `server:${scope.serverId}:workspace:/repo`;
+        // Proven ../0.2 413054f17c vector for id:m1:/first, not a reconstructed current serializer.
+        const legacyKey = 'wl_e539b108';
         const labelKey = buildSessionOrganizationLabelKey({ serverId: scope.serverId, labelKind: 'workspace', scopeKey: legacyKey });
         const recordId = storage.getState().upsertSessionOrganizationLabelOptimistic(scope.serverId, {
             labelKind: 'workspace', scopeKey: legacyKey, display: { t: 'plain', v: { label: 'My checkout' } },
@@ -657,10 +873,12 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
             archivedAt: null, createdAt: 1, updatedAt: 1,
         });
         storage.getState().commitSessionOrganizationOptimistic(recordId);
-        const ref = { id: 'label-checkout', serverId: scope.serverId, machineId: 'machine', rootPath: '/repo', createdAtMs: 1 };
+        const ref = { id: 'label-checkout', projectKey: 'label-project', serverId: scope.serverId, machineId: 'm1', rootPath: '/first', createdAtMs: 1 };
+        const organization = { key: { kind: 'project-organization' as const, serverId: scope.serverId, projectKey: ref.projectKey },
+            value: ProjectAccountOrganizationV1Schema.parse({ label: 'Project override' }), revision: 2 };
         let label: string | null = null;
         homes.answer(serverId, `POST ${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`, { select: () => ({ body:
-            createPlainProjectAccountRowListFixture({ workspaceRefs: [{ ...ref, label }] }) }) });
+            createPlainProjectAccountRowListFixture({ workspaceRefs: [{ ...ref, label }], organizations: [organization] }) }) });
         homes.answer(serverId, `POST ${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/mutate`, { select: input => {
             const request = ProjectAccountRowMutationRequestV1Schema.parse(input);
             const mutation = request.mutations[0];
@@ -683,21 +901,68 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
             labelKind: 'workspace', scopeKey: legacyKey, archived: true,
         } });
 
+        const groupKey = JSON.stringify(['project', scope.serverId, ref.projectKey]);
+        const headerInput = { listItems: [{ type: 'header' as const, headerKind: 'project' as const,
+            title: 'Pending', groupKey, workspaceKey: groupKey, projectKey: { serverId: scope.serverId, projectKey: ref.projectKey } }],
+            workspaceRefs: [{ ...ref, label }], projectOrganizations: [organization],
+            workspaceLabels: { [legacyKey]: 'My checkout' }, workspaceRefsServerId: scope.serverId,
+            legacyWorkspaceLabelDisplayStatesByKey: { [labelKey]: storage.getState().sessionOrganizationLabelsByLabelKey[labelKey]!.displayState },
+            machinesById: { m1: createMachineFixture({ id: 'm1' }) },
+        };
+        const header = buildSessionListProjectHeaderViewModels(headerInput);
+        expect(header.projectHeaderViewModelByGroupKey.get(groupKey)?.displayTitle).toBe('Project override');
+        const migrationScope = header.scopeHintByLegacyWorkspaceKey.get(legacyKey);
+        expect(migrationScope).toEqual({ serverId: scope.serverId, machineId: ref.machineId, rootPath: ref.rootPath });
+        expect(buildSessionListProjectHeaderViewModels({ ...headerInput,
+            legacyWorkspaceLabelDisplayStatesByKey: {
+                [buildSessionOrganizationLabelKey({ serverId: 'another-home', labelKind: 'workspace', scopeKey: legacyKey })]:
+                    { status: 'available', value: { label: 'My checkout' } },
+            },
+        }).scopeHintByLegacyWorkspaceKey.has(legacyKey)).toBe(false);
+        expect(buildSessionListProjectHeaderViewModels({ ...headerInput,
+            legacyWorkspaceLabelDisplayStatesByKey: { [labelKey]: { status: 'locked', reason: 'account_key_unavailable' } },
+        }).scopeHintByLegacyWorkspaceKey.has(legacyKey)).toBe(false);
+        const { buildSessionWorkspaceFallbackOrderKey } = await import('@/sync/domains/session/listing/sessionWorkspaceOrderKeys');
+        const collisionKey = buildSessionWorkspaceFallbackOrderKey([scope.serverId, 'm29645', '/repo']);
+        expect(buildSessionWorkspaceFallbackOrderKey([scope.serverId, 'm41845', '/repo'])).toBe(collisionKey);
+        const collisionLabelKey = buildSessionOrganizationLabelKey({ serverId: scope.serverId, labelKind: 'workspace', scopeKey: collisionKey });
+        expect(buildSessionListProjectHeaderViewModels({ ...headerInput,
+            workspaceRefs: [{ ...ref, id: 'collision-a', machineId: 'm29645', rootPath: '/repo' },
+                { ...ref, id: 'collision-b', machineId: 'm41845', rootPath: '/repo' }],
+            workspaceLabels: { [collisionKey]: 'My checkout' },
+            legacyWorkspaceLabelDisplayStatesByKey: { [collisionLabelKey]: { status: 'available', value: { label: 'My checkout' } } },
+            machinesById: { m29645: createMachineFixture({ id: 'm29645' }), m41845: createMachineFixture({ id: 'm41845' }) },
+        }).scopeHintByLegacyWorkspaceKey.has(collisionKey)).toBe(false);
+        const replacementKey = buildSessionWorkspaceFallbackOrderKey([scope.serverId, 'successor', '/new-home/first']);
+        const replacementLabelKey = buildSessionOrganizationLabelKey({ serverId: scope.serverId, labelKind: 'workspace', scopeKey: replacementKey });
+        const predecessor = createMachineFixture({ id: 'm1' });
+        const successor = createMachineFixture({ id: 'successor' });
+        expect(buildSessionListProjectHeaderViewModels({ ...headerInput,
+            workspaceRefs: [{ ...ref, rootPath: '~/first' }], workspaceLabels: { [replacementKey]: 'My checkout' },
+            legacyWorkspaceLabelDisplayStatesByKey: { [replacementLabelKey]: { status: 'available', value: { label: 'My checkout' } } },
+            machinesById: { m1: { ...predecessor, replacedByMachineId: successor.id,
+                metadata: { ...predecessor.metadata!, homeDir: '/old-home' } },
+                successor: { ...successor, metadata: { ...successor.metadata!, homeDir: '/new-home' } } },
+        }).scopeHintByLegacyWorkspaceKey.get(replacementKey)).toEqual({
+            serverId: scope.serverId, machineId: 'm1', rootPath: '~/first',
+        });
+        if (!migrationScope) throw new Error('Missing proven predecessor migration scope');
         const result = await sync.mutateProjectWorkspaceRef({
             kind: 'migrate_label',
-            scope: { serverId: scope.serverId, machineId: ref.machineId, rootPath: ref.rootPath },
+            scope: migrationScope,
             legacyKey, label: 'My checkout', nowMs: 2,
         }, scope);
 
         expect(result).toMatchObject({ ok: true, migrated: true, workspaceRefId: ref.id });
         expect(label).toBe('My checkout');
+        expect(organization.value.label).toBe('Project override');
         const retained = storage.getState().sessionOrganizationLabelsByLabelKey[labelKey];
         if (renamed) expect(retained?.displayState).toEqual({ status: 'available', value: { label: 'New label' } });
         else expect(retained).toBeUndefined();
         expect(homes.requestsFor('/v2/account/settings').filter(request => request.input !== null)).toEqual([]);
     });
 
-    it('lists external plugin skills through executor B while retaining supplier A provenance for read and local copy', async () => {
+    it.each([false, true])('lists external plugin skills through executor B while retaining supplier A provenance for read and local copy (%s)', async selectedOnly => {
         const { normalizePluginUiProjection } = await import('@/sync/domains/plugins/ui/projection');
         const { createPluginUiExecutionOriginCandidatePublication, unionPluginUiProjections, readPluginUiContributionSupplies } = await import('@/sync/domains/plugins/ui/projectionUnion');
         const { publishCommittedAppShellPluginUiProjection } = await import('@/components/appShell/plugins/committedPluginUiProjection');
@@ -730,7 +995,8 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
         const producer = createSkillActionExecuteV1({ store, skillRules: { ...store.organization,
             listSkills: signal => readSkillLibraryCatalog({ list: options => account.listArtifacts(options), readPluginSkills: async () => pluginSkills }, signal),
             ruleWriteContext: () => ({ nowMs: Date.now(), newId: randomUUID }) },
-            readPluginSkills: async () => pluginSkills, randomId: randomUUID, includeInSession: async () => ({ ok: true }) });
+            readPluginSkills: async () => pluginSkills, randomId: randomUUID,
+            includeInSession: async () => ({ ok: true, state: 'on', previous: 'inherit', applyTiming: { t: 'next_turn' } }) });
         const sourceMachineId = 'plugin-supplier-a';
         const machine = createMachineFixture({ id: 'plugin-executor-b', active: true, activeAt: Date.now() });
         const originFor = (machineId: string) => ({ serverIdentityId: account.serverIdentityId!,
@@ -739,10 +1005,12 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
             installationId: 'plugin-installation',
             metadata: encodePlainMachineStoredContent(machine.metadata), daemonState: encodePlainMachineStoredContent(machine.daemonState) };
         homes.answer(serverId, '/v1/machines', { body: [published] });
-        storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { [account.serverId]: [machine] } });
+        homes.answer(serverId, `/v1/machines/${machine.id}`, { body: { machine: published } });
+        const accessibleMachine = { ...machine, access: published.access };
+        storage.setState({ machines: { [machine.id]: accessibleMachine }, machineListByServerId: { [account.serverId]: [accessibleMachine] } });
         const projection = normalizePluginUiProjection(PluginProjectionV2Schema.parse({ v: 2, generation: 1,
             installedPackagesById: { [pluginId]: { id: pluginId, displayName: 'Acme Skills', version: '1.0.0', enabled: true, occurrenceId: 'acme-runtime', executionOrigin: originFor(sourceMachineId), source: { kind: 'path', locator: '/plugins/acme' } } },
-            agentsById: {}, actionsById: {},   resourcesById: {}, settingsById: {}, diagnostics: [],
+            agentsById: {}, actionsById: {}, resourcesById: {}, settingsById: {}, diagnostics: [],
             familiesById: { skills: { family: 'skills', entriesById: Object.fromEntries(pluginSkills.map((skill, index) => {
                 const id = skill.skillId.slice('plugin:'.length);
                 return [id, { id, pluginId, pluginVersion: '1.0.0', occurrenceId: 'acme-runtime', executionOrigin: originFor(sourceMachineId), definition: { id: ['check', 'review'][index], directory: `./skills/${index}` } }];
@@ -788,6 +1056,12 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
         try {
             const context = { surface: 'ui', authority: 'present_user', serverId } as const;
             const executor = createDefaultActionExecutor();
+            if (selectedOnly) {
+                expect(await executor.execute('skills.list', { skillIds: ['selected-library-record'] }, context))
+                    .toMatchObject({ ok: true, result: { items: [] } });
+                expect(homes.requestsFor('/v1/actions/skills.list')).toHaveLength(0);
+                return;
+            }
             const listed = await executor.execute('skills.list', {}, context);
             expect(listed).toMatchObject({ ok: true, result: { items: expect.arrayContaining(pluginSkills.map(skill => expect.objectContaining({ skillId: skill.skillId, provenance: skill.provenance }))) } });
             expect(homes.requestsFor('/v1/actions/skills.list')).toHaveLength(1);
@@ -949,7 +1223,7 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
 
     it('routes qualified memory reads to their Home and writes private facts through real Artifact CAS', async () => {
         const artifactId = await sync.createArtifactWithHeader({ v: 1, kind: 'memory_doc.v1', title: 'Memory' },
-            JSON.stringify({ v: 1, facts: [], archive: [] }));
+            JSON.stringify({ v: 1, index: [], topics: [] }));
         homes.answer(serverId, `/v1/artifacts/${artifactId}/access/grants`, { body: { artifactId, ownerAccountId: 'account-a', access: 'owner', grants: [] } });
         homes.answer(serverId, `/v1/public-shares?${new URLSearchParams({ subjectKind: 'artifact', subjectId: artifactId })}`, { body: { publicShares: [] } });
         const executor = createDefaultActionExecutor();
@@ -988,6 +1262,20 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
         expect(rpc.session).toHaveBeenLastCalledWith({ sessionId: 'session_1', serverId, method: 'session.model.transition', payload: { v: 1, selection: selection('provider-next', 'pc_active') } });
     });
 
+    it('preserves an opaque native model id through the real UI Action RPC and inactive metadata paths', async () => {
+        const modelId = ' native/model ';
+        const expected = { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: null, modelId };
+        seedSession(true);
+        rpc.session.mockResolvedValueOnce({ ok: true, status: 'applied', activeSelection: expected });
+        const activeResult = await executeModel(modelInput(modelId, null));
+        expect(rpc.session).toHaveBeenLastCalledWith({ sessionId: 'session_1', serverId,
+            method: 'session.model.transition', payload: { v: 1, selection: expected } });
+        expect(activeResult).toMatchObject({ ok: true, result: { modelId, activeSelection: expected } });
+        const remote = serveSession(seedSession(false));
+        expect(await executeModel(modelInput(modelId, null))).toMatchObject({ ok: true, result: { status: 'intent_updated', modelId } });
+        expect(remote.readMetadata().modelSelectionIntentV1?.selection).toEqual(expected);
+    });
+
     it('returns owner_unavailable when the active session transition owner transport rejects', async () => {
         seedSession(true);
         const sentinels = ['raw-model-transition-token-sentinel', 'raw-model-transition-url-sentinel', 'raw-model-transition-path-sentinel'];
@@ -997,6 +1285,16 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
             details: { status: 'owner_unavailable', activeSelection: null, requestedSelection: selection('provider-model', 'pc_work') } });
         for (const sentinel of sentinels) expect(JSON.stringify(result)).not.toContain(sentinel);
         expect(homes.requests.some(({ path, input }) => path.startsWith('/v2/sessions') && input !== null)).toBe(false);
+    });
+
+    it('preserves a model unarm refusal as a typed outer Action failure', async () => {
+        seedSession(true);
+        const refusal = { ok: false, status: 'owner_unavailable', activeSelection: null,
+            requestedSelection: selection('native-model'), reason: 'publisher_authority_unavailable' };
+        rpc.session.mockResolvedValueOnce(refusal);
+        expect(await createDefaultActionExecutor().execute('session.model.unarm', { sessionId: 'session_1' }, { surface: 'ui', serverId }))
+            .toMatchObject({ ok: false, errorCode: 'owner_unavailable', error: 'owner_unavailable',
+                details: { status: refusal.status, reason: refusal.reason, requestedSelection: refusal.requestedSelection } });
     });
 
     it('records inactive-session model intent through the existing structured metadata-CAS owner', async () => {
@@ -1320,6 +1618,27 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
         expect(catalog.mutations).toEqual([]);
     });
 
+
+    it('compares inline skill candidates after their registry source retires without reading a global catalog', async () => {
+        const executor = createDefaultActionExecutor();
+        const files = registryFixture.files.map(file => ({ ...file, contentKind: 'utf8' as const }));
+        if (registryItem.payload.kind !== 'skill' || registryItem.payload.skill.ref.kind !== 'gitTree') throw new Error('Expected Git skill fixture');
+        const { SkillLockV1Schema } = await import('@happier-dev/protocol/prompts/library/skills/skillLibraryItemV1');
+        const skillId = await sync.createArtifactWithHeader({ v: 1, kind: 'prompt_bundle.v2', title: 'Review',
+            bundleSchemaId: 'skills.skill_md_v1', skillLock: SkillLockV1Schema.parse({ updatePolicy: 'manual',
+                provenance: { kind: 'registry', registry: { ...registryPointer, sourceId: 'retired-template-registry',
+                    format: 'git', sourceUrl: registryItem.payload.skill.ref.repo,
+                    ref: registryItem.payload.skill.ref, importedAt: 1 } } }) },
+            JSON.stringify({ v: 1, createdAtMs: 1, updatedAtMs: 1, entries: files }));
+        const before = homes.requests.length;
+        const result = await executor.execute('skills.updates.diff', { skillId,
+            candidate: { baseFiles: files, files } }, { serverId, surface: 'ui' });
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+        if (!result.ok) throw new Error(result.error);
+        expect(SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.updates.diff'].parse(result.result).files.every(file => !file.changed)).toBe(true);
+        expect(homes.requests.slice(before).filter(request => request.path === PROMPT_LIBRARY_ROWS_ROUTE_V1
+            || request.path.startsWith('/v1/actions/registries.'))).toEqual([]);
+    });
 
     it('awaits cold registry preparation for the first Skills Updates diff without a second request', async () => {
         servePromptLibraryCatalog('updated', { publicSource: true });

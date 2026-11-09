@@ -6,7 +6,9 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Socket } from 'socket.io-client';
-import { AccountSettingsV2GetResponseSchema, V2SessionListResponseSchema, type SessionListQueryV1 } from '@happier-dev/protocol';
+import { AccountSettingsV2GetResponseSchema} from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import { V2SessionListResponseSchema} from '@happier-dev/protocol/sessions/control/contract';
+import { type SessionListQueryV1 } from '@happier-dev/protocol/sessions/listing/query';
 import { SessionOrganizationSnapshotResponseSchema } from '@happier-dev/protocol/sessions/organization/snapshot';
 import { SESSION_ORGANIZATION_SNAPSHOT_VERSION } from '@happier-dev/protocol/sessions/organization/constants';
 import { UpdateContainerSchema } from '@happier-dev/protocol/updates';
@@ -19,8 +21,10 @@ import {
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { initializeRealAppRuntimeForTests } from '@/dev/testkit/harness/realAppRuntimeHarness';
+import { createCompactSessionListFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { storage } from '@/sync/domains/state/storageStore';
+import { readSessionFullPublicationUpdatedAt } from '@/sync/domains/session/sessionRuntimeObservation';
 import { sync } from '@/sync/sync';
 import { TokenStorage, type HomeCredentialWriteRollback } from '@/auth/storage/tokenStorage';
 import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
@@ -39,6 +43,7 @@ import {
     type ActivityPersonalSessionMembership,
 } from '@/activity/source/activityPersonalSessionMembership';
 import { buildSessionListQueryKey } from './sessionListQueryKey';
+import { resolveSessionListQueryPresentation } from './sessionListIndexPresentation';
 import {
     type SessionListQueryHomeInput,
     type SessionListQuerySourceState,
@@ -62,6 +67,7 @@ const features = createRootLayoutFeaturesResponse({ features: {
 const requests: Array<Readonly<{ origin: string; cursor: string | null }>> = [];
 const personalQueryRequests: Array<string | null> = [];
 let filteredListingEnabled = false;
+let ordinaryFailure: 'http' | 'invalid' | 'network' | null = null;
 let secondaryHeadRevision = 1;
 const socketsByOrigin = new Map<string, Socket>();
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
@@ -73,15 +79,18 @@ let markSecondaryPageThreeStarted: (() => void) | null = null;
 const sessionActiveAt = Date.now();
 
 function ordinarySessionRow(origin: string, page: number) {
+    const revision = origin === HOME_B_URL && page === 1 ? secondaryHeadRevision : 1;
     const session = createSessionFixture({ id: 'session-page-' + page, active: true, activeAt: sessionActiveAt,
-        updatedAt: origin === HOME_B_URL && page === 1 ? secondaryHeadRevision : 1 });
+        updatedAt: revision, metadataVersion: revision });
     return { ...createPlainSessionCurrentProjectionRecordFixture({
         id: session.id, active: session.active, activeAt: session.activeAt, updatedAt: session.updatedAt,
+        metadataVersion: revision, metadata: { ...session.metadata, name: `Session page ${page} revision ${revision}` },
     }), viewer: createSessionOwnerViewerFixture(session) };
 }
 
 async function respond(url: Parameters<typeof fetch>[0], init?: RequestInit) {
     const target = new URL(String(url));
+    if (target.pathname === '/v2/sessions/read-batch') return null;
     if (![HOME_A_URL, HOME_B_URL, HOME_C_URL].includes(target.origin)) throw new Error('Unexpected listing Home');
     if (target.pathname === '/health' || target.pathname === '/v1/auth/ping') return Response.json({});
     if (target.pathname === '/v1/features' || target.pathname === '/v1/features/authenticated') return Response.json({
@@ -109,32 +118,37 @@ async function respond(url: Parameters<typeof fetch>[0], init?: RequestInit) {
         personalQueryRequests.push(query.cursor ?? null);
         const page = query.cursor === undefined ? 1 : 2;
         const session = createSessionFixture({ id: 'personal-page-' + page, active: true, activeAt: Date.now() });
-        return Response.json(V2SessionListResponseSchema.parse({
+        return Response.json({
             sessions: [{ ...createPlainSessionCurrentProjectionRecordFixture({
                 id: session.id, active: session.active, activeAt: session.activeAt,
             }), viewer: createSessionOwnerViewerFixture(session) }],
             nextCursor: page === 1 ? 'personal-page-2' : null, hasNext: page === 1,
             attentionNextCursor: null, attentionHasNext: false,
-        }));
+        });
     }
     const exactSession = /^\/v2\/sessions\/session-page-([1-3])$/.exec(target.pathname);
     if (exactSession) return Response.json({ session: ordinarySessionRow(target.origin, Number(exactSession[1])) });
     if (target.pathname !== '/v2/sessions') return new Response('{}', { status: 404 });
     const cursor = target.searchParams.get('cursor');
     requests.push({ origin: target.origin, cursor });
+    if (target.origin === HOME_A_URL) {
+        if (ordinaryFailure === 'http') return Response.json({ error: 'list_failed' }, { status: 500 });
+        if (ordinaryFailure === 'invalid') return Response.json({ sessions: [{ id: 'broken', metadataLayoutVersion: 1 }], nextCursor: null, hasNext: false });
+        if (ordinaryFailure === 'network') throw new TypeError('Failed to fetch');
+    }
     const page = cursor === null ? 1 : cursor === 'page-2' ? 2 : cursor === 'page-3' ? 3 : null;
     if (page === null) throw new Error('Unexpected ordinary-list cursor');
     if (target.origin === HOME_B_URL && page === 3) {
         markSecondaryPageThreeStarted?.();
         await secondaryPageThreeGate;
     }
-    return Response.json(V2SessionListResponseSchema.parse({
+    return Response.json({
         sessions: [ordinarySessionRow(target.origin, page)],
         nextCursor: page === 3 ? null : 'page-' + (page + 1),
         hasNext: page < 3,
         attentionNextCursor: null,
         attentionHasNext: false,
-    }));
+    });
 }
 
 function requestsFor(origin: string) {
@@ -180,6 +194,7 @@ describe('ordinary Session-list frontier on the Home Sync owns', () => {
         requests.length = 0;
         personalQueryRequests.length = 0;
         filteredListingEnabled = false;
+        ordinaryFailure = null;
         secondaryHeadRevision = 1;
         socketsByOrigin.clear();
         secondaryPageThreeGate = null;
@@ -213,7 +228,8 @@ describe('ordinary Session-list frontier on the Home Sync owns', () => {
             if (!write) throw new Error('Could not save the secondary test Home Account');
             secondaryCredentialWrites.push(write);
         }
-        setRuntimeFetch(respond);
+        const request = createCompactSessionListFetchBoundary(async (path, init) => await respond(path, init) ?? undefined);
+        setRuntimeFetch(request);
         await Promise.all(homes.map((home) => getServerFeaturesSnapshot({ serverId: home.id, force: true })));
         await updateEffectiveHomeViewState((current) => ({
             ...current, groups: [], activeTargetKind: 'server', activeTargetId: homes[0]!.id,
@@ -256,6 +272,38 @@ describe('ordinary Session-list frontier on the Home Sync owns', () => {
             expect(requestsFor(HOME_A_URL)).toEqual([...beforeMount, 'page-3', null]);
             expect(harness.read()?.statesByServerId[serverId]?.addresses.map((address) => address.sessionId))
                 .toEqual(['session-page-1']);
+        } finally { await harness.dispose(); }
+    });
+
+    it('publishes active ordinary failures through Sync to the mounted source and shared Retry presentation', async () => {
+        const serverId = homes[0]!.id;
+        await sync.refreshSessions({ awaitSessionListHydration: true });
+        const harness = await renderSource([{ serverId, query: QUERY, ordinaryAdapter: ORDINARY_ADAPTER }]);
+        try {
+            await harness.settle(serverId);
+            for (const failure of ['http', 'invalid'] as const) {
+                ordinaryFailure = failure;
+                const before = requestsFor(HOME_A_URL).length;
+                await act(async () => { await expect(sync.refreshSessions({ awaitSessionListHydration: true })).rejects.toBeDefined(); });
+                expect(requestsFor(HOME_A_URL).length - before).toBe(1);
+                const state = harness.read()?.statesByServerId[serverId];
+                expect(state).toMatchObject({ phase: 'error', failureReason: 'response' });
+                expect(resolveSessionListQueryPresentation({ selectedServerIds: [serverId], statesByServerId: { [serverId]: state },
+                    coverageComplete: false, retainedRowCount: 1, settlingHomeServerId: serverId,
+                })).toEqual({ kind: 'error', retainedRows: true });
+            }
+            ordinaryFailure = null;
+            await act(async () => { await sync.refreshSessions({ awaitSessionListHydration: true }); });
+            expect(harness.read()?.statesByServerId[serverId]).toMatchObject({ phase: 'ready', failureReason: null, failureCode: null });
+            // A failed list fetch does not withdraw a connected socket whose
+            // Home readiness probes still succeed.
+            ordinaryFailure = 'network';
+            await act(async () => { await expect(sync.refreshSessions({ awaitSessionListHydration: true })).rejects.toBeDefined(); });
+            const failed = harness.read()?.statesByServerId[serverId];
+            expect(failed).toMatchObject({ phase: 'error', failureReason: 'network' });
+            expect(resolveSessionListQueryPresentation({ selectedServerIds: [serverId], statesByServerId: { [serverId]: failed },
+                coverageComplete: false, retainedRowCount: 1,
+            })).toEqual({ kind: 'error', retainedRows: true });
         } finally { await harness.dispose(); }
     });
 
@@ -341,10 +389,16 @@ describe('ordinary Session-list frontier on the Home Sync owns', () => {
             expect(secondarySocket).toBeDefined();
             await act(async () => {
                 for (const listener of secondarySocket!.listeners('update')) {
-                    listener({ body: { t: 'update-session', id: 'session-page-1' } });
+                    listener({ id: 'ordinary-head-updated', seq: 2, createdAt: 2,
+                        body: { t: 'update-session', id: 'session-page-1' } });
                 }
                 await vi.waitFor(() => {
-                    expect(storage.getState().sessionListRowsByServerId[serverId]?.['session-page-1']?.updatedAt).toBe(2);
+                    // The compact list advertises the changed metadata version;
+                    // its full read must publish the updated head.
+                    const head = storage.getState().sessionListRowsByServerId[serverId]?.['session-page-1'];
+                    expect(head).toBeDefined();
+                    expect(head?.metadataVersion).toBe(2);
+                    expect(readSessionFullPublicationUpdatedAt(head!)).toBe(2);
                     expect(readConcurrentOrdinarySessionListLifecycle(serverId).fetchMoreInFlight).toBe(false);
                 });
             });

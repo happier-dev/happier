@@ -2,21 +2,24 @@ import { ACP_CATALOG_ACCOUNT_ROW_KEY_V1 } from '@happier-dev/protocol/acp/catalo
 import { serverAccountScopeKeySuffix, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { readAcpCatalog } from '@/sync/api/account/apiAcpCatalog';
 import { createScopedSnapshotLoader, type ScopedLoadTarget } from '@/sync/engine/scope/scopedSnapshotLoader';
+import { subscribeAccountCatalogInvalidation } from './accountCatalogInvalidation';
 import { applyAcpCatalogSnapshot, beginAcpCatalogLoad, getAcpCatalogSnapshot, invalidateAcpCatalogsForServer } from '@/sync/store/settings/acpCatalogSnapshot';
 
 type Target = ScopedLoadTarget & Readonly<{ scope: ServerAccountScope }>;
 const targetFor = (scope: ServerAccountScope): Target => ({ key: `acp:${serverAccountScopeKeySuffix(scope)}`, serverId: scope.serverId, scope });
 const publicationGuards = new Map<string, () => void>();
 const loader = createScopedSnapshotLoader<Target>({
+    subscribeRetainedInvalidation: subscribeAccountCatalogInvalidation,
     load: async ({ key, scope }, context) => {
         const guard = publicationGuards.get(key);
         try { guard?.(); } catch { return; }
         beginAcpCatalogLoad(scope);
         return context.readWithMaintenance<Awaited<ReturnType<typeof readAcpCatalog>>>({
             read: publication => readAcpCatalog(scope, undefined, publication),
-            publish: (projection, current) => {
+            publish: (projection, current, isAccountCurrent) => {
                 try { guard?.(); } catch { return; }
-                applyAcpCatalogSnapshot(scope, projection.catalog, current, projection.cleanup);
+                // A wake withdraws freshness, while the captured Account can still admit display data.
+                applyAcpCatalogSnapshot(scope, projection.catalog, isAccountCurrent ? isAccountCurrent() : current, projection.cleanup, !current);
             },
             getPublication: () => {
                 const snapshot = getAcpCatalogSnapshot(scope);

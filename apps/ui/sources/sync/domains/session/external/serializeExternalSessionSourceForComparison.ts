@@ -1,4 +1,4 @@
-import type { ExternalSessionsSource } from '@happier-dev/protocol';
+import type { ExternalSessionsSource } from '@happier-dev/protocol/sessions/external/sourceCatalog';
 
 function serializeBoundedJsonValue(value: unknown): string {
     if (value === null) return 'null';

@@ -22,6 +22,9 @@ import type { ActionApprovalContinuation } from '@/components/approvals/actionAp
 import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/contributions/ui';
 import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
+import { ArtifactHttpReadV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
+import { decodeBase64 } from 'privacy-kit';
+import { projectArtifactHttpRead } from '../../../../../server/sources/app/artifacts/artifactHttpRead';
 
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
 
@@ -363,14 +366,14 @@ describe('widget semantic Actions through production UI composition', () => {
 
     it('writes Board placements through both native and widget Actions and refuses a mis-bound Board', async () => {
         const executor = createDefaultActionExecutor();
-        const surface = scope({ kind: 'workBoard', boardId: 'board' });
-        const created = await executor.execute('boards.apply', { intent: { kind: 'create', board: { id: 'board', name: 'Checks' } } }, context());
+        const surface = scope({ kind: 'workBoard', boardId: '22222222-2222-4222-8222-222222222227' });
+        const created = await executor.execute('boards.apply', { intent: { kind: 'create', board: { id: '22222222-2222-4222-8222-222222222227', name: 'Checks' } } }, context());
         expect(created, JSON.stringify(created)).toMatchObject({ ok: true });
         const ref = { surface, instanceId: 'board-copy' };
-        expect(await executor.execute('boards.apply', { intent: { kind: 'widget_add', boardId: 'board', ref, instance: instance(ref.instanceId) } }, context()))
+        expect(await executor.execute('boards.apply', { intent: { kind: 'widget_add', boardId: '22222222-2222-4222-8222-222222222227', ref, instance: instance(ref.instanceId) } }, context()))
             .toMatchObject({ ok: true });
         expect(await executor.execute('widgets.item.size.set', { ref, size: 'full' }, context())).toMatchObject({ ok: true });
-        const persisted = WorkBoardV1Schema.parse(storedBody('board'));
+        const persisted = WorkBoardV1Schema.parse(storedBody('22222222-2222-4222-8222-222222222227'));
         expect(persisted.widgets).toMatchObject([{ ref, instance: instance(ref.instanceId), size: 'full' }]);
         const listed = await createDefaultActionExecutor().execute('widgets.item.list', { surface }, context());
         expect(listed).toMatchObject({ ok: true });
@@ -382,7 +385,7 @@ describe('widget semantic Actions through production UI composition', () => {
         expect(WorkBoardWidgetPlacementV1Schema.safeParse({ ...placement, authority: 'forged' }).success).toBe(false);
         expect(await executor.execute('widgets.item.rename', { ref: { ...ref, surface: scope({ kind: 'workBoard', boardId: 'missing' }) }, displayName: 'Wrong' }, context()))
             .toMatchObject({ ok: false });
-        expect(WorkBoardV1Schema.parse(storedBody('board'))).toEqual(persisted);
+        expect(WorkBoardV1Schema.parse(storedBody('22222222-2222-4222-8222-222222222227'))).toEqual(persisted);
     });
 
     it('routes a real drag admission into the Home semantic writer and refuses a mismatched source realm', async () => {
@@ -411,11 +414,29 @@ describe('widget semantic Actions through production UI composition', () => {
     });
 
     it('stores a named layout through its producer and consumes it through the strict layout schema and fresh executor', async () => {
+        // Keep the stateful HTTP persistence boundary, but emit its committed
+        // create row through the server's real read/acknowledgement producer.
+        homes.answer(serverId, 'POST /v1/artifacts', { select: async (_input, request) => {
+            const response = await homes.artifacts(serverId).handle(new URL(request.url).pathname, request.init);
+            if (!response) throw new Error('Artifact create boundary did not handle its route');
+            if (!response.ok) return { status: response.status, body: await response.json() };
+            const row = ArtifactHttpReadV1Schema.parse(await response.json());
+            return { body: projectArtifactHttpRead({ ...row, kind: row.kind ?? null,
+                header: decodeBase64(row.header), body: decodeBase64(row.body),
+                dataEncryptionKey: decodeBase64(row.dataEncryptionKey),
+                provenance: row.provenance ? decodeBase64(row.provenance) : null,
+                provenanceDataEncryptionKey: row.provenanceDataEncryptionKey ? decodeBase64(row.provenanceDataEncryptionKey) : null,
+                createdAt: new Date(row.createdAt), updatedAt: new Date(row.updatedAt),
+            }) };
+        } });
         const executor = createDefaultActionExecutor();
         const base = scope({ kind: 'corePage', pageId: 'usage', area: 'main' });
         const surface = scope({ kind: 'corePage', pageId: 'usage', area: 'main', layoutId: 'checks' });
         const created = await executor.execute('widgets.area.layout.create', { surface: base, layoutId: 'checks', name: 'Checks' }, context());
-        expect(created, JSON.stringify(created)).toMatchObject({ ok: true });
+        expect(created, JSON.stringify(created)).toMatchObject({ ok: true, result: {
+            surface, artifactId: buildWidgetSurfaceArtifactIdV1(surface),
+            revision: { headerVersion: 1, bodyVersion: 1 },
+        } });
         expect(await executor.execute('widgets.item.add', { surface, instance: instance('area-copy') }, context())).toMatchObject({ ok: true });
         const layout = WidgetAreaLayoutV1Schema.parse(storedBody(buildWidgetSurfaceArtifactIdV1(surface)));
         expect(layout).toMatchObject({ surface, items: [{ instance: instance('area-copy') }] });

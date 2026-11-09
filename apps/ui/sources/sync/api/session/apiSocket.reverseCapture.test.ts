@@ -1,13 +1,14 @@
-import { ActionFailureCauseV1Schema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { ActionFailureCauseV1Schema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import {
     UiBrowserRecordingCaptureFrameResponseV1Schema,
-    uiBrowserAutomationDispatchMethod,
     type UiBrowserRecordingCaptureFrameRequestV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/browser/recording/reverseCaptureV1';
+import {
+    uiBrowserAutomationDispatchMethod} from '@happier-dev/protocol/browser/automation/reverseDispatchV1';
 import type { Encryption } from '@/sync/encryption/encryption';
 import { createSocketIoBoundaryStub } from '@/dev/testkit/mocks/socketIo';
 import { createBrowserAutomationControlService } from '@/sync/domains/browser/automation/controlService';
@@ -126,6 +127,40 @@ describe('apiSocket inbound machine-scoped reverse RPC (RU2 G1)', () => {
                 expect(JSON.stringify(result)).not.toContain('PRIVATE_TOKEN');
             } finally { dispose(); }
         }
+    });
+
+    it.each(['plain', 'e2ee'] as const)('settles a retired automation handler through the %s codec as known unavailable', async mode => {
+        const { socket } = createSocketStub();
+        const machineId = mode === 'plain' ? 'retired-plain-machine' : 'machine-1';
+        const machineEncryption = createMachineEncryption();
+        const { storage } = await import('@/sync/domains/state/storage');
+        storage.getState().applyMachines([createMachineFixture({ id: machineId, storageMode: mode })], true);
+        await bootApiSocket({ socket, getMachineEncryption: () => mode === 'plain' ? null : machineEncryption });
+        const view = { browserSessionId: 'retired-browser', viewId: 'retired-view', sessionId: 'retired-session' };
+        const dispose = apiSocket.installBrowserAutomationReverseDispatch(machineId, view);
+        const receive = getRegisteredHandler(socket, SOCKET_RPC_EVENTS.REQUEST)!;
+        dispose();
+        const { loadBrowserDaemonRuntimeForTests } = await import('@/dev/testkit/harness/browserDaemonRuntime');
+        const { createBrowserAutomationReverseDispatcher } = await loadBrowserDaemonRuntimeForTests();
+        const content = mode === 'plain' ? { mode: 'plain' as const } : callerContent;
+        const execute = createBrowserAutomationReverseDispatcher({ getMachineClient: () => ({
+            hasConnectedClientRpcHandler: () => true,
+            callConnectedClientRpc: async (method, payload, options) => {
+                const qualifiedMethod = `${machineId}:${method}`;
+                const params = await socketRpcCodec.encodeParams(content, payload, { method: qualifiedMethod, callId });
+                options?.onIssued?.();
+                const ack = await new Promise<unknown>(resolve => receive({ method: qualifiedMethod, params }, resolve));
+                const result = await socketRpcCodec.decodeResult(content, { ok: true, result: ack }, callId);
+                expect(result).toMatchObject({ errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND });
+                return { ok: true, result };
+            },
+        }) });
+        expect(await execute({ actionId: 'browser.automation.click', input: {
+            v: 1, browserSessionId: view.browserSessionId, viewId: view.viewId, automationRequestId: 'retired-click',
+            actionKind: 'click', navigationGeneration: 0, requestedBy: 'agent', requesterRef: { kind: 'agent', id: 'agent' },
+            timeoutMs: 1000, payload: { selector: '#go' },
+        }, context: { surface: 'agent', authority: 'account_automation', defaultSessionId: view.sessionId } }))
+            .toMatchObject({ ok: false, errorCode: 'runtime_action_disabled' });
     });
 
     it('fingerprints token-only admitted reads without exposing the bearer or merging replacement tokens', async () => {

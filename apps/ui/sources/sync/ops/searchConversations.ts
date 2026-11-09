@@ -27,7 +27,8 @@ export async function readConversationSearchSources(input: Readonly<{
     const { serverId, accountId } = input.accountLifetime.scope;
     input.signal?.throwIfAborted();
     if (!input.accountLifetime.isCurrent()) return [];
-    const inputs = await loadDaemonMergedProjectionInputs({ machineId: input.machineId, serverId, accountLifetime: input.accountLifetime, signal: input.signal, sections: DAEMON_AGENT_CATALOG_SECTIONS });
+    const inputs = await loadDaemonMergedProjectionInputs({ machineId: input.machineId, serverId, accountLifetime: input.accountLifetime,
+        signal: input.signal, sections: DAEMON_AGENT_CATALOG_SECTIONS });
     input.signal?.throwIfAborted();
     const projection = inputs?.pluginProjectionV2;
     if (!projection || !input.accountLifetime.isCurrent()) return [];
@@ -118,6 +119,8 @@ export async function searchConversationsForAccount(input: Readonly<{
         const result = await searchConversations({ serverId, accountId, query,
             machines: machines.map(machine => ({ id: machine.id, online: isMachineReachable(input.accountLifetime.scope, machine) })),
             retryUnreachableMachines: input.retryUnreachableMachines,
+            // Temporary (rpc-lost-ack-1028): restores the pre-perf-r337 Machine cap so search
+            // settles while wide fan-out loses relay replies. Remove when that fix lands.
             concurrencyLimit: readMemorySearchSessionHydrationConcurrencyLimit(),
             mode: input.mode, ...input.providers, homeSessions, signal: controller.signal,
             continuation: input.continuation,

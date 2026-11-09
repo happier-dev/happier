@@ -1,4 +1,4 @@
-import type { WorkspaceSyncConflictListV1 } from '@happier-dev/protocol';
+import type { WorkspaceSyncConflictListV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 import { listWorkspaceSyncConflicts } from '@/sync/ops/workspaceSync';

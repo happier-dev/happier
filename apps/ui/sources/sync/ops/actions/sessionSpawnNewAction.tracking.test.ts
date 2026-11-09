@@ -259,7 +259,7 @@ describe('executeSessionSpawnNewAction tracking', () => {
             const draftId = 'd493e639-d8be-46d4-b52a-a196d433be5e';
             const values = new Map<string, string>();
             const repository = createSessionDraftRepository({ storage: {
-                getString: key => values.get(key), set: (key, value) => { values.set(key, value); }, delete: key => { values.delete(key); },
+                getString: key => values.get(key), getAllKeys: () => [...values.keys()], set: (key, value) => { values.set(key, value); }, delete: key => { values.delete(key); },
             }, cipher: createSessionDraftCipher({
                 accountMode: 'plain', accountCryptoMaterial: null, getSessionContext: () => null,
                 randomBytes: length => new Uint8Array(length),

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { AgentModelOptionOverrideRuleSchema } from '@happier-dev/protocol';
+import { AgentModelOptionOverrideRuleSchema } from '@happier-dev/protocol/models/descriptor';
 
 import { parseSessionModesState, SessionOptionOverrideRuleSchema } from './schema';
 

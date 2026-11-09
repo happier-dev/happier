@@ -1,9 +1,10 @@
 import type {
-    ReviewCommentDraftMessageV1,
+    ReviewCommentDraftMessageV1} from '@happier-dev/protocol/messages/structured/reviewCommentsV1';
+import type {
     WorkspaceAnchorSnapshotV1,
     WorkspaceAnchorSourceV1,
     WorkspaceAnchorV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/workspace/anchors/v1';
 
 /**
  * The review-comment draft vocabulary is owned by `@happier-dev/protocol`

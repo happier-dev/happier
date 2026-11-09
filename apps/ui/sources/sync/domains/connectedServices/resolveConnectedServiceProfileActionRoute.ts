@@ -7,7 +7,7 @@ import {
 } from './connectedAccountSettingsRoute';
 
 export type ConnectedServiceProfileActionRoute =
-    | ReturnType<typeof buildConnectedAccountSettingsRoute>
+    | NonNullable<ReturnType<typeof buildConnectedAccountSettingsRoute>>
     | Readonly<{
         pathname: '/(app)/settings/connected-services';
     }>;
@@ -28,7 +28,7 @@ export function resolveConnectedServiceProfileActionRoute(
         { serviceId: params.serviceId, profileId: params.profileId },
         entries,
     );
-    return resolved
+    return (resolved
         ? buildConnectedAccountSettingsRoute(resolved.service, resolved.focus, { add: resolved.focus === null })
-        : { pathname: '/(app)/settings/connected-services' };
+        : null) ?? { pathname: '/(app)/settings/connected-services' };
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { DaemonPluginReactNativeBundleCacheIdentityV1Schema } from '@happier-dev/protocol';
+import { DaemonPluginReactNativeBundleCacheIdentityV1Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import {
     PluginUiArtifactAdoptionOwner,

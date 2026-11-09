@@ -205,23 +205,34 @@ export function loadSessionActionDrafts(scope?: ServerAccountScope | null): Sess
     }
 }
 
-export function saveSessionActionDrafts(
-    drafts: SessionActionDraftsByAddressKey,
+/** Only the one-way importer retires source entries; this is never an active draft writer. */
+export function removeImportedSessionActionDrafts(
+    imported: readonly z.infer<typeof SessionActionDraftSchema>[],
     scope: ServerAccountScope,
 ): void {
     const mmkv = getPersistenceStorage();
     const key = sessionActionDraftsKey(scope);
-    const scopedDrafts = Object.fromEntries(Object.entries(drafts).flatMap(([key, entries]) => {
-        const exactEntries = entries.filter((draft) => (
-            draft.address.serverId === scope.serverId && draft.accountId === scope.accountId
-        ));
-        return exactEntries.length > 0 ? [[key, exactEntries] as const] : [];
-    }));
-    if (Object.keys(scopedDrafts).length === 0) {
-        mmkv.delete(key);
-        return;
+    const raw = mmkv.getString(key);
+    if (!raw) return;
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return;
+    const remaining: Record<string, unknown> = {};
+    for (const [sourceKey, entries] of Object.entries(parsed)) {
+        if (!Array.isArray(entries)) { remaining[sourceKey] = entries; continue; }
+        const retained = entries.filter((entry: unknown) => {
+            const addressed = StoredSessionActionDraftSchema.safeParse(entry);
+            if (addressed.success) return !imported.some((draft) => draft.id === addressed.data.id
+                && draft.address.sessionId === addressed.data.address.sessionId
+                && draft.address.serverId === addressed.data.address.serverId && draft.accountId === addressed.data.accountId);
+            if (entry && typeof entry === 'object' && ('address' in entry || 'accountId' in entry)) return true;
+            const legacy = StoredLegacySessionActionDraftSchema.safeParse(entry);
+            return !legacy.success || !imported.some((draft) => draft.id === legacy.data.id
+                && draft.address.sessionId === legacy.data.sessionId && legacy.data.sessionId === sourceKey.trim());
+        });
+        if (retained.length) remaining[sourceKey] = retained;
     }
-    mmkv.set(key, JSON.stringify(scopedDrafts));
+    if (Object.keys(remaining).length) mmkv.set(key, JSON.stringify(remaining));
+    else mmkv.delete(key);
 }
 
 export function loadSessionPermissionModes(scope?: ServerAccountScope | null): Record<string, PermissionMode> {

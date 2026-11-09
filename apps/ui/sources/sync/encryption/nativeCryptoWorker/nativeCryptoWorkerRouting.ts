@@ -152,6 +152,9 @@ function whenAborted(signal: AbortSignal | undefined): Promise<void> {
     });
 }
 
+/** The standard long-task threshold: normal timer jitter stays below it, a blocked thread does not. */
+const JS_LONG_TASK_MS = 50;
+
 async function runWithDispatchLifetime<T>(fn: (signal?: AbortSignal) => Promise<T>, timeoutMs: number | null, signal?: AbortSignal): Promise<T> {
     let timeout: ReturnType<typeof setTimeout> | undefined;
     const controller = new AbortController();
@@ -164,7 +167,17 @@ async function runWithDispatchLifetime<T>(fn: (signal?: AbortSignal) => Promise<
         return await Promise.race([
             pending,
             new Promise<never>((_, reject) => {
-                timeout = setTimeout(() => reject(new Error('native crypto worker timed out')), timeoutMs);
+                const arm = () => {
+                    const deadline = defaultNow() + timeoutMs;
+                    timeout = setTimeout(() => {
+                        // This bound detects a hung worker, but it runs on the thread that delivers the
+                        // worker's reply. Firing late proves that thread was blocked at the deadline, so
+                        // the reply may be queued behind this callback: only an on-time firing convicts.
+                        if (defaultNow() - deadline > JS_LONG_TASK_MS) arm();
+                        else reject(new Error('native crypto worker timed out'));
+                    }, timeoutMs);
+                };
+                arm();
             }),
         ]);
     } finally {

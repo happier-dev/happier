@@ -6,9 +6,8 @@ import type {
     PeerMediationObservabilityFlowSummary,
     PeerMediationObservabilityScopeState,
     PeerMediationObservabilityUiStore,
-    PeerMediationPreviewProxyDiagnostics,
 } from './types';
-import type { PeerMediationObservabilityScopeV1 } from '@happier-dev/protocol';
+import type { PeerMediationObservabilityScopeV1 } from '@happier-dev/protocol/machines/peer/mediation/observability/v1';
 
 /**
  * Relative-URL parse base for the shared redactor. The daemon binds `loopback.invalid` and the
@@ -182,37 +181,6 @@ export function selectPeerMediationObservabilityWebSocketMetadata(
     }>,
 ): Record<string, unknown> | null {
     return selectFlowSummary(state, input)?.websocket ?? null;
-}
-
-export function selectPeerMediationPreviewProxyDiagnostics(
-    state: PeerMediationObservabilityUiStore,
-    input: Readonly<{
-        scope: PeerMediationObservabilityScopeV1;
-        previewId: string;
-    }>,
-): PeerMediationPreviewProxyDiagnostics {
-    const scopeState = selectPeerMediationObservabilityScopeState(state, input.scope);
-    if (scopeState.status === 'idle' || scopeState.status === 'unavailable') {
-        return {
-            status: 'unavailable',
-            reasonCode: scopeState.unavailableReasonCode ?? 'observability_unavailable',
-        };
-    }
-    const flows = selectPeerMediationObservabilityFlowSummaries(state, input.scope).filter((flow) => (
-        flow.flow.productRef?.kind === 'preview'
-        && flow.flow.productRef.id === input.previewId
-    ));
-    return {
-        status: scopeState.stale ? 'stale' : 'available',
-        attribution: 'traffic_for_preview_all_views',
-        activeFlowCount: flows.filter((flow) => (
-            flow.lifecycleState !== 'closed'
-            && flow.lifecycleState !== 'aborted'
-            && flow.lifecycleState !== 'errored'
-            && flow.lifecycleState !== 'denied'
-        )).length,
-        flows,
-    };
 }
 
 export function selectPeerMediationObservabilityFlowByRef(

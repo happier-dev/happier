@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ReviewCommentV1 } from '@happier-dev/protocol';
+import type { ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
 
 import {
     applyReviewCommentList,

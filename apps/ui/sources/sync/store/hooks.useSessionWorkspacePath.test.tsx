@@ -212,6 +212,16 @@ describe('useSessionWorkspacePath', () => {
                 expected: '/Users/alice/repo',
             },
             {
+                name: 'managed Session retaining its physical workspace target',
+                sessionId: 'session-1',
+                session: buildSession({ metadata: {
+                    host: 'localhost', machineId: 'machine-1', path: '/Users/alice/private/chat',
+                    homeDir: '/Users/alice', sessionDirectoryV1: { v: 1, kind: 'managed' },
+                } }),
+                register: null,
+                expected: '/Users/alice/private/chat',
+            },
+            {
                 name: 'session with a path but no machine id (host-scoped project key)',
                 sessionId: 'session-1',
                 session: buildSession({ metadata: { host: 'localhost', path: '/Users/alice/repo', homeDir: '/Users/alice' } } as never),

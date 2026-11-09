@@ -7,7 +7,8 @@ import { ServerScopedTransportUnavailableError } from '@/sync/runtime/homeCarrie
 import {
     acquireEligibleHomeCarrier,
 } from '@/sync/runtime/homeCarrierPolicy';
-import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol';
+import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol/auth/accountDirectory';
+import { getSavedHomeConnectionSnapshot } from '@/sync/domains/server/serverProfiles';
 
 export { ServerScopedTransportUnavailableError } from '@/sync/runtime/homeCarrier';
 
@@ -15,6 +16,7 @@ type ServerTransportProfile = Readonly<{
     serverUrl: string;
     canonicalServerUrl?: string | null;
     homeConnectionDescriptor?: HomeConnectionDescriptorV1;
+    serverIdentityId?: string | null;
 }>;
 
 export type ResolvedServerScopedTransport = Readonly<{
@@ -82,11 +84,11 @@ export async function resolveServerScopedTransport(params: Readonly<{
     let leaseId: string | undefined;
     let homeCarrier: HomeCarrier | undefined;
     let releaseCarrier = async (): Promise<void> => {};
-    const descriptor = params.profile.homeConnectionDescriptor;
+    const saved = getSavedHomeConnectionSnapshot({ canonicalServerUrl, serverIdentityId: params.profile.serverIdentityId });
+    const descriptor = params.profile.homeConnectionDescriptor ?? saved?.homeConnectionDescriptor;
 
     if (descriptor) {
         const acquired = await acquireEligibleHomeCarrier({
-            mode: 'initial_selection',
             descriptor,
             verification: { kind: 'authenticated', token: params.credentials.token },
             credentials: params.credentials,
@@ -109,6 +111,8 @@ export async function resolveServerScopedTransport(params: Readonly<{
             leaseId = acquired.lease.leaseId;
             releaseCarrier = acquired.release;
         }
+    } else {
+        runtimeOrigin = saved?.runtimeOrigin ?? canonicalServerUrl;
     }
 
     return {

@@ -77,12 +77,12 @@ describe('Session Board Action adapter', () => {
                 if (query.get('kind') === 'layout.v1') throw new Error('Disabled Board must not be read');
                 return new Response(JSON.stringify({ record: { id: 'item-row', address: {
                     owner: 'host', namespace: 'surface', kind: 'item.v1', localId: 'note',
-                }, revision, creator: { kind: 'session', sessionId: session.sessionId }, content: { t: 'plain', v: { ...item, destination: 'transcript' } },
+                }, revision, content: { t: 'plain', v: { ...item, destination: 'transcript' } },
                 createdAt: '2026-09-05T00:00:00.000Z', updatedAt: '2026-09-05T00:00:00.000Z' } }));
             } });
         await expect(execute({ actionId: 'session.board.get', context: {}, input: {
             sessionId: session.sessionId, itemIds: ['note'],
-        } })).resolves.toMatchObject({ layout: null, items: [{ itemId: 'note', creator: { kind: 'session', sessionId: session.sessionId }, item: { destination: 'transcript' } }] });
+        } })).resolves.toMatchObject({ layout: null, items: [{ itemId: 'note', item: { destination: 'transcript' } }] });
     });
     it('creates and removes a transcript visual without reading or writing Board layout', async () => {
         const writes: unknown[] = [];
@@ -501,10 +501,7 @@ describe('Session Board Action adapter', () => {
                     intent: { ...input, destination: 'board', ...(defaultWidget ? { placement: { ...input.placement, width: 'medium' } } : {}),
                     item: kind === 'html-off' ? { ...authoredItem, source: {
                         ...authoredItem.source, requestedCapabilities: { network: 'none', networkOrigins: [] },
-                    } } : defaultWidget ? { ...authoredItem, height: { mode: 'fixed', size: 'regular' } } : authoredItem, reviewedVisual: {
-                        recordRevision: null, creator: { kind: 'unknown' }, previousExecutableFingerprint: null,
-                        previousCapabilitiesDigest: null, networkSetting: kind === 'html-off' ? 'off' : null,
-                    } },
+                    } } : defaultWidget ? { ...authoredItem, height: { mode: 'fixed', size: 'regular' } } : authoredItem },
                 },
             },
         });
@@ -525,7 +522,7 @@ describe('Session Board Action adapter', () => {
             const changedRecovery = { ...recovery, intent: { ...issuedIntent, item: changedItem }, mutationRequest,
                 requestBody: JSON.stringify(mutationRequest) };
             const details = SessionBoardOutcomeUnknownDetailsV1Schema.parse({ recovery: changedRecovery });
-            expect(parseSessionBoardActionExecuteOutcomeV1('session.board.item.upsert', input,
+            expect(parseSessionBoardActionExecuteOutcomeV1('session.board.item.upsert', issuedIntent,
                 { ...result, details }, { expectedServerId: scope.serverId, expectedSessionId: session.sessionId })).toEqual({ success: false });
         };
         rejectChangedItem({ ...issuedItem, title: 'Changed after dispatch' });
@@ -641,7 +638,7 @@ describe('Session Board Action adapter', () => {
             capabilities: { readTranscript: true, editSessionRecords: true },
             request: async (_path, init) => {
                 requests += 1;
-                if (init?.method !== 'PUT') throw new Error('network unavailable');
+                if (init?.method !== 'PUT') throw new TypeError('Failed to fetch');
                 throw new Error('mutation must not be reached');
             },
         });
@@ -829,7 +826,7 @@ describe('Session Board Action adapter', () => {
         })).resolves.toEqual({
             v: 1, serverId: scope.serverId, sessionId: session.sessionId,
             capabilities: { readTranscript: true, editSessionRecords: false }, layout: null,
-            items: [{ itemId: 'note', revision, title: item.title, sourceKind: 'declarative', creator: { kind: 'unknown' }, item }],
+            items: [{ itemId: 'note', revision, title: item.title, sourceKind: 'declarative', item }],
             incomplete: true, page: { cursor: null, hasNext: false },
         });
     });

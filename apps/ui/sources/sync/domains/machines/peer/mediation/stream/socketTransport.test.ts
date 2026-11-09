@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { sealMachineLiveStreamEnvelopeV1, type MachineLiveStreamRelayEnvelopeV1 } from '@happier-dev/protocol';
+import { sealMachineLiveStreamEnvelopeV1} from '@happier-dev/protocol/machines/peer/mediation/stream/payloadV1';
+import { type MachineLiveStreamRelayEnvelopeV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 import { MachineEncryption } from '@/sync/encryption/machineEncryption';
 import { AES256Encryption } from '@/sync/encryption/encryptor';
 import { EncryptionCache } from '@/sync/encryption/encryptionCache';

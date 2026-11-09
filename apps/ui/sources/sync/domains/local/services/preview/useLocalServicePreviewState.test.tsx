@@ -1,6 +1,6 @@
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { DaemonLocalServicePreviewSnapshotResponseV1, LocalServicePreviewResourceV1 } from '@happier-dev/protocol';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { DaemonLocalServicePreviewSnapshotResponseV1, LocalServicePreviewResourceV1 } from '@happier-dev/protocol/local/services/preview/v1';
 
 import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 
@@ -13,6 +13,7 @@ import type { LocalServicePreviewSnapshotClient } from './useLocalServicePreview
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import { setActiveServer } from '@/sync/domains/server/serverRuntime';
 import { createAccountTokenForTests, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -75,6 +76,30 @@ function createPreviewResource(overrides: Partial<LocalServicePreviewResourceV1>
 }
 
 describe('useLocalServicePreviewState', () => {
+    let home: Awaited<ReturnType<typeof upsertServerProfile>>;
+    let token: string;
+    beforeEach(async () => {
+        home = await upsertServerProfile({ serverUrl: 'https://preview-background.example.test' });
+        token = createAccountTokenForTests('preview-account', { currentAccount: true });
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(async (serverUrl) => (
+            serverUrl === home.serverUrl ? { token } : null
+        ));
+        setRuntimeFetch(async (input, init) => {
+            const url = new URL(String(input));
+            if (url.origin !== home.serverUrl) throw new Error('Unexpected preview Home');
+            if (url.pathname === '/health') return Response.json({ status: 'ok' });
+            if (url.pathname === '/v1/auth/ping') return Response.json({});
+            if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+            if (url.pathname === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+            const machine = { ...createPlainMachineRowFixture({ id: 'machine_1', accountId: 'preview-account' }), runnerContentKeyBinding: null };
+            if (url.pathname === '/v1/machines') return Response.json([machine]);
+            if (url.pathname === '/v1/machines/read-batch' && init?.method === 'POST') return createMachineReadBatchResponseFixture(init.body,
+                id => id === machine.id ? machine : null);
+            if (url.pathname === '/v1/machines/machine_1') return Response.json({ machine });
+            return Response.json({}, { status: 404 });
+        });
+        await setActiveServer({ serverId: home.id });
+    });
     afterEach(async () => {
         vi.useRealTimers();
         resetLocalServicePreviewStoreForTests();
@@ -114,7 +139,9 @@ describe('useLocalServicePreviewState', () => {
 
         await flushHookEffects({ cycles: 2, turns: 2 });
 
-        expect(snapshotClient).toHaveBeenCalledWith(expect.objectContaining({ machineId: 'machine_1' }));
+        await waitForHomeGovernance(() => expect(snapshotClient).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'machine_1', serverId: home.id, accountId: 'preview-account',
+        })));
         expect(selectLocalServicePreviewRows(hook.getCurrent())).toEqual([
             expect.objectContaining({
                 previewId: 'preview_1',
@@ -126,25 +153,6 @@ describe('useLocalServicePreviewState', () => {
     });
 
     it('routes the default snapshot request through daemon machine rpc', async () => {
-        const home = await upsertServerProfile({ serverUrl: 'https://preview-background.example.test' });
-        const token = createAccountTokenForTests('preview-account', { currentAccount: true });
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(async (serverUrl) => (
-            serverUrl === home.serverUrl ? { token } : null
-        ));
-        setRuntimeFetch(async (input, init) => {
-            const url = new URL(String(input));
-            if (url.origin !== home.serverUrl) throw new Error(`Unexpected preview Home: ${url.origin}`);
-            if (url.pathname === '/health') return Response.json({ status: 'ok' });
-            if (url.pathname === '/v1/auth/ping') return Response.json({});
-            if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
-            if (url.pathname === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
-            const machine = { ...createPlainMachineRowFixture({ id: 'machine_1', accountId: 'preview-account' }), runnerContentKeyBinding: null };
-            if (url.pathname === '/v1/machines') return Response.json([machine]);
-            if (url.pathname === '/v1/machines/read-batch' && init?.method === 'POST') return createMachineReadBatchResponseFixture(init.body,
-                id => id === machine.id ? machine : null);
-            if (url.pathname === '/v1/machines/machine_1') return Response.json({ machine });
-            return Response.json({}, { status: 404 });
-        });
         daemonBoundary.response = {
             protocolVersion: 1,
             snapshot: {
@@ -190,6 +198,7 @@ describe('useLocalServicePreviewState', () => {
 
         await flushHookEffects({ cycles: 2, turns: 2 });
 
+        await waitForHomeGovernance(() => expect(hook.getCurrent().refreshState).toBe('error'));
         expect(selectLocalServicePreviewRows(hook.getCurrent())).toEqual([]);
         expect(hook.getCurrent().refreshState).toBe('error');
     });
@@ -226,11 +235,11 @@ describe('useLocalServicePreviewState', () => {
         }));
 
         await flushHookEffects({ cycles: 2, turns: 2 });
-        expect(snapshotClient).toHaveBeenCalledTimes(1);
+        await waitForHomeGovernance(() => expect(snapshotClient).toHaveBeenCalledTimes(1));
         expect(selectLocalServicePreviewRows(hook.getCurrent())).toHaveLength(1);
 
         await act(async () => {
-            invalidateLocalServicePreviewStore({ machineId: 'machine_1' });
+            invalidateLocalServicePreviewStore({ machineId: 'machine_1', serverId: home.id, accountId: 'preview-account' });
         });
         await flushHookEffects({ cycles: 2, turns: 2 });
 

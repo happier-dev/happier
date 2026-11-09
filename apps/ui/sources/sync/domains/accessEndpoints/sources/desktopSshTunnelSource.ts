@@ -1,4 +1,4 @@
-import type { SshTunnelSnapshot, SshTunnelStatus } from '@happier-dev/protocol';
+import type { SshTunnelSnapshot, SshTunnelStatus } from '@happier-dev/protocol/ssh/tunnels';
 
 import type { AccessEndpoint, AccessEndpointStatus } from '../model';
 import { createScopedAccessEndpointRemediationAction } from '../remediation';

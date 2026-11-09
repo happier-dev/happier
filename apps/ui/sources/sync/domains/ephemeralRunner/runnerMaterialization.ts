@@ -1,4 +1,5 @@
-import { createStoredReadSchema, projectSessionDisplayV1, type SessionDisplayProjectionV1 } from '@happier-dev/protocol';
+import { createStoredReadSchema} from '@happier-dev/protocol/json/storedReadSchema';
+import { projectSessionDisplayV1, type SessionDisplayProjectionV1 } from '@happier-dev/protocol/sessions';
 import {
     RunnerActivationBindingV1Schema,
     type RunnerActivationBindingV1,

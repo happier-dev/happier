@@ -640,7 +640,7 @@ describe('execution-origin Machine publication', () => {
                 const connection = ctx.connect(inputsFor(), listener);
                 return { pluginId, machineId, listener, inputsFor, connection };
             });
-            return { ...ctx, second, plugins };
+            return { ...ctx, second, plugins, sourceFor };
         }
 
         it('does not republish when a parent rebuilds semantically unchanged inputs', () => {
@@ -661,6 +661,47 @@ describe('execution-origin Machine publication', () => {
             for (const plugin of plugins) {
                 expect(plugin.listener).toHaveBeenCalledTimes(plugin.machineId === second.id ? 1 : 0);
             }
+        });
+
+        it('keeps demands on other Machines quiet while one Machine opens newer content', () => {
+            const { plugins, home, machine, second } = manyPlugins(20);
+            const elect = vi.spyOn(origins, 'resolvePluginMachineExecutionOriginState');
+            const onFirst = plugins.filter(plugin => plugin.machineId === machine.id);
+            const before = onFirst.map(plugin => plugin.connection.getSnapshot());
+            const version = (second.daemonStateVersion ?? 0) + 1;
+            const keyBasis = { metadataVersion: second.metadataVersion ?? 0, daemonStateVersion: version };
+            for (const plugin of plugins) plugin.listener.mockClear();
+            // Machine B announces newer daemon content, then opens it.
+            storage.setState({ machineListByServerId: { [home.id]: [machine, { ...second, keyBasis }] } });
+            storage.setState({ machineListByServerId: { [home.id]: [machine, { ...second, daemonStateVersion: version, keyBasis }] } });
+            const wakes = onFirst.reduce((sum, plugin) => sum + plugin.listener.mock.calls.length, 0);
+            const elections = elect.mock.calls.filter(([input]) => input.pluginId && onFirst.some(plugin => plugin.pluginId === input.pluginId)).length;
+            expect({ wakes, elections }).toEqual({ wakes: 0, elections: 0 });
+            onFirst.forEach((plugin, index) => expect(plugin.connection.getSnapshot()).toBe(before[index]));
+            // Demands supplied by B still follow its content.
+            expect(plugins.filter(plugin => plugin.machineId === second.id)
+                .every(plugin => plugin.connection.getSnapshot().selection?.state.kind === 'selected')).toBe(true);
+        });
+
+        it('does not wake a demand selected elsewhere while another of its Machines opens newer content', () => {
+            const { plugins, home, machine, second, sourceFor } = manyPlugins(10);
+            // Every plugin is supplied by both Machines (the busy Account's shape).
+            for (const plugin of plugins) {
+                plugin.connection.updateInputs(plugin.inputsFor([sourceFor(plugin.pluginId, machine.id), sourceFor(plugin.pluginId, second.id)]));
+            }
+            const onFirst = plugins.filter(plugin => {
+                const state = plugin.connection.getSnapshot().selection?.state;
+                return state?.kind === 'selected' && originIdentity.getPluginMachineExecutionOriginRef(state.origin).machineId === machine.id;
+            });
+            expect(onFirst.length).toBeGreaterThan(0);
+            const before = onFirst.map(plugin => plugin.connection.getSnapshot().selection);
+            const version = (second.daemonStateVersion ?? 0) + 1;
+            const keyBasis = { metadataVersion: second.metadataVersion ?? 0, daemonStateVersion: version };
+            for (const plugin of plugins) plugin.listener.mockClear();
+            storage.setState({ machineListByServerId: { [home.id]: [machine, { ...second, keyBasis }] } });
+            storage.setState({ machineListByServerId: { [home.id]: [machine, { ...second, daemonStateVersion: version, keyBasis }] } });
+            expect(onFirst.reduce((sum, plugin) => sum + plugin.listener.mock.calls.length, 0)).toBe(0);
+            onFirst.forEach((plugin, index) => expect(plugin.connection.getSnapshot().selection).toBe(before[index]));
         });
 
         it('publishes each plugin once per real input arrival and never for an equal re-arrival', () => {

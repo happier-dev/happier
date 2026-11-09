@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { encodeBase64 } from '@happier-dev/protocol';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createRpcCallError, RpcError } from '@happier-dev/protocol/rpcErrors';
 import { storage } from '@/sync/domains/state/storage';
@@ -655,6 +655,7 @@ describe('machine direct sessions ops server-scoped routing', () => {
             ok: false,
             errorCode: 'agent_unavailable',
             error: 'background_follow_not_supported',
+            retryable: false,
         });
 
         expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(1);

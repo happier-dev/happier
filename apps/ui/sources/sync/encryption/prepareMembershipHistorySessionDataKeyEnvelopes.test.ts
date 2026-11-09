@@ -3,14 +3,17 @@ import tweetnacl from 'tweetnacl';
 import type {
     MembershipSessionDataKeyEnvelopePageV1,
     PatchMembershipSessionDataKeyEnvelopesV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/encryption/membershipSessionDataKeyEnvelopes';
 import {
-    encodeMembershipSessionDataKeyEnvelopeCursorV1,
-    SESSION_DATA_KEY_ENVELOPE_PAGE_MAX_ENTRIES_V1,
+    encodeMembershipSessionDataKeyEnvelopeCursorV1} from '@happier-dev/protocol/sessions/encryption/membershipSessionDataKeyEnvelopes';
+import {
+    SESSION_DATA_KEY_ENVELOPE_PAGE_MAX_ENTRIES_V1} from '@happier-dev/protocol/sessions/encryption/sessionDataKeyEnvelopes';
+import {
     openEncryptedDataKeyEnvelopeV1,
-    sealEncryptedDataKeyEnvelopeV1,
+    sealEncryptedDataKeyEnvelopeV1} from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import {
     signAccountContentKeyBindingV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/crypto/accountContentKeyBindingV1';
 
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import { encodeHex } from '@/encryption/hex';
@@ -21,10 +24,10 @@ import {
     type MembershipSessionDataKeyEnvelopeTransport,
 } from './prepareMembershipHistorySessionDataKeyEnvelopes';
 import { Encryption } from './encryption';
+import { AES256Encryption } from './encryptor';
 import { createFakeCryptoWorker } from './nativeCryptoWorker/fakeCryptoWorker';
 import { SESSION_DATA_KEY_SEAL_CHUNK_SIZE } from './directShareEncryption';
 import { DEFAULT_CRYPTO_BATCH_YIELD_CHUNK_SIZE } from './cryptoBatchYield';
-import { AES256Encryption } from './encryptor';
 
 const SERVER_ID = 'home-1';
 const RECIPIENT_ACCOUNT_ID = 'account-recipient';
@@ -45,9 +48,6 @@ function dataKeyFor(seed: number): Uint8Array {
     return new Uint8Array(32).fill(seed);
 }
 
-/** The caller's own canonical Session envelope, exactly as the historical GET returns it. */
-function callerEnvelopeFor(seed: number): string {
-    return encodeBase64(sealEncryptedDataKeyEnvelopeV1({
 /**
  * Each Session's own strict layout-1 shared metadata sealed with its key, which is what proves to
  * the pass that the key the Home names is that Session's. `dataKeyFor` wraps at one byte, so one
@@ -61,6 +61,9 @@ beforeAll(async () => {
     }
 });
 
+/** The caller's own canonical Session envelope, exactly as the historical GET returns it. */
+function callerEnvelopeFor(seed: number): string {
+    return encodeBase64(sealEncryptedDataKeyEnvelopeV1({
         dataKey: dataKeyFor(seed),
         recipientPublicKey: callerContentKeyPair.publicKey,
         randomBytes: (length) => tweetnacl.randomBytes(length),
@@ -98,11 +101,11 @@ function readyPage(params: Readonly<{
         items: params.sessionSeeds.map((seed) => ({
             sessionId: `session-${seed}`,
             callerDataKeyEnvelope: callerEnvelopeFor(seed),
+            metadata: boundMetadataByKeyByte.get(seed & 0xff)!,
+            metadataLayoutVersion: 1,
         })),
         exceptions: params.exceptions === undefined ? {
             callerVisibleNonTransferableSessionCount: 0,
-            metadata: boundMetadataByKeyByte.get(seed & 0xff)!,
-            metadataLayoutVersion: 1,
             callerEnvelopeRepairRequiredCount: 0,
         } : params.exceptions,
         nextCursor: params.nextCursor ?? null,

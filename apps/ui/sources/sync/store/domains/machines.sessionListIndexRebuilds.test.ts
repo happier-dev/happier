@@ -4,6 +4,7 @@ import { createStore } from 'zustand/vanilla';
 import { createPartialServerProfilesModuleMock, type ServerProfileMockProfile } from '@/dev/testkit/mocks/serverProfiles';
 import { buildMachineDisplayRenderableFromMachine } from '../../domains/machines/machineDisplayRenderable';
 import { resolveMachineSessionListIndexImpact as resolveMachineSessionIndexImpactFromHelper } from './machineSessionListIndexImpact';
+import { resolveMachineSessionListIndexImpact as resolveMachineSessionIndexImpactFromDomain } from './machines';
 import type { MachineMetadata } from '../../domains/state/storageTypes';
 import type { StorageState } from '../types';
 import type { createMachinesDomain as createMachinesDomainFactory } from './machines';
@@ -117,9 +118,8 @@ async function seedActiveServerSessionListIndex(initialState: any) {
 }
 
 describe('machines domain: sessionListIndex rebuild gating', () => {
-    it('exports the machine session list index impact resolver from the domain entrypoint', async () => {
-        const { resolveMachineSessionListIndexImpact } = await import('./machines');
-        expect(resolveMachineSessionListIndexImpact).toBe(resolveMachineSessionIndexImpactFromHelper);
+    it('exports the machine session list index impact resolver from the domain entrypoint', () => {
+        expect(resolveMachineSessionIndexImpactFromDomain).toBe(resolveMachineSessionIndexImpactFromHelper);
     });
 
     it('rebuilds project-grouped session indexes when a referenced machine becomes replaced', () => {

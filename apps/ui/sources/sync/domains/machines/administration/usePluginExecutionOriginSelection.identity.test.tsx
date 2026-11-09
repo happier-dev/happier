@@ -2,11 +2,17 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vites
 import { act } from 'react-test-renderer';
 import * as React from 'react';
 
-import { getPluginMachineExecutionOriginRef, type PluginMachineMaterializationV1 } from '@happier-dev/protocol';
+import { getPluginMachineExecutionOriginRef} from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { type PluginMachineMaterializationV1 } from '@happier-dev/protocol/plugins/availability/v1';
+import { createPackageAssetArchiveV1, normalizePluginReleaseFactsV1, PluginAccountAvailabilityIntentReadResponseV1Schema } from '@happier-dev/protocol/plugins/availability';
 
-import { createMachineFixture, renderHook, standardCleanup } from '@/dev/testkit';
+import { createMachineFixture, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
+import { useAppPaneScope, type AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { countStoreNotifications } from '@/dev/testkit/performance/counts';
 import { installSessionOpsNetworkBoundary, type SessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
+import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
+import { createRegistryNpmPackageFixture } from '@/dev/testkit/fixtures/registryPluginCatalog';
 import { publishAppliedActiveServerSnapshot, publishAppliedActiveServerRuntimeAvailability } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { useAllProfileMachineInventorySnapshots } from '@/sync/domains/machines/useMachineInventorySnapshots';
 import {
@@ -19,7 +25,6 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { adoptHomeProfile, setActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { storage } from '@/sync/domains/state/storageStore';
 import { useIsMachineListSettled, useMachineListStatusForServer } from '@/sync/store/hooks';
-import { readMachineStatusNextRefreshAtMs } from '@/utils/sessions/machineUtils';
 import { clearMachineRequestReachabilityForScope, clearMachineRequestReachabilityForTest, recordMachineRequestFailed } from '@/sync/domains/machines/reachability/machineReachability';
 import { sessionListRuntimeClock } from '@/hooks/session/sessionListRuntimeClock';
 import { loadVitestModuleForNodeRequire } from '@/dev/vitestRnShim';
@@ -91,6 +96,57 @@ describe('execution-origin plugin identity with real Account and machine owners'
         vi.restoreAllMocks();
         externalStoreReads.reads.length = 0;
         vi.useRealTimers();
+    });
+
+    it('keeps origin subscribers quiet across file open, switch and reopen, while publishing a real eligibility change', async () => {
+        const serverIdentityId = 'srv_file_open_count';
+        const url = 'https://file-open-count.example.test';
+        await network.addHome(url, FIXTURE_ACCOUNT_ID);
+        const home = await adoptHomeProfile({ descriptor: { v: 1, homeServerIdentityId: serverIdentityId,
+            canonicalServerUrl: url, revision: 1, endpoints: [{ kind: 'https', url }] }, source: 'manual' });
+        await setActiveServerId(home.id);
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+        const scope = { serverId: home.id, accountId: FIXTURE_ACCOUNT_ID };
+        const machine = createMachineFixture({ id: 'file-open-machine', active: true, activeAt: Date.now() });
+        storage.setState({ profileScope: scope, settingsScope: scope, machines: {},
+            machineListByServerId: { [home.id]: [machine] }, machineListStatusByServerId: { [home.id]: 'idle' } });
+        observeMachinePresenceForTest(scope, [machine.id]);
+        const pluginId = 'acme.file-open';
+        const sources = [{ source: { origin: { serverIdentityId, sourceRef: { machineId: machine.id, pluginId,
+            sourceCustody: { kind: 'development' as const, registeredRootId: 'file-open-root' } } },
+            version: '1.0.0', occurrenceId: 'file-open-occurrence', serverId: home.id },
+            releaseContent: 'matched' as const, validation: { kind: 'admitted' as const } }];
+        replacePluginAccountAvailabilityProjection({ scope, snapshot: {
+            availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [],
+        } });
+        let renders = 0;
+        let selection: ReturnType<typeof usePluginMachineExecutionOriginSelection> | undefined;
+        let pane: AppPaneScopeApi | undefined;
+        const Origin = React.memo(function Origin() {
+            renders += 1;
+            selection = usePluginMachineExecutionOriginSelection({ pluginId, sourceCandidates: sources,
+                includeMachineCandidates: false, classifyRelease: useActivePluginAccountAvailabilityReleaseClassifier(pluginId) });
+            return null;
+        });
+        function Commands() { pane = useAppPaneScope('project:file-open'); return null; }
+        const screen = await renderScreen(<AppPaneProvider><Origin /><Commands /></AppPaneProvider>);
+        try {
+            expect(selection?.canExecute).toBe(true);
+            const initial = selection;
+            const settledRenders = renders;
+            for (const path of ['a.ts', 'b.ts', 'a.ts']) {
+                await act(async () => pane!.openDetailsTab({ key: `file:${path}`, kind: 'file', title: path,
+                    resource: { kind: 'file', path } }));
+                await act(async () => pane!.patchDetailsTabState(`file:${path}`, { scrollTop: 120 }));
+            }
+            console.info('file open/switch/reopen: origin renders =', renders - settledRenders);
+            expect(renders - settledRenders).toBe(0);
+            expect(selection?.candidates).toBe(initial?.candidates);
+            expect(selection?.state).toBe(initial?.state);
+            await act(async () => storage.setState({ machineListByServerId: { [home.id]: [{ ...machine, active: false }] } }));
+            expect(renders).toBeGreaterThan(settledRenders);
+            expect(selection?.state).toMatchObject({ kind: 'unavailable', reasons: ['offline'] });
+        } finally { await screen.unmount(); }
     });
 
     it('auto-picks qualified rows during hydration, remembers use locally and never replaces a pending pin', async () => {
@@ -662,6 +718,98 @@ describe('execution-origin plugin identity with real Account and machine owners'
         await hook.unmount();
     });
 
+    it('admits the execution origin once for repeated host checks and re-resolves only on a real input change', async () => {
+        const serverIdentityId = 'srv_origin_admission';
+        const url = 'https://origin-admission.example.test';
+        await network.addHome(url, FIXTURE_ACCOUNT_ID);
+        const home = await adoptHomeProfile({ descriptor: { v: 1, homeServerIdentityId: serverIdentityId,
+            canonicalServerUrl: url, revision: 1, endpoints: [{ kind: 'https', url }] }, source: 'manual' });
+        await setActiveServerId(home.id);
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+        const scope = { serverId: home.id, accountId: FIXTURE_ACCOUNT_ID };
+        const machine = createMachineFixture({ id: 'machine-origin-admission', active: true, activeAt: Date.now() });
+        storage.setState({ profileScope: scope, settingsScope: scope, isDataReady: true,
+            machines: {}, machineListByServerId: { [home.id]: [machine] }, machineListStatusByServerId: { [home.id]: 'idle' },
+            settings: { ...storage.getState().settings, machineAdministrationSelectionsV1: { v: 1, pluginExecutionOriginsByPluginId: {} } } });
+        const origin = { serverIdentityId, sourceRef: { machineId: machine.id, pluginId: 'acme.admission',
+            sourceCustody: { kind: 'development' as const, registeredRootId: 'admission-root' } } };
+        const candidates = [{ source: { origin, version: '1.0.0', occurrenceId: 'admission-occurrence', serverId: home.id },
+            releaseContent: 'matched' as const, validation: { kind: 'admitted' as const } }];
+        replacePluginAccountAvailabilityProjection({ scope, snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } });
+        const hook = await renderHook(() => usePluginMachineExecutionOriginSelection({ pluginId: 'acme.admission',
+            classifyRelease: useActivePluginAccountAvailabilityReleaseClassifier(), sourceCandidates: candidates,
+            declaredDefaultOrigins: [origin], includeMachineCandidates: false }));
+        // Observe the real election; its implementation is not replaced.
+        const elections = vi.spyOn(executionOrigin, 'resolvePluginMachineExecutionOriginState');
+        const resolve = hook.getCurrent().resolveExecutionOrigin;
+        // One host operation's isCurrent/context reads: one admission, then cheap still-active checks.
+        for (let check = 0; check < 50; check += 1) expect(resolve({ recordUse: false })?.machineTarget.machine).toBe(machine);
+        expect(elections).toHaveBeenCalledTimes(1);
+        // A real presence/inventory change re-admits, and still fails closed.
+        await act(async () => { storage.setState({ machineListByServerId: { [home.id]: [{ ...machine, revokedAt: Date.now() }] } }); });
+        expect(resolve({ recordUse: false })).toBeNull();
+        const refreshed = { ...machine, activeAt: Date.now() };
+        await act(async () => { storage.setState({ machineListByServerId: { [home.id]: [refreshed] } }); });
+        const beforeReadmission = elections.mock.calls.length;
+        for (let check = 0; check < 10; check += 1) expect(resolve({ recordUse: false })?.machineTarget.machine).toBe(refreshed);
+        expect(elections.mock.calls.length - beforeReadmission).toBe(1);
+        await hook.unmount();
+    });
+
+    it('holds the admitted origin across host reads with no per-read Machine check; a presence lapse arrives as a publication', async () => {
+        // The presence owner publishes a lapse on its own timer; no reader polls the clock.
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+        const serverIdentityId = 'srv_origin_held';
+        const url = 'https://origin-held.example.test';
+        await network.addHome(url, FIXTURE_ACCOUNT_ID);
+        const home = await adoptHomeProfile({ descriptor: { v: 1, homeServerIdentityId: serverIdentityId,
+            canonicalServerUrl: url, revision: 1, endpoints: [{ kind: 'https', url }] }, source: 'manual' });
+        await setActiveServerId(home.id);
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+        const scope = { serverId: home.id, accountId: FIXTURE_ACCOUNT_ID };
+        // Count authority reads of the elected row: each Machine check reads its lock/revocation facts.
+        let rowChecks = 0;
+        const counted = <T extends object>(row: T): T => new Proxy(row, {
+            get(target, key, receiver) { if (key === 'revokedAt') rowChecks += 1; return Reflect.get(target, key, receiver); },
+        });
+        // A Home without the presence fact: its presence expires on the client clock (online grace).
+        const machine = counted(createMachineFixture({ id: 'machine-origin-held', active: true, activeAt: Date.now() }));
+        const other = createMachineFixture({ id: 'machine-origin-other', active: true, activeAt: Date.now(), presenceProtocolVersion: 1 });
+        storage.setState({ profileScope: scope, settingsScope: scope, isDataReady: true,
+            machines: {}, machineListByServerId: { [home.id]: [machine, other] }, machineListStatusByServerId: { [home.id]: 'idle' },
+            settings: { ...storage.getState().settings, machineAdministrationSelectionsV1: { v: 1, pluginExecutionOriginsByPluginId: {} } } });
+        const origin = { serverIdentityId, sourceRef: { machineId: machine.id, pluginId: 'acme.held',
+            sourceCustody: { kind: 'development' as const, registeredRootId: 'held-root' } } };
+        const candidates = [{ source: { origin, version: '1.0.0', occurrenceId: 'held-occurrence', serverId: home.id },
+            releaseContent: 'matched' as const, validation: { kind: 'admitted' as const } }];
+        replacePluginAccountAvailabilityProjection({ scope, snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } });
+        const hook = await renderHook(() => usePluginMachineExecutionOriginSelection({ pluginId: 'acme.held',
+            classifyRelease: useActivePluginAccountAvailabilityReleaseClassifier(), sourceCandidates: candidates,
+            declaredDefaultOrigins: [origin], includeMachineCandidates: false }));
+        const elections = vi.spyOn(executionOrigin, 'resolvePluginMachineExecutionOriginState');
+        const resolve = hook.getCurrent().resolveExecutionOrigin;
+        expect(resolve({ recordUse: false })?.machineTarget.machine).toBe(machine);
+        const admittedElections = elections.mock.calls.length;
+        // One re-open's host isCurrent/context reads.
+        rowChecks = 0;
+        for (let check = 0; check < 50; check += 1) expect(resolve({ recordUse: false })?.machineTarget.machine).toBe(machine);
+        const held = { rowChecks, elections: elections.mock.calls.length - admittedElections };
+        // Another Machine's heartbeat changes nothing this decision reads.
+        const { publishMachineActivity } = await import('@/sync/domains/machines/machineActivity');
+        publishMachineActivity(other, { active: true, activeAt: Date.now() + 1 }, []);
+        rowChecks = 0;
+        const beforeHeartbeat = elections.mock.calls.length;
+        expect(resolve({ recordUse: false })?.machineTarget.machine).toBe(machine);
+        const heartbeat = { rowChecks, elections: elections.mock.calls.length - beforeHeartbeat };
+        // The presence lapses with no store publication: the presence owner publishes it and the next read refuses.
+        const beforeLapse = resolve({ recordUse: false })?.machineTarget.machine === machine;
+        vi.advanceTimersByTime(61_000);
+        const lapsed = resolve({ recordUse: false });
+        expect({ held, heartbeat, beforeLapse, lapsed }).toEqual({ held: { rowChecks: 0, elections: 0 },
+            heartbeat: { rowChecks: 0, elections: 0 }, beforeLapse: true, lapsed: null });
+        await hook.unmount();
+    });
+
     it('retains selection work across machine presentation updates while observing fresh eligibility and invocation data', async () => {
         // Observe the real expensive derivation; do not replace its implementation.
         const createFacts = vi.spyOn(executionOrigin, 'createPluginMachineExecutionOriginMachineFacts');
@@ -687,6 +835,9 @@ describe('execution-origin plugin identity with real Account and machine owners'
         } });
         const defaults = [origin];
         let renders = 0;
+        // Own the clock before mount so its Machine deadline remains scheduled
+        // while unrelated deadline wakes and the expiry are advanced below.
+        vi.useFakeTimers();
         const hook = await renderHook(() => {
             renders += 1;
             return usePluginMachineExecutionOriginSelection({ pluginId: 'acme.presence',
@@ -740,16 +891,14 @@ describe('execution-origin plugin identity with real Account and machine owners'
         const beforePresentationRefresh = machineFactsSerializations();
 
         // Another surface's relative-time wake is not a Machine eligibility change.
-        vi.useFakeTimers();
         const unrelatedWake = {};
         sessionListRuntimeClock.requestWake(unrelatedWake, Date.now() + 1);
         await act(async () => { await vi.advanceTimersByTimeAsync(1); });
         sessionListRuntimeClock.clearWake(unrelatedWake);
-        vi.useRealTimers();
         expect(renders).toBe(settledRenders);
         expect(hook.getCurrent().state).toBe(initial.state);
 
-        const refreshed = { ...machine, activeAt: Date.now(), updatedAt: 11,
+        let refreshed = { ...machine, activeAt: Date.now(), updatedAt: 11,
             metadata: { ...machine.metadata!, displayName: 'After' } };
         await act(async () => { storage.setState({ machineListByServerId: { [home.id]: [refreshed] } }); });
         expect(renders).toBe(settledRenders);
@@ -760,15 +909,15 @@ describe('execution-origin plugin identity with real Account and machine owners'
         expect(initial.resolveExecutionOrigin()?.machineTarget.machine).toBe(refreshed);
         expect(machineFactsSerializations()).toBe(beforePresentationRefresh);
 
-        const expiresAtMs = readMachineStatusNextRefreshAtMs(refreshed, Date.now());
-        expect(expiresAtMs).not.toBeNull();
-        const clock = vi.spyOn(Date, 'now').mockReturnValue(expiresAtMs!);
-        await act(async () => { storage.setState({ settingsVersion: 101 }); });
+        await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
+        expect(hook.getCurrent().canExecute).toBe(true);
+        await act(async () => { storage.setState({ machineListByServerId: { [home.id]: [{ ...refreshed, active: false }] } }); });
         expect(hook.getCurrent().state).toMatchObject({ kind: 'unavailable', reasons: ['offline'] });
         expect(hook.getCurrent().canExecute).toBe(false);
         expect(initial.resolveExecutionOrigin()).toBeNull();
-        clock.mockRestore();
-        await act(async () => { storage.setState({ settingsVersion: 102 }); });
+        // Fresh Machine activity, not an unrelated preference write, restores eligibility.
+        refreshed = { ...refreshed, activeAt: Date.now() };
+        await act(async () => { storage.setState({ machineListByServerId: { [home.id]: [refreshed] } }); });
         expect(hook.getCurrent().canExecute).toBe(true);
 
         await act(async () => { storage.setState({ machineListByServerId: { [home.id]: [{ ...refreshed,
@@ -807,17 +956,16 @@ describe('execution-origin plugin identity with real Account and machine owners'
         expect(hook.getCurrent().state).toMatchObject({ kind: 'unavailable', reasons: ['unknown'] });
         expect(hook.getCurrent().canExecute).toBe(false);
         expect(initial.resolveExecutionOrigin()).toBeNull();
-        // Clock wiring must still expire a real lease without a store update,
-        // including after a heartbeat extends the first requested deadline.
+        // Advancing wall time and heartbeat timestamps cannot change admission;
+        // the server's next presence publication does.
         vi.useFakeTimers();
         const renewed = { ...refreshed, activeAt: Date.now() };
         await act(async () => { storage.setState({ machineListByServerId: { [home.id]: [renewed] },
             machineListStatusByServerId: { [home.id]: 'idle' } }); });
-        const firstExpiry = readMachineStatusNextRefreshAtMs(renewed, Date.now())!;
         await act(async () => { await vi.advanceTimersByTimeAsync(1); });
         const heartbeat = { ...renewed, activeAt: Date.now() };
         await act(async () => { storage.setState({ machineListByServerId: { [home.id]: [heartbeat] } }); });
-        await act(async () => { await vi.advanceTimersByTimeAsync(firstExpiry - Date.now()); });
+        await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
         expect(hook.getCurrent().canExecute).toBe(true);
         // A heartbeat preserves semantic eligibility, but a later Availability
         // publication must classify against the renewed census, not the
@@ -827,8 +975,7 @@ describe('execution-origin plugin identity with real Account and machine owners'
         } }); });
         expect(hook.getCurrent().state).toMatchObject({ kind: 'selected', origin });
         expect(hook.getCurrent().candidates.every(candidate => candidate.validation.kind === 'admitted')).toBe(true);
-        const expiry = readMachineStatusNextRefreshAtMs(heartbeat, Date.now())!;
-        await act(async () => { await vi.advanceTimersByTimeAsync(expiry - Date.now()); });
+        await act(async () => { storage.setState({ machineListByServerId: { [home.id]: [{ ...heartbeat, active: false }] } }); });
         expect(hook.getCurrent().state).toMatchObject({ kind: 'unavailable', reasons: ['offline'] });
         expect(hook.getCurrent().canExecute).toBe(false);
         vi.useRealTimers();
@@ -891,6 +1038,52 @@ describe('execution-origin plugin identity with real Account and machine owners'
             expect(policyClassifications).toBe(machines.length);
         } finally {
             for (const unmount of unmounts) await unmount();
+        }
+    });
+
+    // The shell holds one selector per plugin over the Account's whole materialization list. A plugin's
+    // republished candidate facts must not make every selector rescan that list (plugins × installations).
+    it('reads the Account materialization list once per publication, not once per plugin selector render', async () => {
+        const serverIdentityId = 'srv_materialization_scan';
+        const url = 'https://materialization-scan.example.test';
+        await network.addHome(url, FIXTURE_ACCOUNT_ID);
+        const home = await adoptHomeProfile({ descriptor: { v: 1, homeServerIdentityId: serverIdentityId,
+            canonicalServerUrl: url, revision: 1, endpoints: [{ kind: 'https', url }] }, source: 'manual' });
+        await setActiveServerId(home.id);
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+        const scope = { serverId: home.id, accountId: FIXTURE_ACCOUNT_ID };
+        const machines = Array.from({ length: 6 }, (_, index) => createMachineFixture({ id: `scan-${index}`, active: true, activeAt: Date.now() }));
+        storage.setState({ profileScope: scope, settingsScope: scope, isDataReady: true, machines: {},
+            machineListByServerId: { [home.id]: machines }, machineListStatusByServerId: { [home.id]: 'idle' } });
+        const pluginIds = Array.from({ length: 10 }, (_, index) => `acme.scan-${index}`);
+        const materializations = pluginIds.flatMap(pluginId => machines.map((machine): PluginMachineMaterializationV1 => ({
+            serverIdentityId, machineId: machine.id, materializationId: `${pluginId}-${machine.id}`, pluginId, version: '1.0.0',
+            sourceClass: 'bundledFirstParty', portableRelease: true, enabled: true, trustState: 'trusted', observedAt: 1, uiArtifacts: [] })));
+        replacePluginAccountAvailabilityProjection({ scope, snapshot: { availabilityCursor: 1, intentReads: [], materializations, snapshots: [] } });
+        const sourcesFor = (pluginId: string) => [{ source: { origin: { serverIdentityId, sourceRef: { machineId: machines[0]!.id, pluginId,
+            sourceCustody: { kind: 'development' as const, registeredRootId: 'scan-root' } } }, version: '1.0.0', occurrenceId: `${pluginId}-occurrence`,
+            serverId: home.id }, releaseContent: 'matched' as const, validation: { kind: 'admitted' as const } }];
+        const Selector = React.memo(function Selector(props: Readonly<{ pluginId: string; sources: ReturnType<typeof sourcesFor> }>) {
+            usePluginMachineExecutionOriginSelection({ pluginId: props.pluginId, sourceCandidates: props.sources, includeMachineCandidates: false,
+                observeOriginsOnly: true, classifyRelease: useActivePluginAccountAvailabilityReleaseClassifier(props.pluginId) });
+            return null;
+        });
+        const shell = () => <>{pluginIds.map(pluginId => <Selector key={pluginId} pluginId={pluginId} sources={sourcesFor(pluginId)} />)}</>;
+        const screen = await renderScreen(shell());
+        // Work counter: rows visited by scans of a list as long as the Account's materialization list.
+        const filter = Array.prototype.filter;
+        let rowsScanned = 0;
+        const scan = vi.spyOn(Array.prototype, 'filter').mockImplementation(function (this: unknown[], ...args) {
+            if (this.length === materializations.length) rowsScanned += this.length;
+            return filter.apply(this, args as Parameters<typeof filter>);
+        });
+        try {
+            // Every plugin's candidate facts republish (equal content, new identity), as one Machine transition does.
+            await screen.update(shell());
+            expect(rowsScanned).toBeLessThanOrEqual(materializations.length);
+        } finally {
+            scan.mockRestore();
+            await screen.unmount();
         }
     });
 
@@ -1025,7 +1218,172 @@ describe('execution-origin plugin identity with real Account and machine owners'
         await hook.unmount();
     });
 
-    it('keeps React snapshots stable across presence expiry until an owner publishes a wake', async () => {
+    it('does not re-render a selection for Availability observation clocks or another plugin\'s machine rows', async () => {
+        const serverIdentityId = 'srv_observation_clock';
+        const url = 'https://observation-clock.example.test';
+        await network.addHome(url, FIXTURE_ACCOUNT_ID);
+        const home = await adoptHomeProfile({ descriptor: { v: 1, homeServerIdentityId: serverIdentityId,
+            canonicalServerUrl: url, revision: 1, endpoints: [{ kind: 'https', url }] }, source: 'manual' });
+        await setActiveServerId(home.id);
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+        const scope = { serverId: home.id, accountId: FIXTURE_ACCOUNT_ID };
+        const machine = createMachineFixture({ id: 'observation-clock-machine', active: true, activeAt: Date.now() });
+        storage.setState({ profileScope: scope, settingsScope: scope, machines: {},
+            machineListByServerId: { [home.id]: [machine] }, machineListStatusByServerId: { [home.id]: 'idle' } });
+        observeMachinePresenceForTest(scope, [machine.id]);
+        const pluginId = 'acme.observation-clock';
+        const registryPackage = createRegistryNpmPackageFixture({ packageName: 'acme-observation-clock', pluginId,
+            title: 'Observation fixture', version: '1.0.0' });
+        const manifest = registryPackage.happier.compatibilityProjection.manifest;
+        const archive = createPackageAssetArchiveV1({ manifest, files: [] });
+        if (!archive) throw new Error('Expected the registry fixture package archive');
+        const release = normalizePluginReleaseFactsV1({ ref: { pluginId, version: manifest.version },
+            archiveDigestSha256: `sha256:${'b'.repeat(64)}`, normalizedManifest: manifest,
+            collectionContracts: [], uiSlots: [], packageAssetArchive: archive.descriptor });
+        const response = PluginAccountAvailabilityIntentReadResponseV1Schema.parse({ availabilityCursor: 1,
+            hostingCapability: { enabled: false }, intent: { pluginId, desiredVersion: manifest.version,
+                enabled: true, offlineUiHosting: 'enabled', writableCollections: [], revision: 'observation-fixture-intent' },
+            release, packageAssets: [], uiArtifacts: [] });
+        const row = (id: string, rowPluginId: string, observedAt: number) => ({
+            serverIdentityId, machineId: machine.id, materializationId: id, pluginId: rowPluginId, version: '1.0.0',
+            sourceClass: 'registryPackage' as const, portableRelease: true, archiveDigestSha256: release.archiveDigestSha256,
+            enabled: true, trustState: 'trusted' as const, observedAt, uiArtifacts: [] });
+        const publish = (cursor: number, rows: readonly ReturnType<typeof row>[]) => replacePluginAccountAvailabilityProjection({
+            scope, snapshot: { availabilityCursor: cursor, intentReads: [{ pluginId, response }],
+                materializations: rows, snapshots: [{ serverIdentityId, machineId: machine.id, materializations: rows }] } });
+        publish(1, [row('own', pluginId, 1), row('peer', 'acme.peer', 1)]);
+        let renders = 0;
+        const hook = await renderHook(() => {
+            renders += 1;
+            return usePluginMachineExecutionOriginSelection({ pluginId, includeMachineCandidates: false,
+                classifyRelease: useActivePluginAccountAvailabilityReleaseClassifier(pluginId) });
+        });
+        const initial = hook.getCurrent();
+        expect(initial.candidates).toHaveLength(1);
+        const settledRenders = renders;
+        for (let index = 1; index <= 20; index += 1) {
+            // Clock-only republication of this plugin's row, then a real peer-plugin row change.
+            await act(async () => { publish(1 + index * 2, [row('own', pluginId, 1 + index), row('peer', 'acme.peer', 1)]); });
+            await act(async () => { publish(2 + index * 2, [row('own', pluginId, 1 + index), row('peer', 'acme.peer', 1 + index)]); });
+        }
+        console.info('execution-origin observation clocks: 40 publications, selection renders =', renders - settledRenders);
+        expect(renders).toBe(settledRenders);
+        expect(hook.getCurrent().candidates).toBe(initial.candidates);
+        expect(hook.getCurrent().state).toBe(initial.state);
+        // A real change to this plugin's own supply still re-renders.
+        await act(async () => { publish(100, [{ ...row('own', pluginId, 50), enabled: false }, row('peer', 'acme.peer', 1)]); });
+        expect(renders).toBeGreaterThan(settledRenders);
+        await hook.unmount();
+    });
+
+    it('does not re-render a selection for machine-activity heartbeats that change nothing it presents', async () => {
+        const serverIdentityId = 'srv_heartbeat_idle';
+        const url = 'https://heartbeat-idle.example.test';
+        await network.addHome(url, FIXTURE_ACCOUNT_ID);
+        const home = await adoptHomeProfile({ descriptor: { v: 1, homeServerIdentityId: serverIdentityId,
+            canonicalServerUrl: url, revision: 1, endpoints: [{ kind: 'https', url }] }, source: 'manual' });
+        await setActiveServerId(home.id);
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+        const scope = { serverId: home.id, accountId: FIXTURE_ACCOUNT_ID };
+        const machine = createMachineFixture({ id: 'heartbeat-machine', active: true, activeAt: Date.now() });
+        storage.setState({ profileScope: scope, settingsScope: scope, machines: {},
+            machineListByServerId: { [home.id]: [machine] }, machineListStatusByServerId: { [home.id]: 'idle' } });
+        observeMachinePresenceForTest(scope, [machine.id]);
+        const pluginId = 'acme.heartbeat-idle';
+        const registryPackage = createRegistryNpmPackageFixture({ packageName: 'acme-heartbeat-idle', pluginId,
+            title: 'Observation fixture', version: '1.0.0' });
+        const manifest = registryPackage.happier.compatibilityProjection.manifest;
+        const archive = createPackageAssetArchiveV1({ manifest, files: [] });
+        if (!archive) throw new Error('Expected the registry fixture package archive');
+        const release = normalizePluginReleaseFactsV1({ ref: { pluginId, version: manifest.version },
+            archiveDigestSha256: `sha256:${'b'.repeat(64)}`, normalizedManifest: manifest,
+            collectionContracts: [], uiSlots: [], packageAssetArchive: archive.descriptor });
+        const response = PluginAccountAvailabilityIntentReadResponseV1Schema.parse({ availabilityCursor: 1,
+            hostingCapability: { enabled: false }, intent: { pluginId, desiredVersion: manifest.version,
+                enabled: true, offlineUiHosting: 'enabled', writableCollections: [], revision: 'observation-fixture-intent' },
+            release, packageAssets: [], uiArtifacts: [] });
+        const row = (id: string, rowPluginId: string, observedAt: number) => ({
+            serverIdentityId, machineId: machine.id, materializationId: id, pluginId: rowPluginId, version: '1.0.0',
+            sourceClass: 'registryPackage' as const, portableRelease: true, archiveDigestSha256: release.archiveDigestSha256,
+            enabled: true, trustState: 'trusted' as const, observedAt, uiArtifacts: [] });
+        const publish = (cursor: number, rows: readonly ReturnType<typeof row>[]) => replacePluginAccountAvailabilityProjection({
+            scope, snapshot: { availabilityCursor: cursor, intentReads: [{ pluginId, response }],
+                materializations: rows, snapshots: [{ serverIdentityId, machineId: machine.id, materializations: rows }] } });
+        publish(1, [row('own', pluginId, 1), row('peer', 'acme.peer', 1)]);
+        let renders = 0;
+        const hook = await renderHook(() => {
+            renders += 1;
+            return usePluginMachineExecutionOriginSelection({ pluginId, includeMachineCandidates: false,
+                classifyRelease: useActivePluginAccountAvailabilityReleaseClassifier(pluginId) });
+        });
+        const initial = hook.getCurrent();
+        expect(initial.candidates).toHaveLength(1);
+        await act(async () => { storage.getState().applyMachineActivityUpdates([{ id: machine.id, active: true, activeAt: Date.now() }], { sourceServerId: home.id }); });
+        const heartbeatBaseline = renders;
+        for (let index = 1; index <= 20; index += 1) {
+            await act(async () => {
+                storage.getState().applyMachineActivityUpdates([machine].map(entry => ({ id: entry.id, active: true,
+                    activeAt: Date.now() + index })), { sourceServerId: home.id });
+            });
+        }
+        console.info('execution-origin heartbeats: 20 arrivals, selection renders =', renders - heartbeatBaseline);
+        expect(renders).toBe(heartbeatBaseline);
+        await hook.unmount();
+    });
+
+    it('wakes an origins-only observer for selectable-origin changes, not for another Machine\'s rejection reason', async () => {
+        const serverIdentityId = 'srv_origins_only';
+        const url = 'https://origins-only.example.test';
+        await network.addHome(url, FIXTURE_ACCOUNT_ID);
+        const home = await adoptHomeProfile({ descriptor: { v: 1, homeServerIdentityId: serverIdentityId,
+            canonicalServerUrl: url, revision: 1, endpoints: [{ kind: 'https', url }] }, source: 'manual' });
+        await setActiveServerId(home.id);
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+        const scope = { serverId: home.id, accountId: FIXTURE_ACCOUNT_ID };
+        const live = createMachineFixture({ id: 'origins-only-live', active: true, activeAt: Date.now() });
+        const other = createMachineFixture({ id: 'origins-only-other', active: false, activeAt: 1 });
+        storage.setState({ profileScope: scope, settingsScope: scope, machines: {},
+            machineListByServerId: { [home.id]: [live, other] }, machineListStatusByServerId: { [home.id]: 'idle' } });
+        observeMachinePresenceForTest(scope, [live.id, other.id]);
+        const pluginId = 'acme.origins-only';
+        const registryPackage = createRegistryNpmPackageFixture({ packageName: 'acme-origins-only', pluginId,
+            title: 'Origins only fixture', version: '1.0.0' });
+        const manifest = registryPackage.happier.compatibilityProjection.manifest;
+        const archive = createPackageAssetArchiveV1({ manifest, files: [] });
+        if (!archive) throw new Error('Expected the registry fixture package archive');
+        const release = normalizePluginReleaseFactsV1({ ref: { pluginId, version: manifest.version },
+            archiveDigestSha256: `sha256:${'b'.repeat(64)}`, normalizedManifest: manifest,
+            collectionContracts: [], uiSlots: [], packageAssetArchive: archive.descriptor });
+        const response = PluginAccountAvailabilityIntentReadResponseV1Schema.parse({ availabilityCursor: 1,
+            hostingCapability: { enabled: false }, intent: { pluginId, desiredVersion: manifest.version,
+                enabled: true, offlineUiHosting: 'enabled', writableCollections: [], revision: 'origins-only-intent' },
+            release, packageAssets: [], uiArtifacts: [] });
+        const row = (machineId: string) => ({ serverIdentityId, machineId, materializationId: `m-${machineId}`, pluginId,
+            version: '1.0.0', sourceClass: 'registryPackage' as const, portableRelease: true,
+            archiveDigestSha256: release.archiveDigestSha256, enabled: true, trustState: 'trusted' as const, observedAt: 1, uiArtifacts: [] });
+        const rows = [row(live.id), row(other.id)];
+        replacePluginAccountAvailabilityProjection({ scope, snapshot: { availabilityCursor: 1, intentReads: [{ pluginId, response }],
+            materializations: rows, snapshots: [{ serverIdentityId, machineId: live.id, materializations: [rows[0]!] },
+                { serverIdentityId, machineId: other.id, materializations: [rows[1]!] }] } });
+        let renders = 0;
+        const hook = await renderHook(() => {
+            renders += 1;
+            return usePluginMachineExecutionOriginSelection({ pluginId, includeMachineCandidates: false, observeOriginsOnly: true,
+                classifyRelease: useActivePluginAccountAvailabilityReleaseClassifier(pluginId) });
+        });
+        const settledRenders = renders;
+        expect(hook.getCurrent().candidates).toHaveLength(2);
+        // offline -> revoked changes the unselectable Machine's rejection reason, not any selectable origin.
+        await act(async () => storage.setState({ machineListByServerId: { [home.id]: [live, { ...other, revokedAt: Date.now() }] } }));
+        console.info('origins-only observer: rejection-reason change renders =', renders - settledRenders);
+        expect(renders).toBe(settledRenders);
+        // The other Machine becoming selectable is a real change to what the observer reports.
+        await act(async () => storage.setState({ machineListByServerId: { [home.id]: [live, { ...other, active: true, activeAt: Date.now(), revokedAt: null }] } }));
+        expect(renders).toBeGreaterThan(settledRenders);
+        await hook.unmount();
+    });
+
+    it('keeps React snapshots stable as time passes until authoritative activity changes', async () => {
         const serverIdentityId = 'srv_snapshot_expiry';
         const url = 'https://snapshot-expiry.example.test';
         await network.addHome(url, FIXTURE_ACCOUNT_ID);
@@ -1038,12 +1396,28 @@ describe('execution-origin plugin identity with real Account and machine owners'
         storage.setState({ profileScope: scope, settingsScope: scope,
             machines: {}, machineListByServerId: { [home.id]: [machine] },
             machineListStatusByServerId: { [home.id]: 'idle' } });
+        // The socket boundary may withdraw retained presence. Publishing raw
+        // fixture rows does not itself observe fresh ingress for this Account.
+        observeMachinePresenceForTest(scope, [machine.id]);
         // A non-bundled plugin supplies both a portable installation and a development source.
         const pluginId = 'acme.snapshot-expiry';
+        const registryPackage = createRegistryNpmPackageFixture({ packageName: 'acme-snapshot-expiry', pluginId,
+            title: 'Snapshot fixture', version: '1.0.0' });
+        const manifest = registryPackage.happier.compatibilityProjection.manifest;
+        const archive = createPackageAssetArchiveV1({ manifest, files: [] });
+        if (!archive) throw new Error('Expected the registry fixture package archive');
+        const release = normalizePluginReleaseFactsV1({ ref: { pluginId, version: manifest.version },
+            archiveDigestSha256: `sha256:${'a'.repeat(64)}`, normalizedManifest: manifest,
+            collectionContracts: [], uiSlots: [], packageAssetArchive: archive.descriptor });
+        const response = PluginAccountAvailabilityIntentReadResponseV1Schema.parse({ availabilityCursor: 1,
+            hostingCapability: { enabled: false }, intent: { pluginId, desiredVersion: manifest.version,
+                enabled: true, offlineUiHosting: 'enabled', writableCollections: [], revision: 'snapshot-fixture-intent' },
+            release, packageAssets: [], uiArtifacts: [] });
         replacePluginAccountAvailabilityProjection({ scope, snapshot: {
-            availabilityCursor: 1, intentReads: [], snapshots: [], materializations: [{
+            availabilityCursor: 1, intentReads: [{ pluginId, response }], snapshots: [], materializations: [{
                 serverIdentityId, machineId: machine.id, materializationId: 'installed-external-plugin',
                 pluginId, version: '1.0.0', sourceClass: 'registryPackage', portableRelease: true,
+                archiveDigestSha256: release.archiveDigestSha256,
                 enabled: true, trustState: 'trusted', observedAt: 1, uiArtifacts: [],
             }],
         } });
@@ -1065,14 +1439,20 @@ describe('execution-origin plugin identity with real Account and machine owners'
         const state = storage.getState();
         const before = readSnapshot!();
         expect(readSnapshot!()).toBe(before);
-        const expiresAtMs = readMachineStatusNextRefreshAtMs(machine, Date.now());
-        expect(expiresAtMs).not.toBeNull();
-        const clock = vi.spyOn(Date, 'now').mockReturnValue(expiresAtMs!);
+        const validations = () => hook.getCurrent().candidates.map(candidate => candidate.validation);
+        expect(hook.getCurrent().candidates).toHaveLength(2);
+        expect(validations(), JSON.stringify(validations())).toEqual([
+            { kind: 'admitted' }, { kind: 'admitted' },
+        ]);
+        const expiresAtMs = readAtMs + 120_000;
+        const clock = vi.spyOn(Date, 'now').mockReturnValue(expiresAtMs);
         try {
             expect(storage.getState()).toBe(state);
             expect(readSnapshot!()).toBe(before);
-            await act(async () => { await vi.advanceTimersByTimeAsync(expiresAtMs! - readAtMs); });
+            await act(async () => { await vi.advanceTimersByTimeAsync(expiresAtMs - readAtMs); });
             expect(storage.getState()).toBe(state);
+            expect(hook.getCurrent().candidates.every(candidate => candidate.validation.kind === 'admitted')).toBe(true);
+            await act(async () => { storage.getState().applyMachineActivityUpdates([{ id: machine.id, active: false, activeAt: expiresAtMs }], { sourceServerId: home.id }); });
             expect(hook.getCurrent().candidates).toHaveLength(2);
             expect(hook.getCurrent().candidates.every(candidate =>
                 candidate.validation.kind === 'rejected' && candidate.validation.reason === 'offline')).toBe(true);

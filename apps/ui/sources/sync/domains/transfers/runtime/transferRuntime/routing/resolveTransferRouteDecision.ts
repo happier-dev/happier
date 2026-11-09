@@ -1,4 +1,4 @@
-import type { FeaturesResponse as ServerFeatures } from '@happier-dev/protocol';
+import type { FeaturesResponse as ServerFeatures } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import {
     type DirectPeerRouteKind,
     resolvePeerRouteDecision,

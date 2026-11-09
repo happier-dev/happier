@@ -1,4 +1,5 @@
-import type { FeaturesResponse as ServerFeatures, SessionHandoffTransportStrategy } from '@happier-dev/protocol';
+import type { FeaturesResponse as ServerFeatures} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import type { SessionHandoffTransportStrategy } from '@happier-dev/protocol/sessions/control/handoff/handoffTypes';
 import { resolveMachineTransferRoute } from '@happier-dev/transfers';
 import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
 

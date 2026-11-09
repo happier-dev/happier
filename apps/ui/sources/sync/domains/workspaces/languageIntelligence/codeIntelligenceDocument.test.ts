@@ -23,7 +23,7 @@ describe('language document custody', () => {
             },
         });
         try {
-            const pending = holder.query('diagnostics', undefined, new AbortController().signal, true);
+            const pending = holder.query('diagnostics', undefined, new AbortController().signal, true, { scope: 'project' });
             await vi.waitFor(() => expect(finishProject).toBeTypeOf('function'));
             expect(await holder.query('hover', { line: 0, character: 2 }, new AbortController().signal)).toMatchObject({ status: 'ok' });
             finishProject({ status: 'ok', kind: 'diagnostics', diagnostics: [], hasMore: false, version: 5, generation: 'g1' });

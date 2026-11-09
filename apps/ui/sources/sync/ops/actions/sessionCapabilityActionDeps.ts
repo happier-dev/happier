@@ -6,8 +6,8 @@ import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessi
 import { SpawnCapabilitiesPreviewOutputV1Schema, SessionCapabilitiesGetOutputV1Schema } from '@happier-dev/protocol/actions/specs/sessionCapabilities';
 import type { ActionExecutorDeps, ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { resolveSessionCapabilityItemIdentityV1, resolveSessionCapabilitiesGetFailureV1, type SessionCapabilitiesActionPortV1 } from '@happier-dev/protocol/actions/executor/sessionCapabilities';
-import { createRpcCallError, isRpcMethodNotAvailableError } from '@happier-dev/protocol/rpcErrors';
-import { isRpcMethodNotFoundResult, RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { readSessionSnapshotForAuthority, SessionSnapshotReadError } from '@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority';
 import { runWithServerRequestAuthorityForServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
@@ -43,8 +43,9 @@ export function createUiSessionCapabilityActionDeps(account: LazyActionAccountCo
     const readSession = async (sessionId: string, context: ActionExecutorContext) => {
         assertCurrent(context);
         try {
-            const snapshot = await runWithServerRequestAuthorityForServerAccountScope({ scope: account.accountLifetime.scope, activeRequest: account.request },
-                authority => readSessionSnapshotForAuthority({ authority, sessionId, isCurrent: account.accountLifetime.isCurrent }));
+            const snapshot = await runWithServerRequestAuthorityForServerAccountScope({ scope: account.accountLifetime.scope, activeRequest: account.request,
+                ...(account.prepareRequest ? { prepareRequest: account.prepareRequest } : {}) },
+                authority => readSessionSnapshotForAuthority({ authority, sessionId, includeTurns: false, isCurrent: account.accountLifetime.isCurrent }));
             assertCurrent(context);
             return snapshot.session;
         } catch (failure) {
@@ -61,7 +62,8 @@ export function createUiSessionCapabilityActionDeps(account: LazyActionAccountCo
             const agentId = resolveAgentIdFromSessionMetadata(metadata);
             const core = agentId ? getAgentCore(agentId) : null;
             const runtime = agentId ? resolveAgentRuntimeControlSurfaceForSession({ agentId, metadata }) : null;
-            const cached = readCachedDaemonMergedProjectionCacheEntry({ machineId: metadata.machineId, serverId: account.serverId });
+            const cached = readCachedDaemonMergedProjectionCacheEntry({ machineId: metadata.machineId, serverId: account.serverId,
+                sections: ['agentsById'] });
             const projection = cached && (cached.kind === 'ready' || cached.kind === 'error') ? cached.inputs?.pluginProjectionV2 : null;
             const projected = projection && agentId ? readCurrentProjectedAgentCapabilities({ projection, agentId }) : null;
             const actual = readSessionCapabilityAgentFactsV1(metadata);
@@ -95,7 +97,8 @@ export function createUiSessionCapabilityActionDeps(account: LazyActionAccountCo
             if (catalogId) return catalogId;
             const session = await readSession(input.sessionId, context);
             const metadata = session ? readSessionOwnerMetadataView(session) : null;
-            const cached = readCachedDaemonMergedProjectionCacheEntry({ machineId: metadata?.machineId, serverId: account.serverId });
+            const cached = readCachedDaemonMergedProjectionCacheEntry({ machineId: metadata?.machineId, serverId: account.serverId,
+                sections: ['familiesById.mcp'] });
             const projection = cached && (cached.kind === 'ready' || cached.kind === 'error') ? cached.inputs?.pluginProjectionV2 : null;
             return projection && readMcpPluginItemMetadataFromProjectionV1(projection).some(item => item.id === input.id) ? input.id : null;
         },
@@ -106,6 +109,7 @@ export function createUiSessionCapabilityActionDeps(account: LazyActionAccountCo
                 await sync.patchSessionMetadataWithRetry(input.sessionId, metadata => {
                     assertCurrent(context); return MetadataSchema.parse(input.update(metadata));
                 }, { serverId: account.serverId, accountLifetime: account.accountLifetime,
+                    ...(account.prepareRequest ? { prepareRequest: account.prepareRequest } : {}),
                     onMetadataCommitted: () => { committed = true; } });
                 return committed ? 'updated' : 'conflict';
             } catch (failure) {
@@ -148,15 +152,11 @@ export function createUiSessionCapabilityActionDeps(account: LazyActionAccountCo
                     applyTiming: { mcp: { t: 'session_not_running' }, skills: { t: 'session_not_running' } },
                 });
             }
-            const response = record(await withActionAccountRequestSignal(account, context.signal, signal => machineRpcWithServerScope({ machineId: input.machineId, serverId: account.serverId, accountId: account.accountId,
-                method: RPC_METHODS.DAEMON_MCP_SERVERS_PREVIEW, payload: input, operationTimeoutMs: null, signal })));
+            const raw = await withActionAccountRequestSignal(account, context.signal, signal => machineRpcWithServerScope({ machineId: input.machineId, serverId: account.serverId, accountId: account.accountId,
+                method: RPC_METHODS.DAEMON_MCP_SERVERS_PREVIEW, payload: input, operationTimeoutMs: null, signal }));
             assertCurrent(context);
-            if (isRpcMethodNotFoundResult(response) || isRpcMethodNotAvailableError({ rpcErrorCode: response?.errorCode })) {
-                const errorCode = typeof response?.errorCode === 'string' ? response.errorCode : RPC_ERROR_CODES.METHOD_NOT_FOUND;
-                throw createRpcCallError({ error: typeof response?.error === 'string' ? response.error : errorCode, errorCode });
-            }
-            if (response?.ok !== true) return { ok: false, reason: isMachineRequestReachabilityFailure(response)
-                || isMachineRequestReachabilityFailure({ code: response?.errorCode }) ? 'machine_unreachable' : 'invalid_input' };
+            const response = record(readMachineActionRpcResult(raw));
+            if (response?.ok !== true) return { ok: false, reason: 'invalid_input' };
             const parsed = SpawnCapabilitiesPreviewOutputV1Schema.safeParse({ ok: true, machinePlatform: response.machinePlatform,
                 mcp: response.mcp, skills: response.skills, applyTiming: response.applyTiming });
             return parsed.success ? parsed.data : { ok: false, reason: 'invalid_input' };

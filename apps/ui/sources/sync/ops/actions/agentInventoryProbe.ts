@@ -7,6 +7,7 @@ import {
     AgentModelsProbeObservationSchema,
     AgentSessionModesProbeObservationSchema,
     type AgentModelsProbeObservation,
+    readCapabilityInvokeFailure,
 } from '@happier-dev/protocol/capabilities';
 
 import { buildProviderCliCapabilityId } from '@/capabilities/cliCapabilityId';
@@ -56,16 +57,23 @@ export async function probeAgentInventory(
         { ...(serverId ? { serverId } : {}), ...(transportTimeoutMs ? { timeoutMs: transportTimeoutMs } : {}), signal },
     );
     if (!res.supported) return { ok: false, failure: {
-        ...(res.reason === 'outcomeUnknown' ? projectUnexpectedActionFailureV1(true) : {
+        ...(res.reason === 'outcomeUnknown' && !res.errorCode ? projectUnexpectedActionFailureV1(true) : {
             ok: false as const,
-            errorCode: res.reason === 'not-supported' ? 'unsupported_method' : 'agent_inventory_probe_failed',
-            error: res.reason === 'not-supported' ? 'unsupported_method' : 'agent_inventory_probe_failed',
+            errorCode: res.errorCode ?? (res.reason === 'not-supported' ? 'unsupported_method' : 'agent_inventory_probe_failed'),
+            error: res.errorCode ?? (res.reason === 'not-supported' ? 'unsupported_method' : 'agent_inventory_probe_failed'),
         }),
-        details: { reason: res.reason, ...(res.requestDisposition ? { requestDisposition: res.requestDisposition } : {}) },
+        details: { reason: res.reason, ...(res.retryable === undefined ? {} : { retryable: res.retryable }),
+            ...(res.requestDisposition ? { requestDisposition: res.requestDisposition } : {}) },
     } };
     const failed = (errorCode = 'agent_inventory_probe_failed'): Readonly<{ ok: false; failure: ActionExecuteFailure }> => ({ ok: false,
         failure: { ok: false, errorCode, error: errorCode } });
-    if (!res.response.ok) return failed(res.response.error.code?.trim() || undefined);
+    if (!res.response.ok) {
+        const failure = readCapabilityInvokeFailure({ ...res.response.error, errorCode: res.response.error.code });
+        const result = failed(failure?.errorCode);
+        return failure?.retryable === undefined ? result : { ok: false, failure: {
+            ...result.failure, details: { retryable: failure.retryable },
+        } };
+    }
     const result = res.response.result;
     if (!result || typeof result !== 'object' || Array.isArray(result)) return failed();
     if (probe) {

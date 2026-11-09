@@ -11,7 +11,7 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { describeEntityDropOutcome } from '@/components/ui/treeDragDrop/ui/entityDropOutcome';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
-import { HOME_HUB_DEFAULT_LAYOUT } from '@happier-dev/protocol/home';
+import { getHomeHubDefaultLayoutV1 } from '@happier-dev/protocol/home';
 import type { WidgetLayoutGroupV1 } from '@happier-dev/protocol/widgets';
 
 vi.mock('socket.io-client', async importOriginal =>
@@ -30,7 +30,7 @@ describe('widget movement Action recovery projection', () => {
         const boundary = createHomeHubArtifactHttpBoundary(scope.accountId);
         const group: WidgetLayoutGroupV1 = { kind: 'group', id: 'group', width: 'half', frameStyle: 'card', dividers: 'hairline',
             children: [{ kind: 'widget', instance, size: 'small', frameStyle: 'plain' }] };
-        boundary.seed({ ...HOME_HUB_DEFAULT_LAYOUT, items: [group] });
+        boundary.seed({ ...getHomeHubDefaultLayoutV1(), items: [group] });
         await import('@/sync/syncEngine');
         const connection = await restoreServerAccountForTest({ serverUrl: 'https://widget-group-admission.test', accountId: scope.accountId, request: boundary.request });
         try {

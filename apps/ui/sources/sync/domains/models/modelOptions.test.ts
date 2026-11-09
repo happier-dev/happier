@@ -14,8 +14,10 @@ import {
 } from './modelOptions';
 import { findModelOptionForEffectiveModelId } from './modelOptions';
 import type { Metadata } from '@happier-dev/session-core/state';
-import { buildBackendTargetKeyV2, SessionModelSelectionIntentV1Schema } from '@happier-dev/protocol';
+import { buildBackendTargetKeyV2} from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { SessionModelSelectionIntentV1Schema } from '@happier-dev/protocol/providers/selection/v1';
 import { buildAgentUniverseBackendTargetKey } from '@/agents/catalog/agentUniverse';
+import { projectComposerOptionsInputV1 } from '@happier-dev/protocol/embed';
 
 function withMetadata(overrides: Partial<Metadata>): Metadata {
     return {
@@ -26,6 +28,23 @@ function withMetadata(overrides: Partial<Metadata>): Metadata {
 }
 
 describe('modelOptions', () => {
+    it.each([true, false])('keeps global override rules on projected selected-model controls (on=%s)', on => {
+        const thinking = { id: 'thinking', name: 'Thinking', type: 'select', currentValue: 'medium',
+            options: [{ value: 'medium', name: 'Medium' }, { value: 'high', name: 'High' }] };
+        const metadata = projectComposerOptionsInputV1({
+            sessionModelsV1: { v: 1, agentId: 'codex', updatedAt: 1, currentModelId: 'selected',
+                availableModels: [{ id: 'selected', name: 'Selected', modelOptions: [thinking] }] },
+            sessionConfigOptionsV1: { v: 1, agentId: 'codex', updatedAt: 1, configOptions: [thinking,
+                { id: 'automatic', name: 'Automatic', type: 'boolean', currentValue: String(on),
+                    overridesWhenOn: { optionIds: ['thinking'], forcedValue: 'medium' } }] },
+            sessionConfigOptionOverridesV1: { v: 1, updatedAt: 2, overrides: { thinking: { updatedAt: 2, value: 'high' } } },
+        });
+        const controls = computeSessionModelConfigOptionControls({ agentId: 'codex', metadata, modelId: 'selected' });
+        expect(controls).toHaveLength(1);
+        expect(controls?.[0]).toMatchObject({ option: { id: 'thinking' }, effectiveValue: 'high',
+            ...(on ? { disabled: true, disabledByOptionName: 'Automatic', overriddenEffectiveValue: 'medium' } : {}) });
+        if (!on) expect(controls?.[0]?.disabled).not.toBe(true);
+    });
     it('uses only the selected model options and their published valid overrides', () => {
         const metadata = withMetadata({
             sessionModelsV1: {

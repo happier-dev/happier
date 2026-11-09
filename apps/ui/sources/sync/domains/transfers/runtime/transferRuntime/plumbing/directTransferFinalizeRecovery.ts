@@ -243,6 +243,7 @@ export function createDirectTransferFinalizeRecovery<TResponse>(params: Readonly
                     timeoutMs: params.timeoutMs ?? null,
                     signal: cancellation.signal,
                     ...(carrierRequest.request ? { request: carrierRequest.request } : {}),
+                    carrierKind: carrierRequest.carrierKind,
                 });
             } catch {
                 if (signal?.aborted) return retainTransferFinalizeRecovery(createUnavailableResult({
@@ -279,7 +280,7 @@ export function createDirectTransferFinalizeRecovery<TResponse>(params: Readonly
                 const endpoint = resolveDirectImportCarrierRequest({ endpointUrl: params.baseUrl, carrier });
                 const failed = await abortOwnedDirectImportSession({ machineId: params.machineId, serverId: params.serverId,
                     accountId: params.accountId, uploadId: params.uploadId, filesystemRootPath: params.filesystemRootPath,
-                    preparedSession: { baseUrls: [endpoint.url], ...(endpoint.request ? { request: endpoint.request } : {}) },
+                    preparedSession: { baseUrls: [endpoint.url], ...(endpoint.request ? { request: endpoint.request } : {}), carrierKind: endpoint.carrierKind },
                     timeoutMs: params.timeoutMs, signal: cancellation.signal });
                 return failed ? retainTransferFinalizeRecovery(createUnavailableResult({ reason: 'session_unavailable', error: failed.error }))
                     : settleTransferFinalizeRecovery({ status: 'discarded' });

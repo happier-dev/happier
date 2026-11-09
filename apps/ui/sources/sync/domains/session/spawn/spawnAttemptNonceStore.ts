@@ -1,71 +1,20 @@
-import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
-import {
-    serverAccountScopedStorageKey,
-    type ServerAccountScope,
-} from '@/sync/domains/scope/serverAccountScope';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { SessionCreationKeyV1Schema, deriveSessionCreationTagV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
-import { buildSpawnedFirstTurnLocalId, buildSessionSpawnInitialInputLocalIdV1 } from '@happier-dev/protocol/sessions/messages/spawnedFirstTurn';
+import { buildSessionSpawnInitialInputLocalIdV1 } from '@happier-dev/protocol/sessions/messages/spawnedFirstTurn';
 
 import { createUiSessionSpawnNonce, normalizeSpawnSessionNonce } from './spawnSessionNonce';
+import { normalizeRequired, recordId, readSpawnAttemptCustodyState, writeAttempts,
+    type PersistedSpawnAttempt } from './custodyPersistence';
+export { readSpawnAttemptCustodyState, readSpawnAttemptCustodyQuarantine, resetUnreadableSpawnAttemptCustody,
+    type PersistedSpawnAttempt, type SpawnAttemptCustodyStoreState, type SpawnAttemptCustodyQuarantine } from './custodyPersistence';
 
-const STORAGE_KEY_PREFIX = 'session-spawn-attempts-v1';
-const QUARANTINE_STORAGE_KEY_PREFIX = 'session-spawn-attempts-quarantine-v1';
 const LOCK_NAME_PREFIX = 'happier:session-spawn-attempts-v2';
 
-export type PersistedSpawnAttempt = Readonly<{
-    v: 3;
-    scope: ServerAccountScope;
-    machineId: string;
-    targetFingerprint: string;
-    userAttemptId: string;
-    nonce: string;
-    submissionState: 'prepared' | 'submitted';
-    createdSessionId: string | null;
-    firstTurnLocalId: string;
-    attachmentMessageLocalId: string;
-}>;
-
-type PersistedSpawnAttempts = Readonly<Record<string, PersistedSpawnAttempt>>;
-
-export type SpawnAttemptCustodyStoreState =
-    | Readonly<{ status: 'missing' }>
-    | Readonly<{
-        status: 'valid';
-        attempts: PersistedSpawnAttempts;
-        quarantinedRecordIds?: readonly string[];
-    }>
-    | Readonly<{ status: 'corrupt' }>;
-
 export type AcquireSpawnAttemptCustodyResult =
-    | Readonly<{ status: 'acquired'; record: PersistedSpawnAttempt; reused: boolean }>
+    | Readonly<{ status: 'acquired'; record: PersistedSpawnAttempt; reused: boolean;
+        previousSubmissionState?: PersistedSpawnAttempt['submissionState'] }>
     | Readonly<{ status: 'corrupt' }>
     | Readonly<{ status: 'lock_unavailable' }>;
-
-export type SpawnAttemptCustodyQuarantine =
-    | Readonly<{ kind: 'rows'; rows: Readonly<Record<string, unknown>> }>
-    | Readonly<{ kind: 'unreadable_blob'; raw: string }>;
-
-function normalizeRequired(value: unknown): string | null {
-    if (typeof value !== 'string') return null;
-    const normalized = value.trim();
-    return normalized.length > 0 ? normalized : null;
-}
-
-function recordId(machineId: string, targetFingerprint: string, userAttemptId: string): string {
-    return `${machineId.length}:${machineId}${targetFingerprint.length}:${targetFingerprint}${userAttemptId.length}:${userAttemptId}`;
-}
-
-function legacyRecordId(machineId: string, targetFingerprint: string): string {
-    return `${machineId.length}:${machineId}${targetFingerprint.length}:${targetFingerprint}`;
-}
-
-function storageKey(scope: ServerAccountScope): string {
-    return serverAccountScopedStorageKey(STORAGE_KEY_PREFIX, scope);
-}
-
-function quarantineStorageKey(scope: ServerAccountScope): string {
-    return serverAccountScopedStorageKey(QUARANTINE_STORAGE_KEY_PREFIX, scope);
-}
 
 function lockName(scope: ServerAccountScope): string {
     return `${LOCK_NAME_PREFIX}:${encodeURIComponent(scope.serverId)}:${encodeURIComponent(scope.accountId)}`;
@@ -108,150 +57,6 @@ async function withSpawnAttemptMutationLock<T>(
     return { status: 'completed', value: mutate() };
 }
 
-export function readSpawnAttemptCustodyState(scope: ServerAccountScope): SpawnAttemptCustodyStoreState {
-    const raw = getPersistenceStorage().getString(storageKey(scope));
-    if (raw === undefined || raw === null || raw.length === 0) return { status: 'missing' };
-
-    try {
-        const parsed = JSON.parse(raw) as unknown;
-        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-            writeQuarantine(scope, { kind: 'unreadable_blob', raw });
-            return { status: 'corrupt' };
-        }
-
-        const parsedRecord = parsed as Record<string, unknown>;
-        const isRemotePredecessorEnvelope = parsedRecord.v === 3
-            && parsedRecord.attempts
-            && typeof parsedRecord.attempts === 'object'
-            && !Array.isArray(parsedRecord.attempts);
-        const rawAttempts = isRemotePredecessorEnvelope
-            ? parsedRecord.attempts as Record<string, unknown>
-            : parsedRecord;
-        const attempts: Record<string, PersistedSpawnAttempt> = {};
-        const quarantinedRows: Record<string, unknown> = {};
-        if (
-            isRemotePredecessorEnvelope
-            && parsedRecord.quarantined
-            && typeof parsedRecord.quarantined === 'object'
-            && !Array.isArray(parsedRecord.quarantined)
-        ) {
-            for (const [id, value] of Object.entries(parsedRecord.quarantined as Record<string, unknown>)) {
-                quarantinedRows[id] = value
-                    && typeof value === 'object'
-                    && !Array.isArray(value)
-                    && Object.prototype.hasOwnProperty.call(value, 'raw')
-                    ? (value as Record<string, unknown>).raw
-                    : value;
-            }
-        }
-        for (const [id, value] of Object.entries(rawAttempts)) {
-            if (!value || typeof value !== 'object' || Array.isArray(value)) {
-                quarantinedRows[id] = value;
-                continue;
-            }
-            const record = value as Record<string, unknown>;
-            const machineId = normalizeRequired(record.machineId);
-            const targetFingerprint = normalizeRequired(record.targetFingerprint);
-            const userAttemptId = normalizeRequired(record.userAttemptId);
-            const nonce = normalizeSpawnSessionNonce(record.nonce);
-            const submissionState = record.v === 2
-                ? 'submitted'
-                : record.submissionState === 'prepared' || record.submissionState === 'submitted'
-                    ? record.submissionState
-                    : null;
-            const recordScope = record.scope && typeof record.scope === 'object' && !Array.isArray(record.scope)
-                ? record.scope as Record<string, unknown>
-                : null;
-            if (
-                (record.v !== 2 && record.v !== 3)
-                || !machineId
-                || !targetFingerprint
-                || !userAttemptId
-                || !nonce
-                || !submissionState
-                || recordScope?.serverId !== scope.serverId
-                || recordScope?.accountId !== scope.accountId
-                || (
-                    id !== recordId(machineId, targetFingerprint, userAttemptId)
-                    && id !== legacyRecordId(machineId, targetFingerprint)
-                )
-            ) {
-                quarantinedRows[id] = value;
-                continue;
-            }
-            const firstTurnLocalId = normalizeRequired(record.firstTurnLocalId)
-                ?? buildSpawnedFirstTurnLocalId(nonce);
-            const attachmentMessageLocalId = normalizeRequired(record.attachmentMessageLocalId)
-                ?? `spawn-attachment:${nonce}`;
-            if (!firstTurnLocalId || !attachmentMessageLocalId) {
-                quarantinedRows[id] = value;
-                continue;
-            }
-            attempts[recordId(machineId, targetFingerprint, userAttemptId)] = {
-                v: 3,
-                scope,
-                machineId,
-                targetFingerprint,
-                userAttemptId,
-                nonce,
-                submissionState,
-                createdSessionId: normalizeRequired(record.createdSessionId),
-                firstTurnLocalId,
-                attachmentMessageLocalId,
-            };
-        }
-        const quarantinedRecordIds = Object.keys(quarantinedRows);
-        if (quarantinedRecordIds.length > 0) {
-            writeQuarantine(scope, { kind: 'rows', rows: quarantinedRows });
-        }
-        return {
-            status: 'valid',
-            attempts,
-            ...(quarantinedRecordIds.length > 0 ? { quarantinedRecordIds } : {}),
-        };
-    } catch {
-        writeQuarantine(scope, { kind: 'unreadable_blob', raw });
-        return { status: 'corrupt' };
-    }
-}
-
-function writeQuarantine(scope: ServerAccountScope, quarantine: SpawnAttemptCustodyQuarantine): void {
-    getPersistenceStorage().set(quarantineStorageKey(scope), JSON.stringify(quarantine));
-}
-
-export function readSpawnAttemptCustodyQuarantine(
-    scope: ServerAccountScope,
-): SpawnAttemptCustodyQuarantine | null {
-    const raw = getPersistenceStorage().getString(quarantineStorageKey(scope));
-    if (!raw) return null;
-    try {
-        const parsed = JSON.parse(raw) as SpawnAttemptCustodyQuarantine;
-        if (parsed?.kind === 'unreadable_blob' && typeof parsed.raw === 'string') return parsed;
-        if (parsed?.kind === 'rows' && parsed.rows && typeof parsed.rows === 'object') return parsed;
-    } catch {
-        // The quarantine is diagnostic-only; an unreadable diagnostic cannot authorize mutation.
-    }
-    return null;
-}
-
-export function resetUnreadableSpawnAttemptCustody(scope: ServerAccountScope): boolean {
-    const state = readSpawnAttemptCustodyState(scope);
-    const quarantine = readSpawnAttemptCustodyQuarantine(scope);
-    if (state.status !== 'corrupt' || quarantine?.kind !== 'unreadable_blob') return false;
-    getPersistenceStorage().delete(storageKey(scope));
-    return true;
-}
-
-function writeAttempts(scope: ServerAccountScope, attempts: PersistedSpawnAttempts): void {
-    const storage = getPersistenceStorage();
-    const key = storageKey(scope);
-    if (Object.keys(attempts).length === 0) {
-        storage.delete(key);
-        return;
-    }
-    storage.set(key, JSON.stringify(attempts));
-}
-
 export function normalizeSpawnAttemptKey(value: unknown): string | null {
     return normalizeRequired(value);
 }
@@ -267,6 +72,8 @@ export async function acquireSpawnAttemptCustody(params: Readonly<{
     userAttemptId?: string | null;
     createUserAttemptId?: () => string;
     seedNonce?: string | null;
+    /** Commit dispatch custody in this transaction; raw Machine callers prepare their payload first. */
+    submissionState?: 'submitted';
     authoringOriginPersistence?: PersistedSpawnAttempt['authoringOriginPersistence'];
 }>): Promise<AcquireSpawnAttemptCustodyResult> {
     const machineId = normalizeRequired(params.machineId);
@@ -285,7 +92,17 @@ export async function acquireSpawnAttemptCustody(params: Readonly<{
         const id = recordId(machineId, targetFingerprint, userAttemptId);
         const existing = attempts[id];
         if (existing) {
-            return { status: 'acquired', record: existing, reused: true };
+            let record = existing;
+            if (params.submissionState === 'submitted' && !existing.terminalResult) {
+                if (existing.submissionState === 'prepared') {
+                    record = { ...existing, submissionState: 'submitted' };
+                } else if (existing.createdSessionId === null && !existing.hasSubmittedRetry) {
+                    record = { ...existing, hasSubmittedRetry: true };
+                }
+            }
+            if (record !== existing) writeAttempts(params.scope, { ...attempts, [id]: record });
+            return { status: 'acquired', record, reused: true,
+                ...(params.submissionState === 'submitted' ? { previousSubmissionState: existing.submissionState } : {}) };
         }
 
         const nonce = normalizeSpawnSessionNonce(params.seedNonce) ?? createUiSessionSpawnNonce();
@@ -303,7 +120,7 @@ export async function acquireSpawnAttemptCustody(params: Readonly<{
             targetFingerprint,
             userAttemptId,
             nonce,
-            submissionState: 'prepared',
+            submissionState: params.submissionState ?? 'prepared',
             createdSessionId: null,
             firstTurnLocalId,
             // Attachment preparation and text admission compose one Message;
@@ -339,9 +156,30 @@ export async function markSpawnAttemptCreated(params: Readonly<{
         const existing = state.attempts[id];
         if (!existing || existing.userAttemptId !== userAttemptId || existing.nonce !== nonce) return null;
         if (existing.createdSessionId && existing.createdSessionId !== createdSessionId) return null;
-        const created = { ...existing, createdSessionId };
+        const { terminalResult: _terminalResult, ...withoutTerminalResult } = existing;
+        const created = { ...withoutTerminalResult, createdSessionId };
         writeAttempts(params.scope, { ...state.attempts, [id]: created });
         return created;
+    });
+    return locked.status === 'completed' ? locked.value : null;
+}
+
+/** Retain the original typed refusal; it is never represented as a native operation. */
+export async function markSpawnAttemptRefused(params: Readonly<{
+    record: PersistedSpawnAttempt;
+    result: NonNullable<PersistedSpawnAttempt['terminalResult']>;
+}>): Promise<PersistedSpawnAttempt | null> {
+    const { record, result } = params;
+    const locked = await withSpawnAttemptMutationLock(record.scope, () => {
+        const state = readSpawnAttemptCustodyState(record.scope);
+        if (state.status !== 'valid') return null;
+        const id = recordId(record.machineId, record.targetFingerprint, record.userAttemptId);
+        const existing = state.attempts[id];
+        if (!existing || existing.nonce !== record.nonce || existing.createdSessionId !== null
+            || existing.hasSubmittedRetry || result.retryable) return null;
+        const refused = { ...existing, terminalResult: result };
+        writeAttempts(record.scope, { ...state.attempts, [id]: refused });
+        return refused;
     });
     return locked.status === 'completed' ? locked.value : null;
 }
@@ -379,6 +217,8 @@ export async function clearSpawnAttemptCustody(params: Readonly<{
     targetFingerprint: string;
     userAttemptId: string;
     nonce?: string | null;
+    /** No-effect settlement cannot discard a committed receipt or a subsequent submission. */
+    onlyIfUncommitted?: true;
 }>): Promise<boolean> {
     const machineId = normalizeRequired(params.machineId);
     const targetFingerprint = normalizeRequired(params.targetFingerprint);
@@ -395,6 +235,7 @@ export async function clearSpawnAttemptCustody(params: Readonly<{
             !existing
             || existing.userAttemptId !== userAttemptId
             || (nonce !== null && existing.nonce !== nonce)
+            || (params.onlyIfUncommitted === true && (existing.createdSessionId !== null || existing.hasSubmittedRetry === true))
         ) return false;
         const next = { ...state.attempts };
         delete next[id];

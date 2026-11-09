@@ -3,12 +3,20 @@ import { upsertSessionOrganizationTag as upsertSessionOrganizationTagApi } from 
 import { buildSessionOrganizationServerKey } from '@/sync/domains/session/organization';
 import type { UiSessionOrganizationTag } from '@/sync/domains/session/organization';
 import { getStorage } from '@/sync/domains/state/storageStore';
-import type { CreateOrUpdateSessionOrganizationTagRequest } from '@happier-dev/protocol';
+import { sessionOrganizationStoreFor } from './sessionOrganizationAccountStore';
+import type { CreateOrUpdateSessionOrganizationTagRequest } from '@happier-dev/protocol/sessions/organization/mutations';
 import { createSessionOrganizationOpaqueId } from './sessionOrganizationIdAllocation';
+import { CreateOrUpdateSessionOrganizationTagResponseSchema } from '@happier-dev/protocol/sessions/organization/mutations';
+import { createFrontDoorActionExecute, requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { parseToken } from '@/utils/auth/parseToken';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import {
     openSessionOrganizationTagDisplay,
     prepareSessionOrganizationDisplayEnvelopeForWrite,
 } from './sessionOrganizationDisplayEnvelope';
+
+const executeTagAction = createFrontDoorActionExecute();
+export type SessionTagActionExecute = (actionId: 'session.tags.create' | 'session.tags.set', input: unknown) => Promise<ActionExecuteResult>;
 
 type ConcreteSessionOrganizationTagRequest = CreateOrUpdateSessionOrganizationTagRequest & {
     tagId: string;
@@ -40,6 +48,7 @@ export async function upsertSessionTag(params: Readonly<{
         }),
         display: await prepareSessionOrganizationDisplayEnvelopeForWrite({
             credentials: params.credentials,
+            serverUrl: params.serverUrl,
             envelope: params.request.display,
             request: params.requestAtEndpoint,
         }),
@@ -56,8 +65,8 @@ export async function upsertSessionTag(params: Readonly<{
         tag: response.tag,
     });
     params.assertCurrent?.();
-    const recordId = getStorage().getState().upsertSessionOrganizationTagOptimistic(params.serverId, tag);
-    getStorage().getState().commitSessionOrganizationOptimistic(recordId);
+    const recordId = sessionOrganizationStoreFor(params).upsertSessionOrganizationTagOptimistic(params.serverId, tag);
+    sessionOrganizationStoreFor(params).commitSessionOrganizationOptimistic(recordId);
     return tag;
 }
 
@@ -67,6 +76,7 @@ export async function createSessionOrganizationTagWithLabel(params: Readonly<{
     serverUrl?: string;
     label: string;
     usedIds?: ReadonlySet<string>;
+    executeAction?: SessionTagActionExecute;
 }>): Promise<UiSessionOrganizationTag> {
     const label = params.label.trim();
     if (!label) throw new Error('Session organization tag label is required');
@@ -74,15 +84,16 @@ export async function createSessionOrganizationTagWithLabel(params: Readonly<{
         prefix: 'tag',
         usedIds: params.usedIds ?? readCurrentTagIds(params.serverId),
     });
-    return upsertSessionTag({
-        credentials: params.credentials,
-        serverId: params.serverId,
-        serverUrl: params.serverUrl,
-        request: {
-            tagId,
-            tagKey: tagId,
-            sortKey: null,
-            display: { t: 'plain', v: { label } },
-        },
-    });
+    const request = {
+        tagId, tagKey: tagId, sortKey: null, display: { t: 'plain', v: { label } },
+    };
+    const result = params.executeAction ? await params.executeAction('session.tags.create', request)
+        : await executeTagAction('session.tags.create', request, { surface: 'ui', authority: 'present_user',
+            actionCaller: { kind: 'host' }, serverId: params.serverId, expectedAccountId: parseToken(params.credentials.token) });
+    requireActionSuccess(result);
+    const response = CreateOrUpdateSessionOrganizationTagResponseSchema.parse(result.result);
+    const created = sessionOrganizationStoreFor(params).sessionOrganizationTagsByTagKey[
+        buildSessionOrganizationServerKey(params.serverId, response.tag.tagId)];
+    if (!created) throw new Error('invalid_action_output');
+    return created;
 }

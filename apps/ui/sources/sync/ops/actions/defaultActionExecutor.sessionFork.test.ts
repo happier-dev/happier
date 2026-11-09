@@ -2,9 +2,19 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vites
 import { act } from 'react-test-renderer';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
-import { AgentNativeResumeIdentityV1Schema, buildQualifiedPluginContributionKey, computeWorkspaceSyncPolicyDigest, deriveSessionCreationTagV1,
-  PluginManifestV2Schema, PluginProjectionV2Schema, SessionCreationCorrespondenceV1Schema, SessionForkRpcParamsSchema,
-  normalizeActionsSettingsV1, type ActionExecutorContext, type SessionRollbackTarget } from '@happier-dev/protocol';
+import { AgentNativeResumeIdentityV1Schema} from '@happier-dev/protocol/agents/nativeResumeIdentityV1';
+import { buildQualifiedPluginContributionKey} from '@happier-dev/protocol/plugins/contribution-key';
+import { computeWorkspaceSyncPolicyDigest} from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { deriveSessionCreationTagV1} from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
+import {
+  PluginManifestV2Schema} from '@happier-dev/protocol/plugins/manifest/v2';
+import { PluginProjectionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { SessionCreationCorrespondenceV1Schema} from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { SessionForkRpcParamsSchema} from '@happier-dev/protocol/sessions/fork';
+import {
+  normalizeActionsSettingsV1} from '@happier-dev/protocol/actions/actionSettings';
+import { type ActionExecutorContext} from '@happier-dev/protocol/actions/executor/types';
+import { type SessionRollbackTarget } from '@happier-dev/protocol/sessions/rollback';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { parseSocketRpcAuthorizationContext, type SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
@@ -42,6 +52,8 @@ afterAll(restoreExecutorModuleLoader);
 const { storage } = await import('@/sync/domains/state/storage');
 const { sync } = await import('@/sync/sync');
 const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+const { resolveSessionComposerSend } = await import('@/sync/domains/input/slashCommands/resolveSessionComposerSend');
+const { executeSessionComposerResolution } = await import('@/sync/domains/input/slashCommands/executeSessionComposerResolution');
 const { useSessionForkStrategyFlow } = await import('@/sync/domains/sessionFork/useSessionForkStrategyFlow');
 const { getExistingSessionDraftProjection, resetSessionDraftRepositoryForTests } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
 const { startSessionHandoff } = await import('@/sync/ops/sessionHandoffs');
@@ -154,6 +166,7 @@ describe('default Action executor Session lifecycle contracts', () => {
     for (const machine of machines) homes.answer(serverId, `/v1/machines/${machine.id}`, {
       select: () => ({ body: { machine: publishedMachine(machineCensus.find(row => row.id === machine.id) ?? machine) } }),
     });
+    await sync.refreshMachines({ serverId });
     outgoing.length = 0;
     daemonAnswer = () => { throw new Error('Unexpected daemon request'); };
   });
@@ -187,6 +200,57 @@ describe('default Action executor Session lifecycle contracts', () => {
       .toContainEqual(expect.objectContaining({ serverId }));
     expect(readSessionOwnerMetadataView(storage.getState().sessions.sess_child!)?.forkV1).toMatchObject({ parentSessionId: 'sess_parent' });
     expect(openSession).toHaveBeenCalledWith('sess_child', { serverId });
+  });
+
+  it('forks the current Session through /fork and opens the child without sending an agent message', async () => {
+    await sync.refreshMachines({ serverId });
+    installSession();
+    answerFork();
+    const openSession = vi.fn();
+    let message = '/fork';
+    const clearSemanticDraftValues = vi.fn();
+    const modalAlert = vi.fn();
+    const handled = await executeSessionComposerResolution({
+      resolved: resolveSessionComposerSend({ input: message, executionRunsEnabled: false }),
+      sessionId: 'sess_parent', accountScope: { serverId, accountId: 'alice' },
+      agentId: 'codex', permissionMode: 'default',
+      actionExecutor: executor({ openSession }), previousMessage: message,
+      setMessage: (text) => { message = text; }, clearDraft: vi.fn(), clearSemanticDraftValues,
+      trackMessageSent: () => { throw new Error('A local fork must not send an agent message'); },
+      navigateToRuns: vi.fn(), modalAlert,
+    });
+    expect(handled).toBe(true);
+    expect(modalAlert.mock.calls).toEqual([]);
+    expect(rpcRequests(RPC_METHODS.SESSION_FORK)[0]?.params).toMatchObject({
+      parentSessionId: 'sess_parent', forkPoint: { type: 'latest' },
+    });
+    expect(openSession).toHaveBeenCalledWith('sess_child', { serverId });
+    expect(message).toBe('');
+    expect(clearSemanticDraftValues).toHaveBeenCalled();
+    expect(modalAlert).not.toHaveBeenCalled();
+  });
+
+  it('restores /fork and its semantic draft when the fork Action refuses the request', async () => {
+    installSession();
+    setSettings({ sessionReplayEnabled: false });
+    const openSession = vi.fn();
+    let message = '/fork';
+    const clearSemanticDraftValues = vi.fn();
+    const modalAlert = vi.fn();
+    const handled = await executeSessionComposerResolution({
+      resolved: resolveSessionComposerSend({ input: message, executionRunsEnabled: false }),
+      sessionId: 'sess_parent', accountScope: { serverId, accountId: 'alice' },
+      agentId: 'codex', permissionMode: 'default',
+      actionExecutor: executor({ openSession }), previousMessage: message,
+      setMessage: (text) => { message = text; }, clearDraft: vi.fn(), clearSemanticDraftValues,
+      trackMessageSent: vi.fn(), navigateToRuns: vi.fn(), modalAlert,
+    });
+    expect(handled).toBe(true);
+    expect(message).toBe('/fork');
+    expect(clearSemanticDraftValues).not.toHaveBeenCalled();
+    expect(modalAlert).toHaveBeenCalled();
+    expect(openSession).not.toHaveBeenCalled();
+    expect(rpcRequests(RPC_METHODS.SESSION_FORK)).toEqual([]);
   });
 
   it('honors an explicit Replay cutoff and leaves child navigation to the initiating presentation', async () => {
@@ -523,6 +587,35 @@ describe('default Action executor Session lifecycle contracts', () => {
       .toMatchObject({ sessionId: 'sess_parent', targetMachineId: 'machine_2', accountServerId: serverId });
     expect(homes.requestsFor('/v1/machines/read-batch'))
       .toContainEqual(expect.objectContaining({ serverId, input: expect.objectContaining({ machineIds: expect.arrayContaining(['machine_1']) }) }));
+  });
+
+  it('reaches exact-mirror confirmation for a live replacement through the real preflight adapter', async () => {
+    const policy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+    const operationId = 'replace-live-link';
+    const replaceRelationshipId = 'incumbent-link';
+    // The target daemon is the network boundary. Its incumbent-custody lookup
+    // needs the selected link identity before it can inspect this occupied root.
+    daemonAnswer = request => {
+      if (!request.method.endsWith(`:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT}`)) {
+        throw new Error('Replacement must await destination confirmation before creation');
+      }
+      const payload = request.params;
+      if (!payload || typeof payload !== 'object' || !('replaceRelationshipId' in payload)
+        || payload.replaceRelationshipId !== replaceRelationshipId) {
+        return { errorCode: 'workspace_root_in_use', error: 'Handoff target root overlaps an active operation' };
+      }
+      return { type: 'approval_required', approval: { v: 1,
+        consequences: ['delete_target_only_files_during_exact_mirror'], serverId,
+        machineId: 'machine_2', canonicalRoot: '/target/repo', rootFingerprint: 'a'.repeat(64), operationId } };
+    };
+    const result = await executor().execute('workspace.sync.relationship.replace', {
+      v: 1, replaceRelationshipId, sourceWorkspaceRefId: 'workspace-source', targetMachineId: 'machine_2',
+      targetPath: '/target/repo', mode: 'mirror_exactly', destinationIntent: 'use_existing',
+      contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) },
+    }, { ...context(), actionRequestId: operationId, bypassApprovals: true });
+    // A new consequence cannot execute with bypassApprovals and no matching
+    // receipt; importantly, the occupied incumbent root was inspected first.
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'approval_stale' });
   });
 
   it('sends the exact approved target receipt and Action input through the real handoff adapter', async () => {

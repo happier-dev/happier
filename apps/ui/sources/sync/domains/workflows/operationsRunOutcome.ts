@@ -17,7 +17,8 @@ export type OperationsRunReceiptReference = Readonly<{
 /** Historical, typed tool acknowledgements, never inferred from an agent's report. */
 export type OperationsRunProducedResults = Readonly<{
     pullRequests: readonly ScmPullRequestSummary[];
-    approvals: readonly Readonly<{ serverId: string; request: ActionApprovalRequestCreatedResult }>[];
+    /** `status` is the request's own lifecycle when its Artifact is loaded; a transcript handle alone has none. */
+    approvals: readonly Readonly<{ serverId: string; request: ActionApprovalRequestCreatedResult; status?: string }>[];
     operations: readonly QualifiedActionOperation[];
     pendingOperations: readonly NonNullable<Extract<DeploymentReceiptAcceptedResultV1, { kind: 'pending' }>['operation']>[];
     receipts: readonly OperationsRunReceiptReference[];

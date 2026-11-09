@@ -3,16 +3,20 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import {
     encodeV2SessionListCursorV2,
-    projectLegacySessionAccessCapabilitiesV1,
-    type AccountEncryptionCurrentnessResponse,
-    type SessionListQueryV1,
     type V2SessionRecord,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/control/contract';
+import {
+    projectLegacySessionAccessCapabilitiesV1} from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
+import {
+    type AccountEncryptionCurrentnessResponse} from '@happier-dev/protocol/account/encryptionMode';
+import {
+    type SessionListQueryV1} from '@happier-dev/protocol/sessions/listing/query';
 
 import { fetchAndApplySessions as fetchAndApplySessionsSource } from './sessionSnapshot';
 import { createCompactSessionListFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { createSessionListQueryHomeController } from '@/sync/domains/session/listing/sessionListQueryController';
-import { createSessionListRenderableSessionFixture, createSessionViewerFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { resolveSessionListQueryPresentation } from '@/sync/domains/session/listing/sessionListIndexPresentation';
+import { createPlainSessionCurrentProjectionRecordFixture, createSessionListRenderableSessionFixture, createSessionViewerFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 
 function fetchAndApplySessions(params: Parameters<typeof fetchAndApplySessionsSource>[0]) {
     const request = params.request;
@@ -79,9 +83,58 @@ function buildQuery(): SessionListQueryV1 {
 }
 
 describe('fetchAndApplySessions query source', () => {
+    it('refreshes 400 rows without reading Account currentness when owner metadata and recipient readiness are not needed', async () => {
+        const rows = Array.from({ length: 400 }, (_, index) => buildSessionRow(`no-owner-${index}`));
+        const paths: string[] = [];
+        const published: string[][] = [];
+        await fetchAndApplySessions({
+            serverId: 'home-a', source: { kind: 'query', body: buildQuery(), allowV1Fallback: false },
+            credentials: { token: 't' }, encryption: null, sessionDataKeys: new Map(),
+            request: async path => {
+                paths.push(path);
+                return path === '/v1/account/encryption/currentness' ? jsonResponse(PLAIN_ACCOUNT_CURRENTNESS)
+                    : jsonResponse({ sessions: rows, nextCursor: null, hasNext: false,
+                        attentionNextCursor: null, attentionHasNext: false });
+            },
+            applySessions: () => {}, applySessionListRenderables: next => published.push(next.map(row => row.id)),
+            awaitSessionListHydration: true, log: { log: () => {} },
+        });
+        expect(published.at(-1)).toEqual(rows.map(row => row.id));
+        expect(paths.filter(path => path === '/v1/account/encryption/currentness')).toHaveLength(0);
+    });
 
-
-
+    it('publishes the same-version current request address using only the existing list read', async () => {
+        const row = { ...buildSessionRow('list-request'), pendingPermissionRequestCount: 1,
+            pendingUserActionRequestCount: 0, pendingRequestObservedAt: 4,
+            agentState: JSON.stringify({ requests: { permission: {
+                kind: 'permission', tool: 'Bash', arguments: { private: 'body' }, createdAt: 4, turnId: 'turn-a',
+            } } }),
+        };
+        const current = createSessionListRenderableSessionFixture({ id: row.id, active: true,
+            metadataVersion: row.metadataVersion, agentStateVersion: row.agentStateVersion,
+            hasPendingPermissionRequests: true, hasPendingUserActionRequests: false, pendingRequestObservedAt: 4,
+        });
+        const patches: unknown[] = [];
+        const requestPaths: string[] = [];
+        const appliedSessions: unknown[] = [];
+        await fetchAndApplySessions({
+            serverId: 'home-a', source: { kind: 'query', body: { ...buildQuery(), includeAttention: false }, allowV1Fallback: false },
+            credentials: { token: 't' }, accountCurrentness: PLAIN_ACCOUNT_CURRENTNESS,
+            encryption: null, sessionDataKeys: new Map(),
+            request: async path => { requestPaths.push(path); return jsonResponse({ sessions: [row], nextCursor: null, hasNext: false,
+                attentionNextCursor: null, attentionHasNext: false }); },
+            applySessions: sessions => appliedSessions.push(...sessions), applySessionListRenderables: () => {},
+            applySessionListRenderablePatches: next => patches.push(...next),
+            getCurrentSessionListRenderable: () => current, priorityHydrationSessionIds: [row.id], log: { log: () => {} },
+        });
+        await vi.waitFor(() => expect(patches).toContainEqual(expect.objectContaining({
+            sessionId: row.id, patch: expect.objectContaining({ currentRequestRef: {
+                kind: 'permission', requestId: 'permission', turnId: 'turn-a',
+            } }),
+        })));
+        expect(requestPaths).toEqual(['/v2/sessions/query']);
+        expect(appliedSessions).toEqual([]);
+    });
 
     it('applies newer Agent state to a list row even when the hydrated snapshot has older row timestamps', async () => {
         const row = {
@@ -259,7 +312,58 @@ describe('fetchAndApplySessions query source', () => {
             attentionHasNext: false,
         });
     });
-
+    it('DIAG187 FIX215 keeps answered query failures terminal during settling and recovers through normal Retry', async () => {
+        let reply: 'refused' | 'miswired' | 'transport' | 'server_error' | 'valid' = 'refused';
+        const row = { ...createPlainSessionCurrentProjectionRecordFixture({ id: 'diag187-query' }),
+            viewer: createSessionViewerFixture() };
+        const { latestFailureSeq: _latestFailureSeq, ...olderViewer } = row.viewer;
+        const controller = createSessionListQueryHomeController({
+            serverId: 'home-a',
+            fetchPage: page => fetchAndApplySessions({
+                serverId: 'home-a', source: page.source,
+                credentials: { token: 'synthetic-token' }, accountCurrentness: PLAIN_ACCOUNT_CURRENTNESS,
+                encryption: null, sessionDataKeys: new Map(),
+                request: async () => {
+                    if (reply === 'transport') throw new TypeError('Failed to fetch');
+                    if (reply === 'refused') return jsonResponse({ error: 'invalid_request' }, 400);
+                    if (reply === 'server_error') return jsonResponse({ error: 'list_failed' }, 503);
+                    return jsonResponse({ sessions: [{ ...row, viewer: reply === 'miswired' ? olderViewer : row.viewer }],
+                        nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false });
+                },
+                shouldContinue: () => !page.signal.aborted,
+                applySessions: () => {}, applySessionListRenderables: () => {}, log: { log: () => {} },
+            }),
+        });
+        const presentation = () => resolveSessionListQueryPresentation({
+            selectedServerIds: ['home-a'], statesByServerId: { 'home-a': controller.getSnapshot() },
+            coverageComplete: controller.getSnapshot().phase === 'ready', retainedRowCount: 0,
+            settlingHomeServerId: 'home-a',
+        });
+        try {
+            await controller.update({ query: buildQuery(), selected: true, online: true, supported: true });
+            expect(controller.getSnapshot()).toMatchObject({ phase: 'error', failureReason: 'invalid_query',
+                failedOperation: 'replace', appliedQueryKey: null, addresses: [] });
+            reply = 'miswired';
+            await controller.retry();
+            expect(controller.getSnapshot()).toMatchObject({ phase: 'error', failureReason: 'response',
+                failureCode: 'invalid_response', failedOperation: 'replace', appliedQueryKey: null, addresses: [] });
+            expect(presentation()).toEqual({ kind: 'error', retainedRows: false });
+            reply = 'transport';
+            await controller.retry();
+            expect(controller.getSnapshot()).toMatchObject({ phase: 'error', failureReason: 'network' });
+            expect(presentation()).toEqual({ kind: 'initial_loading' });
+            reply = 'server_error';
+            await controller.retry();
+            expect(controller.getSnapshot()).toMatchObject({ phase: 'error', failureReason: 'response', failureCode: null });
+            expect(presentation()).toEqual({ kind: 'error', retainedRows: false });
+            reply = 'valid';
+            await controller.retry();
+            expect(controller.getSnapshot()).toMatchObject({ phase: 'ready', failureReason: null, failureCode: null,
+                addresses: [{ serverId: 'home-a', sessionId: row.id }] });
+            expect(controller.getSnapshot().appliedQueryKey).not.toBeNull();
+            expect(presentation()).toEqual({ kind: 'ready', complete: true });
+        } finally { controller.dispose(); }
+    });
 
     it('revokes controller admission during HTTP and prevents real query ingestion or a later refresh', async () => {
         let finish!: (response: Response) => void;

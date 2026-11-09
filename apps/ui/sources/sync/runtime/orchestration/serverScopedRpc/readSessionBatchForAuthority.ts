@@ -24,6 +24,7 @@ export type SessionPartsReadOptions = Readonly<{
     request: (path: string, init: RequestInit) => Promise<Response>;
     readTransport?: CapturedServerReadTransport;
     sessionIds: readonly string[];
+    underSessionId?: string;
     includeSnapshot: boolean;
     includeTurns?: boolean;
     includeMessages: boolean;
@@ -46,14 +47,14 @@ export function prepareSessionPartsRead(params: Omit<SessionPartsReadOptions, 's
     assertCurrent();
     const demand = SessionReadBatchRequestV1Schema.parse({ sessionIds: [], includeSnapshot: params.includeSnapshot,
         includeMessages: params.includeMessages, includeTurns: params.includeTurns,
-        accessProjectionVersion: params.accessProjectionVersion });
+        accessProjectionVersion: params.accessProjectionVersion, underSessionId: params.underSessionId });
     const includeTurns = demand.includeSnapshot && demand.includeTurns !== false;
     const emptyBody = { ...demand, includeTurns };
     const transport = params.readTransport;
     const transportKey = transport?.key;
     const scope = transport?.scope ?? transportKey;
     const reservation = sessionParts.reserve(JSON.stringify([transportKey ?? null, params.includeSnapshot, includeTurns, params.includeMessages,
-        params.accessProjectionVersion ?? null, params.retry ?? null]), { scope, signal: params.signal, fresh: params.fresh || !transport });
+        params.accessProjectionVersion ?? null, params.retry ?? null, params.underSessionId ?? null]), { scope, signal: params.signal, fresh: params.fresh || !transport });
     return {
         release: reservation.release,
         async read(sessionIds: readonly string[]): Promise<ReadonlyMap<string, SessionReadPart>> {
@@ -97,6 +98,8 @@ export function prepareSessionPartsRead(params: Omit<SessionPartsReadOptions, 's
                         const completed = new Map<string, SessionReadPart>();
                         for (const row of body.results) {
                             if (!expected.delete(row.sessionId)
+                                || (row.detail?.status === 200 && row.detail.body.session.id !== row.sessionId)
+                                || (row.turns?.status === 200 && row.turns.body.sessionId !== row.sessionId)
                                 || (params.includeSnapshot && !row.detail)
                                 || (includeTurns && row.detail?.status === 200 && !row.turns)
                                 || (params.includeMessages && (!params.includeSnapshot || row.detail?.status === 200) && !row.messages)) {

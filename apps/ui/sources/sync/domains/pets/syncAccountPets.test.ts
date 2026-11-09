@@ -1,20 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthCredentials } from "@/auth/storage/tokenStorage";
 import type { AccountPetMetadata } from "./accountPetLibraryTypes";
-import { HappyError } from '@/utils/errors/errors';
+import { createLegacyAccountEncryptionCurrentnessFixture, createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 
-const fetchAccountEncryptionCurrentness = vi.hoisted(() => vi.fn());
 const resolveRuntimeFeatureDecisionOrThrow = vi.hoisted(() => vi.fn());
-
-vi.mock("@/sync/api/account/apiAccountEncryptionMode", () => ({
-    fetchAccountEncryptionCurrentness,
-}));
 
 vi.mock("@/sync/domains/features/featureDecisionInputs", () => ({
     resolveRuntimeFeatureDecisionOrThrow,
 }));
 
-const credentials: AuthCredentials = { token: "token-1", secret: "secret-1" };
+const credentials: AuthCredentials = { token: "token-1" };
+const request = vi.fn(async () => Response.json(createPlainAccountEncryptionCurrentnessFixture()));
 
 function metadata(accountPetId: string): AccountPetMetadata {
     return {
@@ -42,14 +38,8 @@ function metadata(accountPetId: string): AccountPetMetadata {
 
 describe("fetchAndApplyAccountPets", () => {
     beforeEach(() => {
-        fetchAccountEncryptionCurrentness.mockReset();
-        fetchAccountEncryptionCurrentness.mockResolvedValue({
-            mode: "plain",
-            version: 1,
-            signingKeyFingerprint: null,
-            contentKeyFingerprint: null,
-            updatedAt: 1,
-        });
+        request.mockReset();
+        request.mockImplementation(async () => Response.json(createPlainAccountEncryptionCurrentnessFixture()));
         resolveRuntimeFeatureDecisionOrThrow.mockReset();
         resolveRuntimeFeatureDecisionOrThrow.mockResolvedValue({ state: "enabled" });
     });
@@ -63,6 +53,7 @@ describe("fetchAndApplyAccountPets", () => {
 
         const result = await fetchAndApplyAccountPets({
             credentials,
+            request,
             serverId: "server-1",
             resolvePetsSyncEnabled,
             listPets,
@@ -72,7 +63,7 @@ describe("fetchAndApplyAccountPets", () => {
 
         expect(result).toEqual({ status: "applied", count: 1 });
         expect(resolvePetsSyncEnabled).toHaveBeenCalledWith({ serverId: "server-1" });
-        expect(fetchAccountEncryptionCurrentness.mock.invocationCallOrder[0] ?? Number.MAX_SAFE_INTEGER).toBeLessThan(
+        expect(request.mock.invocationCallOrder[0] ?? Number.MAX_SAFE_INTEGER).toBeLessThan(
             listPets.mock.invocationCallOrder[0] ?? Number.MAX_SAFE_INTEGER,
         );
         expect(listPets).toHaveBeenCalledWith(credentials);
@@ -90,6 +81,7 @@ describe("fetchAndApplyAccountPets", () => {
 
         const result = await fetchAndApplyAccountPets({
             credentials,
+            request,
             resolvePetsSyncEnabled,
             listPets,
             applyAccountPets,
@@ -110,6 +102,7 @@ describe("fetchAndApplyAccountPets", () => {
 
         await expect(fetchAndApplyAccountPets({
             credentials,
+            request,
             listPets,
             applyAccountPets,
         })).rejects.toBe(error);
@@ -128,6 +121,7 @@ describe("fetchAndApplyAccountPets", () => {
 
         const result = await fetchAndApplyAccountPets({
             credentials,
+            request,
             resolvePetsSyncEnabled: async () => true,
             listPets,
             applyAccountPets,
@@ -141,13 +135,9 @@ describe("fetchAndApplyAccountPets", () => {
     });
 
     it("does not request predecessor pet metadata when currentness reports e2ee", async () => {
-        fetchAccountEncryptionCurrentness.mockResolvedValue({
-            mode: "e2ee",
-            version: 2,
-            signingKeyFingerprint: "signing-fingerprint",
-            contentKeyFingerprint: "content-fingerprint",
-            updatedAt: 2,
-        });
+        request.mockImplementation(async () => Response.json(
+            createLegacyAccountEncryptionCurrentnessFixture({ secret: new Uint8Array(32).fill(11) }),
+        ));
         const listPets = vi.fn(async () => ({
             ok: true as const,
             pets: [metadata("retained-plain-pet")],
@@ -157,6 +147,7 @@ describe("fetchAndApplyAccountPets", () => {
 
         const result = await fetchAndApplyAccountPets({
             credentials,
+            request,
             resolvePetsSyncEnabled: async () => true,
             listPets,
             applyAccountPets,
@@ -166,15 +157,13 @@ describe("fetchAndApplyAccountPets", () => {
             status: "unavailable",
             reason: "custom_pet_sync_unavailable",
         });
-        expect(fetchAccountEncryptionCurrentness).toHaveBeenCalledWith(credentials);
+        expect(request).toHaveBeenCalledOnce();
         expect(listPets).not.toHaveBeenCalled();
         expect(applyAccountPets).not.toHaveBeenCalled();
     });
 
     it("does not request predecessor pet metadata when strict currentness is unavailable", async () => {
-        fetchAccountEncryptionCurrentness.mockRejectedValue(
-            new HappyError("account-encryption-currentness-unavailable", false),
-        );
+        request.mockImplementation(async () => Response.json({ error: 'forbidden' }, { status: 403 }));
         const listPets = vi.fn(async () => ({
             ok: true as const,
             pets: [metadata("retained-plain-pet")],
@@ -184,6 +173,7 @@ describe("fetchAndApplyAccountPets", () => {
 
         const result = await fetchAndApplyAccountPets({
             credentials,
+            request,
             resolvePetsSyncEnabled: async () => true,
             listPets,
             applyAccountPets,

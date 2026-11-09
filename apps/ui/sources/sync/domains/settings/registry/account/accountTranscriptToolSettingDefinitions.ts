@@ -63,7 +63,6 @@ export const ACCOUNT_TRANSCRIPT_TOOL_SETTING_ANALYTICS = defineAccountSettingAna
     transcriptMessageSavePromptActionEnabled: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
     transcriptMessageMakeRepeatableActionEnabled: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
     transcriptMessagePluginActionsEnabled: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
-    composerPromptLibraryButtonEnabled: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
     transcriptMessageSendToSessionEnabled: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
     transcriptMessageSendToSessionTemplate: {
         trackCurrentState: true,

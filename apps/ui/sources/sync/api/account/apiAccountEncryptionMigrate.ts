@@ -1,5 +1,6 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { HappyError } from '@/utils/errors/errors';
+import { t } from '@/text';
 import { backoff } from '@/utils/timing/time';
 import { createServerFetchAtEndpoint, createServerFetchForActiveServer, type ServerFetch } from '@/sync/http/client';
 import type { HomeCarrier } from '@/sync/runtime/homeCarrier';
@@ -33,7 +34,7 @@ export async function migrateAccountEncryptionMode(
     target?: AccountEncryptionMigrationTarget;
     scope?: AccountEncryptionMigrationScope;
   }> = {},
-): Promise<import('@happier-dev/protocol').AccountEncryptionMigrateSuccessResponse> {
+): Promise<import('@happier-dev/protocol/account/encryptionMigrate').AccountEncryptionMigrateSuccessResponse> {
   if (options.scope) assertAccountEncryptionMigrationScopeCurrent(options.scope);
   const targetServerId = options.scope?.scope.serverId ?? options.target?.serverId
     ?? (!options.request ? getActiveServerSnapshot().serverId : undefined);
@@ -95,13 +96,17 @@ export async function migrateAccountEncryptionMode(
         });
       }
       if (err.error === 'invalid-params' && err.reason) {
-        throw new HappyError('Failed to update encryption setting', false, {
+        throw new HappyError(err.reason === 'migration_inventory_changed'
+          ? t('settingsAccount.encryptionInventoryChanged') : t('settingsAccount.encryptionUpdateFailed'), false, {
           status: response.status,
           kind: 'server',
           code: err.reason,
         });
       }
-      throw new HappyError('Failed to update encryption setting', false, {
+      const message = err.error === 'e2ee-required' ? t('settingsAccount.encryptionRequiredByHome')
+        : err.error === 'plaintext-only' ? t('settingsAccount.encryptionPlainOnlyHome')
+        : t('settingsAccount.encryptionUpdateFailed');
+      throw new HappyError(message, false, {
         status: response.status,
         kind: 'server',
         code: err.error,

@@ -44,6 +44,7 @@ import {
 import { buildNewSessionDraftLocalState } from '@/sync/ops/sessionDrafts/newSessionDraftLocalState';
 
 import { projectNewSessionDraftSyncedAuthoringFields } from './sessionAuthoringDraftProjection';
+import { importSessionActionDrafts } from './sessionActionDraftImport';
 
 function asStrictJsonValue(value: unknown): StrictJsonValue {
     return value as StrictJsonValue;
@@ -161,9 +162,11 @@ function buildNewPatch(draft: NewSessionDraft, scopeServerId: string): Readonly<
 
 /**
  * Captures retired draft stores into the canonical repository and removes each
- * legacy source only after the corresponding CAS write is remotely acknowledged.
+ * legacy source only after its required persistence boundary: local durable storage
+ * for retired action cards, remote acknowledgement for the older composer stores.
  */
 export async function migrateLegacySessionDrafts(scope: ServerAccountScope): Promise<void> {
+    await importSessionActionDrafts(scope);
     const legacyTexts = { ...loadSessionDrafts(scope) };
     const legacyValues = { ...loadRawSessionDraftValues(scope) };
     let textsChanged = false;

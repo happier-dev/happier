@@ -1,40 +1,44 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import {
-    createWorkflowAccountRunActionOwner,
-    WorkflowRunStartRequestV1Schema,
+    createWorkflowAccountRunActionOwner} from '@happier-dev/protocol/actions/executor/workflowRunActions';
+import {
+    WorkflowRunStartRequestV1Schema} from '@happier-dev/protocol/workflows/actionsV1';
+import {
     WorkflowRunSummaryV1Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { callSocketRpc } from '@happier-dev/sync-client';
 import { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
 
 import { createUiWorkflowActionTransport, type WorkflowActionTransport } from './workflowActionTransport';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 
-function createHarness() {
-    let current = true;
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
+
+async function createHarness() {
+    const serverId = await homes.addHome({ name: 'Workflow relay', serverUrl: 'https://workflow-relay.test', accountId: 'account-a' });
+    const { captureLazyActionAccountContext } = await import('./actionAccountContext');
+    const lifetime = new AbortController();
+    const account = await captureLazyActionAccountContext(serverId, lifetime.signal);
+    onTestFinished(() => account.dispose());
     const transport = vi.fn<WorkflowActionTransport>(async () => ({ definitions: [] }));
     const execute = createUiWorkflowActionTransport({
-        account: {
-            serverId: 'home-a',
-            accountId: 'account-a',
-            assertCurrent: () => {
-                if (!current) throw new Error('action_account_scope_changed');
-            },
-        },
+        account,
         resolveFallbackMachineId: () => 'relay-b',
         transport,
     });
     // This fixture is the admitted UI host producer, not a transport default.
     const context = { surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const },
-        serverId: 'home-a', runtimeAccountId: 'account-a' };
-    return { execute, context, transport, retire: () => { current = false; } };
+        serverId: account.serverId, runtimeAccountId: account.accountId };
+    return { execute, context, transport, retire: () => lifetime.abort() };
 }
 
 describe('Workflow Action relay and resource target', () => {
     it('retains a late admission refusal instead of losing it to the ordinary RPC deadline', async () => {
+        const { execute, context, transport } = await createHarness();
         vi.useFakeTimers();
         try {
-            const { execute, context, transport } = createHarness();
             const refusal = { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
             // Only the remote socket is substituted; the Account relay and RPC
             // acknowledgement/deadline owners execute their real logic.
@@ -66,7 +70,7 @@ describe('Workflow Action relay and resource target', () => {
     });
 
     it('reads through an available relay without restricting the Account operation to that relay', async () => {
-        const { execute, context, transport } = createHarness();
+        const { execute, context, transport } = await createHarness();
         await expect(execute({ actionId: 'workflow.definition.list', input: {}, context }))
             .resolves.toEqual({ definitions: [] });
         expect(transport.mock.calls[0]?.[0].machineId).toBe('relay-b');
@@ -74,7 +78,7 @@ describe('Workflow Action relay and resource target', () => {
     });
 
     it('refuses a caller session restriction rather than replacing it with machine authority', async () => {
-        const { execute, context, transport } = createHarness();
+        const { execute, context, transport } = await createHarness();
         const target = { kind: 'session' as const, sessionId: 'session-a' };
         await expect(execute({ actionId: 'workflow.definition.list', input: {}, context: { ...context, externalActionTarget: target } }))
             .resolves.toMatchObject({ ok: false, errorCode: 'target_not_local' });
@@ -82,7 +86,7 @@ describe('Workflow Action relay and resource target', () => {
     });
 
     it('does not supply a relay target when the daemon refuses a missing new-Run target', async () => {
-        const { execute, context, transport } = createHarness();
+        const { execute, context, transport } = await createHarness();
         transport.mockResolvedValue({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' });
         const input = { runId: '00000000-0000-4000-8000-000000000001', source: { kind: 'inline' as const, definition: { blocks: ['Work'] } } };
         await expect(execute({
@@ -94,7 +98,7 @@ describe('Workflow Action relay and resource target', () => {
     });
 
     it('forwards the exact reviewed machine and project', async () => {
-        const { execute, context, transport } = createHarness();
+        const { execute, context, transport } = await createHarness();
         const target = { kind: 'machine' as const, machineId: 'executor-a', project: { machineId: 'executor-a', directory: '/repo' } };
         const input = { runId: '00000000-0000-4000-8000-000000000001', source: { kind: 'inline' as const, definition: { blocks: ['Work'] } } };
         await execute({ actionId: 'workflow.run.start', input, context: { ...context, externalActionTarget: target } });
@@ -104,7 +108,7 @@ describe('Workflow Action relay and resource target', () => {
     });
 
     it("carries the invoking session as the Run origin beside the reviewed target", async () => {
-        const { execute, context, transport } = createHarness();
+        const { execute, context, transport } = await createHarness();
         const target = { kind: 'machine' as const, machineId: 'executor-a', project: { machineId: 'executor-a', directory: '/repo' } };
         const input = { runId: '00000000-0000-4000-8000-000000000001', source: { kind: 'catalog' as const, workflow: 'builtin:review-and-converge' } };
         await execute({ actionId: 'workflow.run.start', input, context: { ...context, defaultSessionId: 'session-a', externalActionTarget: target } });
@@ -114,7 +118,7 @@ describe('Workflow Action relay and resource target', () => {
     });
 
     it.each([true, false])('admits catalog Review & converge only with its invoking session: %s', async (withOrigin) => {
-        const { execute, context, transport } = createHarness();
+        const { execute, context, transport } = await createHarness();
         let admittedOrigin: unknown;
         // The remote host and its materializer stay real. Only storage, native
         // availability, workspace preparation and the plugin schema catalog are boundaries.
@@ -169,7 +173,7 @@ describe('Workflow Action relay and resource target', () => {
     });
 
     it('withdraws a response if the Account lifetime retires while the relay is pending', async () => {
-        const { execute, context, transport, retire } = createHarness();
+        const { execute, context, transport, retire } = await createHarness();
         transport.mockImplementation(async () => {
             retire();
             return { definitions: [{ private: 'must not disclose' }] };

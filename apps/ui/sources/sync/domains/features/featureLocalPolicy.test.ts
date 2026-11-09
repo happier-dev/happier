@@ -1,11 +1,24 @@
 import { describe, expect, it } from 'vitest';
 
 import { resolveLocalFeaturePolicyEnabled, type FeatureLocalPolicySettings } from './featureLocalPolicy';
-import type { FeatureId } from '@happier-dev/protocol';
+
+it.each(['deployments', 'bots', 'browser', 'search', 'sessions.conversations', 'sessions.board',
+    'sessions.following', 'teams', 'providers.localDiscovery', 'devices'] as const)(
+    'consumes the %s Account opt-out through the registry', featureId => {
+        expect(resolveLocalFeaturePolicyEnabled(featureId, { experiments: false, featureToggles: {} })).toBe(true);
+        expect(resolveLocalFeaturePolicyEnabled(featureId, { experiments: false, featureToggles: { [featureId]: false } })).toBe(false);
+    });
+import type { FeatureId } from '@happier-dev/protocol/features/catalog';
 
 const settingsDefaults = { experiments: false, featureToggles: {} } satisfies FeatureLocalPolicySettings;
 
 describe('featureLocalPolicy', () => {
+    it('does not let the retired folder opt-in disable Account section organization', () => {
+        expect(resolveLocalFeaturePolicyEnabled('sessions.folders', {
+            ...settingsDefaults,
+            featureToggles: { 'sessions.folders': false },
+        })).toBe(true);
+    });
     it('keeps the paused onboarding tour disabled even when the legacy rollout env is enabled', () => {
         const env = process.env as Record<string, string | undefined>;
         const enableKey = 'EXPO_PUBLIC_HAPPIER_FEATURE_APP_UI_ONBOARDING_TOUR__ENABLED';
@@ -147,20 +160,15 @@ describe('featureLocalPolicy', () => {
         }
     });
 
-    it('disables attachments.uploads by default when experiments are on', () => {
-        expect(resolveLocalFeaturePolicyEnabled('attachments.uploads', {
-            ...settingsDefaults,
-            experiments: true,
-            featureToggles: {},
-        })).toBe(false);
-    });
-
-    it('enables attachments.uploads when explicitly enabled', () => {
-        expect(resolveLocalFeaturePolicyEnabled('attachments.uploads', {
-            ...settingsDefaults,
-            experiments: true,
-            featureToggles: { 'attachments.uploads': true },
-        })).toBe(true);
+    it('admits uploads independently of Experiments and retired local preferences', () => {
+        for (const experiments of [false, true]) {
+            const preferences: Record<string, boolean>[] = [{}, { 'attachments.uploads': false }, { 'attachments.uploads': true }];
+            for (const featureToggles of preferences) {
+                expect(resolveLocalFeaturePolicyEnabled('attachments.uploads', {
+                    ...settingsDefaults, experiments, featureToggles,
+                })).toBe(true);
+            }
+        }
     });
 
     it('enables voice.agent when explicitly enabled', () => {
@@ -195,14 +203,6 @@ describe('featureLocalPolicy', () => {
         })).toBe(true);
     });
 
-    it('enables sessions.folders by default even when experiments are off', () => {
-        expect(resolveLocalFeaturePolicyEnabled('sessions.folders', {
-            ...settingsDefaults,
-            experiments: false,
-            featureToggles: {},
-        })).toBe(true);
-    });
-
     it('keeps pets.companion disabled by default even when experiments are on', () => {
         expect(resolveLocalFeaturePolicyEnabled('pets.companion', {
             ...settingsDefaults,
@@ -227,14 +227,6 @@ describe('featureLocalPolicy', () => {
         })).toBe(true);
     });
 
-    it('enables sessions.folders when explicitly enabled', () => {
-        expect(resolveLocalFeaturePolicyEnabled('sessions.folders', {
-            ...settingsDefaults,
-            experiments: true,
-            featureToggles: { 'sessions.folders': true },
-        })).toBe(true);
-    });
-
     it('keeps graduated automations available when experiments are off', () => {
         expect(resolveLocalFeaturePolicyEnabled('automations', {
             ...settingsDefaults,
@@ -243,12 +235,15 @@ describe('featureLocalPolicy', () => {
         })).toBe(true);
     });
 
-    it('respects explicit featureToggles overrides', () => {
-        expect(resolveLocalFeaturePolicyEnabled('automations', {
+    it.each(['workflows', 'automations'] as const)('uses the released preference storage key for %s', (featureId) => {
+        expect(resolveLocalFeaturePolicyEnabled(featureId, {
             ...settingsDefaults,
-            experiments: true,
             featureToggles: { automations: false },
         })).toBe(false);
+        expect(resolveLocalFeaturePolicyEnabled(featureId, {
+            ...settingsDefaults,
+            featureToggles: { automations: true },
+        })).toBe(true);
     });
 
     it('enables source control operations without experiments while preserving an explicit read-only preference', () => {

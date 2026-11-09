@@ -4,6 +4,7 @@ import { SOCKET_RPC_EVENTS, type SocketRpcRequestPayload } from '@happier-dev/pr
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { ProjectCommandActionOutputV1Schema } from '@happier-dev/protocol/actions/actionCompletion';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { ProjectDefinitionInspectOutputSchema } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
 import { readProjectManifestDocument } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestDocument';
 import { createDefaultWorkspaceExecutionSettingsV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
@@ -31,6 +32,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { encodeTerminalStreamBytes } from '@happier-dev/protocol/terminal/stream';
 import type { SessionDraftRecordV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
 import { userRequestLeaseOwner } from '@/sync/runtime/connectivity/userRequestLease';
+import { AuthTokenProvenanceSchema } from '@happier-dev/protocol/auth/authToken';
 
 // Component probes retain the real controller/Actions; only native rendering is substituted.
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
@@ -148,7 +150,7 @@ function answerExplicitScriptWorkerPlacement(): void {
         definition: { basis: { kind: 'present', hash: 'a'.repeat(64) }, document: readProjectManifestDocument(JSON.stringify({
             version: 1, scripts: { check: { execution: 'portable', source: { kind: 'command', command: 'echo checked' } } },
         })) },
-        detection: { entries: [], environments: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
+        detection: { entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
     }));
     homes.answer(requesterHomeId, '/v1/projects/execution/config/read', { body: { status: 'present', revision: 1,
         content: { t: 'plain', v: createDefaultWorkspaceExecutionSettingsV1() },
@@ -190,7 +192,7 @@ afterEach(async () => { restoreHttpReplyDecoder?.(); restoreHttpReplyDecoder = u
 
 describe('Project finite delivery through the default UI Action host', () => {
     it.each([
-        { outcome: 'approve', surface: 'agent' }, { outcome: 'reject', surface: 'mcp' },
+        { outcome: 'approve', surface: 'agent' }, { outcome: 'approve', surface: 'cli' }, { outcome: 'reject', surface: 'mcp' },
         { outcome: 'cancel', surface: 'cli' }, { outcome: 'changed', surface: 'agent' },
         { outcome: 'retired', surface: 'agent' },
     ] as const)('routes an agent remembered-setup request through Inbox: $surface / $outcome', async ({ outcome, surface }) => {
@@ -217,7 +219,7 @@ describe('Project finite delivery through the default UI Action host', () => {
         let current = held;
         rpcResponses.set(`source:${ACTION_OPERATION_RPC_METHODS_V2.get}`, { kind: 'found', operation: current });
         homes.answer(requesterHomeId, '/v2/account/settings', { body: { version: 1, content: { t: 'plain', v: {
-            actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'projects.prepare': ['agent', 'mcp', 'cli', 'ui'] } },
+            actionsSettingsV1: { v: 1 },
         } } } });
         storage.getState().activateProjectAccountRowsScope(scope);
         storage.getState().applyProjectAccountRowsForScope(scope, createProjectAccountRowsFixture(scope, { workspaceRefs: [{
@@ -232,7 +234,14 @@ describe('Project finite delivery through the default UI Action host', () => {
             rpcResponses.set(`source:${ACTION_OPERATION_RPC_METHODS_V2.get}`, { kind: 'found', operation: current });
             return { body: { status: 'updated', revision: 1, cursor: 1 } };
         } });
-        const account = await captureLazyActionAccountContext(serverId);
+        if (surface === 'cli' && outcome === 'approve') {
+            // The terminal proposes; the Account UI later decides. Caller input
+            // cannot promote an Account credential into terminal provenance.
+            const provenance = AuthTokenProvenanceSchema.parse({ v: 1, kind: 'terminal', authority: 'account_automation' });
+            const token = `e30.${encodeBase64(new TextEncoder().encode(JSON.stringify({ sub: 'requester', provenance, tokenEpoch: 0 })))}.signature`;
+            await homes.switchAccount(requesterHomeId, 'requester', { token });
+        }
+        let account = await captureLazyActionAccountContext(serverId);
         try {
             const input = { workspace, phase: 'setup', heldOperationId: held.operationId, expectedEffectDigest: digest, consentScope: 'untilChanged' };
             const executor = createDefaultActionExecutor();
@@ -240,7 +249,7 @@ describe('Project finite delivery through the default UI Action host', () => {
             const caller = { kind: 'session' as const, sessionId: 'requesting-session', starterDepth: 0, turnDepth: 0 };
             const target = { kind: 'machine' as const, machineId: 'source' };
             const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(31));
-            const signed = outcome === 'approve' ? ExternalActionExecutionAuthorizationV1Schema.parse({
+            const signed = outcome === 'approve' && surface !== 'cli' ? ExternalActionExecutionAuthorizationV1Schema.parse({
                 v: 1, token: 'signed-setup-request', binding: { accountId: 'requester', authentication: { kind: 'account', tokenEpoch: 0 },
                     serverIdentityId: account.serverIdentityId, machineId: 'source', installationId: 'source-installation',
                     custodianAccountId: 'requester', accountEncryptionMode: 'plain', actionId: 'projects.prepare', requestId, target,
@@ -255,8 +264,13 @@ describe('Project finite delivery through the default UI Action host', () => {
                 homes.answer(requesterHomeId, '/v1/machines', { body: [machine] });
                 homes.answer(requesterHomeId, 'GET /v1/machines/source', { body: { machine } });
             }
-            const requested = await executor.execute('projects.prepare', input, { serverId, surface, authority: 'account_automation',
-                actionRequestId: requestId, defaultSessionId: caller.sessionId, defaultSessionMachineId: 'source',
+            const requested = await executor.execute('projects.prepare', input, { serverId, surface,
+                authority: surface === 'cli' && outcome === 'approve' ? 'present_user' : 'account_automation',
+                approvalProfileId: null,
+                actionRequestId: requestId,
+                ...(surface === 'cli' && outcome === 'approve' ? { actionCaller: { kind: 'host' as const },
+                    externalActionTarget: target, executionRunTargetMachineId: 'source' }
+                    : { defaultSessionId: caller.sessionId, defaultSessionMachineId: 'source' }),
                 ...(signed ? { actionCaller: caller, externalActionTarget: target, externalActionExecutionAuthorization: signed,
                     callerPermissionMode: null, sessionInputSource: { sourceSessionId: caller.sessionId, sourceTurnId: 'turn-1', via: 'action' as const },
                     signExternalActionApprovalInput: args => signExternalActionApprovalInputV1({ authorizationToken: args.authorization.token,
@@ -269,6 +283,9 @@ describe('Project finite delivery through the default UI Action host', () => {
             if (typeof artifact?.body !== 'string') throw new Error('Expected inline approval Artifact body');
             const proposal = ApprovalRequestV2Schema.parse(JSON.parse(artifact.body));
             expect(proposal).toMatchObject({ status: 'open', actionArgs: input, preview: { setupReview: { reviewedEffectDigest: digest } } });
+            if (surface === 'cli' && outcome === 'approve') {
+                expect(proposal.executionOriginV1).toMatchObject({ authority: 'present_user', surface: 'cli', caller: { kind: 'host' } });
+            }
             const { readProjectCommandApproval } = await import('@/components/approvals/ProjectCommandApprovalFacts');
             expect(readProjectCommandApproval(proposal)).toMatchObject({ kind: 'setup', setupReview: { reviewedEffectDigest: digest } });
             expect(homes.requestsFor(`${PROJECT_TRUST_ROUTE_V1}/mutate`)).toEqual([]);
@@ -284,6 +301,11 @@ describe('Project finite delivery through the default UI Action host', () => {
                 rpcResponses.set(`source:${ACTION_OPERATION_RPC_METHODS_V2.get}`, { kind: 'found', operation: current });
             }
             if (outcome === 'retired') rpcResponses.set(`source:${ACTION_OPERATION_RPC_METHODS_V2.get}`, { kind: 'not_found' });
+            if (surface === 'cli' && outcome === 'approve') {
+                account.dispose();
+                await homes.switchAccount(requesterHomeId, 'requester', { token: requesterToken });
+                account = await captureLazyActionAccountContext(serverId);
+            }
             const decided = await decideApprovalAsInbox(serverId, created.artifactId,
                 outcome === 'changed' || outcome === 'retired' ? 'approve' : outcome);
             expect(decided, JSON.stringify(decided)).toMatchObject({ ok: true, result: {
@@ -291,6 +313,12 @@ describe('Project finite delivery through the default UI Action host', () => {
                     : outcome === 'reject' ? 'rejected' : 'canceled',
             } });
             expect(homes.requestsFor(`${PROJECT_TRUST_ROUTE_V1}/mutate`)).toHaveLength(outcome === 'approve' ? 1 : 0);
+            if (outcome === 'approve') {
+                expect(current.setupReview).toBeUndefined();
+                const settled = await account.fetchArtifact(created.artifactId);
+                if (typeof settled?.body !== 'string') throw new Error('Expected a persisted approval execution receipt');
+                expect(ApprovalRequestV2Schema.parse(JSON.parse(settled.body))).toMatchObject({ status: 'executed', execution: { ok: true } });
+            }
             expect(reviewReads()).toHaveLength(outcome === 'approve' ? 4 : outcome === 'changed' ? 3 : outcome === 'retired' ? 2 : 1);
             expect(ownFiniteRelayRequests('projects.prepare')).toEqual([]);
             expect(homes.requestsFor('/v1/actions/approval.request.decide')).toEqual([]);
@@ -368,30 +396,33 @@ describe('Project finite delivery through the default UI Action host', () => {
             await pending;
         }
     });
-    it('confirms project setup with the catalog human summary, never the agent specification', async () => {
+    it('confirms project setup with the shared human presentation and cancels without dispatch', async () => {
         homes.answer(requesterHomeId, '/v2/account/settings', { body: { version: 1, content: { t: 'plain', v: {
             actionsSettingsV1: { v: 1 },
         } } } });
         foreignDisclosure.mockResolvedValueOnce(false);
         const actionId = 'projects.prepare';
         const spec = getActionSpec(actionId);
-        const result = await createDefaultActionExecutor().execute(actionId, {
+        const input = {
             workspace: { serverId, workspaceId: 'source-workspace', machineId: 'source', rootPath: '/repo' },
             phase: 'setup',
-        }, { serverId, surface: 'ui', authority: 'present_user' });
+        };
+        const { presentActionApproval } = await import('@/components/approvals/actionApprovalPresentation');
+        const presentation = presentActionApproval({ actionId, actionArgs: input, subject: 'Finite requester' });
+        const result = await createDefaultActionExecutor().execute(actionId, input,
+            { serverId, surface: 'ui', authority: 'present_user' });
 
         expect(result).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
         expect(foreignDisclosure).toHaveBeenCalledOnce();
         const [title, body] = foreignDisclosure.mock.calls[0] ?? [];
-        expect(title).toBe(`${spec.title} · Finite requester`);
-        expect(body).toBe(spec.inputHints?.description);
+        expect(title).toBe(presentation.title);
+        expect(body).toBe(presentation.summary);
+        expect(body).toBeTruthy();
         expect(body).not.toBe(spec.description);
-        expect(body).not.toContain(actionId);
-        expect(body).not.toMatch(/waiver/i);
         expect(homes.requestsFor(`/v1/actions/${actionId}`)).toHaveLength(0);
     });
 
-    it.each(['invalid_json', 'mismatched', 'mismatched_refusal', 'outcome_unknown', 'pre_open_refusal'] as const)('keeps original Open custody after HTTP settlement: %s', async settlement => {
+    it.each(['confirmed_opened', 'invalid_json', 'mismatched', 'mismatched_refusal', 'outcome_unknown', 'acknowledged_502', 'pre_open_refusal'] as const)('keeps original Open custody after HTTP settlement: %s', async settlement => {
         const [{ createProjectOpenController }, { createSessionDraftRepository }, { createSessionDraftCipher },
             { captureLazyActionAccountContext }] = await Promise.all([
             import('@/components/projects/activation/projectOpenController'),
@@ -400,17 +431,19 @@ describe('Project finite delivery through the default UI Action host', () => {
             import('./actionAccountContext'),
         ]);
         homes.answer(requesterHomeId, '/v2/account/settings', { body: { version: 1, content: { t: 'plain', v: {
-            actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'projects.open': ['ui'] } },
+            actionsSettingsV1: settlement === 'confirmed_opened' ? { v: 1 }
+                : { v: 1, approvalWaivedSurfaces: { 'projects.open': ['ui'] } },
         } } } });
         // Own non-finite Open uses its incumbent RPC. Foreign custody is the
         // reachable Account HTTP path whose lost acknowledgement must not replay.
         const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(3));
+        const installationId = 'source-installation';
         const machine = { ...createPlainMachineRowFixture({ id: 'source', accountId: 'custodian' }), ...omitRunnerClaim(ExternalActionMachineBootstrapV1Schema.parse({
             id: 'source', kind: 'persistent', active: true, revokedAt: null, replacedByMachineId: null,
-            installationId: 'source-installation',
+            installationId,
             dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, runnerContentKeyBinding: null,
             access: { custodian: { accountId: 'custodian', displayName: 'Custodian' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
-        })), installationPublicKey: encodeBase64(installation.publicKey) };
+        })), installationId, installationPublicKey: encodeBase64(installation.publicKey) };
         homes.answer(requesterHomeId, '/v1/machines', { body: [machine] });
         homes.answer(requesterHomeId, 'GET /v1/machines/source', { body: { machine } });
         homes.answer(requesterHomeId, '/v1/actions/projects.open/execution-authorization', { select: body => {
@@ -430,7 +463,7 @@ describe('Project finite delivery through the default UI Action host', () => {
         const repository = createSessionDraftRepository({
             scope, syncEnabled: true,
             randomUUID: () => `00000000-0000-4000-8000-${String(mutationSequence++).padStart(12, '0')}`,
-            storage: { getString: key => storage.get(key), set: (key, value) => storage.set(key, value), delete: key => storage.delete(key) },
+            storage: { getString: key => storage.get(key), getAllKeys: () => [...storage.keys()], set: (key, value) => storage.set(key, value), delete: key => storage.delete(key) },
             cipher: createSessionDraftCipher({ accountMode: 'plain', accountCryptoMaterial: null,
                 getSessionContext: () => { throw new Error('Open cannot create a Session'); }, randomBytes: size => new Uint8Array(size) }),
             // Authenticated retained draft storage/CAS is the persistence boundary;
@@ -445,12 +478,27 @@ describe('Project finite delivery through the default UI Action host', () => {
         });
         const input = { serverId, machineId: 'source', source: { kind: 'folder' as const, path: '/repo' }, materialization: { kind: 'attach' as const } };
         let effects = 0;
+        let carriedConfirmation: unknown;
+        let openingRequestId: string | undefined;
         rejectOpenJson = settlement === 'invalid_json';
         homes.answer(requesterHomeId, '/v1/actions/projects.open', { select: body => {
             const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+            openingRequestId = request.envelope.requestId;
+            if (settlement === 'confirmed_opened') {
+                carriedConfirmation = openExternalActionRequesterAccountContextV1({ authorization: request.executionAuthorization,
+                    purpose: { kind: 'external_action' }, machineId: machine.id, installationId: machine.installationId,
+                    serverIdentityId: 'srv_finite_requester', installationPrivateKey: installation.secretKey,
+                    includeInvocation: true })?.invocation?.presentUserConfirmation;
+                effects += 1;
+                return { body: { v: 1, actionId: 'projects.open', requestId: request.envelope.requestId,
+                    execution: { ok: true, result: { kind: 'opened', workspace: {
+                        serverId, machineId: 'source', workspaceId: 'confirmed-project', rootPath: '/repo',
+                    }, directory: '/repo', setup: 'approvalRequired' } } } };
+            }
             if (settlement === 'pre_open_refusal') return { status: 409,
                 body: { error: 'invalid_request', code: 'target_unavailable', requestId: request.envelope.requestId } };
             effects += 1;
+            if (settlement === 'acknowledged_502') return { status: 502 };
             if (settlement === 'mismatched_refusal') return { status: 409,
                 body: { error: 'invalid_request', code: 'target_unavailable', requestId: 'another-open' } };
             return { body: { v: 1, actionId: 'projects.open',
@@ -467,6 +515,17 @@ describe('Project finite delivery through the default UI Action host', () => {
             const settlementCode = snapshot.result && 'errorCode' in snapshot.result ? snapshot.result.errorCode
                 : snapshot.result && 'kind' in snapshot.result ? snapshot.result.kind : 'no_result';
             expect(homes.requestsFor('/v1/actions/projects.open'), settlementCode).toHaveLength(1);
+            if (settlement === 'confirmed_opened') {
+                expect(carriedConfirmation).toEqual({ actionId: 'projects.open',
+                    inputDigest: computeActionInputApprovalDigestV1('projects.open', getActionSpec('projects.open').inputSchema.parse(input)),
+                    requestId: openingRequestId, accountId: 'requester', serverId: 'srv_finite_requester',
+                    target: { kind: 'machine', machineId: 'source' } });
+                expect(snapshot).toMatchObject({ uncertainInput: null, result: { kind: 'opened' } });
+                expect(navigation).toEqual([snapshot.result]);
+                expect(effects).toBe(1);
+                expect(foreignDisclosure).not.toHaveBeenCalled();
+                return;
+            }
             if (settlement === 'pre_open_refusal') {
                 expect(snapshot.uncertainInput, settlementCode).toBeNull();
                 expect(snapshot.result, settlementCode).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
@@ -529,7 +588,7 @@ describe('Project finite delivery through the default UI Action host', () => {
                     check: { execution: 'portable', memoryDemand: scriptDemand, source: { kind: 'command', command: 'echo checked' } },
                 },
             })) },
-            detection: { entries: [], environments: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
+            detection: { entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
         }));
         homes.answer(requesterHomeId, '/v1/projects/execution/config/read', { body: { status: 'present', revision: 1,
             content: { t: 'plain', v: { enabled, destination: { kind: 'machine', machineId: 'selected-worker' }, unavailable: 'ask',
@@ -539,7 +598,7 @@ describe('Project finite delivery through the default UI Action host', () => {
         expect(inspection.definition.document).toMatchObject({ status: 'valid', manifest: {
             workspace: { memoryDemand: workspaceDemand }, scripts: { check: { memoryDemand: scriptDemand } },
         } });
-        const screen = await renderScreen(React.createElement(ProjectScriptsBody, { workspace, presentation: 'widget', testID: 'scripts' }));
+        const screen = await renderScreen(React.createElement(ProjectScriptsBody, { workspace, presentation: 'rail', testID: 'scripts' }));
         try {
             await vi.waitFor(() => expect(screen.findAllByType(ProjectScriptRow)[0]?.props.defaultChoice).toEqual(enabled
                 ? { kind: 'primary' } : { kind: 'workers', destination: { kind: 'machine', machineId: 'selected-worker' } }));
@@ -558,7 +617,22 @@ describe('Project finite delivery through the default UI Action host', () => {
         } finally { await act(async () => screen.unmount()); disposeExecutor(); }
     });
 
-    it.each(['page', 'widget'] as const)('retains the picked worker through an unchanged inspection refresh before %s Run', async presentation => withPopoverWebGlobals(async () => {
+    it('shows Overview Script status without admitting a Run or opening a worker picker', async () => {
+        const disposeExecutor = await installRealActionExecutorModuleLoader();
+        const { ProjectScriptsBody } = await import('@/components/projects/projectSetup/ProjectScriptsBody');
+        const workspace = { serverId, workspaceId: 'source-workspace', machineId: 'source', rootPath: '/repo' };
+        answerExplicitScriptWorkerPlacement();
+        const screen = await renderScreen(React.createElement(ProjectScriptsBody, { workspace, presentation: 'widget', testID: 'scripts' }));
+        try {
+            await vi.waitFor(() => expect(screen.findByTestId('scripts.script:check')).not.toBeNull());
+            expect(screen.findByTestId('scripts.script:check.run')).toBeNull();
+            expect(screen.findByTestId('scripts.script:check.run.target')).toBeNull();
+            expect(ownFiniteRelayRequests('projects.script.run')).toEqual([]);
+            expect(calls.some(call => call.request.method === 'selected-worker:projects.worker.status')).toBe(false);
+        } finally { await screen.unmount(); disposeExecutor(); }
+    });
+
+    it.each(['page', 'rail'] as const)('retains the picked worker through an unchanged inspection refresh before %s Run', async presentation => withPopoverWebGlobals(async () => {
         const { reportPopoverContentLayout } = await import('@/dev/testkit/harness/popoverHarness');
         const { ProjectScriptsBody, ProjectScriptsContent } = await import('@/components/projects/projectSetup/ProjectScriptsBody');
         const { WorkerDestinationPicker } = await import('@/components/projects/workers/WorkerDestinationPicker');
@@ -620,7 +694,7 @@ describe('Project finite delivery through the default UI Action host', () => {
         rpcResponses.set(`source:${inspectionMethod}`, ProjectDefinitionInspectOutputSchema.parse({
             definition: { basis: { kind: 'present', hash: 'a'.repeat(64) }, document: readProjectManifestDocument(JSON.stringify({
                 version: 1, scripts: { check: { execution: 'portable', source: { kind: 'command', command: 'echo checked' } } },
-            })) }, detection: { entries: [], environments: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
+            })) }, detection: { entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
         }));
         homes.answer(requesterHomeId, '/v1/projects/execution/config/read', { body: { status: 'present', revision: 1,
             content: { t: 'plain', v: { enabled: true, destination: { kind: 'pool', poolId: '10000000-0000-4000-8000-000000000001', selection: 'ask' },
@@ -649,7 +723,7 @@ describe('Project finite delivery through the default UI Action host', () => {
             }) })]);
             expect(hook.getCurrent().choiceRequired).toBeNull();
         } finally { await hook.unmount(); }
-        const screen = await renderScreen(React.createElement(ProjectScriptsBody, { workspace, presentation: 'widget', testID: 'scripts' }));
+        const screen = await renderScreen(React.createElement(ProjectScriptsBody, { workspace, presentation: 'rail', testID: 'scripts' }));
         try {
             await vi.waitFor(() => expect(screen.findAllByTestId('scripts.script:check.run').length).toBeGreaterThan(0));
             await screen.pressByTestIdAsync('scripts.script:check.run');
@@ -685,19 +759,25 @@ describe('Project finite delivery through the default UI Action host', () => {
         const controller = await renderHook(() => useProjectScriptsController(workspace, () => {},
             useServerCredentialAccountScopeBindings(requestedHomes).get(serverId) ?? null));
         let deciding: Promise<unknown> | undefined;
+        let settled = false;
         try {
             await vi.waitFor(() => expect(controller.getCurrent().ready).toBe(true));
-            act(() => { deciding = controller.getCurrent().prepare('reviewed-setup-effect', 'thisTime'); });
+            act(() => { deciding = controller.getCurrent().prepare('reviewed-setup-effect', 'thisTime').then(result => {
+                settled = true;
+                return result;
+            }); });
             await vi.waitFor(() => expect(controller.getCurrent().approvalId).not.toBeNull());
             const artifactId = controller.getCurrent().approvalId!;
-            expect(router.push).toHaveBeenLastCalledWith(buildApprovalHref(artifactId, serverId));
+            await vi.waitFor(() => expect(router.push).toHaveBeenLastCalledWith(buildApprovalHref(artifactId, serverId)));
             expect(ownFiniteRelayRequests('projects.prepare')).toEqual([]);
-            await act(async () => { await decideApprovalAsInbox(serverId, artifactId, 'reject'); });
+            expect(await decideApprovalAsInbox(serverId, artifactId, 'reject'))
+                .toMatchObject({ ok: true, result: { status: 'rejected' } });
+            await vi.waitFor(() => expect(settled).toBe(true));
             await act(async () => { await deciding; });
             expect(controller.getCurrent().pendingKeys).toEqual({});
             expect(controller.getCurrent().failure).toMatchObject({ code: 'approval_rejected' });
             expect(ownFiniteRelayRequests('projects.prepare')).toEqual([]);
-        } finally { await controller.unmount(); disposeExecutor(); await deciding; }
+        } finally { await controller.unmount(); disposeExecutor(); }
     });
 
     it.each((['projects.prepare', 'projects.script.run', 'projects.compute.exec', 'action.operations.cancel'] as const).flatMap(actionId =>
@@ -723,7 +803,7 @@ describe('Project finite delivery through the default UI Action host', () => {
         homes.answer(requesterHomeId, '/v1/actions/approval.request.decide', { select: body => {
             const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
             return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'approval.request.decide', requestId: envelope.requestId,
-                execution: { ok: false, errorCode: 'fixture_machine_refusal', error: 'fixture_machine_refusal' } }) };
+                execution: { ok: false, effectAttempted: false, errorCode: 'fixture_machine_refusal', error: 'fixture_machine_refusal' } }) };
         } });
         try {
             const workspace = { serverId, workspaceId: 'source-workspace', machineId: 'source', rootPath: '/repo' };
@@ -743,7 +823,7 @@ describe('Project finite delivery through the default UI Action host', () => {
             const proposal = ApprovalRequestV2Schema.parse(JSON.parse(artifact.body));
             const prepareAdmissions = ownFiniteRelayRequests('projects.prepare').length;
             expect(await decideApprovalAsInbox(serverId, created.artifactId, 'approve'))
-                .toMatchObject({ ok: false, errorCode: 'fixture_machine_refusal' });
+                .toMatchObject({ ok: false, effectAttempted: false, errorCode: 'fixture_machine_refusal' });
             expect(proposal.actionArgs).toEqual(input);
             expect(proposal.executionOriginV1).toMatchObject({ serverIdentityId: account.serverIdentityId, machineId });
             const requests = homes.requestsFor('/v1/actions/approval.request.decide');
@@ -771,7 +851,10 @@ describe('Project finite delivery through the default UI Action host', () => {
         // The exact Machine read is the same Home discovery (a532f4a1e0), so it no longer binds the Machine either.
         homes.answer(requesterHomeId, 'GET /v1/machines/source', { body: { machine: null } });
         expect(await decideApprovalAsInbox(serverId, approval.artifactId, 'approve'))
-            .toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
+            .toMatchObject({ ok: false, effectAttempted: false, errorCode: 'admission_unavailable' });
+        const retained = JSON.parse(homes.artifacts(requesterHomeId).readPlainBody(approval.artifactId) ?? 'null');
+        expect(retained).toMatchObject({ status: 'approved' });
+        expect(retained.execution).toBeUndefined();
         expect(homes.requestsFor('/v1/actions/approval.request.decide')).toEqual([]);
         expect(calls).toEqual([]);
     });
@@ -886,7 +969,7 @@ describe('Project finite delivery through the default UI Action host', () => {
                 serverId: capturedServerId, machineId, workspaceRefId: workspace.workspaceId, cwd: workspace.rootPath } } })
             : actionId === 'projects.inspect' ? ProjectDefinitionInspectOutputSchema.parse({
                 definition: { basis: { kind: 'absent' }, document: null },
-                detection: { entries: [], environments: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
+                detection: { entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
             }) : actionId === 'projects.manifest.update' ? { status: 'refused', code: 'write_failed' }
             : actionId === 'projects.open' ? { kind: 'opened', workspace, directory: '/repo', setup: 'notRequired' }
             : { ok: true, terminalId: 'unsealed-bypass', reused: false };
@@ -1111,7 +1194,7 @@ describe('Project finite delivery through the default UI Action host', () => {
             definition: { basis: { kind: 'present', hash: 'a'.repeat(64) }, document: readProjectManifestDocument(JSON.stringify({
                 version: 1, scripts: { build: { source: { kind: 'command', command: 'build' } } },
             })) },
-            detection: { entries: [], environments: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
+            detection: { entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
         }));
         homes.answer(alias, '/v1/projects/execution/config/read', { body: { status: 'present', revision: 1,
             content: { t: 'plain', v: createDefaultWorkspaceExecutionSettingsV1() },
@@ -1203,7 +1286,7 @@ describe('Project finite delivery through the default UI Action host', () => {
         if (!inspectionMethod || !statusMethod) throw new Error('Missing canonical project RPC binding');
         rpcResponses.set(`source:${inspectionMethod}`, ProjectDefinitionInspectOutputSchema.parse({
             definition: { basis: { kind: 'present', hash: 'a'.repeat(64) }, document: readProjectManifestDocument(bytes) },
-            detection: { entries: [], environments: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
+            detection: { entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
         }));
         homes.answer(requesterHomeId, '/v1/projects/execution/config/read', { body: { status: 'present', revision: 1,
             content: { t: 'plain', v: { enabled: true, destination, unavailable: 'fail', allowAdHoc: false, scriptOverrides: {}, services: {} } },

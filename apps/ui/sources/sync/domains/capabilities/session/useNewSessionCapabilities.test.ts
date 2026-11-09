@@ -84,7 +84,7 @@ describe('useNewSessionCapabilities', () => {
         expect(preview).toMatchObject({ ok: true, machinePlatform: null,
             mcp: { strictMode: false, detected: [], items: [{ id: 'server-portable', selected: false, reason: 'session_removed',
                 preview: { serverId: 'server-portable', selected: false, portability: 'portable' } }] },
-            skills: { items: expect.arrayContaining([{ kind: 'skill', id: skillId, name: 'review', selected: true, selectable: true,
+            skills: { items: expect.arrayContaining([{ kind: 'skill', id: skillId, name: 'review', selected: true, reachEnabled: true, selectable: true,
                 reason: 'rule_on', decidedBy: { ruleId: 'review-everywhere', target: 'allMachines', agentQualified: false }, sessionOverride: null }]),
                 plan: { plan: 'none', items: [], nativeDisables: [], diagnostics: [] } },
             applyTiming: { mcp: { t: 'session_not_running' }, skills: { t: 'session_not_running' } } });
@@ -180,9 +180,60 @@ describe('useNewSessionCapabilities', () => {
             release();
             await vi.waitFor(() => expect(ready()).toBe('ready'));
             await act(async () => { hook.getCurrent().demandPreview(); });
-            await vi.waitFor(() => expect(previews).toBe(5));
+            await vi.waitFor(() => expect(previews).toBe(kind === 'session' ? 4 : 5));
             await vi.waitFor(() => expect(ready()).toBe('ready'));
         } finally { release(); await hook.unmount(); }
+    });
+
+    it.each([true, false])('shares the Info read with the pane across unmount, including an empty selection (%s)', async enabled => {
+        // Existing Sessions receive the Machine's resolved items; draft previews
+        // separately resolve the Account catalog through their own Action.
+        const sessionPreview = SpawnCapabilitiesPreviewOutputV1Schema.parse({ ...previewResponse, skills: { ...previewResponse.skills, items: [{
+            kind: 'skill', id: 'review', name: 'review', selected: enabled, selectable: true,
+            reason: enabled ? 'rule_on' : 'rule_off', decidedBy: null, sessionOverride: null,
+        }] } });
+        const sessionId = 'c123456789012345678901234';
+        const metadata = { machineId: 'machine-1', path: '/repo', host: 'host', flavor: 'codex' };
+        const owner = createSessionOwnerMetadataV1({ metadata });
+        if (!owner.ok) throw new Error('Invalid owner metadata fixture');
+        const row = SessionCurrentProjectionRecordV1Schema.parse({ id: sessionId, seq: 1, createdAt: 1, updatedAt: 1, active: false, activeAt: 1,
+            encryptionMode: 'plain', metadataLayoutVersion: 1, metadata: JSON.stringify({ v: 1 }), metadataVersion: 1,
+            ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1(owner.ownerMetadata), agentState: null, agentStateVersion: 1,
+            dataEncryptionKey: null, share: null, responsibleAccountId: null, responsibleAccount: null,
+            effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }], capabilities: createSessionAccessFixture().capabilities } });
+        for (const suffix of ['', '?accessProjectionVersion=1']) homes.answer(serverId, `GET /v2/sessions/${sessionId}${suffix}`, { body: { session: row } });
+        let release!: () => void;
+        const pending = new Promise<void>(resolve => { release = resolve; });
+        let previews = 0;
+        transport.mockImplementation(async input => {
+            if (isPreviewRequest(input)) { previews++; await pending; }
+            return sessionPreview;
+        });
+        const { useSessionSkillCount, useSessionCapabilities } = await import('./useSessionCapabilities');
+        const info = await renderHook(() => useSessionSkillCount(sessionId, serverId));
+        expect(info.getCurrent()).toBeNull();
+        try {
+            await vi.waitFor(() => expect(previews).toBe(1));
+            // Navigate while the read is pending: the query belongs to the Session, not Info's mount.
+            await info.unmount();
+            const pane = await renderHook(() => useSessionCapabilities(sessionId, metadata, { serverId }));
+            await act(async () => { pane.getCurrent().demandPreview(); });
+            expect(previews).toBe(1);
+            release();
+            await vi.waitFor(() => expect(pane.getCurrent().status, pane.getCurrent().error ?? '').toBe('ready'));
+            const reopenedInfo = await renderHook(() => useSessionSkillCount(sessionId, serverId));
+            expect(reopenedInfo.getCurrent()).toBe(enabled ? 1 : 0);
+            expect(pane.getCurrent().preview?.skills.items.filter(item => item.selected).length).toBe(reopenedInfo.getCurrent());
+            expect(previews).toBe(1);
+            transport.mockRejectedValue(createRpcCallError({ error: 'offline', errorCode: 'RPC_METHOD_NOT_AVAILABLE' }));
+            await act(async () => { await pane.getCurrent().refresh(); });
+            expect(pane.getCurrent().status).toBe('unavailable');
+            expect(reopenedInfo.getCurrent()).toBeNull();
+            transport.mockResolvedValue(sessionPreview);
+            await act(async () => { await pane.getCurrent().refresh(); });
+            expect(reopenedInfo.getCurrent()).toBe(enabled ? 1 : 0);
+            await pane.unmount(); await reopenedInfo.unmount();
+        } finally { release(); }
     });
 
     it('observes a host acknowledgment from metadata even while a demanded preview still says pending', async () => {

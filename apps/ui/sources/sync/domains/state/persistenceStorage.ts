@@ -63,6 +63,11 @@ export function getPersistenceStorageId(): string {
     return buildScopedStorageId('default', isWebRuntime() ? null : readScopedStorageScopeFromEnv());
 }
 
+/** MMKV's web adapter uses its unconfigured default id and a backslash separator. */
+export function getPersistenceStorageWebKey(key: string): string {
+    return `mmkv.default\\${key}`;
+}
+
 export function getPersistenceStorage(): PersistenceStorage {
     if (persistedStorage) return persistedStorage;
     if (isEmbedWindowContext()) {

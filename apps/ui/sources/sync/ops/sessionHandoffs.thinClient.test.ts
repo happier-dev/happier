@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol';
+import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { upsertServerProfile, setServerProfileIdentityForUrl } from '@/sync/domains/server/serverProfiles';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
@@ -13,6 +13,22 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
 }));
 
 describe('session handoff UI request client', () => {
+    it.each([undefined, 'owned-handoff-request'])('admits an uncancelled handoff with its transport operation identity (%s)', async actionRequestId => {
+        // The remote coordinator requires a transport request id as its operation id;
+        // a same-named semantic payload field does not populate RPC context.
+        machineRpc.mockImplementationOnce(async request => request.requestId ? {
+            ok: true,
+            handoffId: request.requestId,
+            status: { handoffId: request.requestId, status: 'completed', phase: 'finalizing', recoveryActions: [] },
+            workspace: { kind: 'none' },
+        } : { ok: false, errorCode: 'invalid_input', error: 'invalid_input' });
+        const { startSessionHandoff } = await import('./sessionHandoffs');
+        const result = await startSessionHandoff({ sourceMachineId: 'source-1', sessionId: 'session-1',
+            targetMachineId: 'target-1', serverId: 'srv_fx14_owned', workspaceAction: { kind: 'none' },
+            ...(actionRequestId ? { actionRequestId } : {}) });
+        expect(result).toMatchObject({ ok: true, result: { handoffId: actionRequestId ?? expect.any(String) } });
+    });
+
     it.each(['returned', 'thrown'] as const)('preserves the target preflight refusal and repair reason (%s)', async mode => {
         const refusal = { errorCode: 'workspace_root_unsafe', error: 'Workspace target parent cannot be inspected' };
         if (mode === 'returned') machineRpc.mockResolvedValueOnce(refusal);

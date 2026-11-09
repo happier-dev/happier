@@ -13,7 +13,7 @@ import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { SessionDraftRecipientValueV1Schema } from '@happier-dev/protocol/drafts/sessionDrafts';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
-import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { readServerAccountScopeOwnerLifetime, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { getSessionDraftSnapshot, writeExistingSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { invokeUiScmAction, type UiScmActionExecutor, type UiScmActionFailure } from '@/sync/ops/scm/scmActionInvocation';
 import { ScmOperationErrorCodeSchema } from '@happier-dev/protocol/scm';
@@ -49,10 +49,11 @@ export function createScmDiffSummaryResultOperations(params: ScmDiffSummaryHost 
   shouldContinue: () => boolean;
   /** An admitted generator turn's real observation handle; never a guessed input id. */
   onRunAdmitted?: (observation: Readonly<{ runId: string; inputId: string; resultId: string }>) => void;
-  composerDraft?: Readonly<{ scope: ServerAccountScope }>;
+  composerDraft?: ServerAccountScopeLifetime;
   actionExecutor?: UiScmActionExecutor;
 }>) {
   const current = () => !params.signal?.aborted && params.shouldContinue();
+  const composerDraftLifetime = params.composerDraft ? readServerAccountScopeOwnerLifetime(params.composerDraft) : undefined;
   async function invoke<T>(actionId: ActionId, input: Readonly<{ cwd: string }>, schema: core.$ZodType<T>, sharedRead = false) {
     return presentScmFailure(actionId, await invokeUiScmAction({ actionId, input, schema, executor: params.actionExecutor, shouldContinue: sharedRead ? () => true : current,
       context: {
@@ -93,7 +94,7 @@ export function createScmDiffSummaryResultOperations(params: ScmDiffSummaryHost 
   }
   async function discuss(input: ScmDiffSummaryDiscussInput): Promise<ScmCommitPlanOperationResult> {
     const validated = ScmDiffSummaryDiscussInputSchema.parse(input);
-    const draft = params.sessionId ? params.composerDraft : undefined;
+    const draft = params.sessionId ? composerDraftLifetime : undefined;
     const readRecipientField = () => {
       if (!draft) return null;
       const document = params.sessionId ? getSessionDraftSnapshot(draft.scope, { kind: 'session', sessionId: params.sessionId })?.document : null;
@@ -113,7 +114,7 @@ export function createScmDiffSummaryResultOperations(params: ScmDiffSummaryHost 
     const runId = response.runId;
     if (!runId) return { success: false, errorCode: 'admission_unknown', error: 'The admitted conversation could not be identified. Refresh the saved result before sending again.' };
     // The exact routing field owns this transition. A newer recipient selection survives.
-    if (params.sessionId && current() && readRecipientField()?.mutationId === capturedField?.mutationId) {
+    if (params.sessionId && draft.isCurrent() && readRecipientField()?.mutationId === capturedField?.mutationId) {
       writeExistingSessionDraft({ scope: draft.scope, sessionId: params.sessionId,
         patch: { routing: { recipient: StrictJsonValueSchema.parse({ mode: 'manual', recipient: { kind: 'execution_run', runId } }) } },
         materializationIntent: 'userEdit' });

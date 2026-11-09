@@ -14,7 +14,7 @@ import {
     uploadDaemonSessionAttachmentFromReader,
 } from '@/sync/domains/transfers/runtime/transferRuntime';
 import type { SessionAttachmentsUploadFinalizeResponse, SessionAttachmentTransferContext } from '@/sync/domains/transfers/runtime/transferRuntime/families/sessionAttachmentTransfers';
-import type { SessionAttachmentHandleV1 } from '@happier-dev/protocol';
+import type { SessionAttachmentHandleV1 } from '@happier-dev/protocol/transfers/sessions/sessionAttachmentHandleV1';
 
 export type AttachmentsUploadLocation = 'workspace' | 'os_temp';
 export type VcsIgnoreStrategy = 'git_info_exclude' | 'gitignore' | 'none';

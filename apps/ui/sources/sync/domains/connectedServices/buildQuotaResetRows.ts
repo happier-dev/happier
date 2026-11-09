@@ -3,7 +3,7 @@ import type {
     ConnectedServiceQuotaRecoveryCreditDetailsV1,
     ConnectedServiceQuotaRecoveryCreditDetailsByIdV1,
     ConnectedServiceQuotaRecoveryCreditsV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/connected-service-schemas';
 
 import { isConnectedServiceQuotaRecoveryCreditAvailable } from '@happier-dev/protocol/connect/connected-service-schemas';
 

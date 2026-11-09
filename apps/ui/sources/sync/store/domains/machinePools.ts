@@ -1,4 +1,4 @@
-import type { MachinePoolViewV1 } from '@happier-dev/protocol';
+import type { MachinePoolViewV1 } from '@happier-dev/protocol/machines/pools/v1';
 import type { StoreGet, StoreSet } from './_shared';
 
 /**

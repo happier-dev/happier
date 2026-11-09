@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { CreateOrUpdateSessionOrganizationFolderRequestSchema, ReorderSessionOrganizationRequestSchema, SetSessionFolderAssignmentRequestSchema, type SessionOrganizationFolder } from '@happier-dev/protocol';
+import { CreateOrUpdateSessionOrganizationFolderRequestSchema, CreateOrUpdateSessionOrganizationTagRequestSchema,
+    ReorderSessionOrganizationRequestSchema, SetSessionFolderAssignmentRequestSchema, MutateSessionTagAssignmentsRequestSchema} from '@happier-dev/protocol/sessions/organization/mutations';
+import {
+    type SessionOrganizationFolder} from '@happier-dev/protocol/sessions/organization/folders';
+import { type SessionOrganizationTag } from '@happier-dev/protocol/sessions/organization/tags';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 
@@ -7,6 +11,8 @@ import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/
 // admission, the organization owner, and its store projection remain real.
 const home = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(home);
+// Charge the real executor graph's cold transform to collection, not an operation timeout.
+await import('@/sync/ops/actions/defaultActionExecutor');
 beforeEach(async () => { await home.reset(); });
 afterEach(() => standardCleanup());
 
@@ -33,6 +39,37 @@ describe('Session organization Action scope', () => {
         expect(getStorage().getState().sessionOrganizationFolderAssignmentsBySessionKey[
             buildSessionOrganizationSessionKey(serverId, 'session-a')]).toBeUndefined();
         expect(assignmentWrites).toBe(0);
+    });
+
+    it('checks current membership on Undo activation and preserves intervening changes and Account scope', async () => {
+        const accountId = 'account-undo';
+        const serverId = await home.addHome({ name: 'Undo Home', serverUrl: 'https://undo.example', accountId });
+        let sectionId: string | null = 'destination';
+        let assignmentWrites = 0;
+        home.answer(serverId, 'GET /v2/session-organization', { select: () => ({ body: { snapshot: {
+            schemaVersion: 1, version: 1, pins: [], tags: [], tagAssignments: [], orderEntries: [], labels: [], folders: [],
+            folderAssignments: sectionId ? [{ sessionId: 'session-a', folderId: sectionId }] : [],
+        } } }) });
+        home.answer(serverId, 'PUT /v2/session-organization/folder-assignments/session-a', { select: input => {
+            assignmentWrites += 1;
+            sectionId = SetSessionFolderAssignmentRequestSchema.parse(input).folderId;
+            return { body: { sessionId: 'session-a', folderId: sectionId } };
+        } });
+        const { readAcknowledgedActionResult } = await import('@/components/approvals/actionResultFacts');
+        const { executeAcknowledgedActionInverse } = await import('@/sync/ops/actions/executeAcknowledgedActionInverse');
+        const fact = readAcknowledgedActionResult({ actionId: 'session.section.set', result: {
+            sessionId: 'session-a', sectionId: 'destination', previousSectionId: null,
+        } })!;
+        expect(home.requests.filter(row => row.path.startsWith('/v2/session-organization'))).toHaveLength(0);
+        expect(await executeAcknowledgedActionInverse(fact, { serverId, accountId }))
+            .toMatchObject({ ok: true, result: { sessionId: 'session-a', sectionId: null } });
+        sectionId = 'changed-after-result';
+        expect(await executeAcknowledgedActionInverse(fact, { serverId, accountId }))
+            .toMatchObject({ ok: false, errorCode: 'section_membership_changed' });
+        expect(sectionId).toBe('changed-after-result');
+        expect(await executeAcknowledgedActionInverse(fact, { serverId, accountId: 'foreign-account' }))
+            .toMatchObject({ ok: false, errorCode: 'action_account_scope_changed' });
+        expect(assignmentWrites).toBe(1);
     });
 
     it('uses the scoped Action front door for section creation, editing, filing, ordering and removal', async () => {
@@ -119,6 +156,84 @@ describe('Session organization Action scope', () => {
         const { buildSessionOrganizationServerKey } = await import('@/sync/domains/session/organization/keys');
         expect(getStorage().getState().sessionOrganizationFoldersByFolderKey[buildSessionOrganizationServerKey(serverId, 'legacy-child')])
             .toMatchObject({ parentFolderId: null, parentFolderKey: null });
+    });
+    it('admits section membership, tag-label assignment and attention through Actions before writing', async () => {
+        const serverId = await home.addHome({ name: 'Info Home', serverUrl: 'https://info-home.example', accountId: 'account-a' });
+        home.answer(serverId, '/v2/account/settings', { body: { version: 1, content: { t: 'plain', v: {
+            actionsSettingsV1: { v: 1, actions: { 'session.section.set': { enabled: false }, 'session.tags.create': { enabled: false }, 'session.tags.set': { enabled: false }, 'session.attention.set': { enabled: false } } },
+        } } } });
+        const { resolveSessionOrganizationMutationScope, writeSessionOrganizationTagLabels, writeSessionOrganizationFolderAssignment } = await import('./sessionOrganizationMutationOwner');
+        const resolved = await resolveSessionOrganizationMutationScope(serverId);
+        if (!resolved.ok) throw new Error('Expected test Home scope');
+        home.answer(serverId, 'GET /v2/session-organization', { body: { snapshot: {
+            schemaVersion: 1, version: 1, pins: [], folders: [], folderAssignments: [], tags: [],
+            tagAssignments: [], orderEntries: [], labels: [],
+        } } });
+        const writes: string[] = [];
+        home.answer(serverId, 'PUT /v2/session-organization/tag-assignments/source', { select: () => {
+            writes.push('tags'); return { body: { sessionId: 'source', tagIds: [] } };
+        } });
+        home.answer(serverId, 'PUT /v2/session-organization/folder-assignments/source', { select: () => {
+            writes.push('section'); return { body: { sessionId: 'source', folderId: 'folder-a' } };
+        } });
+        home.answer(serverId, 'PUT /v2/session-organization/attention-standings/source', { select: () => {
+            writes.push('attention'); return { body: { standing: { sessionId: 'source', standing: true, updatedAt: 1 } } };
+        } });
+        home.answer(serverId, 'POST /v2/session-organization/tags', { select: input => {
+            writes.push('create-tag');
+            const request = CreateOrUpdateSessionOrganizationTagRequestSchema.parse(input);
+            const tagId = request.tagId ?? 'new-tag';
+            return { body: { tag: { ...request, tagId, tagKey: request.tagKey ?? tagId,
+                sortKey: request.sortKey ?? null, display: request.display ?? null,
+                archivedAt: null, createdAt: 1, updatedAt: 1 } } };
+        } });
+        await expect(writeSessionOrganizationFolderAssignment({ scope: resolved.scope, sessionId: 'source', folderId: 'folder-a' })).rejects.toThrow();
+        await expect(writeSessionOrganizationTagLabels({ scope: resolved.scope, sessionId: 'source', tags: [] })).rejects.toThrow();
+        await expect(writeSessionOrganizationTagLabels({ scope: resolved.scope, sessionId: 'source', tags: ['New'] })).rejects.toThrow();
+        const { sessionSetAttentionStandingWithServerScope } = await import('./setSessionAttentionStanding');
+        expect(await sessionSetAttentionStandingWithServerScope('source', true, { serverId })).toMatchObject({ success: false });
+        expect(writes).toEqual([]);
+    });
+    it('resolves labels through the existing tag owner and reads back Action-assigned ids', async () => {
+        const serverId = await home.addHome({ name: 'Tags Home', serverUrl: 'https://tags-home.example', accountId: 'account-tags' });
+        let tags: SessionOrganizationTag[] = [{ tagId: 'existing', tagKey: 'existing', sortKey: null,
+            display: { t: 'plain', v: { label: 'Existing' } }, archivedAt: null, createdAt: 1, updatedAt: 1 }];
+        let assigned: string[] = [];
+        home.answer(serverId, 'GET /v2/session-organization', { select: () => ({ body: { snapshot: {
+            schemaVersion: 1, version: 1, pins: [], folders: [], folderAssignments: [], tags,
+            tagAssignments: [{ sessionId: 'source', tagIds: assigned }], orderEntries: [], labels: [],
+        } } }) });
+        home.answer(serverId, 'POST /v2/session-organization/tags', { select: input => {
+            const request = CreateOrUpdateSessionOrganizationTagRequestSchema.parse(input);
+            if (!request.tagId || !request.tagKey) throw new Error('Expected allocated tag identity');
+            const tag: SessionOrganizationTag = { ...request, tagId: request.tagId, tagKey: request.tagKey,
+                sortKey: request.sortKey ?? null, display: request.display ?? null,
+                archivedAt: null, createdAt: 2, updatedAt: 2 };
+            tags = [...tags, tag];
+            return { body: { tag } };
+        } });
+        home.answer(serverId, 'PUT /v2/session-organization/tag-assignments/source', { select: input => {
+            const mutation = MutateSessionTagAssignmentsRequestSchema.parse(input);
+            assigned = 'tagIds' in mutation ? mutation.tagIds : [...new Set([
+                ...assigned.filter(id => !mutation.removeTagIds.includes(id)), ...mutation.addTagIds,
+            ])];
+            return { body: { sessionId: 'source', tagIds: assigned } };
+        } });
+        const { resolveSessionOrganizationMutationScope, writeSessionOrganizationTagLabels } = await import('./sessionOrganizationMutationOwner');
+        const resolved = await resolveSessionOrganizationMutationScope(serverId);
+        if (!resolved.ok) throw new Error('Expected tags scope');
+        await writeSessionOrganizationTagLabels({ scope: resolved.scope, sessionId: 'source', tags: ['Existing', 'New'] });
+        const { getStorage } = await import('@/sync/domains/state/storageStore');
+        const { buildSessionOrganizationSessionKey } = await import('@/sync/domains/session/organization/keys');
+        expect(tags).toHaveLength(2);
+        const expectedIds = tags.map(tag => tag.tagId);
+        expect(getStorage().getState().sessionOrganizationTagAssignmentsBySessionKey[buildSessionOrganizationSessionKey(serverId, 'source')])
+            .toEqual({ sessionId: 'source', tagIds: expectedIds });
+        await writeSessionOrganizationTagLabels({ scope: resolved.scope, sessionId: 'source', tags: ['Existing', 'New'] });
+        expect(tags).toHaveLength(2);
+        const definitions = home.requests.filter(request => new URL(request.path, request.serverUrl).pathname === '/v2/session-organization');
+        expect(definitions).toHaveLength(2);
+        expect(new URL(definitions[0]!.path, definitions[0]!.serverUrl).searchParams.get('includeFolders')).toBe('false');
     });
     it('returns the published unavailable result when the captured Account retires before dispatch', async () => {
         const serverId = await home.addHome({ name: 'Retired Home', serverUrl: 'https://retired-home.example', accountId: 'account-a' });

@@ -2,20 +2,15 @@ import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverSc
 import { prepareAccountSettingsForDaemonSpawnIfNeeded } from '@/sync/ops/accountSettingsDaemonSpawnPreparation';
 import type {
     ConnectedServiceBindingsV2,
-    ConnectedAccountServiceKey,
+    ConnectedAccountServiceKey} from '@happier-dev/protocol/connect/connected-service-bindings';
+import type {
     ConnectedServiceUxDiagnosticV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { SessionTeamCredentialBindingIntentListV1 } from '@happier-dev/protocol/teams';
 
 export const SESSION_CONNECTED_SERVICE_AUTH_SWITCH_MACHINE_RPC_METHOD =
     RPC_METHODS.DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH;
-
-// The daemon switch owner can legitimately spend one 60s turn-boundary wait plus
-// one 60s bounded application window. Keep the outer machine acknowledgement
-// above the daemon HTTP budget so a healthy completion cannot be reported as a
-// UI failure first.
-const SESSION_CONNECTED_SERVICE_AUTH_SWITCH_MACHINE_RPC_TIMEOUT_MS = 210_000;
 
 export type SessionConnectedServiceAuthSwitchStatus =
     | 'hot_applied'
@@ -125,7 +120,6 @@ export async function setSessionConnectedServiceAuthBinding(params: Readonly<{
         machineId: params.machineId,
         serverId: params.serverId ?? null,
         method: SESSION_CONNECTED_SERVICE_AUTH_SWITCH_MACHINE_RPC_METHOD,
-        timeoutMs: SESSION_CONNECTED_SERVICE_AUTH_SWITCH_MACHINE_RPC_TIMEOUT_MS,
         // This is a non-idempotent session mutation. Once emitted, the scoped
         // transport must surface uncertainty instead of retrying it on another route.
         onIssued: () => {},

@@ -1,3 +1,4 @@
+import { PushNotificationTestResultSchema } from '@happier-dev/protocol/push/pushNotificationTest';
 import { BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID } from '@happier-dev/protocol/account/settings/notificationChannels';
 import { NotificationChannelCatalogRecordV1Schema, NotificationChannelRecordV1Schema, WebhookNotificationChannelRecordV1Schema,
     type NotificationChannelRecordV1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
@@ -15,12 +16,12 @@ import { requireOneShotAccountSettingsMutationApplied, syncSettings } from '@/sy
 import { resolveSettingsSecretsKeySet } from '@/sync/encryption/resolveSettingsSecretsKeySet';
 import { randomUUID } from '@/platform/randomUUID';
 import type { LazyActionAccountContext } from './actionAccountContext';
-import { Platform } from 'react-native';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { sendExpoLocalNotification } from '@/activity/notifications/channels/sendExpoLocalNotification';
 import { storage } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { PUSH_NOTIFICATION_SOUND_IDS, resolveExpoNotificationSoundName } from '@happier-dev/protocol/push/pushNotificationActions';
+import { playBundledSound, resolveNotificationSoundPreviewTarget } from './playBundledSound';
 import { createUiAccountAction } from './accountActionDeps';
 import { ActionExecuteFailureSchema, readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
@@ -128,21 +129,41 @@ export function createNotificationConfigurationAction(account: LazyActionAccount
         }
         if (actionId === 'notifications.sounds.preview') {
             NotificationConfigurationActionInputSchemas[actionId].parse(input);
-            if (Platform.OS === 'web' || isDesktopHost()) return {
+            const target = resolveNotificationSoundPreviewTarget();
+            if (target === 'unsupported') return {
                 ok: false, errorCode: 'native_notification_preview_unsupported', error: 'native_notification_preview_unsupported',
             };
             const settings = await account.readSettings();
             account.assertCurrent();
             context.signal?.throwIfAborted();
             const soundId = settings.attentionDeliveryPolicyV1.sounds.defaultSoundId;
-            const sound = storage.getState().localSettings.attentionDeviceOverridesV1.sounds.enabled === false
-                || soundId === PUSH_NOTIFICATION_SOUND_IDS.none ? null : resolveExpoNotificationSoundName(soundId);
+            const enabled = storage.getState().localSettings.attentionDeviceOverridesV1.sounds.enabled !== false
+                && soundId !== PUSH_NOTIFICATION_SOUND_IDS.none;
+            if (target === 'desktop') {
+                // Webviews have no OS-default notification chime; use the calm bundled default.
+                if (enabled) await playBundledSound(soundId === PUSH_NOTIFICATION_SOUND_IDS.urgent
+                    ? PUSH_NOTIFICATION_SOUND_IDS.urgent : PUSH_NOTIFICATION_SOUND_IDS.soft);
+                return { notificationId: 'desktop-sound-preview' };
+            }
+            const sound = enabled ? resolveExpoNotificationSoundName(soundId) : null;
             const notificationId = await sendExpoLocalNotification({
                 title: t('settingsNotifications.sounds.previewNotificationTitle'),
                 body: t('settingsNotifications.sounds.previewNotificationBody'),
                 sound,
             });
             return { notificationId };
+        }
+        if (actionId === 'notifications.push.test') {
+            const { tokenId } = NotificationConfigurationActionInputSchemas[actionId].parse(input);
+            const response = await account.request(`/v1/push-tokens/${encodeURIComponent(tokenId)}/test`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+                signal: context.signal,
+            });
+            account.assertCurrent();
+            context.signal?.throwIfAborted();
+            if (response.status === 404) return { status: 'unsupported' };
+            if (!response.ok) throw new Error('Remote push test acceptance could not be confirmed');
+            return PushNotificationTestResultSchema.parse(await response.json());
         }
         if (actionId === 'notifications.push.register') {
             NotificationConfigurationActionInputSchemas[actionId].parse(input);

@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { DirectRouteGrantRequestV2Schema, IrohMachineHandshakeV1Schema, SignedDirectRouteGrantV2Schema, type IrohEndpointDescriptorV1 } from '@happier-dev/protocol';
+import { DirectRouteGrantRequestV2Schema, SignedDirectRouteGrantV2Schema} from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantV2';
+import { IrohMachineHandshakeV1Schema} from '@happier-dev/protocol/connectivity/iroh/machineHandshakeV1';
+import { type IrohEndpointDescriptorV1 } from '@happier-dev/protocol/connectivity/iroh/endpointDescriptorV1';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';

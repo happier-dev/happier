@@ -30,9 +30,20 @@ describe('resolveReviewWalkthroughPlan', () => {
             walkthrough: true, narratorEngineId: engines[0]!.engineId });
         expect(plan.selected.map(engine => engine.engineId)).toEqual(['acme.review/second']);
         expect(plan.narrator).toBeNull();
-        const missing = resolveReviewWalkthroughPlan({ engines: [{ ...CLAUDE, machineAgent: null }],
-            selectedEngineIds: [CLAUDE.engineId], walkthrough: false, narratorEngineId: null });
-        expect(missing.canStart).toBe(false);
+    });
+    it('uses the review inventory for enabled engines with no Machine agent row', () => {
+        // Orchestrator ruling B: absence from a settled Machine inventory is not a review refusal.
+        const available = resolveReviewWalkthroughPlan({ engines: [{ ...RABBIT, machineAgent: null, machineInventoryStatus: 'ready' }],
+            selectedEngineIds: [RABBIT.engineId], walkthrough: false, narratorEngineId: null });
+        expect(available.canStart).toBe(true);
+        expect(available.selected.map(engine => engine.engineId)).toEqual([RABBIT.engineId]);
+        const disabled = resolveReviewWalkthroughPlan({ engines: [{ ...RABBIT, enabled: false, machineAgent: null }],
+            selectedEngineIds: [RABBIT.engineId], walkthrough: false, narratorEngineId: null });
+        expect(disabled.canStart).toBe(false);
+        for (const machineInventoryStatus of ['idle', 'loading', 'error', 'offline'] as const) {
+            expect(resolveReviewWalkthroughPlan({ engines: [{ ...RABBIT, machineAgent: null, machineInventoryStatus }],
+                selectedEngineIds: [RABBIT.engineId], walkthrough: false, narratorEngineId: null }).canStart).toBe(false);
+        }
     });
     it('lets one capable engine write its own walkthrough with no narrator to choose', () => {
         const plan = resolveReviewWalkthroughPlan({ engines: ENGINES, selectedEngineIds: ['codex'], walkthrough: true, narratorEngineId: null });

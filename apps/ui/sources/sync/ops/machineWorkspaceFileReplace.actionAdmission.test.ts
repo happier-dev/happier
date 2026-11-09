@@ -54,9 +54,8 @@ beforeEach(async () => {
             return await admit();
         },
     });
-    // The Action Machine is read by id through the Machine rows reader (a532f4a1e0).
-    homes.answer(serverId, `/v1/machines/${boundary.machine.id}`, { body: { machine: boundary.machine } });
-    for (const path of ['/v1/actions/workspace.files.replace/execution-authorization', '/v1/actions/workspace.files.replace']) {
+    homes.answer(serverId, '/v1/machines', { body: [boundary.machine] });
+    for (const path of ['GET /v1/machines/machine', '/v1/actions/workspace.files.replace/execution-authorization', '/v1/actions/workspace.files.replace']) {
         homes.answer(serverId, path, { select: async (_body, request) => {
             const response = await boundary.handle(new URL(request.url), request.init);
             if (!response) throw new Error('Unexpected replace request');

@@ -108,6 +108,9 @@ async function receiveFilesystemRequest(request: FilesystemBoundaryRequest, invo
             return origin ? { kind: 'approval_request_created', artifactId: 'native-approval', actionId: request.method }
                 : { ok: false, errorCode: 'approval_origin_unavailable', error: 'approval_origin_unavailable' };
         }
+        if (filesystem.response && typeof filesystem.response === 'object'
+            && ('ok' in filesystem.response && filesystem.response.ok === false
+                || 'success' in filesystem.response && filesystem.response.success === false)) return filesystem.response;
         if (request.method === 'daemon.filesystem.createDirectory' && request.payload.path) filesystem.paths.add(request.payload.path);
         if (request.method === 'daemon.filesystem.rename' && request.payload.from && request.payload.to) {
             filesystem.paths.delete(request.payload.from); filesystem.paths.add(request.payload.to);
@@ -144,6 +147,9 @@ beforeEach(async () => {
         'daemon.filesystem.getDirectoryTree', 'daemon.filesystem.upload', 'daemon.filesystem.download'] as const) {
         const boundary = await createExternalActionAccountHttpBoundary({ serverUrl: 'https://filesystem-action.test',
             serverIdentityId: 'srv_filesystem_action', accountId: 'account-a', machineId: 'machine-a', actionId, tokenEpoch: 0,
+            failure: result => result && typeof result === 'object' && 'ok' in result && result.ok === false
+                && 'errorCode' in result && typeof result.errorCode === 'string'
+                && 'error' in result && typeof result.error === 'string' ? result : null,
             execute: async (input, context) => {
                 expect(context.invocation).toMatchObject({ surface: 'ui', authority: 'present_user', caller: { kind: 'host' } });
                 return await receiveFilesystemRequest({ method: getActionSpec(actionId).bindings!.rpcMethod!,
@@ -182,6 +188,37 @@ afterEach(async () => {
 });
 
 describe('shared workspace filesystem Action admission', () => {
+    it('preserves a workspace list refusal through search without trying a second filesystem route', async () => {
+        const { searchWorkspaceFiles, workspaceFileSearchCache } = await import('@/sync/domains/workspaces/files/workspaceFileSearch');
+        filesystem.response = { ok: false, errorCode: 'filesystem_identity_custody_unavailable',
+            details: { reason: 'requester_identity_unavailable' } };
+        for (const mode of [undefined, 'glob'] as const) {
+            workspaceFileSearchCache.clearAll();
+            filesystem.calls.length = 0;
+            await expect(searchWorkspaceFiles({ scope: target, query: 'a', ...(mode ? { mode } : {}) }))
+                .rejects.toMatchObject({ errorCode: 'filesystem_identity_custody_unavailable',
+                    details: { reason: 'requester_identity_unavailable' } });
+            expect(filesystem.calls).toHaveLength(1);
+        }
+    });
+    it('preserves a closed filesystem admission cause through every workspace filesystem sink', async () => {
+        filesystem.response = { ok: false, errorCode: 'filesystem_identity_custody_unavailable',
+            error: 'Filesystem admission refused', details: { reason: 'requester_identity_unavailable' } };
+        const calls = [() => workspaceReadFile(target, 'a'), () => workspaceWriteFile(target, 'a', 'unchanged'),
+            () => workspaceListDirectory(target, '.'), () => workspaceGetDirectoryTree(target, '.', 1),
+            ...operations.map(operation => () => operation.run(target))];
+        for (const call of calls) {
+            await expect(call()).resolves.toMatchObject({ success: false,
+                errorCode: 'filesystem_identity_custody_unavailable', details: { reason: 'requester_identity_unavailable' } });
+        }
+        expect(filesystem.calls).toHaveLength(calls.length);
+        expect([...filesystem.paths]).toEqual(['/repo/a']);
+        filesystem.response = { ok: false, errorCode: 'filesystem_identity_custody_unavailable',
+            error: 'Filesystem admission refused', details: { reason: 'requester_identity_unavailable', path: '/private' } };
+        const untrustedFailure = await workspaceReadFile(target, 'a');
+        expect(untrustedFailure).toMatchObject({ success: false, errorCode: 'filesystem_identity_custody_unavailable' });
+        expect(untrustedFailure).not.toHaveProperty('details');
+    });
     it('reads exact ranged slices of a larger file through admission, including tail and past EOF', async () => {
         const bytes = Uint8Array.from({ length: 3_000_019 }, (_, index) => index % 256);
         filesystem.fileBytes = bytes;
@@ -509,7 +546,10 @@ describe('shared workspace filesystem Action admission', () => {
         expect([...filesystem.paths]).toEqual(['/repo/a']);
     });
 
-    it.each(['file', 'folder'] as const)('the real New %s control presents approval and completes only after replay', async kind => {
+    it.each([
+        { kind: 'file', succeeds: true }, { kind: 'folder', succeeds: true },
+        { kind: 'file', succeeds: false }, { kind: 'folder', succeeds: false },
+    ] as const)('the real New $kind control settles approved replay (success=$succeeds)', async ({ kind, succeeds }) => {
         const actionId = kind === 'file' ? 'daemon.filesystem.writeFile' : 'daemon.filesystem.createDirectory';
         await homes.requireUiApproval(serverId, actionId);
         const machine = createMachineFixture({ id: target.machineId, activeAt: Date.now() });
@@ -536,14 +576,16 @@ describe('shared workspace filesystem Action admission', () => {
         expect(opened).toEqual([]);
         expect(expanded).not.toHaveBeenCalled();
         const artifactId = homes.artifacts(serverId).list()[0]!.id;
-        filesystem.response = kind === 'file' ? { success: true, hash: 'sha256:created' } : { success: true };
+        filesystem.response = succeeds
+            ? kind === 'file' ? { success: true, hash: 'sha256:created' } : { success: true }
+            : { ok: false, errorCode: 'access_denied', error: 'Filesystem permission denied' };
         const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
         const { captureActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
         await act(async () => {
             const decision = await createDefaultActionExecutor().execute('approval.request.decide', { artifactId, decision: 'approve' },
                 { surface: 'ui', serverId });
             expect(decision, JSON.stringify({ decision, approvalBody: homes.artifacts(serverId).readPlainBody(artifactId), calls: filesystem.calls }))
-                .toMatchObject({ ok: true, result: { status: 'executed' } });
+                .toMatchObject({ ok: true, result: { status: succeeds ? 'executed' : 'failed' } });
             const account = await captureActionAccountContext(serverId);
             try {
                 const artifact = await account.fetchArtifact(artifactId);
@@ -553,7 +595,14 @@ describe('shared workspace filesystem Action admission', () => {
                 storage.getState().updateArtifact(artifact);
             } finally { account.dispose(); }
         });
-        await vi.waitFor(() => kind === 'file' ? expect(opened).toEqual(['created.txt']) : expect(expanded).toHaveBeenCalledWith(['created.txt']));
+        if (succeeds) {
+            await vi.waitFor(() => kind === 'file' ? expect(opened).toEqual(['created.txt']) : expect(expanded).toHaveBeenCalledWith(['created.txt']));
+        } else {
+            await vi.waitFor(() => expect(alerts).toHaveBeenCalledWith(expect.any(String), 'Filesystem permission denied'));
+            expect(opened).toEqual([]);
+            expect(expanded).not.toHaveBeenCalled();
+            expect([...filesystem.paths]).toEqual(['/repo/a']);
+        }
         expect(filesystem.calls.filter(call => (call as { method: string }).method === actionId))
             .toEqual([expect.objectContaining({ payload: kind === 'file'
                 ? { rootPath: '/repo', path: '/repo/created.txt', content: '', expectedHash: null }
@@ -713,6 +762,43 @@ describe('shared workspace filesystem Action admission', () => {
         expect(expanded).toHaveBeenCalledWith(['b', 'b/sub', 'other']);
         expect(refresh).toHaveBeenCalledOnce();
         await hook.unmount();
+    });
+    it.each(['rename', 'delete'] as const)('shows the filesystem refusal when an approved tree %s fails', async operation => {
+        const actionId = operation === 'rename' ? 'daemon.filesystem.rename' : 'daemon.filesystem.delete';
+        await homes.requireUiApproval(serverId, actionId);
+        const { useWorkspaceRepositoryTreeRowActions } = await import('@/hooks/workspaces/files/useWorkspaceRepositoryTreeRowActions');
+        const alerts = vi.spyOn((await import('@/modal')).Modal, 'alert');
+        const { createActionApprovalContinuationObserver } = await import('@/components/approvals/actionApprovalContinuation');
+        const refresh = vi.fn();
+        const expanded = vi.fn();
+        const observer = createActionApprovalContinuationObserver({ onExecuted: refresh });
+        const hook = await renderHook(() => useWorkspaceRepositoryTreeRowActions({
+            workspaceScope: { ...target, serverId }, writeActionsEnabled: true,
+            expandedPaths: ['a', 'a/sub', 'other'], onExpandedPathsChange: expanded, onRequestRefresh: refresh,
+            onActionApproval: observer.requestApproval,
+        }));
+        await act(async () => { await hook.getCurrent().onSelectRowMenuItem({ path: 'a', type: 'file' },
+            operation === 'rename' ? 'repository-tree-menuitem-rename' : 'repository-tree-menuitem-delete'); });
+        const artifactId = observer.getSnapshot().approval?.artifactId;
+        if (!artifactId) throw new Error('Expected pending tree approval');
+        expect(alerts).not.toHaveBeenCalled();
+        filesystem.response = { ok: false, errorCode: 'access_denied', error: 'Filesystem permission denied' };
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const decision = await createDefaultActionExecutor().execute('approval.request.decide', { artifactId, decision: 'approve' },
+            { surface: 'ui', serverId });
+        expect(decision).toMatchObject({ ok: true, result: { status: 'failed',
+            execution: { ok: false, errorCode: 'access_denied' } } });
+        const { captureActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const account = await captureActionAccountContext(serverId);
+        try {
+            const artifact = await account.fetchArtifact(artifactId);
+            if (!artifact) throw new Error('Approval Artifact disappeared');
+            await act(async () => { observer.observeArtifact(artifact); observer.deliverSettlement(); });
+        } finally { account.dispose(); observer.dispose(); await hook.unmount(); }
+        expect([...filesystem.paths]).toEqual(['/repo/a']);
+        expect(refresh).not.toHaveBeenCalled();
+        expect(expanded).not.toHaveBeenCalled();
+        expect(alerts).toHaveBeenCalledWith(expect.any(String), 'Filesystem permission denied');
     });
     it.each(operations)('$actionId cannot reach the machine when UI-disabled', async operation => {
         const scope = accountScope;

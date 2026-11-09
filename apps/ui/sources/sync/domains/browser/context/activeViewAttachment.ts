@@ -115,3 +115,4 @@ export function cancelActiveBrowserAnnotationMode(params: Readonly<{
     if (!params.view) return params.state;
     return cancelBrowserAnnotationMode(params.state, { viewId: params.view.viewId });
 }
+

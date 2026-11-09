@@ -1,4 +1,4 @@
-import type { SessionPublicLinkSettingsV1 } from '@happier-dev/protocol';
+import type { SessionPublicLinkSettingsV1 } from '@happier-dev/protocol/sessions/access/sessionAccessActionsV1';
 
 /**
  * The canonical publication projection plus the bearer this device generated.

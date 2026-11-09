@@ -14,10 +14,13 @@ import { renderWithAppProviders } from '@/dev/testkit/render/renderWithAppProvid
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { pluginArtifactTransferDaemonState } from '@/dev/testkit/harness/pluginArtifactTransferBoundary';
 import { createAccountNoticeArtifactFixture } from '@/dev/testkit/fixtures/usageNoticeFixtures';
 import { createPlainArtifactHttpFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 
 const packaged = vi.hoisted(() => ({
+    accountExecutableBytes: null as Promise<void> | null,
+    accountExecutableReads: 0,
     bytes: new TextEncoder().encode(`
 const React = require("react");
 const { defineUiSurface, usePluginHostApi, useSurfaceContext, TargetedSurface } = require("@happier-dev/plugin-ui");
@@ -80,7 +83,7 @@ function AccountDetail() {
 }
 module.exports.activate = function(api) { api.actions.register("read", async (_input, context) => ({
     surface: context.surface, caller: context.caller ? context.caller.kind : null
-})); api.actions.register("nested", async (_input, context) => {
+}), { observeRead(_input, invalidate) { invalidate(); return { dispose() {} }; } }); api.actions.register("nested", async (_input, context) => {
     try { return await context.services.actions.execute({ pluginId: "acme.provider-source", localId: "list" }, {}); }
     catch (error) { return { code: error.code }; }
 }); api.actions.register("nested-local", async (_input, context) => {
@@ -110,7 +113,7 @@ vi.mock('./generatedBundledPluginUiArtifacts', async () => {
     } });
     const authored = definePlugin({ id: 'happier.fixture', version: '1.0.0', displayName: 'Fixture',
         contributionPoints: { sources: sourceProtocol.point() },
-        actions: { read: { title: 'Read Account', scopes: ['global'], surfaces: ['ui'], placementBindings: [], dangerLevel: 'safe',
+        actions: { read: { title: 'Read Account', scopes: ['global'], surfaces: ['ui'], placementBindings: [], dangerLevel: 'safe', readOnly: true,
             execution: { target: 'account', account: { artifactId: 'account-actions', exportName: 'activate' } }, run: async () => null },
             nested: { title: 'Read source', scopes: ['global'], surfaces: ['ui'], placementBindings: [], dangerLevel: 'safe',
                 execution: { target: 'account', account: { artifactId: 'account-actions', exportName: 'activate' } }, run: async () => null },
@@ -156,7 +159,10 @@ vi.mock('./generatedBundledPluginUiArtifacts', async () => {
     const pointlessDeclaration = { ...uiDeclaration, pluginId: pointlessManifest.id, normalizedManifest: pointlessManifest,
         entriesById: projectPluginPortableUiDeclarationsV1(pointlessManifest, [artifactGraph, accountGraph]),
         declaredExecution: { daemonActions: true, contributionPoints: false } };
-    return { BUNDLED_PLUGIN_UI_APP_DECLARATIONS: [uiDeclaration, pointlessDeclaration],
+    return { BUNDLED_PLUGIN_UI_APP_DECLARATIONS: [uiDeclaration, pointlessDeclaration].map(declaration => ({
+        ...declaration, normalizedManifest: undefined, presentationManifest: declaration.normalizedManifest,
+        loadDeclaration: async () => declaration,
+    })),
         BUNDLED_PLUGIN_UI_APP_ARTIFACTS: [artifactGraph, accountGraph].map((graph, index) => ({
         pluginId: manifest.id, releaseVersion: manifest.version, artifactId: graph.artifactId, tier: graph.tier,
         digest: graph.digest, artifactGraph: graph, files: [{ relativePath: graph.entry, asset: index + 1 }],
@@ -165,16 +171,26 @@ vi.mock('./generatedBundledPluginUiArtifacts', async () => {
         digest: graph.digest, artifactGraph: graph, files: [{ relativePath: graph.entry, asset: index + 1 }],
     }))), BUNDLED_PLUGIN_BRAND_MARKS: [] };
 });
-vi.mock('expo-asset', () => ({ Asset: { fromModule: () => ({
-    localUri: 'file:///test-app/entry.cjs.bundle', downloadAsync: async () => undefined,
+vi.mock('expo-asset', () => ({ Asset: { fromModule: (asset: number) => ({
+    localUri: `file:///test-app/${asset}/entry.cjs.bundle`, downloadAsync: async () => undefined,
 }) } }));
 vi.mock('expo-file-system', () => ({ File: class {
+    constructor(private readonly uri: string) {}
     exists = true;
-    bytes = async () => packaged.bytes;
+    bytes = async () => {
+        if (this.uri === 'file:///test-app/2/entry.cjs.bundle') {
+            packaged.accountExecutableReads++;
+            await packaged.accountExecutableBytes;
+        }
+        return packaged.bytes;
+    };
 } }));
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
     const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
+    const { createPluginArtifactTransferBoundary } = await import('@/dev/testkit/harness/pluginArtifactTransferBoundary');
+    const artifacts = createPluginArtifactTransferBoundary(input => packaged.machineRpc(input));
     return createServerScopedMachineRpcBoundaryMock(async input => {
+        if (artifacts.handles(input.method)) return artifacts.request(input);
         const result = packaged.machineRpc(input);
         if (result !== undefined) return result;
         throw new Error('No daemon is reachable');
@@ -207,6 +223,8 @@ const enabledPluginFeatures = createRootLayoutFeaturesResponse({ features: { plu
 } } });
 
 afterEach(async () => {
+    packaged.accountExecutableBytes = null;
+    packaged.accountExecutableReads = 0;
     packaged.machineRpc.mockReset();
     clearPluginAccountAvailabilityProjection();
     await account.reset();
@@ -307,7 +325,7 @@ it('reuses bundled digests through current mounted admission while checking ever
     const { createCanonicalPluginReactNativeHostApiAdapter } = await import('@/components/plugins/reactNative/hostApi');
     const { createPluginSurfaceContextFixture } = await import('@/dev/testkit/fixtures/pluginSurfaceContextFixture');
     const { PluginReactNativeSurface } = await import('@/components/plugins/reactNative/PluginReactNativeSurface');
-    const selected = readPluginAccountAvailability(lifetime.scope).readCurrentAccountExecution('happier.fixture');
+    const selected = await readPluginAccountAvailability(lifetime.scope).ensureCurrentAccountExecution('happier.fixture');
     if (selected.kind !== 'available') throw new Error('Expected bundled Account admission');
     const digests = vi.spyOn(crypto, 'computeCanonicalDomainSeparatedHexDigest');
     const selections = vi.spyOn(owner, 'resolvePluginAccountExecutionSelectionV1');
@@ -390,7 +408,7 @@ it('reuses prepared Account target semantics across unchanged mounted contributi
     const { readPluginAccountAvailability, retirePluginAccountAvailabilityProjection } = await import('./projection');
     const { readMountedAccountTargetedContributions } = await import('@/components/plugins/surfaces/mountedAccountTargetedContributions');
     const availability = readPluginAccountAvailability(lifetime.scope);
-    const selected = availability.readCurrentAccountExecution('happier.fixture');
+    const selected = await availability.ensureCurrentAccountExecution('happier.fixture');
     if (selected.kind !== 'available') throw new Error('Expected current Account target');
     const read = () => readMountedAccountTargetedContributions({ pluginId: 'happier.fixture',
         origin: { ...lifetime.scope, custodyId: selected.custodyId, sourceCustody: selected.sourceCustody },
@@ -402,6 +420,51 @@ it('reuses prepared Account target semantics across unchanged mounted contributi
     expect(schemaParses).not.toHaveBeenCalled();
     retirePluginAccountAvailabilityProjection(['happier.fixture']);
     await expect(read()).rejects.toMatchObject({ code: 'plugin_action_generation_retired' });
+});
+
+it('keeps its bundled self-detail through late development target-custody publication', async () => {
+    await account.restore({ machines: [], features: enabledPluginFeatures, serverIdentityId: 'srv_self_detail_custody' });
+    const lifetime = captureActiveServerAccountScopeLifetime()!;
+    replacePluginAccountAvailabilityProjection({ scope: lifetime.scope, snapshot: {
+        availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [],
+    } });
+    const { readPluginAccountAvailability } = await import('./projection');
+    const { readMountedAccountTargetedContributions } = await import('@/components/plugins/surfaces/mountedAccountTargetedContributions');
+    const { prepareTargetedSurfaceMounts } = await import('@/components/plugins/surfaces/mountedTargetedContributions');
+    const { readTargetedPluginSurfaceReactMountRequest } = await import('@/components/plugins/surfaces/TargetedPluginSurfaceHost');
+    const { DaemonPluginTargetedSourceDeclarationV1Schema, DaemonPluginUiTargetedContributionsReadRequestSchema } = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
+    const { RPC_METHODS} = await import('@happier-dev/protocol/rpc/methods');
+    const selected = await readPluginAccountAvailability(lifetime.scope).ensureCurrentAccountExecution('happier.fixture');
+    if (selected.kind !== 'available' || selected.sourceCustody.kind !== 'bundled_first_party') throw new Error('Expected bundled Account source');
+    const machineCustody = { kind: 'development' as const, registeredRootId: 'external-development-root' };
+    const declaration = DaemonPluginTargetedSourceDeclarationV1Schema.parse({
+        occurrenceId: 'machine-target-current', sourceCustody: machineCustody,
+        manifest: { id: selected.manifest.id, contributes: { actions: selected.manifest.contributes.actions,
+            pluginContributionPoints: selected.manifest.contributes.pluginContributionPoints,
+            targetedPluginContributions: selected.manifest.contributes.targetedPluginContributions,
+            ui: { renderers: selected.manifest.contributes.ui.renderers } } },
+    });
+    packaged.machineRpc.mockImplementation(request => {
+        if (request.method !== RPC_METHODS.DAEMON_PLUGIN_UI_TARGETED_CONTRIBUTIONS_READ) throw new Error('Unexpected Machine RPC');
+        const query = DaemonPluginUiTargetedContributionsReadRequestSchema.parse(request.payload);
+        if (query.readMode !== 'sourceDeclarations') throw new Error('An Account child must not borrow a Machine mount');
+        return { status: 'sourceDeclarations', pluginId: selected.manifest.id, sourceDeclarations: [declaration] };
+    });
+    const read = (withMachine: boolean) => readMountedAccountTargetedContributions({
+        pluginId: selected.manifest.id, origin: { ...lifetime.scope, custodyId: selected.custodyId, sourceCustody: selected.sourceCustody },
+        accountLifetime: lifetime, signal: new AbortController().signal, isCurrent: lifetime.isCurrent,
+        ...(withMachine ? { machine: { machineId: 'selected-machine', serverId: lifetime.scope.serverId } } : {}),
+    });
+    for (const withMachine of [false, true]) {
+        const published = await read(withMachine);
+        expect(published.targetedContributions.target.sourceCustody).toEqual(withMachine ? machineCustody : selected.sourceCustody);
+        const surface = published.targetedContributions.points[0]!.protocols[0]!.contributions[0]!.surfaces[0]!;
+        expect(surface.contributor.sourceCustody).toEqual(selected.sourceCustody);
+        const request = readTargetedPluginSurfaceReactMountRequest({ presentation: { surface, input: { id: 'personal' } },
+            target: published.targetedContributions.target, mounts: prepareTargetedSurfaceMounts(published.targetedSurfaceMounts) });
+        expect(request, 'the exact rematch must retain the Account child after Machine custody arrives').not.toBeNull();
+        expect(request?.mount.mount.accountExecutionOrigin?.sourceCustody).toEqual(selected.sourceCustody);
+    }
 });
 
 it.each([
@@ -423,9 +486,9 @@ it.each([
     const { readMountedAccountTargetedContributions } = await import('@/components/plugins/surfaces/mountedAccountTargetedContributions');
     const { prepareTargetedSurfaceMounts } = await import('@/components/plugins/surfaces/mountedTargetedContributions');
     const { readTargetedPluginSurfaceReactMountRequest } = await import('@/components/plugins/surfaces/TargetedPluginSurfaceHost');
-    const { PluginProjectedActionV2Schema, RPC_METHODS } = await import('@happier-dev/protocol');
+    const [{ PluginProjectedActionV2Schema}, { RPC_METHODS}] = await Promise.all([import('@happier-dev/protocol/daemon/contributionRegistryProjection'), import('@happier-dev/protocol/rpc/methods')]);
     const { DaemonPluginStructuredMessageActionExecuteRequestSchema } = await import('@happier-dev/protocol/plugins/actions/daemonInvocationV1');
-    const selected = readPluginAccountAvailability(lifetime.scope).readCurrentAccountExecution('happier.fixture');
+    const selected = await readPluginAccountAvailability(lifetime.scope).ensureCurrentAccountExecution('happier.fixture');
     if (selected.kind !== 'available' || selected.sourceCustody.kind !== 'bundled_first_party') throw new Error('Expected admitted Account bundle');
     const origin = { ...lifetime.scope, custodyId: selected.custodyId, sourceCustody: selected.sourceCustody };
     const projected = await readMountedAccountTargetedContributions({ pluginId: 'happier.fixture', origin,
@@ -441,7 +504,7 @@ it.each([
         authorization: { generation: { targetGeneration: 'provider-current', desiredGeneration: 'provider-current', appliedGeneration: 'provider-current' },
             resourceSelections: [], scopedGrants: [], serviceAvailability: [], operatingSystemAuthorization: [] } });
     const pluginProjectionV2 = { v: 2 as const, generation: 1, installedPackagesById: {}, agentsById: {},
-        actionsById: { 'acme.provider-source/list': provider },   resourcesById: {}, settingsById: {}, diagnostics: [], familiesById: {} };
+        actionsById: { 'acme.provider-source/list': provider }, resourcesById: {}, settingsById: {}, diagnostics: [], familiesById: {} };
     const { publishDaemonMergedProjectionInputs } = await import('@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters');
     const { createInstalledPluginUiProjectionPublication } = await import('@/sync/domains/plugins/ui/projectionUnion');
     const { createPluginActionInputSelectionFactsPublication } = await import('@/components/plugins/surfaces/pluginActionInputSelectionFacts');
@@ -469,7 +532,7 @@ it.each([
         <PluginSurfaceHost targetedMount={{ request, physicalTarget: { kind: 'app' }, parentLifetime: lifetime,
             pluginProjectionV2, pluginProjectionById: inputs.pluginProjectionById, pluginUiProjection, actionInputSelectionFactsKey,
             runtimeComposerAttachmentsById: inputs.pluginUiProjection.composerAttachmentsById,
-            daemonProjectionReady: withMachine, isExecutionOriginCurrent: () => transportCurrent }}
+            isExecutionOriginCurrent: () => transportCurrent }}
             machineId={withMachine ? machineId : null} serverId={lifetime.scope.serverId} platform="web" projectionInteractionEnabled />
     </AppShellPluginUiProjectionProvider>);
     try {
@@ -531,17 +594,127 @@ it.each([false, true])('invokes an Account Action from the real mounted Account 
     } finally { await screen.unmount(); }
 });
 
+it('waits for lazy Account registration from a physical page with its own routed credential lifetime', async () => {
+    await account.restore({ machines: [], features: enabledPluginFeatures, serverIdentityId: 'srv_lazy_account_page' });
+    let releaseBytes!: () => void;
+    packaged.accountExecutableBytes = new Promise<void>(resolve => { releaseBytes = resolve; });
+    const scope = storage.getState().profileScope!;
+    replacePluginAccountAvailabilityProjection({ scope, snapshot: {
+        availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [],
+    } });
+    const screen = await renderWithAppProviders(<AppPaneProvider><AppShellPluginUiProjectionProvider>
+        <PluginAppPageScreen pluginId="happier.fixture" localId="account-page" subPath="" />
+    </AppShellPluginUiProjectionProvider></AppPaneProvider>);
+    try {
+        await waitForHomeGovernance(async () => {
+            await flushHookEffects();
+            expect(screen.tree.root.findAllByProps({ testID: 'account-page-invoke' })).toHaveLength(1);
+        });
+        const action = readCurrentAppShellPluginUiProjection()!.actionsById['happier.fixture/read']!;
+        expect(resolvePluginUiClientActionRegistration({ action, platform: 'web' })).not.toBeNull();
+        expect(packaged.accountExecutableReads).toBe(0);
+        let read!: Promise<void>;
+        await act(async () => {
+            read = screen.tree.root.findByProps({ testID: 'account-page-invoke' }).props.onPress();
+        });
+        expect(screen.tree.root.findAllByProps({ testID: 'account-page-result' }),
+            'a mounted read must remain pending until its exact registration commits').toHaveLength(0);
+        await act(async () => { releaseBytes(); await read; });
+        expect(screen.tree.root.findByProps({ testID: 'account-page-result' }).props.children)
+            .toBe(JSON.stringify({ surface: 'ui', caller: 'plugin' }));
+        expect(packaged.accountExecutableReads).toBe(1);
+        expect(packaged.machineRpc).not.toHaveBeenCalled();
+    } finally { releaseBytes(); await screen.unmount(); }
+});
+
+it.each(['admitted', 'cancelled', 'refused', 'retired'] as const)('settles one cold Session observer from real lazy Account registration (%s)', async settlement => {
+    const { CurrentUiContextProvider } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
+    const { MainAppTabStateProvider } = await import('@/components/navigation/mobile/chrome/MainAppTabStateProvider');
+    const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+    const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+    const { CurrentUiContextActionHost } = await import('@/components/appShell/currentUiContext/currentUiContextVoiceToolPort');
+    const { observeCurrentUiContextContributedAction } = await import('@/components/appShell/currentUiContext/currentUiContextActionRuntime');
+    const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
+    const { retireActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+    await account.restore({ machines: [], features: enabledPluginFeatures, serverIdentityId: 'srv_cold_session_observer' });
+    const credentials = await TokenStorage.getCredentials();
+    let releaseBytes!: () => void;
+    let refuseBytes!: (error: Error) => void;
+    packaged.accountExecutableBytes = new Promise<void>((resolve, reject) => { releaseBytes = resolve; refuseBytes = reject; });
+    const lifetime = captureActiveServerAccountScopeLifetime()!;
+    replacePluginAccountAvailabilityProjection({ scope: lifetime.scope, snapshot: {
+        availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [],
+    } });
+    const screen = await renderWithAppProviders(<InjectedAuthProvider credentials={credentials}><MainAppTabStateProvider><AppPaneProvider><AppShellPluginUiProjectionProvider>
+        <CurrentUiContextProvider><CurrentUiContextActionHost />
+            <PluginAppPageScreen pluginId="happier.fixture" localId="account-page" subPath="" />
+        </CurrentUiContextProvider>
+    </AppShellPluginUiProjectionProvider></AppPaneProvider></MainAppTabStateProvider></InjectedAuthProvider>);
+    const controller = new AbortController();
+    const invalidations = vi.fn();
+    let attachment: Awaited<ReturnType<typeof observeCurrentUiContextContributedAction>> | undefined;
+    try {
+        await waitForHomeGovernance(async () => {
+            await flushHookEffects();
+            expect(screen.tree.root.findAllByProps({ testID: 'account-page-invoke' })).toHaveLength(1);
+        });
+        const action = readCurrentAppShellPluginUiProjection()!.actionsById['happier.fixture/read']!;
+        expect(action).toBeDefined();
+        expect(readCurrentAppShellPluginUiProjection({ scope: lifetime.scope, declarationsOnly: true })?.actionsById['happier.fixture/read']).toBe(action);
+        expect(resolvePluginUiClientActionRegistration({ action, platform: 'web' })).not.toBeNull();
+        expect(packaged.accountExecutableReads).toBe(0);
+        const results: unknown[] = [];
+        const request = {
+            action: { pluginId: 'happier.fixture', localId: 'read' }, input: {}, defaultSessionId: 'cold-session',
+            signal: controller.signal, isCurrent: lifetime.isCurrent, invalidate: invalidations,
+        };
+        const hostAction = { execute: createFrontDoorActionExecute(), context: {
+            surface: 'ui' as const, ...lifetime.scope, expectedAccountId: lifetime.scope.accountId, defaultSessionId: 'cold-session',
+        } };
+        await expect(observeCurrentUiContextContributedAction({ ...request,
+            action: { pluginId: 'happier.fixture', localId: 'absent' } }, hostAction))
+            .rejects.toMatchObject({ code: 'contributed_action_unavailable', retryable: false });
+        const observing = observeCurrentUiContextContributedAction(request, hostAction);
+        void observing.then(value => { attachment = value; results.push('attached'); }, error => { results.push(error); });
+        await flushHookEffects();
+        expect(results, 'declared Account Action with pending executable bytes must not be terminal absence').toEqual([]);
+        if (settlement === 'admitted') {
+            await act(async () => { releaseBytes(); await observing; });
+            expect(results).toEqual(['attached']);
+            expect(invalidations).toHaveBeenCalledTimes(1);
+        } else {
+            await act(async () => {
+                if (settlement === 'cancelled') controller.abort();
+                else if (settlement === 'retired') retireActiveServerAccountScopeLifetime();
+                else refuseBytes(new Error('Account artifact boundary refused'));
+                await expect(observing).rejects.toMatchObject({ code: settlement === 'refused'
+                    ? 'artifact_source_unavailable' : 'plugin_action_generation_retired', retryable: false });
+            });
+            expect(attachment).toBeUndefined();
+            expect(invalidations).not.toHaveBeenCalled();
+            await act(async () => { releaseBytes(); });
+            expect(invalidations).not.toHaveBeenCalled();
+        }
+        expect(packaged.machineRpc).not.toHaveBeenCalled();
+        await attachment?.dispose();
+    } finally { controller.abort(); releaseBytes(); await attachment?.dispose(); await screen.unmount(); }
+});
+
 it('uses the current Machine action map on a pointless physical surface while retaining Account callees', async () => {
     const pluginId = 'happier.pointless-fixture';
     const machineId = 'current-pointless-machine';
-    await account.restore({ machines: [createMachineFixture({ id: machineId, active: true, activeAt: Date.now() })],
-        features: enabledPluginFeatures, serverIdentityId: 'srv_pointless_machine' });
+    await account.restore({ machines: [createMachineFixture({ id: machineId, active: true, activeAt: Date.now(), daemonState: pluginArtifactTransferDaemonState })],
+        features: createRootLayoutFeaturesResponse({ features: {
+            plugins: enabledPluginFeatures.features.plugins,
+            machines: { enabled: true, transfer: { enabled: true, directPeer: { enabled: false }, serverRouted: { enabled: false } } },
+        } }),
+        serverIdentityId: 'srv_pointless_machine' });
     const lifetime = captureActiveServerAccountScopeLifetime()!;
     replacePluginAccountAvailabilityProjection({ scope: lifetime.scope, snapshot: {
         availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [],
     } });
     const declaration = BUNDLED_PLUGIN_UI_APP_DECLARATIONS.find(row => row.pluginId === pluginId)!;
-    const { PluginProjectionV2Schema, RPC_METHODS } = await import('@happier-dev/protocol');
+    const [{ PluginProjectionV2Schema}, { RPC_METHODS}] = await Promise.all([import('@happier-dev/protocol/daemon/contributionRegistryProjection'), import('@happier-dev/protocol/rpc/methods')]);
     const { DaemonPluginUiArtifactBytesReadRequestSchema, DaemonPluginUiArtifactBytesReadResponseSchema,
         DaemonPluginActionSchemasReadRequestSchema, DaemonPluginActionSchemasReadResponseSchema,
     } = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
@@ -580,7 +753,7 @@ it('uses the current Machine action map on a pointless physical surface while re
     const invocations: ReturnType<typeof DaemonPluginStructuredMessageActionExecuteRequestSchema.parse>[] = [];
     packaged.machineRpc.mockImplementation(request => {
         if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return { protocolVersion: 1, projection: wire };
-        if (request.method === RPC_METHODS.DAEMON_PLUGIN_UI_ARTIFACT_BYTES_READ) {
+        if (request.method === RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE) {
             const query = DaemonPluginUiArtifactBytesReadRequestSchema.parse(request.payload);
             expect(query.machineId).toBe(machineId);
             const graph = BUNDLED_PLUGIN_UI_APP_ARTIFACTS.find(row => row.pluginId === pluginId
@@ -803,6 +976,8 @@ it.each(['bundledSource', 'materialization', 'retainedMetadata', 'automaticDevel
 });
 
 it('renders a cold bundled Account page with shared state across navigation chrome changes and no daemon calls', async () => {
+    const { resolvePluginPageLaunchAuthorities } = await import('@/components/plugins/pages/pluginPageNavigation');
+    const { resolvePluginPages } = await import('@/components/plugins/pages/pluginPages');
     await account.restore({ machines: [], features: enabledPluginFeatures, serverIdentityId: 'srv_bundled_account_page' });
     packaged.machineRpc.mockClear();
     const scope = storage.getState().profileScope!;
@@ -830,6 +1005,21 @@ it('renders a cold bundled Account page with shared state across navigation chro
         expect(admission.kind).toBe('available');
         expect(screen.tree.root.findByType(PluginSurfacePlacementHost).props.placement.occurrenceId)
             .toBe(admission.kind === 'available' ? admission.custodyId : undefined);
+        // Producer -> consumer contract: the real bundled Account projection
+        // that this physical renderer admitted must also admit page ingress.
+        // A Machine supply is not the Account renderer's launch identity.
+        const projection = readCurrentAppShellPluginUiProjection();
+        const placement = projection?.surfacePlacementsById['surfacePlacement:happier.fixture:account-page'];
+        if (!placement) throw new Error('Expected published bundled Account page');
+        const accountLifetime = captureActiveServerAccountScopeLifetime();
+        const launchAuthorities = resolvePluginPageLaunchAuthorities({
+            pages: resolvePluginPages({ target: { kind: 'app' }, placements: [placement] }), accountLifetime,
+        });
+        expect(launchAuthorities.get('plugin:happier.fixture:account-page')).toMatchObject({
+            serverId: scope.serverId, machineId: null, accountLifetime,
+            occurrenceId: admission.kind === 'available' ? admission.custodyId : undefined,
+            executionOrigin: null,
+        });
         const mountedContent = screen.tree.root.findByProps({ testID: 'host-bundled-shared-scope-ready' });
         for (const showsBack of [true, false]) {
             await expect(screen.update(renderPage(showsBack))).resolves.toBeUndefined();
@@ -897,7 +1087,7 @@ it('keeps the Account page usable when its optional contribution points belong t
     const executionOrigin = { serverIdentityId: 'srv_bundled_account_page',
         sourceRef: { machineId, pluginId: 'happier.fixture', sourceCustody } };
     const runtime = normalizePluginUiProjection({ v: 2, generation: 1, agentsById: {}, actionsById: {},
-          resourcesById: {}, settingsById: {}, diagnostics: [],
+        resourcesById: {}, settingsById: {}, diagnostics: [],
         installedPackagesById: { 'happier.fixture': { id: 'happier.fixture', displayName: 'Fixture', version: '1.0.0',
             enabled: true, source: { kind: 'localPath', locator: 'fixture-source' }, occurrenceId: 'fixture-occurrence',
             sourceCustody, executionOrigin,

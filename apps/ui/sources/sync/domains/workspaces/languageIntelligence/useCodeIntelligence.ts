@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import type { TextEditorHandle, EditorDecoration, Rect } from '@/components/ui/code/editor/codeEditorTypes';
+import type { TextEditorHandle, EditorDecoration, Rect, CodeEditorLanguageIntelligence } from '@/components/ui/code/editor/codeEditorTypes';
 import { useKeyboardShortcutHandlers } from '@/keyboard/KeyboardShortcutProvider';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -13,6 +13,9 @@ import { forwardCodeIntelligenceSettlements } from './codeIntelligenceSettlement
 import { bindCodeIntelligenceEditor } from './bindCodeIntelligenceEditor';
 import type { CodeIntelligenceController, CodeIntelligenceControllerInput, CodeIntelligenceSnapshot } from './createCodeIntelligenceController';
 import { useCodeIntelligenceController } from './useCodeIntelligenceController';
+import { DEFAULT_FILES_EDITOR_AI_SUGGESTIONS_V1 } from '@happier-dev/protocol/account/settings/accountSettings';
+import type { CodeInlineSuggestionPort, CodeInlineSuggestionUsage } from './codeInlineSuggestions';
+import type { LanguageIntelligenceQueryInput } from '@happier-dev/protocol/machines/languageIntelligence';
 
 export type UseCodeIntelligenceInput = Readonly<{
     scope: WorkspaceScopeBase | null;
@@ -20,6 +23,10 @@ export type UseCodeIntelligenceInput = Readonly<{
     languageId: string | null;
     /** Command focus only; the mounted File page owns the document lifetime. */
     active: boolean;
+    /** Entering Edit warms the existing holder; reading modes stay on demand. */
+    editing?: boolean;
+    editorIntelligencePreferences?: Pick<CodeEditorLanguageIntelligence, 'inlayHints' | 'semanticHighlighting' | 'referencePreview' | 'nextEditKeys'>;
+    inlineSuggestions?: Omit<CodeInlineSuggestionPort, 'query'>;
     /** P4 owns the buffer; this hook never subscribes the File page to keystrokes. */
     liveValue: Readonly<{ get(): string; subscribe?(listener: () => void): () => void }>;
     /** Selected reading text; undefined keeps the editor's live draft basis. */
@@ -52,6 +59,7 @@ export function useCodeIntelligence(input: UseCodeIntelligenceInput) {
     const serverId = input.scope?.serverId;
     const machineId = input.scope?.machineId;
     const rootPath = input.scope?.rootPath;
+    const hasInlineSuggestions = Boolean(input.inlineSuggestions);
     const controllerInput = React.useMemo<CodeIntelligenceControllerInput | null>(() => {
         if (!serverId || !machineId || !rootPath || !lifetime) return null;
         return {
@@ -67,10 +75,23 @@ export function useCodeIntelligence(input: UseCodeIntelligenceInput) {
                 watch: (request, signal) => machineLanguageIntelligenceWatch(machineId, request, { serverId, accountId: lifetime.scope.accountId, signal }),
                 restart: signal => machineLanguageIntelligenceRestartAction(machineId, { rootPath }, { serverId, accountId: lifetime.scope.accountId, signal }),
             },
+            ...(hasInlineSuggestions ? { inlineSuggestions: {
+                getSettings: () => latest.current.inlineSuggestions?.getSettings() ?? DEFAULT_FILES_EDITOR_AI_SUGGESTIONS_V1,
+                getModel: (operation: Parameters<CodeInlineSuggestionPort['getModel']>[0]) => latest.current.inlineSuggestions?.getModel(operation) ?? null,
+                query: (request: LanguageIntelligenceQueryInput, signal: AbortSignal) => machineLanguageIntelligenceQuery(machineId, request, { serverId, accountId: lifetime.scope.accountId, signal }),
+                onUsage: (event: CodeInlineSuggestionUsage) => { if (lifetime.isCurrent()) latest.current.inlineSuggestions?.onUsage?.(event); },
+            } } : {}),
             openLocation: location => latest.current.openLocation(location),
         };
-    }, [input.path, input.languageId, input.liveValue, serverId, machineId, rootPath, lifetime]);
+    }, [input.path, input.languageId, input.liveValue, serverId, machineId, rootPath, lifetime, hasInlineSuggestions]);
     const controller = useCodeIntelligenceController(controllerInput);
+    React.useEffect(() => {
+        controller?.inlineSuggestions.setActive(input.active && input.editing === true);
+    }, [controller, input.active, input.editing]);
+    React.useEffect(() => { controller?.inlineSuggestions.refresh(); }, [controller, input.inlineSuggestions]);
+    React.useEffect(() => {
+        if (input.editing) void controller?.activate();
+    }, [controller, input.editing]);
     React.useEffect(() => {
         // A presentation switch changes coordinates, not document ownership.
         // Reuse the passive controller and its versioned sync; dirty custody
@@ -88,14 +109,16 @@ export function useCodeIntelligence(input: UseCodeIntelligenceInput) {
         editorBinding.current?.();
         const editor = latest.current.editorHandleRef?.current;
         if (!controller || !editor) { editorBinding.current = null; return; }
-        const stopPosition = bindCodeIntelligenceEditor(controller, editor);
+        const stopPosition = bindCodeIntelligenceEditor(controller, editor, { path: latest.current.path,
+            inlayHints: latest.current.editorIntelligencePreferences?.inlayHints ?? 'off', semanticHighlighting: latest.current.editorIntelligencePreferences?.semanticHighlighting ?? true,
+            referencePreview: latest.current.editorIntelligencePreferences?.referencePreview, nextEditKeys: latest.current.editorIntelligencePreferences?.nextEditKeys });
         const stopDiagnostics = editor.setDecorations ? bindCodeDiagnosticDecorations({ handle: { setDecorations: editor.setDecorations }, path: latest.current.path,
             getProjection: controller.getDiagnosticsProjection, subscribe: controller.subscribe }) : () => undefined;
         const stopDecoration = editor.onDecorationPress?.((layer, item) => {
             if (layer === 'diagnostic' && 'severity' in item) latest.current.onDiagnosticPress?.(item, editor.getLineRect?.(item.startLine) ?? null);
         });
         editorBinding.current = () => { stopPosition(); stopDiagnostics(); stopDecoration?.(); };
-    }, [controller]);
+    }, [controller, input.editorIntelligencePreferences]);
     React.useEffect(() => {
         bindEditor();
         return () => { editorBinding.current?.(); editorBinding.current = null; };

@@ -1,13 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
-    FeaturesResponseSchema,
+    FeaturesResponseSchema} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import {
     measurePluginCollectionCandidatePreparationStageRequestEncodedBytesV1,
     normalizePluginAccountCollectionContractV1,
     type PluginCollectionCandidatePreparationBindingV1,
-    PluginCollectionCandidatePreparationStageRequestV1Schema,
+    PluginCollectionCandidatePreparationStageRequestV1Schema} from '@happier-dev/protocol/plugins/data/collectionsV1';
+import {
     type PluginDataCollectionsCapabilities,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/features/payload/capabilities/pluginDataCollectionsCapabilities';
 import type { PluginAccountCollectionMigrationRuntimeProjection } from '@happier-dev/plugin-sdk';
 
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';

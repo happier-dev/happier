@@ -16,6 +16,7 @@ import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/proto
 import { openExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { socketRpcCodec } from '@happier-dev/sync-client';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { serverScopedRpcSocketPool } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool';
 import { Modal } from '@/modal';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -30,7 +31,7 @@ installApprovalCommonModuleMocks();
 installDisconnectedServerSocketBoundary();
 
 describe('original Account finite Project admission', () => {
-    it('forwards the existing typed Session write scope through the real socket boundary without Account HTTP admission', async () => {
+    it.each([false, true])('forwards the existing typed Session write scope and its refusal without Account HTTP admission (refused: %s)', async refused => {
         const homeId = 'srv_session_finite';
         const serverUrl = 'https://session-finite.example.test';
         const token = `header.${Buffer.from(JSON.stringify({ sub: 'ui-owner', tokenEpoch: 1,
@@ -49,6 +50,7 @@ describe('original Account finite Project admission', () => {
             const payload = value as Readonly<{ method: string; params: unknown; authorization?: unknown; requestId?: string }>;
             calls.push(payload);
             expect(payload.requestId).toBe('session-finite-request');
+            if (refused) return { ok: false, error: 'Forbidden', errorCode: RPC_ERROR_CODES.FORBIDDEN };
             const opened = await socketRpcCodec.decodeRequestParams({ mode: 'plain' }, payload.params, payload.method);
             return { ok: true, result: await socketRpcCodec.encodeResponse({ mode: 'plain' }, result, opened.callId) };
         };
@@ -80,7 +82,8 @@ describe('original Account finite Project admission', () => {
             input: { workspace: { serverId: homeId, workspaceId: 'checkout', machineId: 'guest', rootPath: '/repo' }, phase: 'setup' },
             context: { surface: 'agent', authority: 'account_automation', actionRequestId: 'session-finite-request',
                 actionCaller: { kind: 'session', sessionId: authorization.sessionId, starterDepth: 0, turnDepth: 0 }, rpcSessionAuthorization: authorization } });
-        expect(received, JSON.stringify({ networkPaths, socketCreations, calls })).toEqual(result);
+        expect(received, JSON.stringify({ networkPaths, socketCreations, calls })).toEqual(refused
+            ? { ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN, error: RPC_ERROR_CODES.FORBIDDEN } : result);
         expect(calls).toHaveLength(1);
         expect(calls[0]).toMatchObject({ authorization, requestId: 'session-finite-request' });
         expect(actionPosts).toBe(0);

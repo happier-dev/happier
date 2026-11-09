@@ -23,7 +23,7 @@ import {
  * The plugin UI Host API and the Companion's needs-you block both read this one
  * projection and answer through `answerSessionPermission`, so "Allow" means the
  * same provider decision wherever it is pressed. The transcript footer keeps its
- * richer, footer-only grants and is not replaced by this list.
+ * richer choices (shared with the notch) and is not replaced by this list.
  */
 export type SessionPendingPermission = Readonly<{
     requestId: string;

@@ -3,24 +3,120 @@ import * as React from 'react';
 import { beforeEach, expect, it } from 'vitest';
 
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
-import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
+import { clearPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
 import { storage } from '@/sync/domains/state/storageStore';
 import { settingsDefaults, settingsParse, type Settings } from '@/sync/domains/settings/settings';
 import { useSettingsSelector } from './hooks';
 import { useSetting } from './settingsReadHooks';
 import { holdSettingWrite, useSettingsPreviewStore } from './settingsPreview';
-import { useSessionListQuerySourceState } from '@/sync/domains/session/listing/useSessionListQuerySourceState';
-
 import { useAgentUiSettings, getAgentUiSettingsKeys } from '@/agents/catalog/useAgentUiSettings';
 import { publishProjectedAgentUiBehaviorDescriptors, clearProjectedAgentUiBehaviorDescriptors } from '@/agents/registry/agentUiBehaviorProjection';
+import { useSessionAuthoringEnginePicker } from '@/components/sessions/authoring/controls/useSessionAuthoringEnginePicker';
+import { useSessionListQuerySourceState } from '@/sync/domains/session/listing/useSessionListQuerySourceState';
+import { useCollectionSpaceBinding } from '@/components/ui/lists/collection/useCollectionSpaceBinding';
+import { useCollectionSpaceFilter } from '@/components/ui/lists/collection/useCollectionSpaceFilter';
+import { useNewSessionOrganizationPlacement } from '@/components/sessions/new/organization/useNewSessionOrganizationPlacement';
+import { createDefaultCollectionSpaceV1 } from '@happier-dev/protocol/collections/spaces/collectionSpacesV1';
+import { selectCollectionSpace } from '@/sync/domains/session/listing/sessionListSpaces';
+import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { createRenderCommitCounter, useRenderCommitCounter } from '@/dev/testkit/performance/counts';
 import { useFeatureLocalPolicySettings } from '@/hooks/server/useFeatureLocalPolicySettings';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 
 const collectionScope = { serverId: 'selector-home', accountId: 'selector-account' };
+const defaultSpace = createDefaultCollectionSpaceV1('sessionWork');
+const collectionInput = { defaultName: defaultSpace.name, defaultFilter: defaultSpace.filter };
+
+it('captures the active Space at deliberate New entry and leaves disabled entries without automatic organization context', async () => {
+    storage.setState({ profileScope: collectionScope });
+    const spaces = ['space-a', 'space-b'].map(id => ({ ...defaultSpace, id, name: id }));
+    storage.getState().applySettings(settingsParse({ ...storage.getState().settings,
+        collectionSpacesV1: { v: 1, spaces } }), 2);
+    await selectCollectionSpace(collectionScope, 'sessionWork', 'space-a');
+    // A New Session surface opened from the ordinary entry starts in the active Space (entry context, not a stored draft).
+    const enterNew = (input: Readonly<{ startInActiveSpace: boolean; initialSpaceMembership?: null }> = { startInActiveSpace: true }) =>
+        renderHook(() => useNewSessionOrganizationPlacement({
+            serverId: collectionScope.serverId, executionTarget: null, directory: '', ...input,
+        }));
+    const captured = await enterNew();
+    expect(captured.getCurrent().spaceMembership).toEqual({ spaceId: 'space-a', spaceSettingsTarget: collectionScope });
+    await act(async () => {
+        await selectCollectionSpace(collectionScope, 'sessionWork', 'space-b');
+    });
+    // Captured at entry: a later sidebar switch does not move the open draft.
+    expect(captured.getCurrent().spaceMembership).toMatchObject({ spaceId: 'space-a' });
+    await captured.unmount();
+    for (const input of [{ startInActiveSpace: false }, { startInActiveSpace: true, initialSpaceMembership: null }] as const) {
+        // Contextual entries and a draft whose Space was cleared start in no Space.
+        const other = await enterNew(input);
+        expect(other.getCurrent().spaceMembership).toBeNull();
+        await other.unmount();
+    }
+    // Opened before the Account's settings are readable: the entry takes its Space once they are, then keeps it.
+    const settingsBefore = storage.getState().settings;
+    storage.setState({ settingsVersion: null });
+    const cold = await enterNew();
+    expect(cold.getCurrent().spaceMembership).toBeNull();
+    await act(async () => { storage.getState().applySettings(settingsBefore, 3); });
+    expect(cold.getCurrent().spaceMembership).toMatchObject({ spaceId: 'space-b' });
+    await act(async () => {
+        await selectCollectionSpace(collectionScope, 'sessionWork', 'space-a');
+    });
+    expect(cold.getCurrent().spaceMembership).toMatchObject({ spaceId: 'space-b' });
+    await cold.unmount();
+    for (const key of ['collectionSpacesEnabled', 'sessionSpacesEnabled'] as const) {
+        await act(async () => { storage.getState().applySettingsLocal({ [key]: false }); });
+        const disabled = await enterNew();
+        expect(disabled.getCurrent().spaceMembership).toBeNull();
+        await disabled.unmount();
+        await act(async () => { storage.getState().applySettingsLocal({ [key]: true }); });
+    }
+});
+
+it.each(['workflow', 'discussion'] as const)('restores ordinary %s filters while disabled and retains the Account-local selection', async entityKind => {
+    storage.setState({ profileScope: collectionScope });
+    const baseline = createDefaultCollectionSpaceV1(entityKind);
+    const space = entityKind === 'workflow'
+        ? { ...createDefaultCollectionSpaceV1('workflow'), id: 'saved', filter: { view: 'running' as const } }
+        : { ...createDefaultCollectionSpaceV1('discussion'), id: 'saved', filter: { state: 'active' as const, attention: 'needs_you' as const, unreadOnly: true } };
+    storage.getState().applySettings(settingsParse({ ...storage.getState().settings,
+        collectionSpacesV1: { v: 1, spaces: [space] } }), 2);
+    await selectCollectionSpace(collectionScope, entityKind, space.id);
+    const lifetime = { scope: collectionScope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+    const counter = createRenderCommitCounter();
+    const hook = await renderHook(() => {
+        useRenderCommitCounter(counter);
+        return useCollectionSpaceFilter(entityKind, { lifetime, defaultName: baseline.name, defaultFilter: baseline.filter });
+    });
+    expect(hook.getCurrent().filters).toEqual(space.filter);
+    counter.reset();
+    await act(async () => { storage.getState().applySettings(settingsParse({ ...storage.getState().settings }), 3); });
+    expect(counter.read()).toEqual({ renders: 0, commits: 0 });
+    await act(async () => { storage.getState().applySettingsLocal({ collectionSpacesEnabled: false }); });
+    expect(hook.getCurrent().spacesEnabled).toBe(false);
+    expect(hook.getCurrent().filters).toEqual(baseline.filter);
+    expect(hook.getCurrent().bound).toBe(true);
+    expect(hook.getCurrent().selectedSpaceId).toBe('saved');
+    expect(hook.getCurrent().activeSpace).toBeNull();
+    await act(async () => { storage.getState().applySettingsLocal({ collectionSpacesEnabled: true }); });
+    expect(hook.getCurrent().filters).toEqual(space.filter);
+    await hook.unmount();
+    await act(async () => {
+        storage.getState().applySettingsLocal({ collectionSpacesEnabled: false });
+        storage.setState({ settingsVersion: null });
+    });
+    const cold = await renderHook(() => useCollectionSpaceFilter(entityKind, {
+        lifetime, defaultName: baseline.name, defaultFilter: baseline.filter,
+    }));
+    expect(cold.getCurrent().bound).toBe(false);
+    await act(async () => { storage.setState({ settingsVersion: 4 }); });
+    expect(cold.getCurrent().bound).toBe(true);
+    expect(cold.getCurrent().filters).toEqual(baseline.filter);
+    await cold.unmount();
+});
 
 beforeEach(async () => {
-    getPersistenceStorage().clearAll();
+    clearPersistenceStorage();
     useSettingsPreviewStore.setState({ scope: null, account: {}, local: {}, projects: {}, profiles: {} });
     await storage.getState().activateSettingsScope({ serverId: 'selector-home', accountId: 'selector-account' });
     storage.getState().applySettings(settingsDefaults, 1);
@@ -65,50 +161,6 @@ it.each([
     await gated.unmount();
 });
 
-it('does not recompute settings projections for other store domains', async () => {
-    let computations = 0;
-    const selectDensity = (settings: Settings) => {
-        computations++;
-        return { density: settings.sessionListDensity };
-    };
-    const hook = await renderHook(() => useSettingsSelector(selectDensity, ['sessionListDensity']));
-    const baseline = computations;
-    await act(async () => {
-        storage.setState({ machines: { ...storage.getState().machines } });
-    });
-    expect(computations).toBe(baseline);
-    await act(async () => { storage.getState().applySettingsLocal({ showLineNumbers: !storage.getState().settings.showLineNumbers }); });
-    expect(computations).toBe(baseline);
-    const nextDensity = hook.getCurrent().density === 'narrow' ? 'cozy' : 'narrow';
-    await act(async () => {
-        storage.getState().applySettingsLocal({ sessionListDensity: nextDensity });
-    });
-    expect(hook.getCurrent().density).toBe(nextDensity);
-    expect(computations).toBe(baseline + 1);
-    await hook.unmount();
-});
-
-it('keeps the mounted Session list source stable for unrelated Account settings', async () => {
-    let commits = 0;
-    const input = { enabled: false, homes: [] } as const;
-    const hook = await renderHook(() => {
-        React.useLayoutEffect(() => { commits++; });
-        return useSessionListQuerySourceState(input);
-    });
-    const before = commits;
-    const source = hook.getCurrent();
-    await act(async () => {
-        storage.getState().applySettingsLocal({ showLineNumbers: !storage.getState().settings.showLineNumbers });
-    });
-    expect(commits - before).toBe(0);
-    expect(hook.getCurrent()).toBe(source);
-    await act(async () => {
-        storage.getState().applySettingsLocal({ sessionListLayoutV1: 'recent_activity' });
-    });
-    expect(commits - before).toBe(1);
-    await hook.unmount();
-});
-
 it('shares status words with work columns without rerendering them for unrelated publications', async () => {
     let commits = 0;
     const hook = await renderHook(() => {
@@ -132,6 +184,29 @@ it('shares status words with work columns without rerendering them for unrelated
     });
     expect(hook.getCurrent()).toBe(false);
     expect(commits - before).toBe(2);
+    await hook.unmount();
+});
+
+it('does not recompute settings projections for other store domains', async () => {
+    let computations = 0;
+    const selectDensity = (settings: Settings) => {
+        computations++;
+        return { density: settings.sessionListDensity };
+    };
+    const hook = await renderHook(() => useSettingsSelector(selectDensity, ['sessionListDensity']));
+    const baseline = computations;
+    await act(async () => {
+        storage.setState({ machines: { ...storage.getState().machines } });
+    });
+    expect(computations).toBe(baseline);
+    await act(async () => { storage.getState().applySettingsLocal({ showLineNumbers: !storage.getState().settings.showLineNumbers }); });
+    expect(computations).toBe(baseline);
+    const nextDensity = hook.getCurrent().density === 'narrow' ? 'cozy' : 'narrow';
+    await act(async () => {
+        storage.getState().applySettingsLocal({ sessionListDensity: nextDensity });
+    });
+    expect(hook.getCurrent().density).toBe(nextDensity);
+    expect(computations).toBe(baseline + 1);
     await hook.unmount();
 });
 
@@ -251,4 +326,99 @@ it('takes dependency keys from the effective Machine behavior and honors setting
     } finally {
         clearProjectedAgentUiBehaviorDescriptors();
     }
+});
+
+it('keeps the authoring engine picker quiet for unrelated Account settings', async () => {
+    const counter = createRenderCommitCounter();
+    const input = { values: {} };
+    const hook = await renderHook(() => {
+        useRenderCommitCounter(counter);
+        return useSessionAuthoringEnginePicker(input);
+    });
+    const result = hook.getCurrent();
+    counter.reset();
+    await act(async () => {
+        const current = storage.getState();
+        current.applySettings({ ...current.settings, showLineNumbers: !current.settings.showLineNumbers }, 2);
+    });
+    expect(counter.read()).toEqual({ renders: 0, commits: 0 });
+    expect(hook.getCurrent().options).toBe(result.options);
+    await hook.unmount();
+});
+
+it('keeps the mounted Session list source stable for unrelated Account settings', async () => {
+    let commits = 0;
+    const input = { enabled: false, homes: [] } as const;
+    const hook = await renderHook(() => {
+        React.useLayoutEffect(() => { commits++; });
+        return useSessionListQuerySourceState(input);
+    });
+    const before = commits;
+    const source = hook.getCurrent();
+    await act(async () => {
+        storage.getState().applySettingsLocal({ showLineNumbers: !storage.getState().settings.showLineNumbers });
+    });
+    expect(commits - before).toBe(0);
+    expect(hook.getCurrent()).toBe(source);
+    await act(async () => {
+        storage.getState().applySettingsLocal({ sessionListLayoutV1: 'recent_activity' });
+    });
+    expect(commits - before).toBe(1);
+    await hook.unmount();
+});
+
+it('does not render a bound Collection for unrelated accepted settings revisions', async () => {
+    storage.setState({ profileScope: collectionScope });
+    const counter = createRenderCommitCounter();
+    const hook = await renderHook(() => {
+        useRenderCommitCounter(counter);
+        return useCollectionSpaceBinding('sessionWork', collectionInput);
+    });
+    expect(hook.getCurrent().spacesReady).toBe(true);
+    const binding = hook.getCurrent();
+    counter.reset();
+    for (let revision = 2; revision <= 4; revision++) {
+        await act(async () => {
+            const current = storage.getState();
+            current.applySettings({ ...current.settings, showLineNumbers: !current.settings.showLineNumbers }, revision);
+        });
+    }
+    expect(storage.getState().settingsVersion).toBe(4);
+    expect(counter.read()).toEqual({ renders: 0, commits: 0 });
+    expect(hook.getCurrent()).toBe(binding);
+    await hook.unmount();
+});
+
+it('keeps bound Collection readiness, catalog, selection and Account changes live', async () => {
+    storage.setState({ profileScope: collectionScope, settingsVersion: null });
+    const hook = await renderHook(() => useCollectionSpaceBinding('sessionWork', collectionInput));
+    expect(hook.getCurrent().spacesReady).toBe(false);
+    await act(async () => { storage.getState().applySettings(settingsDefaults, 2); });
+    expect(hook.getCurrent().spacesReady).toBe(true);
+
+    const customSpace = { ...defaultSpace, id: 'review', name: 'Review' } as Omit<typeof defaultSpace, 'membership'>; // The default factory omits membership; no readonly tags enter this fixture.
+    await act(async () => {
+        const current = storage.getState();
+        current.applySettings({ ...current.settings, collectionSpacesV1: { v: 1, spaces: [customSpace] } }, 3);
+    });
+    expect(hook.getCurrent().spaces.map(space => space.id)).toEqual(['my-work', 'review']);
+    await act(async () => {
+        expect(await selectCollectionSpace(collectionScope, 'sessionWork', customSpace.id)).toBeUndefined();
+    });
+    expect(hook.getCurrent().selectedSpace).toEqual(customSpace);
+
+    const nextScope = { ...collectionScope, accountId: 'next-account' };
+    await act(async () => { await storage.getState().activateSettingsScope(nextScope); });
+    expect(hook.getCurrent().spacesReady).toBe(false);
+    expect(hook.getCurrent().admittedSpaces.spaces).toEqual([]);
+    await act(async () => {
+        storage.setState({ profileScope: nextScope });
+        storage.getState().applySettings(settingsDefaults, 1);
+    });
+    expect(hook.getCurrent().spacesReady).toBe(true);
+    expect(hook.getCurrent().spaceSettingsScope).toEqual(nextScope);
+    expect(hook.getCurrent().selectedSpaceId).toBe('my-work');
+    await act(async () => { storage.getState().clearSettingsScope(); });
+    expect(hook.getCurrent().spacesReady).toBe(false);
+    await hook.unmount();
 });

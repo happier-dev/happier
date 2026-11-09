@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import tweetnacl from 'tweetnacl';
 import {
-    ENCRYPTED_DATA_KEY_ENVELOPE_V1_BYTES,
-    deriveBoxPublicKeyFromSeed,
-    openEncryptedDataKeyEnvelopeV1,
+    ENCRYPTED_DATA_KEY_ENVELOPE_V1_BYTES} from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeFormatV1';
+import {
+    deriveBoxPublicKeyFromSeed} from '@happier-dev/protocol/crypto/boxBundle';
+import {
+    openEncryptedDataKeyEnvelopeV1} from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import {
     signAccountContentKeyBindingV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/crypto/accountContentKeyBindingV1';
 
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import { encodeHex } from '@/encryption/hex';

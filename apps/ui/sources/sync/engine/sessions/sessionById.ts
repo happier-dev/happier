@@ -4,7 +4,7 @@ import { StoredSessionSharedMetadataV1Schema } from '@happier-dev/protocol/sessi
 import { SessionCurrentProjectionRecordV1Schema } from '@happier-dev/protocol/sessions/listing/response';
 import { SessionTurnsProjectionV1Schema, type SessionTurnsProjectionV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
 import { isSessionEncryptionModeAllowedByClientRequirement, type ClientEncryptionRequirement } from '@happier-dev/protocol/encryption/clientEncryptionRequirement';
-import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
+import { ACCOUNT_MODE_DOWNGRADE_UNVERIFIED, admitReportedSessionMode } from '@happier-dev/sync-client';
 import type { V2SessionByIdResponse } from '@happier-dev/protocol/sessions/control/contract';
 import { V2SessionByIdResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
 import type { SessionReadObservation } from './snapshotMembership';
@@ -52,6 +52,7 @@ import {
   type SessionDataKeyHydrationResult,
 } from '@/sync/encryption/sessionDataKeyHydration';
 import type {
+  Encryption,
   EncryptionGenerationScope,
   EncryptionGenerationScopeAuthority,
 } from '@/sync/encryption/encryption';
@@ -62,8 +63,10 @@ import {
 } from '@/sync/domains/session/encryptedContentAvailability';
 import {
   AccountEncryptionCurrentnessReadinessError,
-  fetchAccountEncryptionCurrentness,
+  fetchOperationAccountEncryptionIdentity,
+  fetchAccountEncryptionIdentity,
 } from '@/sync/api/account/apiAccountEncryptionMode';
+import type { AccountEncryptionIdentity } from '@happier-dev/sync-client';
 import { SESSION_OWNER_METADATA_PROJECTION } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { SESSION_LIST_DOCUMENT_ADMISSION, buildSessionListRenderableFromSession, type SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { buildRenderableFromRowAndCache, createSessionListDocumentAdmission } from './sessionSnapshot';
@@ -73,7 +76,7 @@ import { admitOpenedSessionListDisplayMetadata, admitOpenedSessionListAgentState
 import type { AgentStateOpenResult } from '@/sync/encryption/sessionEncryption';
 import { parsePlainSessionAgentStateResult } from './parsePlainSessionPayload';
 import { hasAuthoritativeSessionRouteData } from '@/sync/domains/session/hasAuthoritativeSessionRouteData';
-import { SessionDisplayProjectionV1Schema } from '@happier-dev/protocol';
+import { SessionDisplayProjectionV1Schema } from '@happier-dev/protocol/sessions';
 import { readSessionByIdHttp } from './sessionByIdHttp';
 import type { CapturedServerReadTransport } from '@/sync/runtime/orchestration/serverScopedRpc/capturedServerReadTransport';
 import type { ScopedBatchResolutionContext } from '@/sync/runtime/orchestration/serverScopedRpc/scopedResolutionSingleFlight';
@@ -88,7 +91,7 @@ type SessionEncryption = {
 };
 
 export type SessionByIdEncryption = {
-  decryptEncryptionKey: (value: string) => Promise<Uint8Array | null>;
+  decryptEncryptionKey: Encryption['decryptEncryptionKey'];
   initializeSessions: (
     sessionKeys: Map<string, Uint8Array | null>,
     options?: import('@/sync/encryption/encryption').EncryptionScopeInput,
@@ -218,6 +221,18 @@ export type SessionByIdPrefetchedRead = Readonly<{
   detail: Readonly<{ status: number; body: unknown }>;
   turns?: Readonly<{ status: number; body: unknown }>;
 }>;
+
+/**
+ * The server's Session detail refusal when this credential does not satisfy a
+ * Team's authentication policy (403) or the Team's accepted method is
+ * unavailable at the Home (503). It concerns this one Session, never Account
+ * sign-in, so callers settle it per Session.
+ */
+export const SESSION_TEAM_AUTHENTICATION_REFUSAL_CODES = ['team_authentication_required', 'team_authentication_unavailable'] as const;
+export type SessionTeamAuthenticationRefusalCode = typeof SESSION_TEAM_AUTHENTICATION_REFUSAL_CODES[number];
+export function isSessionTeamAuthenticationRefusalCode(code: unknown): code is SessionTeamAuthenticationRefusalCode {
+  return (SESSION_TEAM_AUTHENTICATION_REFUSAL_CODES as readonly unknown[]).includes(code);
+}
 
 function isUnknownRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -427,11 +442,12 @@ export async function fetchAndApplySessionById(params: Readonly<{
   credentials: AuthCredentials;
   /** Explicit bridge envelope: presence binds this read to a Session recipient. */
   sessionKey?: string | null;
-  accountCurrentness?: AccountEncryptionCurrentnessResponse;
+  accountCurrentness?: AccountEncryptionIdentity;
   readAccountMaterial?: Parameters<typeof readSessionLayout1OwnerMetadata>[0]['readAccountMaterial'];
-  accountMode?: AccountEncryptionCurrentnessResponse['mode'];
+  accountMode?: AccountEncryptionIdentity['mode'];
   composerOptionsInput?: import('@happier-dev/protocol/embed').ComposerOptionsInputV1 | null;
-  fetchAccountCurrentness?: () => Promise<AccountEncryptionCurrentnessResponse>;
+  composerOptionsGrant?: import('@happier-dev/protocol/auth/apiTokenGrant').ApiTokenGrantV1 | null;
+  fetchAccountCurrentness?: () => Promise<AccountEncryptionIdentity>;
   /** Re-admit a finite witness withdrawn by transport loss before publication. */
   ensureAccountCurrentness?: () => Promise<void>;
   encryption: SessionByIdEncryption;
@@ -443,6 +459,8 @@ export async function fetchAndApplySessionById(params: Readonly<{
   applySessions: (sessions: Array<Omit<Session, 'presence'> & { presence?: 'online' | number }>) => void;
   applySessionListRows?: ApplySessionListRows;
   getExistingSession?: (sessionId: string) => Session | null | undefined;
+  /** Provenance reuse only; a tuple writer's raw CAS baseline stays independent. */
+  ownerMetadataProjectionBaseline?: Session[typeof SESSION_OWNER_METADATA_PROJECTION];
   getCurrentSessionListRenderable?: (sessionId: string) => SessionListRenderableSession | null | undefined;
   log: { log: (message: string) => void };
   timeoutMs?: number;
@@ -542,6 +560,10 @@ export async function fetchAndApplySessionById(params: Readonly<{
   if (!isCurrent()) return staleResult();
 
   if (!responseOk) {
+    const teamAuthenticationRefusal = isUnknownRecord(body) ? body.error : undefined;
+    if ((responseStatus === 403 || responseStatus === 503) && isSessionTeamAuthenticationRefusalCode(teamAuthenticationRefusal)) {
+      return { ok: false, session: null, errorCode: teamAuthenticationRefusal, httpStatus: responseStatus };
+    }
     // Detail refusals concern this Session, including parts of a successful
     // Account read-batch. They do not invalidate the Account connection.
     if (responseStatus === 403) {
@@ -602,7 +624,6 @@ export async function fetchAndApplySessionById(params: Readonly<{
   if (String(row.id ?? '').trim() !== sessionId) {
     return { ok: false, session: null, errorCode: 'invalid_response' };
   }
-
   const observation = V2SessionByIdResponseSchema.shape.observationCursor.safeParse(
     isUnknownRecord(body) ? body.observationCursor : undefined,
   );
@@ -610,7 +631,15 @@ export async function fetchAndApplySessionById(params: Readonly<{
   params.onSessionObservation?.({ session: row, observationCursor: observation.data });
   if (!isCurrent()) return staleResult();
 
-  const encryptionMode: 'e2ee' | 'plain' = row.encryptionMode === 'plain' ? 'plain' : 'e2ee';
+  let encryptionMode: 'e2ee' | 'plain';
+  try {
+    encryptionMode = admitReportedSessionMode({ reported: row.encryptionMode === 'plain' ? 'plain' : 'e2ee',
+      dataEncryptionKey: row.dataEncryptionKey,
+      admittedE2ee: params.getExistingSession?.(sessionId)?.encryptionMode === 'e2ee'
+        || params.encryption.getSessionEncryption(sessionId) !== null });
+  } catch {
+    return { ok: false, session: null, errorCode: ACCOUNT_MODE_DOWNGRADE_UNVERIFIED };
+  }
   if (!isSessionEncryptionModeAllowedByClientRequirement(
     params.clientEncryptionRequirement ?? 'follow_account',
     encryptionMode,
@@ -619,12 +648,12 @@ export async function fetchAndApplySessionById(params: Readonly<{
   }
 
   if (params.contentDemand === 'list-projection') {
-    let accountCurrentness = params.accountCurrentness;
+    let accountCurrentness: AccountEncryptionIdentity | undefined = params.accountCurrentness;
     if (!accountCurrentness && readSessionMetadataLayoutVersion(row.metadataLayoutVersion) === 1 && access?.role === 'owner') {
       try {
         accountCurrentness = params.fetchAccountCurrentness
           ? await params.fetchAccountCurrentness()
-          : await fetchAccountEncryptionCurrentness(params.credentials, { request: params.request });
+          : await fetchAccountEncryptionIdentity(params.credentials, { request: params.request, usage: 'identity', signal: params.signal });
       } catch (error) {
         if (isTerminalAuthError(error)) throw error;
         return { ok: false, session: null, errorCode: 'account_currentness_unavailable' };
@@ -682,8 +711,9 @@ export async function fetchAndApplySessionById(params: Readonly<{
   const hydrationScope = typeof params.serverId === 'string' && params.serverId.trim().length > 0
     ? { serverId: params.serverId.trim() }
     : {};
+  // Captured for this Session: another writer replacing or removing its key ends this read.
   let capturedEncryptionGeneration = params.encryption.getCurrentEncryptionGenerationScope?.(
-    hydrationScope,
+    { ...hydrationScope, sessionId },
   ) ?? null;
   const isHydrationCurrent = () => (
     isCurrent()
@@ -699,7 +729,7 @@ export async function fetchAndApplySessionById(params: Readonly<{
       decryptEncryptionKeys: async (values) => {
         const opened: Array<Uint8Array | null> = [];
         for (const value of values) {
-          opened.push(await params.encryption.decryptEncryptionKey(value));
+          opened.push(await params.encryption.decryptEncryptionKey(value, { ...hydrationScope, workClass: 'interactive' }));
         }
         return opened;
       },
@@ -722,6 +752,7 @@ export async function fetchAndApplySessionById(params: Readonly<{
   if (hydration.sessionKeys.size > 0) {
     const initializedScope = await params.encryption.initializeSessions(hydration.sessionKeys, {
       ...hydrationScope,
+      sessionId,
       shouldContinue: isHydrationCurrent,
     });
     if (initializedScope) capturedEncryptionGeneration = initializedScope;
@@ -732,8 +763,8 @@ export async function fetchAndApplySessionById(params: Readonly<{
   if (hydration.sessionEncryptionClears.includes(sessionId)) {
     params.sessionDataKeys.delete(sessionId);
     params.sessionDataKeyEnvelopes?.delete(sessionId);
-    // Clearing a reader this request just found unopenable advances the owning
-    // generation exactly like installing one does, so the post-commit scope is
+    // Clearing a reader this request just found unopenable advances this Session's
+    // reader generation exactly like installing one does, so the post-commit scope is
     // adopted here too. Without it the request rejects its own truthful
     // ready→locked result and the route keeps spinning on a retryable error.
     const clearedScope = params.encryption.removeSessionEncryption?.(sessionId);
@@ -750,13 +781,13 @@ export async function fetchAndApplySessionById(params: Readonly<{
   }
 
   const hydrationState = hydration.states.get(sessionId) ?? 'missing_envelope';
-  let accountCurrentness = params.accountCurrentness;
+  let accountCurrentness: AccountEncryptionIdentity | undefined = params.accountCurrentness;
   let recipientReadiness = accountCurrentness?.recipientEnvelopeReadiness;
   if (params.sessionKey === undefined && hydrationState === 'missing_envelope' && !recipientReadiness) {
     try {
       accountCurrentness = params.fetchAccountCurrentness
         ? await params.fetchAccountCurrentness()
-        : await fetchAccountEncryptionCurrentness(params.credentials, { request: params.request });
+        : await fetchOperationAccountEncryptionIdentity(params.credentials, { request: params.request });
       recipientReadiness = accountCurrentness.recipientEnvelopeReadiness;
     } catch (error) {
       if (error instanceof AccountEncryptionCurrentnessReadinessError) {
@@ -813,7 +844,9 @@ export async function fetchAndApplySessionById(params: Readonly<{
         ownerMetadataEnvelope: row.ownerMetadata,
         credentials: params.credentials,
         composerOptionsInput: params.composerOptionsInput,
-        previousProjection: params.getExistingSession?.(sessionId)?.[SESSION_OWNER_METADATA_PROJECTION],
+        composerOptionsGrant: params.composerOptionsGrant,
+        previousProjection: params.getExistingSession?.(sessionId)?.[SESSION_OWNER_METADATA_PROJECTION]
+          ?? params.ownerMetadataProjectionBaseline,
       })
     : null;
   const lockedOwnerVisibility = projectSessionLayout1LockedOwnerVisibility(
@@ -993,7 +1026,7 @@ export async function fetchAndApplySessionById(params: Readonly<{
     : params.composerOptionsInput !== undefined && params.composerOptionsInput !== null
       ? params.composerOptionsInput
       : metadataLayoutVersion === 0 && (params.composerOptionsInput === undefined || accountMode === 'plain')
-        ? projectComposerOptionsInputV1(metadata)
+        ? projectComposerOptionsInputV1(metadata, params.composerOptionsInput === undefined ? undefined : params.composerOptionsGrant ?? null)
         : null;
   if (!isHydrationCurrent()) return staleResult();
 

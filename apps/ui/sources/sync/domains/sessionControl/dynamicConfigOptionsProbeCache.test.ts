@@ -41,12 +41,13 @@ describe('dynamic config options probe cache', () => {
         vi.setSystemTime(2_500);
         resetDynamicConfigOptionsProbeCacheForTests();
         const options = [{ id: 'sandbox', name: 'Sandbox', type: 'boolean', currentValue: 'true' }];
-        writeDynamicConfigOptionsProbeCacheSuccess('key-unknown', options, 1_000);
+        writeDynamicConfigOptionsProbeCacheSuccess('key-unknown', options, 1_000, ' native-choice ');
         writeDynamicConfigOptionsProbeCacheError('key-unknown', 2_000, {
             reason: 'outcomeUnknown', requestDisposition: 'outcomeUnknown',
         });
         expect(readDynamicConfigOptionsProbeCache('key-unknown')).toMatchObject({
             kind: 'success', updatedAt: 1_000, value: options,
+            modelConfigOptionId: ' native-choice ',
             reason: 'outcomeUnknown', requestDisposition: 'outcomeUnknown',
         });
         writeDynamicConfigOptionsProbeCacheSuccess('key-unknown', options, 3_000);

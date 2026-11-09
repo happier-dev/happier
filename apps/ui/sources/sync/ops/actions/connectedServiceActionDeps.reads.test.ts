@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { Linking } from 'react-native';
 import { CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
-import { AccountProfileSchema } from '@happier-dev/protocol';
+import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { CONNECTED_SERVICE_POOL_SELECTION_RPC_METHOD } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
 import { createUiConnectedServiceAction } from './connectedServiceActionDeps';
 import { captureLazyActionAccountContext } from './actionAccountContext';
@@ -19,6 +19,35 @@ vi.mock('socket.io-client', async (importOriginal) =>
   (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 installDisconnectedServerSocketBoundary(configureConnectedServerSocketBoundary);
 afterEach(() => { vi.restoreAllMocks(); });
+
+it('retries demanded connected-service projections through the same catalog Action on the captured Home', async () => {
+  const bridge = await loadSyncSingletonForTests();
+  const previous = storage.getState();
+  const accountId = 'catalog-retry';
+  const http = createHomeHubArtifactHttpBoundary(accountId);
+  const connection = await restoreServerAccountForTest({ accountId, serverUrl: 'https://catalog-retry.test', request: http.request });
+  const scope = { serverId: connection.home.id, accountId };
+  storage.setState({ profileScope: scope, profile: AccountProfileSchema.parse({ id: accountId }) });
+  const { captureMachineContributionRegistryProjectionScope } = await import('@/sync/ops/machineContributionRegistryProjectionRevision');
+  const local = captureMachineContributionRegistryProjectionScope({ serverId: scope.serverId, machineId: 'demanded' });
+  const foreign = captureMachineContributionRegistryProjectionScope({ serverId: 'other-home', machineId: 'demanded' });
+  const before = local.readRevision();
+  const foreignBefore = foreign.readRevision();
+  const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+  const executor = createDefaultActionExecutor();
+  try {
+    const context = { surface: 'mcp' as const, authority: 'account_automation' as const, serverId: scope.serverId };
+    expect(await executor.execute('connectedServices.catalog.list', {}, context)).toMatchObject({ ok: true });
+    expect(local.readRevision()).toBe(before);
+    expect(await executor.execute('connectedServices.catalog.list', { refresh: true }, context)).toMatchObject({ ok: true });
+    expect(local.readRevision()).toBe(before + 1);
+    expect(foreign.readRevision()).toBe(foreignBefore);
+    const controller = new AbortController();
+    controller.abort();
+    await expect(executor.execute('connectedServices.catalog.list', { refresh: true }, { ...context, signal: controller.signal })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(local.readRevision()).toBe(before + 1);
+  } finally { storage.setState(previous, true); await connection.dispose(); bridge.dispose(); }
+});
 
 it.each(['ready', 'first-row'] as const)('sets and clears a monthly subscription price through the captured keyless Account transport from %s', async initial => {
   const bridge = await loadSyncSingletonForTests();

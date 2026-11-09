@@ -88,7 +88,7 @@ describe('preset Actions through the captured Home', () => {
         const preset = {
             id: 'preset-a', homeId: 'srv_preset', revision: 1, name: 'Guest',
             owner: { kind: 'account', accountId: 'preset-owner' },
-            recipe: { provider: { pluginId: 'happier.machine.lima', localId: 'lima' }, schemaVersion: 1, name: 'guest', choices: { cores: 2 } },
+            launch: { provider: { pluginId: 'happier.machine.lima', localId: 'lima' }, schemaVersion: 1, name: 'guest', choices: { cores: 2 } },
             controller: { machineId: 'host-a', installationId: 'installation-a' },
         } as const;
         setRuntimeFetch(async (input, init) => {

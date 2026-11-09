@@ -1,4 +1,4 @@
-import { compareTranscriptMessagesOldestFirst, type Message, type ToolCall } from "@happier-dev/session-core/messages";
+import { sortTranscriptMessagesOldestFirst, type Message, type ToolCall } from "@happier-dev/session-core/messages";
 import { readParticipantRecipientRoutingIdentityV1 } from '@happier-dev/protocol/messages/structured/participantMessageV1';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
@@ -44,7 +44,7 @@ export function resolveExecutionRunVisibleMessages(params: Readonly<{
     if (questions.length === 0) return focused.length === focusedMessages.length
         && focused.every((message, index) => message === focusedMessages[index]) ? focusedMessages : focused;
     const asPersonMessages = questions.map(message => withoutParticipantEnvelope(message));
-    return [...focused, ...asPersonMessages].sort(compareTranscriptMessagesOldestFirst);
+    return sortTranscriptMessagesOldestFirst([...focused, ...asPersonMessages]);
 }
 
 function withoutParticipantEnvelope(message: Message): Message {

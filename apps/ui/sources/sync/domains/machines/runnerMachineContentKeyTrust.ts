@@ -4,9 +4,10 @@ import { createServerAccountScope } from '@/sync/domains/scope/serverAccountScop
 import { loadRunnerCreatorMachineContentKeyTrust } from '@/sync/domains/ephemeralRunner/runnerCreatorMachineContentKeyTrust';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import type {
-    AccountScopedCryptoMaterial,
+    AccountScopedCryptoMaterial} from '@happier-dev/protocol/crypto/accountScopedCipher';
+import type {
     ExpectedRunnerMachineContentKeyBindingV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/machines/machineStoredContent';
 
 /**
  * What this device independently knows about a Runner Machine's content key.

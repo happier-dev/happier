@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ApprovalRequestV1Schema, buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol';
+import { ApprovalRequestV1Schema} from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { Platform } from 'react-native';
 import { encodeBase64 } from '@/encryption/base64';
 import { Encryption } from '@/sync/encryption/encryption';
@@ -50,7 +51,7 @@ describe('background artifact decryption', () => {
             }
         } finally { controller.abort(); Object.defineProperty(Platform, 'OS', previousPlatform); }
     });
-    it.each(['new', 'update'] as const)('repairs a transient %s socket decrypt through artifact invalidation without publishing a lock or a raw toast', async kind => {
+    it.each(['new', 'update', 'missing-key'] as const)('requests exact-id repair for a %s socket decrypt failure without publishing a lock or a raw toast', async kind => {
         const encryption = await Encryption.create(new Uint8Array(32).fill(38));
         const worker = createFakeCryptoWorker();
         vi.spyOn(worker, 'decryptDataKeyEnvelopeV1').mockRejectedValue(new Error('native crypto worker timed out'));
@@ -74,14 +75,14 @@ describe('background artifact decryption', () => {
                 await handleUpdateArtifactSocketUpdate({ artifactId, createdAt: 2, encryption,
                     provenance: 'pending ciphertext', provenanceDataEncryptionKey: dataEncryptionKey,
                     body: { version: 2, value: 'pending body' },
-                    artifactDataKeys: new Map([[artifactId, { dataKey: key, envelope: dataEncryptionKey }]]),
+                    artifactDataKeys: kind === 'missing-key' ? new Map() : new Map([[artifactId, { dataKey: key, envelope: dataEncryptionKey }]]),
                     getExistingArtifact: () => ({ id: artifactId, title: 'Kept document', isDecrypted: true,
                         headerVersion: 1, bodyVersion: 1, body: 'Kept content', seq: 1, createdAt: 1, updatedAt: 1, storageMode: 'e2ee' }),
                     updateArtifact: publish, invalidateArtifactsSync, log: { log: () => {} } });
             }
         } finally { Object.defineProperty(Platform, 'OS', previousPlatform); }
         expect(publish).not.toHaveBeenCalled();
-        expect(invalidateArtifactsSync).toHaveBeenCalledOnce();
+        expect(invalidateArtifactsSync).toHaveBeenCalledExactlyOnceWith([artifactId]);
         expect(rawError).not.toHaveBeenCalled();
     });
     it('retains corrupt stored content as locked without writing to the raw error/toast channel', async () => {

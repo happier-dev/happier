@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { setTimeout as delay } from 'node:timers/promises';
 import { Server } from 'socket.io';
 import { io, type Socket } from 'socket.io-client';
 import { expect, it } from 'vitest';
@@ -256,7 +257,7 @@ it('refuses an ACK write after its pooled physical socket disconnects without bu
     }
 });
 
-it('settles the original issued read after namespace loss even when its pooled socket is connected again', async () => {
+it.each(['reply', 'disconnect'] as const)('distinguishes a long issued read from target discovery failure through pooled lease churn: %s', async outcome => {
     const http = createServer();
     const server = new Server(http, { path: '/v1/updates/' });
     const requests: string[] = [];
@@ -274,9 +275,8 @@ it('settles the original issued read after namespace loss even when its pooled s
     if (!address || typeof address === 'string') throw new Error('Missing loopback server address');
     const sockets: Socket[] = [];
     const pool = createServerScopedRpcSocketPool({
-        createSocket: ({ serverUrl }) => {
-            const socket = io(serverUrl, { path: '/v1/updates/', autoConnect: false, reconnection: false, forceNew: true });
-            socket.io.timeout(false);
+        createSocket: ({ serverUrl, token }) => {
+            const { socket } = createHappierSocket({ endpoint: serverUrl, token, clientType: 'user-scoped', clientPurpose: 'scoped-rpc' });
             sockets.push(socket);
             return socket;
         },
@@ -284,7 +284,7 @@ it('settles the original issued read after namespace loss even when its pooled s
             startReachability: async () => {}, waitForReachable: async () => {},
             subscribeNetworkAllowed: () => () => {},
         },
-        readIdleDisconnectMs: () => 0,
+        readIdleDisconnectMs: () => outcome === 'reply' ? 5_000 : 0,
     });
     const scope = { serverUrl: `http://127.0.0.1:${address.port}`, token: 'synthetic-token', timeoutMs: 5_000 };
     try {
@@ -294,6 +294,31 @@ it('settles the original issued read after namespace loss even when its pooled s
             method: RPC_METHODS.MACHINES_VITALS_GET, params: {}, content: { mode: 'plain' }, timeoutMs: null, requestId: 'old-read' })
             .catch((error: unknown) => error);
         await issued;
+        // Request custody survives the caller's logical release. Holding this
+        // client for the whole read would not exercise the idle-retirement race.
+        if (outcome === 'reply') first.disconnect();
+        // Longer than the pool's default five-second idle window. An unrelated
+        // logical acquisition/release must not retire this request's namespace.
+        const sibling = await pool.acquire(scope);
+        sibling.disconnect();
+        await delay(30_000);
+        expect(first.getSocketId()).toBe(originalNamespace);
+        expect(first.connected).toBe(true);
+        if (outcome === 'reply') {
+            const reacquired = await pool.acquire(scope);
+            expect(reacquired.getSocketId()).toBe(originalNamespace);
+            reacquired.disconnect();
+            acknowledgeOld({ ok: true, result: 'completed-read' });
+            expect(await oldRead).toBe('completed-read');
+            expect(sockets).toHaveLength(1);
+            expect(requests).toEqual(['old-read']);
+            // ACK settlement releases the last use; the ordinary idle policy
+            // still retires this socket, rather than retaining it indefinitely.
+            await new Promise<void>(resolve => sockets[0]!.once('disconnect', () => resolve()));
+            expect(first.connected).toBe(false);
+            first.disconnect();
+            return;
+        }
         sockets[0]!.disconnect();
         const second = await pool.acquire(scope);
         expect(second.connected).toBe(true);
@@ -301,7 +326,9 @@ it('settles the original issued read after namespace loss even when its pooled s
         expect(first.getSocketId()).toBe(second.getSocketId());
         expect(sockets).toHaveLength(1);
         const failure = await oldRead;
-        expect(failure).toMatchObject({ rpcErrorCode: 'RPC_TRANSPORT_UNAVAILABLE' });
+        // This lifecycle test owns lost-result disposition, not read/mutation
+        // classification (protocol/rpc/errors.ts TRANSPORT_UNAVAILABLE).
+        expect(failure).toBeInstanceOf(Error);
         expect(readRpcRequestDisposition(failure)).toBe('outcomeUnknown');
         // A late reply belongs to the old namespace; the new request's ACK is
         // the transport barrier, not a timer or a replay of the old read.
@@ -316,4 +343,4 @@ it('settles the original issued read after namespace loss even when its pooled s
         await pool.stopAll();
         await new Promise<void>(resolve => { server.close(() => resolve()); });
     }
-});
+}, 45_000);

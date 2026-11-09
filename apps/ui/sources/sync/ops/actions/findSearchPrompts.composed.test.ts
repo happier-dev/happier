@@ -319,7 +319,7 @@ describe('FSP search production composition', () => {
             }
             return ExternalSessionsCandidatesListResponseSchema.parse({ ok: true, ...native });
         };
-        const pending = searchConversations({ serverId, accountId: 'fsp-account', concurrencyLimit: 1,
+        const pending = searchConversations({ serverId, accountId: 'fsp-account',
             machines: [{ id: 'fsp-machine', online: true }], mode: 'standard', signal: controller.signal,
             query: { v: 1, query: 'café\nwith "quotes"', scope: { type: 'global' }, mode: 'auto', corpora: ['external_transcripts'] },
             readSources: async () => sources, onProgress: page => pages.push(page) });
@@ -335,7 +335,7 @@ describe('FSP search production composition', () => {
             expect(first.hits).toHaveLength(1);
             expect(first.continuations).toHaveLength(1);
             // A source whose content capability is mis-bound must not produce native body hits.
-            const unsupported = await searchConversations({ serverId, accountId: 'fsp-account', concurrencyLimit: 1,
+            const unsupported = await searchConversations({ serverId, accountId: 'fsp-account',
                 machines: [{ id: 'fsp-machine', online: true }], mode: 'standard',
                 query: { v: 1, query: 'café', scope: { type: 'global' }, mode: 'auto', corpora: ['external_transcripts'] },
                 readSources: async () => sources.map(source => ({ ...source, contentSearch: false })) });

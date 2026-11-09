@@ -30,7 +30,13 @@ import { shouldRetryError } from '@/sync/runtime/connectivity/transientConnectiv
 import type { NewSessionDraftLocalState } from './newSessionDraftLocalState';
 import { readSessionInstructionsAuthoringDraft } from '@/sync/domains/state/sessionInstructionsDraft';
 import { getSessionDraftDocumentField as getField, getSessionDraftDocumentFieldValue, type DraftFieldPathV1 } from './sessionDraftDocumentFields';
-import { parseSerializedSessionDraftScope, serializeSessionDraftReplica } from './sessionDraftSerializedScope';
+import {
+    isLegacySessionDraftScopeRecord,
+    migrateLegacySessionDraftScope,
+    parseSessionDraftScopeEnvelope,
+    serializeSessionDraftReplica,
+    sessionDraftRowKey,
+} from './sessionDraftSerializedScope';
 import { clearNewSessionAttachmentDrafts } from '@/components/sessions/new/attachments/newSessionAttachmentDraftStore';
 import { resolveNewSessionDraftAttachmentFlowId } from '@/components/sessions/new/attachments/newSessionDraftAttachmentFlowId';
 import { normalizeComposerDraftReferenceTokens } from '@/components/sessions/composer/composerScopeAdapters';
@@ -121,6 +127,8 @@ function readSessionMessagingDraftCustody(value: unknown): SessionMessagingDraft
 export type SessionDraftLocalSupplement = Readonly<{
     /** Local action-operation correlation; never sealed or sent to the server. */
     launchUserAttemptId?: string;
+    /** Local embed owner correlation; token ids are identifiers, never credential material. */
+    embedNewSessionOwnerId?: string;
     /** Local-only launch CAS token paired to one attempt; never sealed or uploaded. */
     launchCurrentnessCapture?: SessionDraftLaunchCurrentnessCapture;
     /** Crash-stable Discussion retry identity. The synchronized draft owns content. */
@@ -419,8 +427,10 @@ export type NewSessionDraftProjection = Readonly<{
 export type SessionDraftRepositoryStorage = Readonly<{
     prepare?(): Promise<void>;
     flush?(): Promise<void>;
-    refresh?(key: string, replicaKey?: string): Promise<void>;
+    /** Re-reads one committed record, dropping this process's pending write of it. */
+    refresh?(key: string): Promise<void>;
     getString(key: string): string | undefined;
+    getAllKeys(): string[];
     set(key: string, value: string): unknown;
     delete(key: string): unknown;
 }>;
@@ -454,8 +464,14 @@ type PersistedReplica = {
     localSupplement: SessionDraftLocalSupplement;
 };
 
-type ScopeState = { loaded: boolean; replicas: Map<string, PersistedReplica>; retainedReplicaEntries: string[]; persistenceError?: boolean;
-    unreadableRetainedContent?: boolean; envelopeFields?: Readonly<Record<string, unknown>> };
+type ScopeState = {
+    loaded: boolean;
+    replicas: Map<string, PersistedReplica>;
+    /** The replica object each draft record last held; a persist writes only the replicas that differ. */
+    persisted: Map<string, PersistedReplica>;
+    persistenceError?: boolean;
+    unreadableRetainedContent?: boolean;
+};
 type Listener = () => void;
 type ScopeMutationBatch = {
     originalReplicas: Map<string, PersistedReplica>;
@@ -497,6 +513,20 @@ type SyncRepositoryRuntime = RepositoryRuntime & Readonly<{
     transport: SessionDraftRepositoryTransport;
     syncEnabled: true;
 }>;
+
+type SessionDraftCensusProgress = {
+    readonly runtime: SessionDraftRepositoryScopedRuntime;
+    /** Cursor of the next unlisted page; advanced only after a page is fully staged. */
+    after: string | undefined;
+    readonly requestedBaseRevisions: ReadonlyMap<string, SessionDraftExpectedRevisionV1>;
+    readonly staged: Map<string, Readonly<{
+        address: SessionDraftAddressV2;
+        response: SessionDraftReadResponseV2;
+        document: SessionDraftDocumentV2 | null;
+    }>>;
+    readonly listedAddresses: Set<string>;
+    readonly unopened: Map<string, SessionDraftAddressV2>;
+};
 
 const STORAGE_PREFIX = 'session-drafts-repository-v1';
 
@@ -842,6 +872,7 @@ function normalizeLocalSupplement(value: unknown, expectedAddress: SessionDraftA
         : '';
     const normalized: {
         launchUserAttemptId?: string;
+        embedNewSessionOwnerId?: string;
         launchCurrentnessCapture?: SessionDraftLaunchCurrentnessCapture;
         discussionMutationAttempt?: SessionDiscussionDraftMutationAttempt;
         sessionMessagingMutationAttempt?: SessionMessagingDraftMutationAttempt;
@@ -850,6 +881,12 @@ function normalizeLocalSupplement(value: unknown, expectedAddress: SessionDraftA
         legacyExistingSessionDraftV1?: true;
     } = {};
     if (launchUserAttemptId) normalized.launchUserAttemptId = launchUserAttemptId;
+    const embedNewSessionOwnerId = typeof candidate.embedNewSessionOwnerId === 'string'
+        ? candidate.embedNewSessionOwnerId.trim()
+        : '';
+    if (expectedAddress.kind === 'newSession' && embedNewSessionOwnerId) {
+        normalized.embedNewSessionOwnerId = embedNewSessionOwnerId;
+    }
     if (candidate.legacyNewSessionDraftV1 === true) normalized.legacyNewSessionDraftV1 = true;
     if (candidate.legacyExistingSessionDraftV1 === true) normalized.legacyExistingSessionDraftV1 = true;
     const parsedNewSessionLocalState = StrictJsonValueSchema.safeParse(candidate.newSessionLocalState);
@@ -944,38 +981,26 @@ function isNewSessionListAddress(address: SessionDraftAddressV2): boolean {
 }
 
 export class SessionDraftRepository {
-    async reloadSessionDraftFromLocalPersistence(params: Readonly<{
-        scope: SessionDraftRepositoryScope;
-        address: SessionDraftAddressV2;
-    }>): Promise<void> {
-        await this.flushSessionDraftLocally(params);
-        await this.storage.refresh?.(this.storageKey(params.scope), canonicalSessionDraftAddressV2(params.address));
-        const scopeKey = this.scopeKey(params.scope);
-        const previous = this.scopeStates.get(scopeKey);
-        this.scopeStates.delete(scopeKey);
-        const restored = this.getScopeState(params.scope);
-        if (restored.unreadableRetainedContent) {
-            if (previous) this.scopeStates.set(scopeKey, previous);
-            throw new Error('Stored draft is unavailable. Your saved drafts have not been discarded.');
-        }
-        if (previous) {
-            const key = canonicalSessionDraftAddressV2(params.address);
-            const replica = restored.replicas.get(key);
-            if (replica) previous.replicas.set(key, replica);
-            else if (!isUnauthoredNewSessionContext(previous.replicas.get(key))) previous.replicas.delete(key);
-            this.scopeStates.set(scopeKey, previous);
-        }
-        this.notify(params.scope, params.address);
-    }
-
-    // Replicas are replaced on writes; unchanged documents need no repeat JSON traversal.
-    private readonly serializedReplicas = new WeakMap<PersistedReplica, string>();
     private readonly scopeStates = new Map<string, ScopeState>();
     private readonly listeners = new Map<string, Set<Listener>>();
     private readonly listListeners = new Map<string, Set<Listener>>();
     private readonly flushInFlight = new Map<string, Promise<SessionDraftFlushResult>>();
     private readonly exactReadInFlight = new Map<string, Readonly<{ runtime: RepositoryRuntime; invalidationRevision?: number; promise: Promise<void> }>>();
     private readonly observedTombstoneRevisions = new Map<string, number>();
+    /**
+     * Per scope, the exact addresses the last finished collection census (or gap retry) could not
+     * open because their Session context was unavailable. Absent means the gap is unknown (no
+     * census finished since the last one started), which only a full census can settle.
+     */
+    private readonly snapshotGaps = new Map<string, ReadonlyMap<string, SessionDraftAddressV2>>();
+    /**
+     * Per scope, a collection census that stopped before its last page (failed request, hidden app):
+     * its staged-but-unapplied pages and the cursor of the next page. The next census on the same
+     * runtime resumes there instead of re-listing the Account. Nothing staged is applied until the
+     * listing completes, so a cut-off census never advances local state. A run owns its progress
+     * exclusively (taken on start, returned only when it stops early on the same runtime).
+     */
+    private readonly censusProgress = new Map<string, SessionDraftCensusProgress>();
     private readonly draftRemovalCleanups = new Map<string, Promise<void>>();
     private readonly mutationBatches = new Map<string, ScopeMutationBatch>();
     private readonly snapshotCache = new WeakMap<PersistedReplica, {
@@ -983,7 +1008,7 @@ export class SessionDraftRepository {
         composerSnapshot?: SessionComposerDraftSnapshot | null;
     }>();
     private readonly existingProjectionCache = new WeakMap<PersistedReplica, ExistingSessionDraftProjection | null>();
-    /** Reuse validated Account documents only within the cipher that admitted their exact bytes. */
+    /** Reuse validated Account documents only under the cipher that admitted their exact bytes. */
     private readonly openedAccountDocuments = new WeakMap<SessionDraftDocumentV2, Readonly<{
         cipher: SessionDraftRepositoryCipher;
         content: SessionDraftStoredContentEnvelopeV2;
@@ -1059,6 +1084,8 @@ export class SessionDraftRepository {
         this.flushInFlight.clear();
         this.exactReadInFlight.clear();
         this.observedTombstoneRevisions.clear();
+        this.snapshotGaps.clear();
+        this.censusProgress.clear();
         this.mutationBatches.clear();
         this.draftRemovalCleanups.clear();
         this.newListProjectionCache.clear();
@@ -1081,84 +1108,136 @@ export class SessionDraftRepository {
         const scopeKey = this.scopeKey(scope);
         const cached = this.scopeStates.get(scopeKey);
         if (cached) return cached;
-        const state: ScopeState = { loaded: true, replicas: new Map(), retainedReplicaEntries: [] };
-        const raw = this.storage.getString(this.storageKey(scope));
-        if (raw) {
-            try {
-                const parsed = parseSerializedSessionDraftScope(raw);
-                if (parsed) {
-                    const { v: _version, replicas: _replicas, ...envelopeFields } = parsed;
-                    state.envelopeFields = envelopeFields;
-                    for (const [key, replica] of Object.entries(parsed.replicas)) {
-                        // Unknown address custody stays opaque. In particular,
-                        // retired development-only Session Discussion drafts
-                        // are neither normalized nor read/rekeyed/synchronized.
-                        if (!parseCanonicalSessionDraftAddressV2(key)) {
-                            // Retained custody is never rewritten, so serialize it once.
-                            state.retainedReplicaEntries.push(`${JSON.stringify(key)}:${JSON.stringify(replica)}`);
-                            continue;
-                        }
-                        if (isPersistedReplica(replica)) {
-                            const localRawDocument = readStoredDraftDocument(replica.localRawDocument);
-                            const storedAddress = createStoredReadSchema(SessionDraftAddressV2Schema).safeParse(replica.address);
-                            const address = storedAddress.success ? storedAddress.data : replica.address;
-                            const restored: PersistedReplica = {
-                                ...replica,
-                                address,
-                                localRawDocument,
-                                // V2 omits only exact duplicates; v1 remains readable for existing installs.
-                                baseRawDocument: parsed.v === 2 && !Object.prototype.hasOwnProperty.call(replica, 'baseRawDocument')
-                                    ? localRawDocument
-                                    : readStoredDraftDocument(replica.baseRawDocument),
-                                pendingFieldMutations: replica.pendingFieldMutations.map((mutation) => ({
-                                    ...mutation,
-                                    field: parsed.v === 2 && !Object.prototype.hasOwnProperty.call(mutation, 'field')
-                                        ? getField(replica.localRawDocument, mutation.path)
-                                        : mutation.field,
-                                    mutationId: typeof mutation.mutationId === 'string'
-                                        ? mutation.mutationId
-                                        : mutation.field?.mutationId ?? this.randomUUID(),
-                                    intent: mutation.intent === 'clearCaptured' ? 'clearCaptured' : 'edit',
-                                })),
-                                deleteWhenEmpty: replica.deleteWhenEmpty === true,
-                                documentRevision: typeof replica.documentRevision === 'number'
-                                    && Number.isSafeInteger(replica.documentRevision)
-                                    && replica.documentRevision >= 0
-                                    ? replica.documentRevision
-                                    : 0,
-                                localSupplement: normalizeLocalSupplement(replica.localSupplement, address),
-                            };
-                            state.replicas.set(key, restored);
-                            // Hydration defaults are a read projection, not an edit of a sibling
-                            // Session. Keep its stored representation until that replica changes.
-                            this.serializedReplicas.set(restored, JSON.stringify(replica));
-                        } else state.unreadableRetainedContent = true;
-                    }
-                } else state.unreadableRetainedContent = true;
-            } catch {
-                // Preserve the unreadable bytes. A later compatible build may recover them.
-                state.unreadableRetainedContent = true;
+        const state: ScopeState = { loaded: true, replicas: new Map(), persisted: new Map() };
+        const recordKey = this.storageKey(scope);
+        // A refused migration keeps the whole-scope record, which then fails the envelope read
+        // below: this scope alone reads as unreadable retained custody.
+        this.migrateLegacyScopeRecord(scope, recordKey);
+        let unreadableRecords = this.isScopeEnvelopeUnreadable(recordKey) ? 1 : 0;
+        const rowPrefix = sessionDraftRowKey(recordKey, '');
+        for (const key of this.storage.getAllKeys()) {
+            if (!key.startsWith(rowPrefix)) continue;
+            const replicaKey = key.slice(rowPrefix.length);
+            const restored = this.readStoredReplica(replicaKey, this.storage.getString(key));
+            if (restored === 'unreadable') unreadableRecords += 1;
+            else if (restored !== 'retained') {
+                state.replicas.set(replicaKey, restored);
+                state.persisted.set(replicaKey, restored);
             }
+        }
+        if (unreadableRecords > 0) {
+            state.unreadableRetainedContent = true;
+            // A count only: stored drafts, their addresses and the Account stay out of logs.
+            console.warn(`Session drafts: ${unreadableRecords} stored record(s) could not be read and were left in place.`);
         }
         this.scopeStates.set(scopeKey, state);
         return state;
     }
 
+    /** Envelope fields are retained custody this build reads none of; unknown bytes stay unreadable. */
+    private isScopeEnvelopeUnreadable(recordKey: string): boolean {
+        const envelope = this.storage.getString(recordKey);
+        if (envelope === undefined) return false;
+        try {
+            return !parseSessionDraftScopeEnvelope(envelope);
+        } catch {
+            return true;
+        }
+    }
+
+    /** Native and in-memory storage meet a 0.2 whole-scope record here; the browser migrates at prepare. */
+    private migrateLegacyScopeRecord(scope: SessionDraftRepositoryScope, recordKey: string): void {
+        const raw = this.storage.getString(recordKey);
+        if (!isLegacySessionDraftScopeRecord(raw)) return;
+        const changes = migrateLegacySessionDraftScope(recordKey, raw, (key) => this.storage.getString(key));
+        if (!changes) {
+            console.warn('Session draft migration refused: a stored draft differs from the whole-scope copy; both were kept.');
+            return;
+        }
+        for (const [key, value] of changes) {
+            if (value === undefined) this.storage.delete(key);
+            else this.storage.set(key, value);
+        }
+        this.scheduleStorageFlush(scope);
+    }
+
+    /**
+     * One stored draft record. Unknown address custody stays opaque (`retained`): in particular,
+     * retired development-only Session Discussion drafts are neither normalized nor
+     * read/rekeyed/synchronized, and their records are never rewritten.
+     */
+    private readStoredReplica(replicaKey: string, raw: string | undefined): PersistedReplica | 'retained' | 'unreadable' {
+        if (!parseCanonicalSessionDraftAddressV2(replicaKey)) return 'retained';
+        if (raw === undefined) return 'unreadable';
+        let replica: unknown;
+        try {
+            replica = JSON.parse(raw);
+        } catch {
+            // Preserve the unreadable bytes. A later compatible build may recover them.
+            return 'unreadable';
+        }
+        if (!isPersistedReplica(replica)) return 'unreadable';
+        const localRawDocument = readStoredDraftDocument(replica.localRawDocument);
+        const storedAddress = createStoredReadSchema(SessionDraftAddressV2Schema).safeParse(replica.address);
+        const address = storedAddress.success ? storedAddress.data : replica.address;
+        return {
+            ...replica,
+            address,
+            localRawDocument,
+            // Records omit only exact duplicates (v2 compaction).
+            baseRawDocument: !Object.prototype.hasOwnProperty.call(replica, 'baseRawDocument')
+                ? localRawDocument
+                : readStoredDraftDocument(replica.baseRawDocument),
+            pendingFieldMutations: replica.pendingFieldMutations.map((mutation) => ({
+                ...mutation,
+                field: !Object.prototype.hasOwnProperty.call(mutation, 'field')
+                    ? getField(replica.localRawDocument, mutation.path)
+                    : mutation.field,
+                mutationId: typeof mutation.mutationId === 'string'
+                    ? mutation.mutationId
+                    : mutation.field?.mutationId ?? this.randomUUID(),
+                intent: mutation.intent === 'clearCaptured' ? 'clearCaptured' : 'edit',
+            })),
+            deleteWhenEmpty: replica.deleteWhenEmpty === true,
+            documentRevision: typeof replica.documentRevision === 'number'
+                && Number.isSafeInteger(replica.documentRevision)
+                && replica.documentRevision >= 0
+                ? replica.documentRevision
+                : 0,
+            localSupplement: normalizeLocalSupplement(replica.localSupplement, address),
+        };
+    }
+
+    /**
+     * Writes only the drafts whose replica object changed since the last persist (replicas are
+     * replaced, never mutated), so an edit costs one record regardless of how many drafts the
+     * Account holds. Hydration defaults are a read projection: an unchanged draft keeps its stored
+     * bytes.
+     */
     private persist(scope: SessionDraftRepositoryScope): void {
         const state = this.getScopeState(scope);
-        const entries: string[] = [...state.retainedReplicaEntries];
+        const recordKey = this.storageKey(scope);
         for (const [key, replica] of state.replicas) {
             // Unauthored New Session context lives only for this process (see `seededContext`).
-            if (isUnauthoredNewSessionContext(replica)) continue;
-            let serialized = this.serializedReplicas.get(replica);
-            if (serialized === undefined) {
-                serialized = serializeSessionDraftReplica(replica);
-                this.serializedReplicas.set(replica, serialized);
+            const stored = isUnauthoredNewSessionContext(replica) ? undefined : replica;
+            if (state.persisted.get(key) === stored) continue;
+            if (stored) {
+                this.storage.set(sessionDraftRowKey(recordKey, key), serializeSessionDraftReplica(stored));
+                state.persisted.set(key, stored);
+            } else {
+                this.storage.delete(sessionDraftRowKey(recordKey, key));
+                state.persisted.delete(key);
             }
-            entries.push(`${JSON.stringify(key)}:${serialized}`);
         }
-        const envelope = JSON.stringify({ ...state.envelopeFields, v: 2 });
-        this.storage.set(this.storageKey(scope), `${envelope.slice(0, -1)},"replicas":{${entries.join(',')}}}`);
+        for (const key of state.persisted.keys()) {
+            if (state.replicas.has(key)) continue;
+            this.storage.delete(sessionDraftRowKey(recordKey, key));
+            state.persisted.delete(key);
+        }
+        this.scheduleStorageFlush(scope);
+    }
+
+    private scheduleStorageFlush(scope: SessionDraftRepositoryScope): void {
         if (this.storage.flush) {
             // The storage boundary coalesces writes; failures remain visible until a durable retry.
             void Promise.resolve().then(() => this.flushStorage(scope)).catch(() => {});
@@ -1467,6 +1546,7 @@ export class SessionDraftRepository {
         address: SessionDraftAddressV2;
         patch: Readonly<{
             launchUserAttemptId?: string | null;
+            embedNewSessionOwnerId?: string | null;
             discussionMutationAttempt?: SessionDiscussionDraftMutationAttempt | null;
             sessionMessagingMutationAttempt?: SessionMessagingDraftMutationAttempt | null;
             newSessionLocalState?: NewSessionDraftLocalState | null;
@@ -1491,6 +1571,12 @@ export class SessionDraftRepository {
             if (nextSupplement.launchCurrentnessCapture?.userAttemptId !== userAttemptId) {
                 delete nextSupplement.launchCurrentnessCapture;
             }
+        }
+        if (params.patch.embedNewSessionOwnerId === null) delete nextSupplement.embedNewSessionOwnerId;
+        else if (params.patch.embedNewSessionOwnerId !== undefined) {
+            const ownerId = params.patch.embedNewSessionOwnerId.trim();
+            if (ownerId) nextSupplement.embedNewSessionOwnerId = ownerId;
+            else delete nextSupplement.embedNewSessionOwnerId;
         }
         if (params.patch.newSessionLocalState === null) delete nextSupplement.newSessionLocalState;
         else if (params.patch.newSessionLocalState !== undefined) nextSupplement.newSessionLocalState = params.patch.newSessionLocalState;
@@ -1678,6 +1764,32 @@ export class SessionDraftRepository {
     async flushSessionDraftLocally(params: Readonly<{ scope: SessionDraftRepositoryScope }>): Promise<void> {
         if (this.storage.prepare) await this.storage.prepare();
         if (this.storage.flush) await this.flushStorage(params.scope);
+    }
+
+    /** Reacquire one presenter's persisted replica; sibling composers keep their live objects. */
+    async reloadSessionDraftFromLocalPersistence(params: Readonly<{
+        scope: SessionDraftRepositoryScope;
+        address: SessionDraftAddressV2;
+    }>): Promise<void> {
+        await this.flushSessionDraftLocally(params);
+        const key = canonicalSessionDraftAddressV2(params.address);
+        const recordKey = sessionDraftRowKey(this.storageKey(params.scope), key);
+        await this.storage.refresh?.(recordKey);
+        const state = this.getScopeState(params.scope);
+        const raw = this.storage.getString(recordKey);
+        const restored = raw === undefined ? undefined : this.readStoredReplica(key, raw);
+        if (restored === 'unreadable' || state.unreadableRetainedContent || this.isScopeEnvelopeUnreadable(this.storageKey(params.scope))) {
+            throw new Error('Stored draft is unavailable. Your saved drafts have not been discarded.');
+        }
+        if (restored === undefined) {
+            if (!isUnauthoredNewSessionContext(state.replicas.get(key))) state.replicas.delete(key);
+            state.persisted.delete(key);
+        } else if (restored !== 'retained') {
+            state.replicas.set(key, restored);
+            state.persisted.set(key, restored);
+        }
+        if (isNewSessionListAddress(params.address)) this.newListProjectionCache.delete(this.scopeKey(params.scope));
+        this.notify(params.scope, params.address);
     }
 
     /** Unsupported/offline Homes preserve choices but cannot admit an Open effect. */
@@ -2455,6 +2567,7 @@ export class SessionDraftRepository {
         const read = () => this.materializeExactWithScopedRuntime({
             scope,
             address,
+            invalidationRevision,
             runtime,
             isCurrent: () => this.isCurrentRuntime(runtime),
             flushRebasedLocalMutations: () => this.flushSessionDraft({ scope, address }).then(() => undefined),
@@ -2497,6 +2610,7 @@ export class SessionDraftRepository {
         address: SessionDraftAddressV2;
         runtime: SessionDraftRepositoryScopedRuntime;
         isCurrent: () => boolean;
+        invalidationRevision?: number;
         flushRebasedLocalMutations?: () => Promise<void>;
     }>): Promise<void> {
         if (this.storage.prepare) await this.storage.prepare();
@@ -2504,6 +2618,13 @@ export class SessionDraftRepository {
         if (activeFlush) await activeFlush;
         if (!params.isCurrent()) return;
         const requestedBaseRevision = this.readReplica(params.scope, params.address)?.baseRevision ?? 'absent';
+        // Durable catch-up and live push carry the revision they need. Compare
+        // after pending writes/reads settle, using only already applied state.
+        // Foreground demand without a revision still reads the current authority.
+        if (params.invalidationRevision !== undefined && (
+            (typeof requestedBaseRevision === 'number' && requestedBaseRevision >= params.invalidationRevision)
+            || (this.observedTombstoneRevisions.get(this.replicaListenerKey(params.scope, params.address)) ?? -1) >= params.invalidationRevision
+        )) return;
         let response: SessionDraftReadResponseV2;
         try {
             response = await params.runtime.transport.read(params.address);
@@ -2526,6 +2647,8 @@ export class SessionDraftRepository {
             if (!params.isCurrent()) return;
         }
         const shouldFlush = this.reconcileStagedRead(params.scope, params.address, response, remoteDocument, requestedBaseRevision);
+        // This read is newer than a held census's staged copy (an absence carries no revision guard).
+        this.censusProgress.get(this.scopeKey(params.scope))?.staged.delete(canonicalSessionDraftAddressV2(params.address));
         await this.awaitDraftRemovalCleanup(params.scope, params.address);
         if (shouldFlush) await params.flushRebasedLocalMutations?.();
         if (!params.isCurrent()) return;
@@ -2545,7 +2668,8 @@ export class SessionDraftRepository {
         if (isAccountOwnedDraftAddressV2(record.address)) {
             const base = this.readReplica(scope, record.address)?.baseRawDocument;
             const opened = base ? this.openedAccountDocuments.get(base) : undefined;
-            if (base && opened?.cipher === runtime.cipher && areJsonValuesEqual(opened.content, record.content)) return base;
+            if (base && opened && opened.cipher === runtime.cipher
+                && areJsonValuesEqual(opened.content, record.content)) return base;
         }
         const document = await cipher.open(record.address, record.content);
         if (!document) throw new Error(`Unable to open session draft ${canonicalSessionDraftAddressV2(record.address)}`);
@@ -2691,36 +2815,54 @@ export class SessionDraftRepository {
         });
     }
 
-    async ensureSessionDraftRepositoryHydrated(scope: SessionDraftRepositoryScope): Promise<void> {
+    async ensureSessionDraftRepositoryHydrated(scope: SessionDraftRepositoryScope, options: Readonly<{
+        /** Re-read only the known unopened addresses; an unknown gap still takes the full census. */
+        gapOnly?: boolean;
+    }> = {}): Promise<boolean> {
         // Hydration is also the async-storage preparation boundary for local-only callers.
         if (this.storage.prepare) await this.storage.prepare();
         const runtime = this.syncRuntime(scope);
-        if (!runtime) return;
-        await this.ensureSessionDraftRepositoryHydratedWithScopedRuntime({
+        if (!runtime) return true;
+        return this.ensureSessionDraftRepositoryHydratedWithScopedRuntime({
             scope,
             runtime,
             isCurrent: () => this.isCurrentRuntime(runtime),
+            gapOnly: options.gapOnly,
         });
     }
 
-    /** Hydrates one exact Account/Home collection without changing the configured singleton runtime. */
+    /**
+     * Returns whether every listed context opened in the current Account/Home lifetime.
+     * With `gapOnly`, a known gap from a finished census is retried by exact address instead of
+     * re-listing the Account: the list already admitted every other address, and durable changes
+     * repair those by address.
+     */
     async ensureSessionDraftRepositoryHydratedWithScopedRuntime(params: Readonly<{
         scope: SessionDraftRepositoryScope;
         runtime: SessionDraftRepositoryScopedRuntime;
         isCurrent: () => boolean;
-    }>): Promise<void> {
+        gapOnly?: boolean;
+    }>): Promise<boolean> {
         if (this.storage.prepare) await this.storage.prepare();
-        if (!params.isCurrent()) return;
+        if (!params.isCurrent()) return false;
         const { scope } = params;
-        const requestedBaseRevisions = new Map([...this.getScopeState(scope).replicas.entries()]
-            .map(([key, replica]) => [key, replica.baseRevision] as const));
-        const staged = new Map<string, Readonly<{
-            address: SessionDraftAddressV2;
-            response: SessionDraftReadResponseV2;
-            document: SessionDraftDocumentV2 | null;
-        }>>();
-        const listedAddresses = new Set<string>();
-        let unavailableSessionContextCount = 0;
+        const scopeKey = this.scopeKey(scope);
+        const knownGap = params.gapOnly ? this.snapshotGaps.get(scopeKey) : undefined;
+        // A census that does not finish leaves the gap unknown.
+        if (!knownGap) this.snapshotGaps.delete(scopeKey);
+        const resumable = knownGap ? undefined : this.censusProgress.get(scopeKey);
+        this.censusProgress.delete(scopeKey);
+        // Staged pages were opened by this runtime's transport and cipher; another runtime starts over.
+        const progress: SessionDraftCensusProgress = resumable?.runtime === params.runtime ? resumable : {
+            runtime: params.runtime,
+            after: undefined,
+            requestedBaseRevisions: new Map([...this.getScopeState(scope).replicas.entries()]
+                .map(([key, replica]) => [key, replica.baseRevision] as const)),
+            staged: new Map(),
+            listedAddresses: new Set(),
+            unopened: new Map(),
+        };
+        const { requestedBaseRevisions, staged, listedAddresses, unopened } = progress;
         const stageReads = async (reads: readonly Readonly<{ address: SessionDraftAddressV2; response: SessionDraftReadResponseV2 }>[]) => {
             const sessionIds = [...new Set(reads.flatMap(({ response }) => response.status === 'present'
                 && !isAccountOwnedDraftAddressV2(response.record.address) ? [response.record.address.sessionId] : []))];
@@ -2733,7 +2875,7 @@ export class SessionDraftRepository {
                         } catch (error) {
                             if (!params.isCurrent()) return;
                             if (!isSessionDraftContextUnavailableError(error)) throw error;
-                            unavailableSessionContextCount += 1;
+                            unopened.set(canonicalSessionDraftAddressV2(address), address);
                             return;
                         }
                     }
@@ -2745,23 +2887,40 @@ export class SessionDraftRepository {
                 await params.runtime.cipher.withSessionContexts(sessionIds, open);
             } else await open(params.runtime.cipher);
         };
-        let after: string | undefined;
-        do {
-            const response = await params.runtime.transport.list({ ...(after ? { after } : {}), limit: 100 });
-            if (!params.isCurrent()) return;
-            // The list page is the existing allocation boundary. Independent
-            // record opens share no mutable replica state; reconcile only once
-            // every page has staged successfully below.
-            const reads = response.items.map((record) => {
-                const addressKey = canonicalSessionDraftAddressV2(record.address);
-                listedAddresses.add(addressKey);
-                return { address: record.address, response: { status: 'present' as const, record } };
-            });
-            await stageReads(reads);
-            if (!params.isCurrent()) return;
-            after = response.nextAfter;
-        } while (after);
-        const localAddressesMissingFromActiveList = [...this.getScopeState(scope).replicas.values()]
+        if (knownGap) {
+            const gapReads = await Promise.all([...knownGap.values()].map(async (address) => (
+                { address, response: await params.runtime.transport.read(address) })));
+            if (!params.isCurrent()) return false;
+            await stageReads(gapReads);
+            if (!params.isCurrent()) return false;
+        }
+        if (!knownGap) {
+            try {
+                do {
+                    const after = progress.after;
+                    const response = await params.runtime.transport.list({ ...(after ? { after } : {}), limit: 100 });
+                    if (!params.isCurrent()) return false;
+                    // The list page is the existing allocation boundary. Independent
+                    // record opens share no mutable replica state; reconcile only once
+                    // every page has staged successfully below.
+                    const reads = response.items.map((record) => {
+                        const addressKey = canonicalSessionDraftAddressV2(record.address);
+                        listedAddresses.add(addressKey);
+                        return { address: record.address, response: { status: 'present' as const, record } };
+                    });
+                    await stageReads(reads);
+                    if (!params.isCurrent()) return false;
+                    // Advance only past a page whose records are all staged.
+                    progress.after = response.nextAfter;
+                } while (progress.after);
+            } catch (error) {
+                // Staged records keep the revision/tombstone guards at reconcile, so a later
+                // change to an already-listed draft still wins over its staged copy.
+                if (params.isCurrent() && !this.censusProgress.has(scopeKey)) this.censusProgress.set(scopeKey, progress);
+                throw error;
+            }
+        }
+        const localAddressesMissingFromActiveList = knownGap ? [] : [...this.getScopeState(scope).replicas.values()]
             .map((replica) => replica.address)
             .filter((address) => !listedAddresses.has(canonicalSessionDraftAddressV2(address)));
         const missingReads = await Promise.all(localAddressesMissingFromActiveList.map(async (address) => {
@@ -2776,9 +2935,9 @@ export class SessionDraftRepository {
                 : await params.runtime.transport.read(address);
             return { address, response };
         }));
-        if (!params.isCurrent()) return;
+        if (!params.isCurrent()) return false;
         await stageReads(missingReads);
-        if (!params.isCurrent()) return;
+        if (!params.isCurrent()) return false;
         const addressesToFlush: SessionDraftAddressV2[] = [];
         const addressesToRematerialize: SessionDraftAddressV2[] = [];
         this.withAtomicScopeMutation(scope, () => {
@@ -2795,7 +2954,7 @@ export class SessionDraftRepository {
             await this.awaitDraftRemovalCleanup(scope, address);
         }
         for (const address of addressesToFlush) {
-            if (!params.isCurrent()) return;
+            if (!params.isCurrent()) return false;
             await this.flushSessionDraftWithScopedRuntime({
                 scope: params.scope,
                 address,
@@ -2804,7 +2963,7 @@ export class SessionDraftRepository {
             });
         }
         for (const address of addressesToRematerialize) {
-            if (!params.isCurrent()) return;
+            if (!params.isCurrent()) return false;
             await this.materializeExactWithScopedRuntime({
                 scope: params.scope,
                 address,
@@ -2818,13 +2977,16 @@ export class SessionDraftRepository {
                 }).then(() => undefined),
             });
         }
-        if (!params.isCurrent()) return;
+        if (!params.isCurrent()) return false;
         if (this.storage.flush) await this.flushStorage(scope);
-        if (unavailableSessionContextCount > 0) {
+        if (unopened.size > 0) {
             log.log(
-                `[session-drafts] Snapshot skipped reason=session_context_unavailable count=${unavailableSessionContextCount}`,
+                `[session-drafts] Snapshot skipped reason=session_context_unavailable count=${unopened.size}`,
             );
         }
+        if (!params.isCurrent()) return false;
+        this.snapshotGaps.set(scopeKey, unopened);
+        return unopened.size === 0;
     }
 
     getExistingSessionDraftProjection(scope: SessionDraftRepositoryScope, sessionId: string): ExistingSessionDraftProjection | null {
@@ -2881,6 +3043,21 @@ export class SessionDraftRepository {
         this.lastNewListProjection.set(scopeKey, list);
         this.newListProjectionCache.set(scopeKey, list);
         return list;
+    }
+
+    /**
+     * Recovers a crash-interrupted New Session launch only when this local scope
+     * has one possible owner. Multiple retained attempts must remain isolated;
+     * guessing would attach a fresh surface to another launch.
+     */
+    resolveInterruptedNewSessionDraftId(scope: SessionDraftRepositoryScope, embedOwnerId: string): string | null {
+        const ownerId = embedOwnerId.trim();
+        if (!ownerId) return null;
+        const interrupted = this.listNewSessionDraftProjections(scope).filter(
+            (draft) => (draft.localSupplement.launchUserAttemptId?.trim().length ?? 0) > 0
+                && draft.localSupplement.embedNewSessionOwnerId === ownerId,
+        );
+        return interrupted.length === 1 ? interrupted[0]!.draftId : null;
     }
 
     isSessionDraftRemoteAcknowledged(scope: SessionDraftRepositoryScope, address: SessionDraftAddressV2): boolean {
@@ -3038,6 +3215,7 @@ export const ensureSessionDraftRepositoryHydrated = singleton.ensureSessionDraft
 export const ensureSessionDraftRepositoryHydratedWithScopedRuntime = singleton.ensureSessionDraftRepositoryHydratedWithScopedRuntime.bind(singleton);
 export const getExistingSessionDraftProjection = singleton.getExistingSessionDraftProjection.bind(singleton);
 export const listNewSessionDraftProjections = singleton.listNewSessionDraftProjections.bind(singleton);
+export const resolveInterruptedNewSessionDraftId = singleton.resolveInterruptedNewSessionDraftId.bind(singleton);
 export const isSessionDraftRemoteAcknowledged = singleton.isSessionDraftRemoteAcknowledged.bind(singleton);
 export const listNewSessionDraftEncryptionMigrationCandidates = singleton.listNewSessionDraftEncryptionMigrationCandidates.bind(singleton);
 export const acknowledgeNewSessionDraftEncryptionMigration = singleton.acknowledgeNewSessionDraftEncryptionMigration.bind(singleton);

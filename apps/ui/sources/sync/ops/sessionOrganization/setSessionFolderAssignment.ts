@@ -2,6 +2,7 @@ import type { SetSessionFolderAssignmentResponse } from '@happier-dev/protocol/s
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { setSessionFolderAssignment as setSessionFolderAssignmentApi } from '@/sync/api/session/sessionOrganizationApi';
 import { getStorage } from '@/sync/domains/state/storageStore';
+import { sessionOrganizationStoreFor } from './sessionOrganizationAccountStore';
 
 export async function setSessionFolderAssignment(params: Readonly<{
     credentials: AuthCredentials;
@@ -13,7 +14,7 @@ export async function setSessionFolderAssignment(params: Readonly<{
     folderId: string | null;
 }>): Promise<SetSessionFolderAssignmentResponse> {
     params.assertCurrent?.();
-    const recordId = getStorage().getState().setSessionOrganizationFolderAssignmentOptimistic(
+    const recordId = sessionOrganizationStoreFor(params).setSessionOrganizationFolderAssignmentOptimistic(
         params.serverId,
         params.sessionId,
         params.folderId,
@@ -27,8 +28,8 @@ export async function setSessionFolderAssignment(params: Readonly<{
             request: { folderId: params.folderId },
         });
         params.assertCurrent?.();
-        getStorage().getState().commitSessionOrganizationOptimistic(recordId);
-        getStorage().getState().applySessionFolderAssignments(params.serverId, [response]);
+        sessionOrganizationStoreFor(params).commitSessionOrganizationOptimistic(recordId);
+        sessionOrganizationStoreFor(params).applySessionFolderAssignments(params.serverId, [response]);
         return response;
     } catch (error) {
         try {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildOrdinarySessionListHomeState, type OrdinarySessionListLifecycle } from './ordinarySessionListHomeState';
+import { resolveSessionListQueryPresentation } from './sessionListIndexPresentation';
 
 function lifecycle(overrides?: Partial<OrdinarySessionListLifecycle>): OrdinarySessionListLifecycle {
     return {
@@ -19,6 +20,29 @@ function lifecycle(overrides?: Partial<OrdinarySessionListLifecycle>): OrdinaryS
 }
 
 describe('buildOrdinarySessionListHomeState', () => {
+    it.each(['response', 'invalid_query', 'access_denied'] as const)('preserves an admitted %s failure during Home settlement', failureReason => {
+        const observation = { phase: 'error' as const, lastSuccessAt: 1_700,
+            failure: { reason: failureReason, code: 'ordinary_list_failed' } };
+        const state = buildOrdinarySessionListHomeState({ serverId: 'home-a', requestedQueryKey: 'ordinary',
+            sessionIds: ['s1'], observation, lifecycle: lifecycle(), online: true });
+        expect(state.failureReason).toBe(failureReason);
+        expect(state.failureCode).toBe('ordinary_list_failed');
+        expect(resolveSessionListQueryPresentation({ selectedServerIds: ['home-a'], statesByServerId: { 'home-a': state },
+            coverageComplete: false, retainedRowCount: 1, settlingHomeServerId: 'home-a',
+        })).toEqual({ kind: 'error', retainedRows: true });
+    });
+
+    it('does not let socket recovery or promise cleanup mask an admitted response failure', () => {
+        const observation = { phase: 'error' as const, lastSuccessAt: 1_700,
+            failure: { reason: 'response' as const, code: 'invalid_response' } };
+        const state = buildOrdinarySessionListHomeState({ serverId: 'home-a', requestedQueryKey: 'ordinary',
+            sessionIds: ['s1'], observation, lifecycle: lifecycle({ fetchInFlight: true }), online: false });
+        expect(state.phase).toBe('error');
+        expect(resolveSessionListQueryPresentation({ selectedServerIds: ['home-a'], statesByServerId: { 'home-a': state },
+            coverageComplete: false, retainedRowCount: 1, settlingHomeServerId: 'home-a',
+        })).toEqual({ kind: 'error', retainedRows: true });
+    });
+
     it('publishes Sync membership and Sync cursors as the applied ordinary corpus', () => {
         const state = buildOrdinarySessionListHomeState({
             serverId: 'home-a',
@@ -87,7 +111,7 @@ describe('buildOrdinarySessionListHomeState', () => {
             serverId: 'home-a',
             requestedQueryKey: 'query:home-a',
             sessionIds: ['s1'],
-            observation: { phase: 'error', lastSuccessAt: 1_700 },
+            observation: { phase: 'error', lastSuccessAt: 1_700, failure: { reason: 'network', code: null } },
             lifecycle: lifecycle(),
             online: true,
         });

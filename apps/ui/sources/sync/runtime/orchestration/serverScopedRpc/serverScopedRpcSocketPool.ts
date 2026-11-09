@@ -11,6 +11,7 @@ import { canonicalizeServerUrl } from '@/sync/domains/server/url/serverUrlCanoni
 import type { HomeCarrier } from '@/sync/runtime/homeCarrier';
 import { drainRetainedHomeCarrierReleases } from '@/sync/runtime/homeCarrierPolicy';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import {
     resolveSocketIoTransportsForCarrier,
 } from '@/sync/runtime/socketIoTransports';
@@ -129,6 +130,7 @@ export function createServerScopedRpcSocketPool(overrides?: Partial<Deps>): Read
     stopAll: () => Promise<void>;
     resetForTests: () => void;
 }> {
+    syncPerformanceTelemetry.registerScopedRpcSetupSource();
     const createSocket = (params: Parameters<Deps['createSocket']>[0]) => {
         if (overrides?.createSocket) {
             const socket = overrides.createSocket(params);
@@ -331,6 +333,7 @@ export function createServerScopedRpcSocketPool(overrides?: Partial<Deps>): Read
             const controller = new AbortController();
             const progress: { phase: ScopedRpcSocketConnectionPhase } = { phase: 'reachability-start' };
             const run = (async () => {
+                syncPerformanceTelemetry.recordScopedRpcSetup('reachability-start', entry.socket, entry.serverUrl);
                 if (!entry.backgroundTask) {
                     if (!entry.reachabilityRelease && deps.reachability.acquireReachability) {
                         const lease = await deps.reachability.acquireReachability({
@@ -359,7 +362,9 @@ export function createServerScopedRpcSocketPool(overrides?: Partial<Deps>): Read
                     });
                 }
                 if (controller.signal.aborted) throw controller.signal.reason;
+                syncPerformanceTelemetry.recordScopedRpcSetup('reachability-ready', entry.socket, entry.serverUrl);
                 progress.phase = 'socket-connect';
+                syncPerformanceTelemetry.recordScopedRpcSetup('connect', entry.socket, entry.serverUrl);
                 await connectSocket(entry.transport, controller.signal);
             })();
             const result = run.finally(() => {
@@ -463,7 +468,9 @@ export function createServerScopedRpcSocketPool(overrides?: Partial<Deps>): Read
         while (entry?.teardownRequested) {
             // A retiring socket cannot be revived: join (or retry) its canonical teardown,
             // then resolve the key again in case another waiter already installed its successor.
+            syncPerformanceTelemetry.recordScopedRpcSetup('retirement-wait', entry.socket, entry.serverUrl);
             await stopEntrySocket(entry, true);
+            syncPerformanceTelemetry.recordScopedRpcSetup('retired', entry.socket, entry.serverUrl);
             entry = entriesByKey.get(key);
         }
         // This caller acquired its own carrier before it could know an equivalent one
@@ -490,6 +497,7 @@ export function createServerScopedRpcSocketPool(overrides?: Partial<Deps>): Read
         // Reserve this entry before anything below can await: an idle teardown that
         // ran in between would otherwise remove the entry this client is acquiring.
         retainEntryUse(entry);
+        syncPerformanceTelemetry.recordScopedRpcSetup('acquire', entry.socket, entry.serverUrl);
         if (redundantCarrierRelease) {
             // Settled before this call returns, so no carrier release outlives the
             // acquire that started it. A failure is not this acquisition's failure;
@@ -511,6 +519,7 @@ export function createServerScopedRpcSocketPool(overrides?: Partial<Deps>): Read
         try {
             await ensureConnected(entry, deadlineAt, params.signal);
             if (params.signal?.aborted) throw createSocketRpcAbortError();
+            syncPerformanceTelemetry.recordScopedRpcSetup('connected', entry.socket, entry.serverUrl);
         } catch (error) {
             releaseOnce();
             if (params.signal?.aborted) throw createSocketRpcAbortError();

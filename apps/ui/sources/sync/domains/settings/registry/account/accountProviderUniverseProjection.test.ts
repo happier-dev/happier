@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ACCOUNT_SETTING_ARTIFACTS, accountSettingsParse } from '@happier-dev/protocol';
+import { ACCOUNT_SETTING_ARTIFACTS, accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 
 describe('account agent target projection', () => {

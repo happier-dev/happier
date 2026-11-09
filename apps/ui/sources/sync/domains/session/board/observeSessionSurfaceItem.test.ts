@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest';
-import { SessionSystemRecordStoredSchema } from '@happier-dev/protocol';
+import { describe, expect, it, vi } from 'vitest';
+import { SessionSystemRecordStoredSchema } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordRoutes';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { createSessionSystemRecordRepository } from '@/sync/domains/sessionSystemRecords/repository';
 import { observeSessionSurfaceItem, readRetainedSessionSurfaceItem, type SessionSurfaceItemBinding } from './observeSessionSurfaceItem';
 import type { SessionStoredContentContext } from '@happier-dev/sync-client';
+import { log } from '@/log';
 
 const scope = { serverId: 'home-a', accountId: 'alice' };
 const session = { serverId: scope.serverId, sessionId: 'session-one' };
@@ -16,6 +17,63 @@ function record(itemId: string, content: unknown = { t: 'plain', v: item }) {
 const capabilities = { readTranscript: true, editSessionRecords: false };
 
 describe('addressed Session surface item observation', () => {
+    it.each([
+        { code: 'plugin_session_record_forbidden', reason: 'forbidden' },
+        { code: 'plugin_session_records_unavailable', reason: 'protocol_unavailable' },
+        { code: 'account-encryption-currentness-unavailable', reason: 'encryption_material_unavailable' },
+        { code: 'plugin_session_record_invalid_response', reason: 'invalid_response' },
+        { code: 'session_board_storage_mode_mismatch', reason: 'session_board_storage_mode_mismatch' },
+    ])('keeps $reason from the request boundary and never re-polls a definite refusal', async ({ code, reason }) => {
+        vi.useFakeTimers();
+        let requests = 0;
+        const logStart = log.getCount();
+        const repository = createSessionSystemRecordRepository({ scope, retryBackoff: { minDelayMs: 10, maxDelayMs: 100 },
+            request: async () => { requests++; throw Object.assign(new Error('private transport detail'), { code }); } });
+        let latest: SessionSurfaceItemBinding | undefined;
+        const context = { mode: 'plain' } as const;
+        const stop = observeSessionSurfaceItem({ session, repository, itemId: 'refused',
+            readCapabilities: () => capabilities,
+            readContentContext: () => context,
+            isCurrent: () => true, onChange: value => { latest = value; },
+        });
+        try {
+            await flushHookEffects({ cycles: 20 });
+            expect(latest).toEqual({ status: 'unavailable', reason });
+            const diagnostics = log.getLogs().slice(logStart).join('\n');
+            expect(diagnostics).toContain(`code=${reason}`);
+            expect(diagnostics).not.toContain('private transport detail');
+            await vi.advanceTimersByTimeAsync(1000);
+            expect(requests).toBe(1);
+        } finally { stop(); repository.retire(); vi.useRealTimers(); }
+    });
+
+    it('retires content on a record refusal and lets a later record read recover', async () => {
+        let refused = false;
+        const repository = createSessionSystemRecordRepository({ scope, request: async () => {
+            if (refused) throw Object.assign(new Error('private record detail'), { code: 'forbidden' });
+            return Response.json({ record: record('renewed') });
+        } });
+        let latest: SessionSurfaceItemBinding | undefined;
+        const stop = observeSessionSurfaceItem({ session, repository, itemId: 'renewed',
+            readCapabilities: () => capabilities,
+            readContentContext: () => ({ mode: 'plain' }),
+
+            isCurrent: () => true, onChange: value => { latest = value; },
+        });
+        try {
+            await flushHookEffects({ cycles: 20 });
+            expect(latest).toMatchObject({ status: 'ready', item: { state: { kind: 'ready' } } });
+            refused = true;
+            repository.invalidate(session);
+            await flushHookEffects({ cycles: 20 });
+            expect(latest).toEqual({ status: 'unavailable', reason: 'forbidden' });
+            refused = false;
+            repository.invalidate(session);
+            await flushHookEffects({ cycles: 30 });
+            expect(latest).toMatchObject({ status: 'ready', item: { state: { kind: 'ready' } }, freshness: 'fresh' });
+        } finally { stop(); repository.retire(); }
+    });
+
     it('reads only demanded addresses, shares in-flight reads, and stops work while retaining hidden items', async () => {
         const reads: string[] = [];
         let decryptions = 0;
@@ -35,8 +93,8 @@ describe('addressed Session surface item observation', () => {
         } };
         const observed: SessionSurfaceItemBinding[] = [];
         const observe = (itemId: string) => observeSessionSurfaceItem({ session, repository, itemId,
-            authority: { contentContext: context, capabilities }, readCapabilities: () => capabilities,
-            readContentContext: () => context, renewAuthority: async () => ({ status: 'ok', value: { contentContext: context, capabilities } }),
+            readCapabilities: () => capabilities,
+            readContentContext: () => context,
             isCurrent: () => true, onChange: value => { observed.push(value); },
         });
         const stopFirst = observe('visible');
@@ -68,8 +126,8 @@ describe('addressed Session surface item observation', () => {
         let readable = true;
         let latest: SessionSurfaceItemBinding | undefined;
         const stop = observeSessionSurfaceItem({ session, repository, itemId: 'locked',
-            authority: { contentContext: context, capabilities }, readCapabilities: () => ({ ...capabilities, readTranscript: readable }),
-            readContentContext: () => context, renewAuthority: async () => ({ status: 'ok', value: { contentContext: context, capabilities } }),
+            readCapabilities: () => ({ ...capabilities, readTranscript: readable }),
+            readContentContext: () => context,
             isCurrent: () => true, onChange: value => { latest = value; },
         });
         await flushHookEffects({ cycles: 20 });
@@ -91,25 +149,27 @@ describe('addressed Session surface item observation', () => {
         expect(readRetained()).toEqual({ status: 'unavailable', reason: 'forbidden' });
     });
 
-    it('retains content with stale offline authority, then recovers and reports removal', async () => {
+    it('retains content through a failed record read, then recovers and reports removal', async () => {
         let removed = false;
-        let reachable = false;
-        const repository = createSessionSystemRecordRepository({ scope, request: async () => Response.json({ record: removed ? null : record('retained') }) });
+        let reachable = true;
+        const repository = createSessionSystemRecordRepository({ scope, request: async () => {
+            if (!reachable) throw new TypeError('Failed to fetch');
+            return Response.json({ record: removed ? null : record('retained') });
+        } });
         let latest: SessionSurfaceItemBinding | undefined;
         const context = { mode: 'plain' } as const;
         const stop = observeSessionSurfaceItem({ session, repository, itemId: 'retained',
-            authority: { contentContext: context, capabilities }, readCapabilities: () => capabilities,
-            readContentContext: () => context, renewAuthority: async () => reachable
-                ? { status: 'ok', value: { contentContext: context, capabilities } }
-                : { status: 'offline' },
+            readCapabilities: () => capabilities,
+            readContentContext: () => context,
             isCurrent: () => true, onChange: value => { latest = value; },
         });
         await flushHookEffects({ cycles: 20 });
         expect(latest).toMatchObject({ status: 'ready', item: { state: { kind: 'ready' } }, freshness: 'fresh', reachability: 'reachable' });
+        reachable = false;
         repository.invalidate(session);
         expect(latest).toMatchObject({ status: 'ready', freshness: 'stale' });
         await flushHookEffects({ cycles: 20 });
-        expect(latest).toMatchObject({ status: 'ready', item: { state: { kind: 'ready' } }, freshness: 'stale', reachability: 'offline' });
+        expect(latest).toMatchObject({ status: 'ready', item: { state: { kind: 'ready' } }, freshness: 'stale', reachability: 'reachable' });
         reachable = true;
         repository.invalidate(session);
         await flushHookEffects({ cycles: 20 });

@@ -1601,14 +1601,14 @@ export function useScopedPluginSettingsProjection(
         };
     }, [store]);
 
-    // Update the existing subscriber inventory without replacing the shared
-    // record. The store decides whether its field identity actually needs a
-    // read, so an equivalent parent rerender cannot start a second request.
+    // Update demand by its canonical field identity, not the renderer's array
+    // allocation. In particular, rebuilding an empty inventory is not a new
+    // record transition and must not refresh/notify its settled subscribers.
     React.useLayoutEffect(() => {
         const subscription = subscriptionRef.current;
         if (!store || subscription?.store !== store) return;
         store.update(subscription.id, subscriberRef.current);
-    }, [params.enabled, params.fields, params.sourceLifetimeIdentity, store]);
+    }, [fieldsKey, params.enabled, params.sourceLifetimeIdentity, store]);
 
     React.useLayoutEffect(() => {
         const previousFields = previousFieldsRef.current;

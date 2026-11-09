@@ -1,4 +1,4 @@
-import type { PluginContributionIdentityV1 } from '@happier-dev/protocol';
+import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { PluginUiInlineSurfaceMountV1, PluginUiWidgetHomeV1 } from '@happier-dev/protocol/plugins/ui';
 import { PluginUiWidgetHomeV1Schema, resolvePluginUiInlineSurfaceSlotV1, selectPluginUiWidgetEntriesV1 } from '@happier-dev/protocol/plugins/ui';
 
@@ -9,7 +9,7 @@ import type { PluginUiPolicyEvaluationContext } from './policy';
 /**
  * The plugin `widget` contribution as the app host reads it.
  *
- * One widget role, executed against a Session or the App independent of its
+ * One widget role, executed against a Session, App or admitted Project independent of its
  * physical Home, Board or Companion host. The
  * Protocol Surface Registry owns the role and its per-target rows; every host
  * question about a widget's role, target or Home default is answered here, over
@@ -17,7 +17,7 @@ import type { PluginUiPolicyEvaluationContext } from './policy';
  */
 export const WIDGET_ROLE = 'widget' as const;
 
-export type WidgetTargetKind = 'session' | 'app';
+export type WidgetTargetKind = 'session' | 'app' | 'project';
 
 /**
  * Where a widget stands on Home before the person has said anything:

@@ -1,7 +1,6 @@
 import { AutomationRunTriggerEvidenceEnvelopeV1ReadSchema, AutomationRunTriggerEvidenceV1Schema, inspectAutomationRunExecutionRecipeOuterV1, materializeAutomationRunExecutionRecipeV1, parseAutomationRunExecutionRecipeV1, type AutomationRunExecutionRecipeMaterializationResultV1, type AutomationRunTriggerEvidenceV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
-import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
-import { createAccountScopedCryptoMaterialSnapshotV1, openAccountScopedBlobCiphertext, type AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { openAccountScopedBlobCiphertext, type AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { openAutomationRunFailureDetailStoredEnvelopeV1, parseAutomationRunFailureDetailStoredEnvelopeV1, type AutomationRunFailureDetailCorrespondenceV1 } from '@happier-dev/protocol/automations/automationRunFailureDetailStoredContent';
 import { openAutomationRunResultStoredEnvelopeV1, parseAutomationRunResultStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationReplyHandoffStoredContent';
@@ -11,9 +10,7 @@ import type { AutomationV3RunDetail } from '@happier-dev/protocol/automations/au
 import type { WorkflowRunGetResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import { isDataKeyAuthCredentials } from '@/auth/storage/tokenStorage';
-import { decodeBase64 } from '@/encryption/base64';
-import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
+import { resolveCurrentAccountScopedCryptoMaterialSnapshot } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 
 function toAutomationAccountCurrentnessWitness(
     currentness: AccountEncryptionCurrentnessResponse,
@@ -49,28 +46,8 @@ export function resolveAutomationRunDetailAccountMaterial(params: Readonly<{
     if (!params.accountCurrentness.contentKeyFingerprint) {
         return { kind: 'unavailable' };
     }
-    try {
-        const material = resolveAccountScopedCryptoMaterialFromCredentials(params.credentials);
-        const snapshot = createAccountScopedCryptoMaterialSnapshotV1({
-            accountEncryptionMode: 'e2ee',
-            material,
-            ...(isDataKeyAuthCredentials(params.credentials)
-                ? {
-                    dataKeyPublicKey: decodeBase64(
-                        params.credentials.encryption.publicKey,
-                        'base64',
-                    ),
-                }
-                : {}),
-        });
-        return convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(
-            snapshot.contentPublicKeyFingerprint,
-        ) === params.accountCurrentness.contentKeyFingerprint
-            ? { kind: 'available', material }
-            : { kind: 'unavailable' };
-    } catch {
-        return { kind: 'unavailable' };
-    }
+    const snapshot = resolveCurrentAccountScopedCryptoMaterialSnapshot(params);
+    return snapshot ? { kind: 'available', material: snapshot.material } : { kind: 'unavailable' };
 }
 
 export type AutomationRunDetailRecipeInspection =

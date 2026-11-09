@@ -1,4 +1,6 @@
-import type { SessionMessageObservationFactsV1, SessionMessageV1 } from '@happier-dev/protocol';
+import { resolveLastViewedSessionSeq } from '@/sync/domains/session/readCursor/resolveLastViewedSessionSeq';
+import type { SessionMessageObservationFactsV1} from '@happier-dev/protocol/sessions';
+import type { SessionMessageV1 } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 import { storedSessionMessageAttentionImpact } from '@happier-dev/session-core/messages';
 import type { ApiUpdateContainer } from '@/sync/api/types/apiTypes';
 import {
@@ -55,6 +57,7 @@ export function buildCacheOnlyDurableMessageProjectionPatch(params: Readonly<{
             nextLatestReadyEventSeq: renderable.latestReadyEventSeq ?? null,
             readableActivity,
             previousHasUnreadMessages: renderable.hasUnreadMessages,
+            previousLastViewedSessionSeq: resolveLastViewedSessionSeq(renderable),
             recomputeUnread: attentionImpact.affectsUnread && messageSeq !== null,
         }),
     };

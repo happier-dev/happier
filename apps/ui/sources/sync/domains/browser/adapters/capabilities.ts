@@ -391,9 +391,12 @@ export function buildBrowserAdapterCapabilities(
         automationActions: buildBrowserAutomationActions(input, primaryEngine),
         // Structural capture support and live provider admission are separate: the annotation
         // controller still requires its bound producer before it can start or obtain pixels.
-        contextKinds: diagnosticsFidelityByFamily.screenshot
-            ? ['browserPageReference', 'browserScreenshot', 'browserAnnotation']
-            : ['browserPageReference'],
+        contextKinds: [
+            'browserPageReference',
+            ...(diagnosticsFidelityByFamily.screenshot ? ['browserScreenshot' as const, 'browserAnnotation' as const] : []),
+            ...(resolveBrowserInjectedDiagnosticsTransport({ adapterKind: input.adapterKind, engineKind: primaryEngine })
+                ? ['browserSelectedElement' as const] : []),
+        ],
         inputRouting: simulatorPreview || daemonNavigation
             ? 'pmsControlSideband'
             : primaryEngine === 'nativeWebView' || primaryEngine === 'desktopWebView' ? 'native' : 'none',

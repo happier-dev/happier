@@ -114,7 +114,9 @@ describe('captured UI ACP Agent Actions', () => {
         const inventory = await executor.execute('agents.backends.list', { includeDisabled: false }, context);
         if (!inventory.ok) throw new Error(JSON.stringify(inventory));
         expect(inventory).toMatchObject({ ok: true,
-            result: { items: expect.arrayContaining([expect.objectContaining({ backendId: 'row-review', label: 'Row review', enabled: true })]) } });
+            result: { items: expect.arrayContaining([expect.objectContaining({ backendId: 'row-review', label: 'Row review', enabled: true,
+                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.custom-acp', localId: 'custom-acp' }, definitionId: 'row-review' },
+            })]) } });
         expect(await executor.execute('agents.acp.backends.get', { backendId: 'row-review' }, context)).toMatchObject({ ok: true,
             result: { backend: expect.objectContaining(backend), revision: 1 } });
         // Deleting a custom agent is a danger Action: its UI confirmation policy asks before the Account catalog row is removed.

@@ -145,6 +145,67 @@ function fixture(
     };
 }
 
+it('publishes one scoped initial failure and recovers exact Artifact authority without withdrawing confirmed facts', async () => {
+    const data = fixture(true);
+    const store = createPluginAccountAvailabilityReaderStore();
+    const reader = store.bind(scope);
+    const otherReader = store.bind({ ...scope, accountId: 'another-account' });
+    const notifications = vi.fn();
+    const unsubscribe = reader.subscribe(notifications);
+    store.fail({ scope, code: 'plugin_availability_invalid_response' });
+    const failedObservation = reader.getObservationSnapshot();
+    expect(reader.readCurrentArtifact(slot)).toEqual({ kind: 'unavailable', code: 'plugin_availability_invalid_response' });
+    expect(otherReader.readCurrentArtifact(slot)).toEqual({ kind: 'unavailable', code: 'account_availability_not_loaded' });
+    expect(otherReader.getObservationSnapshot()).toBeNull();
+    for (let attempt = 0; attempt < 10; attempt++) store.fail({ scope, code: 'plugin_availability_invalid_response' });
+    expect(reader.getObservationSnapshot()).toBe(failedObservation);
+    expect(notifications).toHaveBeenCalledTimes(1);
+
+    store.replace({ scope, snapshot: data.snapshot });
+    const fetch = vi.fn(async () => data.bytesByPath);
+    const acquired = await acquirePluginSelectedArtifactLease({ reader, slot, accountLifetime: createLifetime(),
+        artifactGraph: data.graph, sources: [{ kind: 'daemon', fetch }] });
+    expect(acquired.kind).toBe('available');
+    if (acquired.kind !== 'available') throw new Error('Expected recovered exact Artifact lease');
+    try {
+        expect(await acquired.lease.readFile(data.graph.entry)).toMatchObject({ kind: 'available', bytes: data.bytesByPath.get(data.graph.entry) });
+        const confirmedObservation = reader.getObservationSnapshot();
+        store.fail({ scope, code: 'plugin_availability_invalid_response' });
+        expect(reader.getObservationSnapshot()).toBe(confirmedObservation);
+        expect(acquired.lease.isCurrent()).toBe(true);
+        expect(fetch).toHaveBeenCalledTimes(1);
+        expect(notifications).toHaveBeenCalledTimes(2);
+    } finally {
+        acquired.lease.dispose();
+        unsubscribe();
+    }
+    store.clear();
+    expect(reader.getObservationSnapshot()).toBeNull();
+    expect(reader.readCurrentArtifact(slot)).toEqual({ kind: 'unavailable', code: 'account_availability_not_loaded' });
+});
+
+it('publishes a failed first census atomically while retaining confirmed partial Artifact authority', async () => {
+    const data = fixture(true);
+    const store = createPluginAccountAvailabilityReaderStore();
+    const reader = store.bind(scope);
+    const controller = new AbortController();
+    const unknownSlot = { ...slot, pluginId: 'com.acme.unread' };
+    const pending = acquirePluginSelectedArtifactLease({ reader, slot: unknownSlot, accountLifetime: createLifetime(),
+        signal: controller.signal, artifactGraph: data.graph, sources: [] });
+    try {
+        store.replace({ scope, snapshot: data.snapshot, intentCensusIncomplete: true,
+            initialFailure: { scope, code: 'plugin_availability_invalid_response' } });
+        await expect(pending).resolves.toEqual({ kind: 'unavailable', code: 'plugin_availability_invalid_response' });
+        expect(reader.readCurrentArtifact(slot).kind).toBe('available');
+        expect(reader.readUiProjectionInputs()?.unavailableReasonCode).toBe('plugin_availability_invalid_response');
+        expect(reader.readMaterializations()).toMatchObject({ kind: 'available', availabilityCursor: 42 });
+        store.replace({ scope, snapshot: data.snapshot });
+        expect(reader.readCurrentArtifact(unknownSlot)).toEqual({ kind: 'unavailable', code: 'artifact_not_current' });
+        expect(reader.readUiProjectionInputs()?.unavailableReasonCode).toBeUndefined();
+        expect(reader.readCurrentArtifact(slot).kind).toBe('available');
+    } finally { controller.abort(); await pending; }
+});
+
 it('leases exact external archive bytes without Account selection and revokes them when that installation retires', async () => {
     const data = fixture(true);
     const release = data.snapshot.intentReads[0]!.response.release!;
@@ -233,6 +294,37 @@ function daemonResponse(record: ReturnType<typeof fixture>) {
 }
 
 describe('Artifact selected handle lease', () => {
+    it.each(['appExact', 'persistentCache', 'daemon', 'accountHosted'] as const)(
+        'hashes only external ingress when loading %s bytes, including a changed selected graph',
+        async (kind) => {
+            const current = fixture(true);
+            const refreshed = fixture(true, 43, undefined, undefined, slot.pluginId, '<p>Updated artifact</p>');
+            const store = createPluginAccountAvailabilityReaderStore();
+            const hashing = vi.spyOn(platformDigest, 'digest');
+            try {
+                for (const data of [current, current, refreshed]) {
+                    store.replace({ scope, snapshot: data.snapshot });
+                    const source = kind === 'persistentCache'
+                        ? persistentCustody(data).source
+                        : { kind, fetch: async () => data.bytesByPath };
+                    const acquired = await acquirePluginSelectedArtifactLease({
+                        reader: store.bind(scope), slot, artifactGraph: data.graph, sources: [source],
+                    });
+                    expect(acquired.kind).toBe('available');
+                    if (acquired.kind !== 'available') throw new Error('Expected selected Artifact lease');
+                    await expect(acquired.lease.readFile(data.graph.entry)).resolves.toMatchObject({
+                        kind: 'available', bytes: data.bytesByPath.get(data.graph.entry),
+                    });
+                    expect(acquired.lease.artifact.digest).toBe(data.graph.digest);
+                    acquired.lease.dispose();
+                }
+                // Two file digests and one file-set digest per actual external
+                // acquisition; app and previously verified device bytes need none.
+                expect(hashing).toHaveBeenCalledTimes(kind === 'appExact' || kind === 'persistentCache' ? 0 : 9);
+            } finally { hashing.mockRestore(); }
+        },
+    );
+
     it('completes hosted acquisition after local misses while the daemon boundary is held', async () => {
         const current = fixture(true);
         const store = createPluginAccountAvailabilityReaderStore();
@@ -353,7 +445,7 @@ describe('Artifact selected handle lease', () => {
                 },
                 slot,
                 artifactGraph: current.graph,
-                sources: [{ kind: 'appExact', fetch: async () => current.bytesByPath }],
+                sources: [{ kind: 'daemon', fetch: async () => current.bytesByPath }],
             });
             // Flush the acquisition's ordinary async source boundary. Hashing
             // itself remains pending at the genuine platform boundary.
@@ -969,10 +1061,10 @@ describe('Artifact selected handle lease', () => {
         });
     });
 
-    it('refuses a source whose files each verify but whose complete declared set does not', async () => {
+    it.each(['daemon', 'accountHosted'] as const)('refuses %s ingress whose files verify but whose complete declared set does not', async (kind) => {
         // Every per-file digest is canonical; only the artifact's whole-graph
         // digest disagrees with the bytes the source hands over.
-        const current = fixture(true, 42, null, `sha256:${'e'.repeat(64)}`);
+        const current = fixture(true, 42, undefined, `sha256:${'e'.repeat(64)}`);
         const store = createPluginAccountAvailabilityReaderStore();
         store.replace({ scope, snapshot: current.snapshot });
         const readFile = vi.fn(async () => current.bytesByPath);
@@ -981,7 +1073,7 @@ describe('Artifact selected handle lease', () => {
             reader: store.bind(scope),
             slot,
             artifactGraph: current.graph,
-            sources: [{ kind: 'appExact', fetch: readFile }],
+            sources: [{ kind, fetch: readFile }],
         })).resolves.toEqual({ kind: 'unavailable', code: 'artifact_source_integrity_invalid' });
         expect(readFile).toHaveBeenCalledTimes(1);
 
@@ -991,7 +1083,7 @@ describe('Artifact selected handle lease', () => {
         store.replace({ scope, snapshot: refreshed.snapshot });
         const recovered = await acquirePluginSelectedArtifactLease({
             reader: store.bind(scope), slot, artifactGraph: refreshed.graph,
-            sources: [{ kind: 'appExact', fetch: async () => refreshed.bytesByPath }],
+            sources: [{ kind, fetch: async () => refreshed.bytesByPath }],
         });
         expect(recovered.kind).toBe('available');
         if (recovered.kind !== 'available') throw new Error('Expected refreshed Artifact lease');
@@ -1086,9 +1178,9 @@ describe('Artifact selected handle lease', () => {
         expect(custody.removePersistentArtifact).not.toHaveBeenCalled();
     });
 
-    it('still deletes the exact retained entry whose declared file graph no longer verifies', async () => {
-        // Corruption is the lease-local deletion trigger the retirement rule
-        // deliberately keeps: these bytes can never satisfy the current digest.
+    it('loads retained verified bytes without rehashing or deleting them', async () => {
+        // Retained bytes are internal data admitted before persistence. Local
+        // modification is not a new server/daemon integrity boundary.
         const current = fixture(true);
         const custody = persistentCustody(current);
         const corrupted = Object.freeze({
@@ -1103,13 +1195,20 @@ describe('Artifact selected handle lease', () => {
         const store = createPluginAccountAvailabilityReaderStore();
         store.replace({ scope, snapshot: current.snapshot });
 
-        await expect(acquirePluginSelectedArtifactLease({
-            reader: store.bind(scope),
-            slot,
-            artifactGraph: current.graph,
-            sources: [corrupted],
-        })).resolves.toEqual({ kind: 'unavailable', code: 'artifact_source_integrity_invalid' });
-        expect(custody.removePersistentArtifact).toHaveBeenCalledTimes(1);
+        const hashing = vi.spyOn(platformDigest, 'digest');
+        try {
+            const acquired = await acquirePluginSelectedArtifactLease({
+                reader: store.bind(scope), slot, artifactGraph: current.graph, sources: [corrupted],
+            });
+            expect(hashing).toHaveBeenCalledTimes(0);
+            expect(acquired.kind).toBe('available');
+            if (acquired.kind !== 'available') throw new Error('Expected retained Artifact lease');
+            await expect(acquired.lease.readFile(current.graph.entry)).resolves.toMatchObject({
+                kind: 'available', bytes: new Uint8Array(current.bytesByPath.get(current.graph.entry)!.byteLength),
+            });
+            acquired.lease.dispose();
+            expect(custody.removePersistentArtifact).not.toHaveBeenCalled();
+        } finally { hashing.mockRestore(); }
     });
 
     it('keeps freshly persisted verified bytes when the projection withdraws during the write', async () => {

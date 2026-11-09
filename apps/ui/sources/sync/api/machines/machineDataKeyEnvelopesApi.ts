@@ -1,6 +1,7 @@
 import { MachineAccessRecipientCensusResponseV1Schema, MachineAccessRefusalV1Schema, MachineRecipientKeyEnvelopeCommitInputV1Schema, MachineRecipientKeyEnvelopeCommitResponseV1Schema, type MachineAccessRecipientCensusResponseV1, type MachineKeyPreparationResultV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { isMachineRetiredForKeyPreparationV1, MachineDataKeyPreparationErrorV1 } from '@happier-dev/protocol/machines/prepareMachineDataKeyEnvelopesV1';
 import { MachineContentKeyTransitionResultV1Schema, MachinePublishedRowV1Schema, type MachinePublishedRowV1 } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
+import { readAccountE2eeCustody } from '@/auth/storage/tokenStorage';
 import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
 import { computeMachineOwnerEnvelopeFingerprintV1 } from '@happier-dev/protocol/machines/machineOwnerEnvelopeFingerprintV1';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
@@ -82,10 +83,11 @@ export async function prepareMachineDataKeyEnvelopesForScope(params: Readonly<{
                         prepareContentKey: async () => {
                             preparedOwner = await encryption.prepareMachineContentKey({ machineId: params.machineId,
                                 custodianAccountId: authority.scope.accountId, isCurrent, signal: guard.signal,
+                                accountE2eeCustody: readAccountE2eeCustody(authority.context.credentials ?? { token: authority.context.token }),
                                 readAccountMode: async () => {
                                     guard.check();
                                     const result = await fetchAccountEncryptionMode(authority.context.credentials ?? { token: authority.context.token }, {
-                                        request: (path, init) => authority.request(path, { ...init, signal: guard.signal }),
+                                        request: authority.request, signal: guard.signal, usage: 'identity',
                                     });
                                     guard.check();
                                     if (!isCurrent()) throw new MachineDataKeyPreparationErrorV1('machine_key_changed');

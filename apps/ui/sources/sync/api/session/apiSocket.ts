@@ -47,6 +47,7 @@ import {
     type ServerFetchOptions,
 } from '@/sync/http/client';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import {
     areServerProfileIdentifiersEquivalent,
     getServerProfileById,
@@ -60,6 +61,7 @@ import {
     canonicalizeServerUrl,
 } from '@/sync/domains/server/url/serverUrlCanonical';
 import {
+    isRetryOfKnownFailure,
     type ManagedConnectionState,
     type ManagedConnectionSupervisor,
     type ManagedConnectionTransport,
@@ -92,7 +94,7 @@ import {
     withdrawMachinePresenceForScope,
     type MachineReachabilityScope,
 } from '@/sync/domains/machines/reachability/machineReachability';
-import { subscribeHomeCredentialChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { isHomeCredentialCurrent, subscribeHomeCredentialChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { userRequestLeaseOwner } from '@/sync/runtime/connectivity/userRequestLease';
 import { SERVER_PEER_LIVENESS_WINDOW_MS } from '@/sync/runtime/connectivity/serverReachabilityTuning';
 import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
@@ -146,6 +148,59 @@ function readMachineStorageModeFromLocalState(machineId: string): 'plain' | 'e2e
     } catch {
         return null;
     }
+}
+
+type StoredMachineRow = ReturnType<typeof storage.getState>['machines'][string] | undefined;
+
+function isSameMachinePublishedKey(captured: StoredMachineRow, current: StoredMachineRow): boolean {
+    return (captured?.dataEncryptionKey === undefined || current?.dataEncryptionKey === captured.dataEncryptionKey)
+        && (captured?.keyBasis?.dataEncryptionKey === undefined || current?.keyBasis?.dataEncryptionKey === captured.keyBasis.dataEncryptionKey);
+}
+
+/**
+ * Sync's canonical Machine list read opens each Machine's key. While that read is still loading
+ * and this Machine's key is not open yet, content (RPC or live stream) waits for the list rather
+ * than treating the missing key as absent. Settled locks, changed keys and missing keys after the
+ * list settles fall through to the caller's own fail-closed checks.
+ */
+function awaitMachineListHydration(input: Readonly<{
+    machineId: string;
+    serverId: string;
+    machine: StoredMachineRow;
+    encryption: Encryption;
+    signal?: AbortSignal;
+}>): Promise<void> {
+    const { machineId, serverId, machine, encryption, signal } = input;
+    const hydrationPending = () => {
+        const state = storage.getState();
+        const current = state.machines[machineId];
+        if (state.machineListStatusByServerId[serverId] !== 'loading' || !isSameMachinePublishedKey(machine, current)
+            || (current?.access && current.access.accessState !== 'ready')
+            || (current?.availability?.kind === 'locked' && current.availability.reason !== 'encryption_material_unavailable')) return false;
+        const mode = readMachineStorageModeFromLocalState(machineId);
+        return mode === null || (mode === 'e2ee' && !encryption.getMachineEncryption(machineId));
+    };
+    if (!hydrationPending()) return Promise.resolve();
+    return new Promise<void>((resolve, reject) => {
+        let unsubscribe = () => {};
+        const finish = () => {
+            unsubscribe();
+            signal?.removeEventListener('abort', check);
+        };
+        const check = () => {
+            if (signal?.aborted) {
+                finish();
+                reject(createSocketRpcAbortError());
+                return;
+            }
+            if (hydrationPending()) return;
+            finish();
+            resolve();
+        };
+        unsubscribe = storage.subscribe(check, { machines: [machineId], machineListStatusByServerId: [serverId] });
+        signal?.addEventListener('abort', check, { once: true });
+        check();
+    });
 }
 
 const GLOBAL_IN_FLIGHT_HTTP_REQUESTS_KEY = '__HAPPIER_GLOBAL_IN_FLIGHT_HTTP_REQUESTS_BY_KEY__';
@@ -282,6 +337,20 @@ type SyncSocketMessageHandler = (data: any, context: SyncSocketMessageContext) =
  */
 export type InboundMachineRpcHandler = (params: unknown, context?: Readonly<{ signal: AbortSignal }>) => Promise<unknown> | unknown;
 
+/** Sync's applied Machine content for one bound scoped RPC (see `captureBoundMachineRpcContent`). */
+export type BoundMachineRpcContent =
+    | Readonly<{ kind: 'locked' }>
+    | Readonly<{
+        kind: 'ready';
+        installationId: string | null;
+        installationPublicKey: string | null;
+        /** Read-admission sharing key parts: generation, mode and projected envelope identity. */
+        bindingKey: readonly unknown[];
+        readScope: readonly object[];
+        /** Binding, projection and cipher are all still the ones captured here. */
+        isCurrent: () => boolean;
+    } & ({ mode: 'plain'; cipher: null } | { mode: 'e2ee'; cipher: NonNullable<ReturnType<Encryption['getMachineEncryption']>> })>;
+
 //
 // Main Class
 //
@@ -324,6 +393,15 @@ class ApiSocket {
     private scopedConnectionSupervisor: ManagedConnectionSupervisor | null = null;
     private activeConnectionSupervisor: ManagedConnectionSupervisor | null = null;
     private detachSocketTransportListeners: Array<() => void> = [];
+    /**
+     * An intentional visibility pause is our own choice to stop listening, not a transport, Account or auth loss:
+     * retained Machine presence and the admitted Account mode stay until fresh transport revalidates them.
+     */
+    private visibilityPauseOnDetach = false;
+    /** A paused user-scoped transport without an observation revalidates the Account mode on its next connect. */
+    private accountModeRevalidationOnConnect = false;
+    /** Sockets whose own (possibly async) disconnect notification belongs to an intentional pause. */
+    private readonly pausedSockets = new WeakSet<object>();
     // Inbound machine-scoped reverse-RPC handlers, keyed by the FULL prefixed method
     // (`<machineId>:<method>`). The daemon for `<machineId>` calls this method over its machine
     // socket; the server forwards it to whichever client joined the matching rpc room. Registering
@@ -357,6 +435,9 @@ class ApiSocket {
         if (!this.config) {
             return;
         }
+        // A Home whose Account left never reconnects on the credential it left with;
+        // the connection owner re-initializes this socket for the Home's current one.
+        if (!this.isConfiguredCredentialRetained()) return;
         // Intentional disconnect cancels issued HTTP reads. Reconnecting the
         // same prepared Home admits new reads without reviving those requests.
         if (this.requestConfigurationAbortController.signal.aborted) {
@@ -500,12 +581,15 @@ class ApiSocket {
         });
     }
 
-    disconnect(options?: Readonly<{ preserveHttpRequests?: boolean }>) {
+    disconnect(options?: Readonly<{ preserveHttpRequests?: boolean; visibilityPause?: boolean }>) {
+        this.visibilityPauseOnDetach = options?.visibilityPause === true;
+        if (this.visibilityPauseOnDetach && this.socketTransport) this.pausedSockets.add(this.socketTransport);
         if (this.accountEncryptionObservation) {
-            this.accountEncryptionObservation.dispose('transport-withdrawal');
+            this.accountEncryptionObservation.dispose('transport-withdrawal', { retainAdmitted: this.visibilityPauseOnDetach });
             this.accountEncryptionObservation = null;
         } else if (this.socketClientType === 'user-scoped') {
-            invalidateAccountEncryptionModeCache({ serverId: this.config?.serverId, reason: 'transport-withdrawal' });
+            if (this.visibilityPauseOnDetach) this.accountModeRevalidationOnConnect = true;
+            else invalidateAccountEncryptionModeCache({ serverId: this.config?.serverId, reason: 'transport-withdrawal' });
         }
         const scopedSupervisor = this.scopedConnectionSupervisor;
         this.scopedConnectionSupervisor = null;
@@ -531,14 +615,14 @@ class ApiSocket {
         // Reset these flags so the next successful connect becomes a new baseline (no onReconnected callback).
         this.hasConnectedOnce = false;
         this.pendingReconnectNotification = false;
-        for (const detach of this.detachSocketTransportListeners.splice(0)) {
-            detach();
-        }
+        for (const detach of this.detachSocketTransportListeners.splice(0)) detach();
         const transport = this.socketTransport;
         this.socketTransport = null;
         this.socketTransportKey = null;
+        // The transport's own disconnect notification is part of this intentional pause.
         void transport?.disconnect({ intentional: true });
         void transport?.destroy();
+        this.visibilityPauseOnDetach = false;
         this.socket = null;
         this.socketClientType = null;
         // Unsubscribing above means the supervisor's own teardown state can no longer reach our listeners, so the
@@ -705,6 +789,74 @@ class ApiSocket {
         }
     }
 
+    /** Sync's push-maintained Machine content selection, captured once per RPC. */
+    private captureProjectedMachineContent(machineId: string) {
+        const usePlaintextParams = readMachineStorageModeFromLocalState(machineId) === 'plain';
+        const machineEncryption = usePlaintextParams
+            ? null
+            : this.encryption?.getMachineEncryption(machineId) ?? null;
+        const capturedMachine = storage.getState().machines[machineId];
+        const capturedEncryption = this.encryption;
+        const isMachineCurrent = () => {
+            const current = storage.getState().machines[machineId];
+            if (current?.availability?.kind === 'locked' || (current?.access && current.access.accessState !== 'ready')) return false;
+            if (current?.dataEncryptionKey !== capturedMachine?.dataEncryptionKey || current?.keyBasis?.dataEncryptionKey !== capturedMachine?.keyBasis?.dataEncryptionKey) return false;
+            return this.encryption === capturedEncryption && (usePlaintextParams
+                ? readMachineStorageModeFromLocalState(machineId) === 'plain'
+                : capturedEncryption?.getMachineEncryption(machineId) === machineEncryption);
+        };
+        return { usePlaintextParams, machineEncryption, capturedMachine, capturedEncryption, isMachineCurrent };
+    }
+
+    /**
+     * Sync's projected content for a scoped Machine RPC whose Home, Account and credential are
+     * exactly this applied Account runtime. `null`: the caller is not that binding, or Sync holds
+     * no projection it can vouch for (absent, Runner, key not yet opened), so the caller reads the
+     * Home row. `locked`: Sync refused this Machine (lock, downgrade pin, non-ready access); the
+     * caller refuses and never re-reads the row, which the same Home serves.
+     */
+    captureBoundMachineRpcContent(
+        binding: Readonly<{ serverId: string; accountId: string | undefined; credentials: AuthCredentials }>,
+        machineId: string,
+    ): BoundMachineRpcContent | null {
+        const config = this.config;
+        const serverId = config?.serverId;
+        if (!config || !serverId || config.request || config.generation === undefined || config.isCurrent?.() === false) return null;
+        const capturedToken = config.token;
+        const controller = this.requestConfigurationAbortController;
+        const isBindingCurrent = () => {
+            const applied = getAppliedActiveServerSnapshot();
+            return this.config === config && config.token === capturedToken
+                && this.requestConfigurationAbortController === controller && !controller.signal.aborted
+                && isAppliedActiveServerRuntimeAvailable()
+                && areServerProfileIdentifiersEquivalent(applied.serverId, serverId) && applied.generation === config.generation;
+        };
+        if (!isBindingCurrent() || !areServerProfileIdentifiersEquivalent(binding.serverId, serverId)) return null;
+        let accountId: string;
+        try { accountId = parseToken(config.token); } catch { return null; }
+        if (!binding.accountId || binding.accountId !== accountId
+            || resolveAuthCredentialsScopeKey(binding.credentials) !== resolveAuthCredentialsScopeKey({ ...config.credentials, token: config.token })) {
+            return null;
+        }
+        const machine = storage.getState().machines[machineId];
+        // Runner key bindings are not projected; those rows keep the exact row read.
+        if (!machine || machine.kind === 'ephemeral_session_runner') return null;
+        const projected = this.captureProjectedMachineContent(machineId);
+        if (!projected.isMachineCurrent()) return { kind: 'locked' };
+        const isCurrent = () => isBindingCurrent() && projected.isMachineCurrent();
+        const shared = {
+            kind: 'ready' as const,
+            installationId: machine.installationId ?? null,
+            installationPublicKey: machine.installationPublicKey ?? null,
+            bindingKey: [config.generation, projected.usePlaintextParams ? 'plain' : 'e2ee',
+                machine.dataEncryptionKey ?? null, machine.keyBasis?.dataEncryptionKey ?? null],
+            readScope: [controller, projected.capturedEncryption?.getMachineEncryptionContext(machineId) ?? machine],
+            isCurrent,
+        };
+        if (projected.usePlaintextParams) return { ...shared, mode: 'plain', cipher: null };
+        return projected.machineEncryption ? { ...shared, mode: 'e2ee', cipher: projected.machineEncryption } : null;
+    }
+
     /**
      * RPC call for machines using the Machine's persisted content mode.
      */
@@ -722,6 +874,10 @@ class ApiSocket {
             requestId?: string;
             readAdmission?: MachineRpcReadAdmission;
             decodeResult?: (raw: unknown) => R;
+            /** Reports the content mode this exact call is sealed with. */
+            onContentMode?: (mode: 'plain' | 'e2ee') => void;
+            /** The Account the caller named; this socket sends only while it still serves that Account. */
+            accountId?: string;
         },
     ): Promise<R> {
         const releaseRequestLease = userRequestLeaseOwner.acquire();
@@ -729,32 +885,38 @@ class ApiSocket {
         try {
             if (options?.signal?.aborted) throw createSocketRpcAbortError();
             if (this.getSessionScopedTarget()) throw new Error('Machine RPC is unavailable to a Session-scoped viewer');
-            const usePlaintextParams =
-                readMachineStorageModeFromLocalState(machineId) === 'plain';
-            const machineEncryption = usePlaintextParams
-                ? null
-                : this.encryption?.getMachineEncryption(machineId) ?? null;
-            const capturedMachine = storage.getState().machines[machineId];
-            const capturedEncryption = this.encryption;
-            const isMachineCurrent = () => {
-                const current = storage.getState().machines[machineId];
-                if (current?.availability?.kind === 'locked' || (current?.access && current.access.accessState !== 'ready')) return false;
-                if (current?.dataEncryptionKey !== capturedMachine?.dataEncryptionKey || current?.keyBasis?.dataEncryptionKey !== capturedMachine?.keyBasis?.dataEncryptionKey) return false;
-                return this.encryption === capturedEncryption && (usePlaintextParams
-                    ? readMachineStorageModeFromLocalState(machineId) === 'plain'
-                    : capturedEncryption?.getMachineEncryption(machineId) === machineEncryption);
-            };
+            // Early RPCs (a Project favicon at first paint) can arrive while Sync's Machine list is
+            // still opening keys. Wait for that read on this socket instead of reporting the key
+            // missing, which would send the caller to a second, scoped connection to the same Home.
+            const hydratingEncryption = this.encryption;
+            if (hydratingEncryption && this.config) {
+                await awaitMachineListHydration({
+                    machineId,
+                    serverId: resolveServerProfileScopeIdForIdentifier(this.config.serverId ?? getActiveServerSnapshot().serverId),
+                    machine: storage.getState().machines[machineId],
+                    encryption: hydratingEncryption,
+                    signal: options?.signal,
+                });
+            }
+            if (options?.accountId !== undefined && this.getMachineRequestScope()?.accountId !== options.accountId) {
+                // The socket switched Account between selection and send: refuse unsent, never
+                // deliver this Account's request through another Account's connection.
+                throw createRpcCallError({ error: 'Machine RPC Account changed before send', errorCode: 'MACHINE_ENCRYPTION_UNAVAILABLE' });
+            }
+            const { usePlaintextParams, machineEncryption, capturedMachine, capturedEncryption, isMachineCurrent } =
+                this.captureProjectedMachineContent(machineId);
             if (!isMachineCurrent()) throw createRpcCallError({ error: `Machine encryption not found for ${machineId}`, errorCode: 'MACHINE_ENCRYPTION_UNAVAILABLE' });
             if (!usePlaintextParams && !machineEncryption) {
                 throw createRpcCallError({ error: `Machine encryption not found for ${machineId}`, errorCode: 'MACHINE_ENCRYPTION_UNAVAILABLE' });
             }
+            options?.onContentMode?.(usePlaintextParams ? 'plain' : 'e2ee');
             const socket = this.requireRpcSocket();
             const config = this.config;
             if (!config) throw createNotAuthenticatedError();
             const controller = this.requestConfigurationAbortController;
             const capturedToken = config.token;
             const machineContext = capturedEncryption?.getMachineEncryptionContext(machineId) ?? capturedMachine ?? config;
-            const { readAdmission, decodeResult, ...rpcOptions } = options ?? {};
+            const { readAdmission, decodeResult, onContentMode: _onContentMode, accountId: _accountId, ...rpcOptions } = options ?? {};
             const assertCurrent = () => {
                 if (this.config !== config || config.token !== capturedToken || this.requestConfigurationAbortController !== controller || controller.signal.aborted
                     || !isMachineCurrent()) throw new StaleServerGenerationError();
@@ -788,7 +950,7 @@ class ApiSocket {
                 ...rpcOptions,
                 signal: sharedSignal,
                 onIssued: () => {
-                    if (!isMachineCurrent()) throw new Error(`Machine encryption context changed for ${machineId}`);
+                    if (!isMachineCurrent()) throw createRpcCallError({ error: `Machine encryption context changed for ${machineId}`, errorCode: 'MACHINE_ENCRYPTION_UNAVAILABLE' });
                     options?.onIssued?.();
                 },
                 }),
@@ -1383,6 +1545,13 @@ class ApiSocket {
         }
     }
 
+    /** The Account socket's credential is still the one its Home holds (a same-Account refresh is). */
+    private isConfiguredCredentialRetained(): boolean {
+        const config = this.config;
+        if (!config || config.request || !config.serverId || !config.credentials) return true;
+        return isHomeCredentialCurrent(config.serverId, { ...config.credentials, token: config.token });
+    }
+
     private handleReachabilityStateChange(state: ManagedConnectionState): void {
         if (!this.config) {
             return;
@@ -1399,6 +1568,7 @@ class ApiSocket {
             return;
         }
 
+        if (!this.isConfiguredCredentialRetained()) return;
         const previousTransport = this.socketTransport;
         try {
             if (this.activeConnectionSupervisor) this.ensureSocketTransport();
@@ -1427,7 +1597,9 @@ class ApiSocket {
                 onStateChange: (socketState) => {
                     if (this.activeConnectionSupervisor !== supervisor || this.config !== config || config.isCurrent?.() === false) return;
                     if (socketState.lastErrorMessage) this.setError(new Error(socketState.lastErrorMessage));
-                    if (socketState.phase === 'connecting') this.updateStatus('connecting');
+                    if (socketState.phase === 'connecting') {
+                        if (!isRetryOfKnownFailure(socketState, this.currentStatus === 'disconnected')) this.updateStatus('connecting');
+                    }
                     else if (socketState.phase === 'online') this.updateStatus('connected');
                     else this.updateStatus(socketState.phase === 'auth_failed' ? 'error' : 'disconnected');
                 },
@@ -1546,7 +1718,7 @@ class ApiSocket {
             detachInboundRequests,
             // Replacement/backgrounding retires observation of this captured
             // scope even when the transport's disconnect listener is detached.
-            () => { if (machineRequestScope) withdrawMachinePresenceForScope(machineRequestScope); },
+            () => { if (machineRequestScope && !this.visibilityPauseOnDetach) withdrawMachinePresenceForScope(machineRequestScope); },
             ...(accountScoped ? [attachManagedSessionHumanPresenceSocket({
                 serverId: this.config.serverId ?? getActiveServerSnapshot().serverId,
                 token: this.config.token, socket, transport,
@@ -1562,7 +1734,11 @@ class ApiSocket {
             })] : []),
             transport.onConnected(() => {
                 if (this.socket !== socket || this.config !== transportConfig || transportConfig?.isCurrent?.() === false) return;
-                accountEncryptionObservation?.connected();
+                if (accountEncryptionObservation) accountEncryptionObservation.connected();
+                else if (accountScoped && this.accountModeRevalidationOnConnect) {
+                    invalidateAccountEncryptionModeCache({ serverId: transportConfig.serverId, reason: 'transport-withdrawal' });
+                }
+                this.accountModeRevalidationOnConnect = false;
                 this.clearError();
                 this.updateStatus('connected');
                 if (machineRequestScope) clearMachineRequestReachabilityForScope(machineRequestScope);
@@ -1583,9 +1759,13 @@ class ApiSocket {
             }),
             transport.onDisconnected((event: TransportDisconnectEvent) => {
                 if (this.socket !== socket || this.config !== transportConfig || transportConfig?.isCurrent?.() === false) return;
-                if (machineRequestScope) withdrawMachinePresenceForScope(machineRequestScope);
-                if (accountEncryptionObservation) accountEncryptionObservation.disconnected();
-                else if (accountScoped) invalidateAccountEncryptionModeCache({ serverId: transportConfig.serverId, reason: 'transport-withdrawal' });
+                const visibilityPause = this.visibilityPauseOnDetach || this.pausedSockets.has(transport);
+                if (machineRequestScope && !visibilityPause) withdrawMachinePresenceForScope(machineRequestScope);
+                // A paused transport keeps the admitted Account mode; the next transport's connected() revalidates it.
+                if (!visibilityPause) {
+                    if (accountEncryptionObservation) accountEncryptionObservation.disconnected();
+                    else if (accountScoped) invalidateAccountEncryptionModeCache({ serverId: transportConfig.serverId, reason: 'transport-withdrawal' });
+                }
                 if (!event.intentional && event.reason === 'io server disconnect' && transportConfig?.request) {
                     // Revocation and expiry are server-forced disconnects, not transient transport loss.
                     const supervisor = this.scopedConnectionSupervisor;
@@ -1644,44 +1824,13 @@ class ApiSocket {
                         && readMachineStorageModeFromLocalState(machineId) === initialMode };
                 const serverId = resolveServerProfileScopeIdForIdentifier(installedConfig.serverId ?? getActiveServerSnapshot().serverId);
                 const machine = storage.getState().machines[machineId];
-                const samePublishedKey = () => {
-                    const current = storage.getState().machines[machineId];
-                    return (machine?.dataEncryptionKey === undefined || current?.dataEncryptionKey === machine.dataEncryptionKey)
-                        && (machine?.keyBasis?.dataEncryptionKey === undefined || current?.keyBasis?.dataEncryptionKey === machine.keyBasis.dataEncryptionKey);
-                };
-                const hydrationPending = () => {
-                    const state = storage.getState();
-                    const current = state.machines[machineId];
-                    if (state.machineListStatusByServerId[serverId] !== 'loading' || !samePublishedKey()
-                        || (current?.access && current.access.accessState !== 'ready')
-                        || (current?.availability?.kind === 'locked' && current.availability.reason !== 'encryption_material_unavailable')) return false;
-                    const mode = readMachineStorageModeFromLocalState(machineId);
-                    return mode === null || (mode === 'e2ee' && !encryption?.getMachineEncryption(machineId));
-                };
+                const samePublishedKey = () => isSameMachinePublishedKey(machine, storage.getState().machines[machineId]);
                 // A display shell can still carry its pre-hydration missing-material lock, or a
                 // retained availability fact without this process's cipher. Await the canonical
                 // list read before admitting content; settled locks and missing keys fail closed.
-                if (encryption && hydrationPending()) {
-                    await new Promise<void>((resolve, reject) => {
-                        let unsubscribe = () => {};
-                        const finish = () => {
-                            unsubscribe();
-                            liveStreamLifetime.signal.removeEventListener('abort', check);
-                        };
-                        const check = () => {
-                            if (liveStreamLifetime.signal.aborted) {
-                                finish();
-                                reject(new MachineLiveStreamPayloadErrorV1('stream_transport_unavailable'));
-                                return;
-                            }
-                            if (hydrationPending()) return;
-                            finish();
-                            resolve();
-                        };
-                        unsubscribe = storage.subscribe(check);
-                        liveStreamLifetime.signal.addEventListener('abort', check, { once: true });
-                        check();
-                    });
+                if (encryption) {
+                    await awaitMachineListHydration({ machineId, serverId, machine, encryption, signal: liveStreamLifetime.signal })
+                        .catch(() => { throw new MachineLiveStreamPayloadErrorV1('stream_transport_unavailable'); });
                 }
                 if (liveStreamLifetime.signal.aborted || this.socket !== socket || this.config !== installedConfig
                     || this.encryption !== encryption || installedConfig.isCurrent?.() === false) {
@@ -1707,6 +1856,7 @@ class ApiSocket {
                     machineId, targetServerId: serverId, targetServerUrl: installedConfig.endpoint,
                     targetAccountId: parseToken(installedConfig.token), token: installedConfig.token,
                     credentials, encryption, runtimeOrigin: installedConfig.runtimeOrigin,
+                    accountEncryptionObservation: this.getAccountEncryptionObservationBinding(credentials) ?? undefined,
                     homeCarrier: installedConfig.homeCarrier ?? undefined,
                     ...(!installedConfig.request && installedConfig.credentials && installedConfig.serverId
                         && typeof installedConfig.generation === 'number' ? {
@@ -1902,7 +2052,7 @@ class ApiSocket {
         }
         switch (state.phase) {
             case 'connecting':
-                this.updateStatus('connecting');
+                if (!isRetryOfKnownFailure(state, this.currentStatus === 'disconnected')) this.updateStatus('connecting');
                 return;
             case 'auth_failed':
                 if (this.socketClientType === 'user-scoped') {

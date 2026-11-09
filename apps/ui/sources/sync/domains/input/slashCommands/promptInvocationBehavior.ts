@@ -1,4 +1,4 @@
-import type { PromptInvocationBehaviorV1 } from '@happier-dev/protocol';
+import type { PromptInvocationBehaviorV1 } from '@happier-dev/protocol/prompts/library/promptInvocationsV1';
 
 export function resolvePromptInvocationComposerSendAction(
     behavior: PromptInvocationBehaviorV1,

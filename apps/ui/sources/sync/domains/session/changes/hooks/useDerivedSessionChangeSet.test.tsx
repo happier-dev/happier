@@ -189,7 +189,6 @@ describe('useDerivedSessionChangeSet', () => {
             const files = useChangedFilesData({
                 sessionId: 'session_1',
                 scmSnapshot: null,
-                workspaceTouchedPaths: [],
                 searchQuery: '',
                 showAllRepositoryFiles: false,
                 latestTurnId: derived.latestTurnId,

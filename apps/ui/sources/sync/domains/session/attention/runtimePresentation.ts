@@ -52,8 +52,8 @@ export type SessionRuntimePresentationInput = Readonly<{
     nowMs?: number;
 }>;
 
-export type SessionRuntimePresentationState = import('@happier-dev/protocol').SessionAwarenessRuntimeFactsV1 & Readonly<{
-    operational: import('@happier-dev/protocol').SessionAwarenessProjectionV1['operational'];
+export type SessionRuntimePresentationState = import('@happier-dev/protocol/sessions/awareness/runtime').SessionAwarenessRuntimeFactsV1 & Readonly<{
+    operational: import('@happier-dev/protocol/sessions/awareness/projectionV1').SessionAwarenessProjectionV1['operational'];
 }>;
 
 export type SessionRuntimePresenceFields = Readonly<{

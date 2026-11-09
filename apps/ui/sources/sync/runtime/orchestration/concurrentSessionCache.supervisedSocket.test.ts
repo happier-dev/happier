@@ -1,14 +1,17 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createConcurrentCacheNetworkHarness } from '@/dev/testkit/harness/concurrentCacheNetworkHarness';
-import { subscribeHomeCredentialMutations } from '@/auth/storage/tokenStorage';
-import { subscribeHomeAccountChange } from './homeAccountChange';
-import * as routes from '@/sync/domains/transfers/runtime/transferRouteCache';
-import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
-import { readSessionListRowsForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 
 const h = await createConcurrentCacheNetworkHarness('cache-supervised');
+// Install the shared HTTP/Socket boundary before loading its runtime consumers.
+const { subscribeHomeCredentialMutations } = await import('@/auth/storage/tokenStorage');
+const { subscribeHomeAccountChange } = await import('./homeAccountChange');
+const routes = await import('@/sync/domains/transfers/runtime/transferRouteCache');
+const { createSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+const { readSessionListRowsForServerId } = await import('@/sync/domains/session/listing/sessionListRowStateLookup');
+const { readBoardSessionSourceState } = await import('@/components/boards/model/boardEntityBinding');
+const { observeUsageProjection } = await import('@/sync/api/account/usageQueryInvalidation');
 const observation = () => h.storage.getState().concurrentSessionListCacheByServerId[h.homeB.id]?.listObservation;
 const status = () => h.storage.getState().machineListStatusByServerId[h.homeB.id];
 const rows = () => h.storage.getState().sessionListRowsByServerId[h.homeB.id];
@@ -41,6 +44,80 @@ function observePeriodicClock() {
 }
 
 describe('concurrent session cache supervised sockets', () => {
+    it('observes a visibly demanded unselected Home without inventory reads and releases its connection with the last observer', async () => {
+        const observer = vi.fn();
+        const release = subscribeHomeAccountChange(observer, { serverIds: [h.homeC.id] });
+        disposers.push(release);
+        const sourceObserver = vi.fn();
+        const releaseSource = subscribeHomeAccountChange(sourceObserver, {
+            serverIds: [h.homeC.id], usageSourcesMachineIds: ['observed-source-machine'],
+        });
+        disposers.push(releaseSource);
+        await h.start(); await h.ready();
+        await vi.waitFor(() => expect(h.network.socketBoundaries.some(socket => socket.serverUrl === h.homeC.serverUrl)).toBe(true));
+        const socket = h.socket(h.homeC);
+        expect(socket.token).toBe(h.homeC.token);
+        expect(h.isConcurrentOrdinarySessionListHome(h.homeC.id)).toBe(false);
+        expect(h.httpRequests.filter(({ url }) => url.origin === h.homeC.serverUrl && ['/v2/sessions', '/v1/machines'].includes(url.pathname))).toHaveLength(0);
+        observer.mockClear();
+        sourceObserver.mockClear();
+        socket.trigger('ephemeral', { type: 'usage-sources-invalidated', machineId: 'observed-source-machine', installationId: 'source-installation' });
+        expect(sourceObserver).toHaveBeenCalledTimes(1);
+        expect(sourceObserver).toHaveBeenLastCalledWith(expect.objectContaining({
+            serverId: h.homeC.id, usageSourcesMachineIds: ['observed-source-machine'],
+        }));
+        releaseSource();
+        socket.trigger('update', { id: 'approval-change', seq: 1, createdAt: 1, body: {
+            t: 'account-change', cursor: 1, entityIds: ['/v1/auth/home-login/approvals'], changeKinds: ['account'], sessionSystemRecords: [],
+        } });
+        expect(observer).toHaveBeenCalledWith(expect.objectContaining({ serverId: h.homeC.id }));
+        socket.trigger('connect');
+        expect(observer).toHaveBeenLastCalledWith(expect.objectContaining({ serverId: h.homeC.id, source: 'connected' }));
+        const secondRelease = subscribeHomeAccountChange(() => {}, { serverIds: [h.homeC.id] });
+        disposers.push(secondRelease);
+        release();
+        await new Promise(resolve => setTimeout(resolve, 25));
+        expect(socket.socket.connected).toBe(true);
+        secondRelease();
+        await vi.waitFor(() => expect(socket.socket.connected).toBe(false));
+        expect(h.socket(h.homeB).socket.connected).toBe(true);
+    });
+    it('upgrades and downgrades visible Home demand on the incumbent connection without idle inventory reads', async () => {
+        await h.select([h.homeA.id]);
+        vi.useFakeTimers();
+        const clock = observePeriodicClock();
+        try {
+            h.startConcurrentSessionCacheSync();
+            await vi.advanceTimersByTimeAsync(1);
+            const release = subscribeHomeAccountChange(() => {}, { serverIds: [h.homeC.id] });
+            disposers.push(release);
+            await vi.waitFor(() => expect(h.network.socketBoundaries.some(socket => socket.serverUrl === h.homeC.serverUrl)).toBe(true));
+            const socket = h.socket(h.homeC);
+            await vi.advanceTimersByTimeAsync(300_000);
+            expect(h.requests('/v2/sessions')).toHaveLength(0);
+            expect(h.requests('/v1/machines')).toHaveLength(0);
+            expect(clock.fires).not.toHaveBeenCalled();
+
+            await h.select([h.homeA.id, h.homeC.id]);
+            await h.ready(h.homeC);
+            expect(h.isConcurrentOrdinarySessionListHome(h.homeC.id)).toBe(true);
+            expect(h.socket(h.homeC)).toBe(socket);
+            await h.select([h.homeA.id]);
+            await vi.waitFor(() => expect(h.isConcurrentOrdinarySessionListHome(h.homeC.id)).toBe(false));
+            expect(h.socket(h.homeC)).toBe(socket);
+            expect(socket.socket.connected).toBe(true);
+            const reads = h.httpRequests.length;
+            await vi.advanceTimersByTimeAsync(300_000);
+            expect(h.httpRequests).toHaveLength(reads);
+            release();
+            await vi.waitFor(() => expect(socket.socket.connected).toBe(false));
+        } finally {
+            h.stopConcurrentSessionCacheSync();
+            clock.scheduled.mockRestore();
+            vi.useRealTimers();
+        }
+    });
+
     it('owns no periodic refresh timer or network when no secondary Home is selected', async () => {
         await h.select([h.homeA.id]);
         vi.useFakeTimers();
@@ -82,7 +159,7 @@ describe('concurrent session cache supervised sockets', () => {
                 return Response.json({ sessions: [h.session({ id: 'late-retired' })], nextCursor: null, hasNext: false });
             });
             await vi.advanceTimersByTimeAsync(refreshPeriodMs);
-            expect(releaseLate).toBeTypeOf('function');
+            await vi.waitFor(() => expect(releaseLate).toBeTypeOf('function'));
             await h.select([h.homeA.id]);
             await vi.advanceTimersByTimeAsync(1);
             expect(signal?.aborted).toBe(true);
@@ -273,6 +350,9 @@ describe('concurrent session cache supervised sockets', () => {
         await h.start();
         await vi.waitFor(() => expect(h.pool.peekServerReachabilityState(h.homeB.serverUrl, h.homeB.token)?.phase).toBe('auth_failed'));
         expect(status()).toBe('signedOut');
+        expect(readBoardSessionSourceState(h.storage.getState(), {
+            kind: 'session', qualifiedId: { serverId: h.homeB.id, id: 'unreadable-session' },
+        })).toBe('failed');
         expect(h.pool.peekServerReachabilityState(h.homeB.serverUrl, 'unrelated-token')).toBeNull();
     });
 
@@ -306,7 +386,9 @@ describe('concurrent session cache supervised sockets', () => {
         h.setResponder(async input => new URL(String(input)).pathname === '/v2/sessions'
             ? Response.json({ error: 'Unavailable' }, { status: 503 }) : null);
         sessionUpdate();
-        await vi.waitFor(() => expect(observation()).toEqual({ phase: 'error', lastSuccessAt: successAt, failure: { reason: 'response', code: null } }));
+        await vi.waitFor(() => expect(observation()).toEqual({
+            phase: 'error', lastSuccessAt: successAt, failure: { reason: 'response', code: null },
+        }));
         expect(phases.slice(0, 2)).toEqual(['loading', 'ready']);
         expect(phases.slice(-2)).toEqual(['refreshing', 'error']);
         expect(phases.slice(1)).not.toContain('loading');
@@ -467,12 +549,30 @@ describe('concurrent session cache supervised sockets', () => {
         const machineReads = h.requests('/v1/machines').length;
         const socket = h.socket();
         socket.trigger('update', { id: 'account-1', seq: 11, createdAt: 11, body: { t: 'update-account', settings: { value: 'encrypted', version: 2 } } });
-        expect(observer).toHaveBeenLastCalledWith({ serverId: h.homeB.id, accountSettingsAffects: true });
-        socket.trigger('ephemeral', { type: 'usage', id: sessionId, key: 'codex:model', tokens: { total: 1 }, cost: { total: 0 }, timestamp: 1000 });
-        expect(observer).toHaveBeenLastCalledWith({ serverId: h.homeB.id, entityIds: ['provider-account-usage'], accountSettingsAffects: true });
+        expect(observer).toHaveBeenLastCalledWith(expect.objectContaining({ serverId: h.homeB.id, accountSettingsAffects: true }));
+        let quotaReads = 0;
+        const quota = observeUsageProjection({ serverId: h.homeB.id, initialReadCompleted: true,
+            read: async () => { quotaReads++; }, busy: () => false, nextReadAtMs: () => Number.POSITIVE_INFINITY });
+        disposers.push(() => quota.dispose());
+        const accountingChange = sessionId === null ? { sessionId } : { sessionId, observedFromMs: 900 };
+        socket.trigger('ephemeral', { type: 'usage', id: sessionId, key: 'codex:model', tokens: { total: 1 }, cost: { total: 0 }, timestamp: 1000,
+            accountingChange });
+        expect.soft(quotaReads, 'Accounting is not a Provider allowance change').toBe(0);
+        expect(observer).toHaveBeenLastCalledWith(expect.objectContaining({ serverId: h.homeB.id, entityIds: [], usageQueryAffects: true,
+            usageAccountingChange: accountingChange,
+            accountSettingsAffects: false, profileCatalogAffects: false, sessionListQueryAffects: false,
+            discussionAffects: false, savedSecretCatalogAffects: false }));
         socket.trigger('ephemeral', { type: 'usage-sources-invalidated', machineId: 'machine-b', installationId: 'installation-b' });
         expect(observer).toHaveBeenCalledTimes(3);
-        expect(observer).toHaveBeenLastCalledWith({ serverId: h.homeB.id, entityIds: ['provider-account-usage'], accountSettingsAffects: true });
+        expect.soft(quotaReads, 'Capture invalidation is not a Provider allowance change').toBe(0);
+        expect(observer).toHaveBeenLastCalledWith(expect.objectContaining({ serverId: h.homeB.id, entityIds: [], usageQueryAffects: true,
+            usageSourcesMachineIds: ['machine-b'],
+            accountSettingsAffects: false, profileCatalogAffects: false, sessionListQueryAffects: false,
+            discussionAffects: false, savedSecretCatalogAffects: false }));
+        socket.trigger('update', { id: 'quota-change', seq: 12, createdAt: 12, body: {
+            t: 'account-change', cursor: 12, changeKinds: ['account'], entityIds: ['provider-account-usage'], sessionSystemRecords: [],
+        } });
+        expect(quotaReads, 'The real dedicated quota key still acquires').toBe(1);
         expect(h.requests('/v2/sessions')).toHaveLength(sessionReads);
         expect(h.requests('/v1/machines')).toHaveLength(machineReads);
     });
@@ -487,11 +587,11 @@ describe('concurrent session cache supervised sockets', () => {
     it('invalidates exact-Home Account projections when a secondary socket reconnects', async () => {
         const observer = observeAccountChanges();
         await h.start(); await h.ready();
-        expect(observer).toHaveBeenLastCalledWith({ serverId: h.homeB.id, source: 'connected', accountSettingsAffects: true });
+        expect(observer).toHaveBeenLastCalledWith(expect.objectContaining({ serverId: h.homeB.id, source: 'connected', accountSettingsAffects: true }));
         observer.mockClear();
         h.socket().trigger('connect');
         expect(observer).toHaveBeenCalledTimes(1);
-        expect(observer).toHaveBeenCalledWith({ serverId: h.homeB.id, source: 'connected', accountSettingsAffects: true });
+        expect(observer).toHaveBeenCalledWith(expect.objectContaining({ serverId: h.homeB.id, source: 'connected', accountSettingsAffects: true }));
     });
 
     it('uses one supervised reconnect owner and disposes the secondary transport on stop', async () => {
@@ -510,6 +610,9 @@ describe('concurrent session cache exact-target credential reconciliation', () =
         const socket = h.socket();
         expect(await h.TokenStorage.removeCredentials()).toBe(true);
         await vi.waitFor(() => expect(status()).toBe('signedOut'));
+        expect(readBoardSessionSourceState(h.storage.getState(), {
+            kind: 'session', qualifiedId: { serverId: h.homeB.id, id: 'unreadable-session' },
+        })).toBe('failed');
         expect(socket.socket.connected).toBe(false);
         expect(h.network.socketBoundaries).toHaveLength(1);
     });

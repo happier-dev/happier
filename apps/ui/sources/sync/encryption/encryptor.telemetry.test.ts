@@ -6,9 +6,10 @@ import { encodeUTF8 } from '@/encryption/text';
 import {
     packSessionDataKeyBundleV0,
     SESSION_DATA_KEY_NONCE_BYTES,
-    SESSION_DATA_KEY_TAG_BYTES,
+    SESSION_DATA_KEY_TAG_BYTES} from '@happier-dev/protocol/crypto/sessionDataKeyBundleV0';
+import {
     stringifySerializedJsonValue,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/crypto/serializedJsonValue';
 import { createDeferred } from '@/dev/testkit';
 
 import { AES256Encryption, SecretBoxEncryption } from './encryptor';

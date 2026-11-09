@@ -3,8 +3,11 @@ import { describe, expect, it, onTestFinished } from 'vitest';
 import tweetnacl from 'tweetnacl';
 
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import { ManagedRebuildInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeSchema, ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ManagedMachineActionInputSchemasV1, ManagedRebuildInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeSchema, ExternalActionRequestEnvelopeV1Schema,
+    ExternalActionResponseEnvelopeV1Schema, EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_REVIEWED_CHILD_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
+import { invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { openExternalActionRequestV2, prepareExternalActionResponseV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
@@ -188,3 +191,126 @@ describe('managed Machine rebuild origination', () => {
             : { ok: true, result: approval });
     });
 });
+
+it.each(['admitted', 'voice-admitted', 'unreviewed', 'authored'] as const)(
+    'carries ordinary Machine confirmation only for an admitted exact host child (%s)', async mode => {
+        const homeId = `srv_reviewed_setup_${mode}`;
+        const serverUrl = `https://reviewed-setup-${mode}.example.test`;
+        const accountId = 'template-author';
+        const machineId = 'author-machine';
+        const requestId = `reviewed-setup-${mode}`;
+        const token = `header.${Buffer.from(JSON.stringify({ sub: accountId, tokenEpoch: 1,
+            provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64')}.signature`;
+        await upsertServerProfile({ serverUrl, name: 'Template Home' });
+        await setServerProfileIdentityForUrl(serverUrl, homeId);
+        expect(await TokenStorage.setCredentialsForServerUrl(serverUrl, { serverId: homeId }, { token })).toBe(true);
+        const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(3));
+        const input = ManagedMachineActionInputSchemasV1['machines.setup.apply'].parse({ homeId, machineId,
+            targets: [{ homeId, machineId, desiredRevision: 0,
+                sources: [{ kind: 'direct', setup: {} }], recipePlans: [], exclusions: [] }] });
+        const parent = { actionId: 'template.updates.apply' as const, input: { requestKey: 'reviewed-software' } };
+        const context: ActionExecutorContext = { surface: mode === 'voice-admitted' ? 'voice' : 'ui',
+            authority: 'present_user', actionCaller: { kind: 'host' },
+            serverId: homeId, serverIdentityId: homeId, runtimeAccountId: accountId, actionRequestId: requestId,
+            ...(mode === 'admitted' || mode === 'voice-admitted'
+                ? { externalActionTarget: { kind: 'session' as const, sessionId: 'reviewed-template-session' } } : {}),
+            // The parent's marker must never be mistaken for a child confirmation.
+            presentUserConfirmation: { actionId: parent.actionId },
+            ...(mode === 'authored' ? { hostReviewedChild: { parent } as ActionExecutorContext['hostReviewedChild'] } : {}) };
+        const receipt = { operationId: 'setup-operation' };
+        const pending = { kind: 'approval_request_created' as const, artifactId: 'setup-card', actionId: 'machines.setup.apply' as const };
+        let invocationConfirmation: unknown;
+        let executions = 0;
+        setRuntimeFetch(async (url, init) => {
+            const path = new URL(String(url)).pathname;
+            const headers = new Headers(init?.headers);
+            expect(headers.get('Authorization')).toBe(`Bearer ${token}`);
+            expect(headers.get(EXTERNAL_ACTION_EFFECT_ACTION_HEADER)).toBeNull();
+            expect(headers.get(EXTERNAL_ACTION_REVIEWED_CHILD_HEADER)).toBeNull();
+            if (path === '/v1/auth/ping') return Response.json({});
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path === '/v1/machines/read-batch') return createMachineReadBatchResponseFixture(init?.body, id => id === machineId
+                ? { ...createPlainMachineRowFixture({ id, accountId }), installationId: 'author-installation',
+                    installationPublicKey: encodeBase64(installation.publicKey) } : null);
+            if (path === '/v1/actions/machines.setup.apply/execution-authorization') {
+                const body = JSON.parse(String(init?.body));
+                const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body.envelope);
+                return Response.json(ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'signed-ordinary-account',
+                    binding: { serverIdentityId: homeId, accountId, authentication: { kind: 'account', tokenEpoch: 1 },
+                        actionId: 'machines.setup.apply', requestId, target: { kind: 'machine', machineId },
+                        machineId, installationId: 'author-installation', custodianAccountId: accountId,
+                        accountEncryptionMode: 'plain', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) } }));
+            }
+            expect(path).toBe('/v1/actions/machines.setup.apply');
+            executions++;
+            const body = JSON.parse(String(init?.body));
+            const opened = openExternalActionRequesterAccountContextV1({ authorization: body.executionAuthorization,
+                purpose: { kind: 'external_action' }, machineId, installationId: 'author-installation',
+                serverIdentityId: homeId, installationPrivateKey: installation.secretKey, includeInvocation: true });
+            invocationConfirmation = opened?.invocation?.presentUserConfirmation;
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body.envelope ?? body);
+            return Response.json(ExternalActionResponseEnvelopeV1Schema.parse({ v: 1,
+                actionId: 'machines.setup.apply', requestId: envelope.requestId,
+                execution: { ok: true, result: invocationConfirmation ? receipt : pending } }));
+        });
+        onTestFinished(resetRuntimeFetch);
+        const account = await captureLazyActionAccountContext(homeId);
+        onTestFinished(() => account.dispose());
+        const execute = (childContext: ActionExecutorContext) => executeManagedMachineNativeAction({
+            account, actionId: 'machines.setup.apply', input, context: childContext });
+        const result = mode === 'authored' ? await execute(context) : await invokeHostReviewedChildV1({
+            parent, context, child: { action: 'machines.setup.apply', role: 'template_setup_apply', input },
+            ...(mode === 'admitted' || mode === 'voice-admitted'
+                ? { admittedReview: { action: 'machines.setup.apply', role: 'template_setup_apply', surface: context.surface! } } : {}),
+            execute: async (_input, childContext) => await execute(childContext),
+        });
+        expect(executions).toBe(1);
+        if (mode === 'admitted' || mode === 'voice-admitted') {
+            expect(result).toEqual({ ok: true, result: receipt });
+            expect(invocationConfirmation).toMatchObject({ actionId: 'machines.setup.apply', accountId, requestId,
+                target: { kind: 'machine', machineId } });
+        } else {
+            expect(result).toEqual({ ok: true, result: pending });
+            expect(invocationConfirmation).toBeUndefined();
+        }
+    });
+
+it.each(['ui', 'voice'] as const)(
+    'replays %s software preparation through the captured Account while keeping Apply closed', async surface => {
+        const homeId = `srv_replayed_setup_${surface}`;
+        const serverUrl = `https://replayed-setup-${surface}.example.test`;
+        const machineId = 'reviewed-machine';
+        const token = `header.${Buffer.from(JSON.stringify({ sub: 'reviewer', tokenEpoch: 1,
+            provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64')}.signature`;
+        await upsertServerProfile({ serverUrl, name: 'Reviewed Home' });
+        await setServerProfileIdentityForUrl(serverUrl, homeId);
+        expect(await TokenStorage.setCredentialsForServerUrl(serverUrl, { serverId: homeId }, { token })).toBe(true);
+        const requests: string[] = [];
+        const plan = { desiredRevision: 0, exclusions: [], support: [], sources: [{ kind: 'direct', setup: {} }] };
+        setRuntimeFetch(async (url, init) => {
+            const path = new URL(String(url)).pathname;
+            expect(new Headers(init?.headers).get('Authorization')).toBe(`Bearer ${token}`);
+            if (path === '/v1/auth/ping') return Response.json({});
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path === '/v1/machines/read-batch') return createMachineReadBatchResponseFixture(init?.body, id => id === machineId
+                ? createPlainMachineRowFixture({ id, accountId: 'reviewer' }) : null);
+            expect(path).toBe('/v1/actions/machines.setup.plan');
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body)));
+            requests.push(path);
+            return Response.json(ExternalActionResponseEnvelopeV1Schema.parse({ v: 1,
+                actionId: 'machines.setup.plan', requestId: envelope.requestId,
+                execution: { ok: true, result: plan } }));
+        });
+        onTestFinished(resetRuntimeFetch);
+        const account = await captureLazyActionAccountContext(homeId);
+        onTestFinished(() => account.dispose());
+        const context: ActionExecutorContext = { surface, authority: 'present_user', actionCaller: { kind: 'host' },
+            serverId: homeId, serverIdentityId: homeId, runtimeAccountId: 'reviewer',
+            actionRequestId: 'approved-template-replay', bypassApprovals: true };
+        expect(await executeManagedMachineNativeAction({ account, actionId: 'machines.setup.plan',
+            input: { homeId, machineId }, context })).toEqual({ ok: true, result: plan });
+        expect(await executeManagedMachineNativeAction({ account, actionId: 'machines.setup.apply',
+            input: { homeId, machineId, targets: [] }, context })).toEqual({
+                ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' });
+        expect(requests).toEqual(['/v1/actions/machines.setup.plan']);
+    });

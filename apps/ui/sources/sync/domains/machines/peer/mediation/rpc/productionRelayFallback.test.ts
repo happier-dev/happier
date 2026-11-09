@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
     FeaturesResponseSchema,
-    RPC_METHODS,
-    resolveMachineRpcRoutePolicy,
     type FeaturesResponse,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import {
+    RPC_METHODS} from '@happier-dev/protocol/rpc/methods';
+import {
+    resolveMachineRpcRoutePolicy} from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 
 import { resolveProductionMachineRpcRelayFallback } from './productionRelayFallback';
 

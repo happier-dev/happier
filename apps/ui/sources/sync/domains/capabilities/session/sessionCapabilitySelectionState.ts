@@ -1,7 +1,7 @@
 import type {
     DaemonMcpServersPreviewResponse,
     ManagedMcpPreviewEntryV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/mcp/servers/previewV1';
 import { SessionMcpSelectionV1Schema } from '@happier-dev/protocol/mcp/servers/sessionSelectionV1';
 import { SessionCapabilitySelectionAuthoringV1Schema, setSessionCapabilitySelectionItemV1,
     type SessionCapabilitySelectionV1 } from '@happier-dev/protocol/reach/sessionCapabilitySelectionV1';

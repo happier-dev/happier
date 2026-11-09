@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol';
+import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
 import type { Session } from '@/sync/domains/state/storageTypes';
 
 import { fetchAndApplySessionById, type SessionByIdEncryption } from './sessionById';
@@ -10,12 +10,16 @@ import { Encryption } from '@/sync/encryption/encryption';
 import { encodeBase64 } from '@/encryption/base64';
 import {
     createPlainSessionOwnerMetadataEnvelopeV1,
-    projectLegacySessionAccessCapabilitiesV1,
-    projectSessionSharedMetadataV1,
-    sealEncryptedDataKeyEnvelopeV1,
-    sealSessionOwnerMetadataEnvelopeV1,
+    projectSessionSharedMetadataV1} from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import {
+    projectLegacySessionAccessCapabilitiesV1} from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
+import {
+    sealEncryptedDataKeyEnvelopeV1} from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import {
+    sealSessionOwnerMetadataEnvelopeV1} from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
+import {
     V2SessionRecordSchema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/control/contract';
 import { fetchAndApplySessions as fetchAndApplySessionsSource } from './sessionSnapshot';
 import { createCompactSessionListFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { hasAuthoritativeSessionRouteData } from '@/sync/domains/session/hasAuthoritativeSessionRouteData';

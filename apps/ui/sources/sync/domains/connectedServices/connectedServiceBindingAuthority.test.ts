@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
-  QualifiedConnectedAccountProfileV4Schema,
+  QualifiedConnectedAccountProfileV4Schema} from '@happier-dev/protocol/connect/qualified-connected-account-projections';
+import {
   readBuiltInLegacyConnectedAccountServiceKeyIngress,
-  type AccountProfile,
   type ConnectedServiceBindingsV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/connected-service-bindings';
+import {
+  type AccountProfile} from '@happier-dev/protocol/account/profile';
 
 import {
   createConnectedAccountTargetAuthorityFingerprint,

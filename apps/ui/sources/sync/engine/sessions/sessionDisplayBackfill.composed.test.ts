@@ -8,7 +8,9 @@ import { createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit/
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { SessionCurrentProjectionRecordV1Schema } from '@happier-dev/protocol/sessions/listing/response';
 import { openSessionOwnerDisplayEnvelopeV1, openSessionSharedDisplayEnvelopeV1, sealSessionSharedDisplayEnvelopeV1, sealSessionOwnerDisplayEnvelopeV1,
-    projectSessionDisplayV1, projectLegacySessionAccessCapabilitiesV1, SessionSharedMetadataV1Schema } from '@happier-dev/protocol';
+    projectSessionDisplayV1} from '@happier-dev/protocol/sessions';
+import { projectLegacySessionAccessCapabilitiesV1} from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
+import { SessionSharedMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 
 vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
@@ -259,9 +261,13 @@ it.each(['complete', 'cancel'] as const)('keeps declared maintenance PATCH work 
     const held = new Promise<void>(resolve => { release = resolve; });
     let active = 0;
     let maximum = 0;
+    const declaredPatches: string[] = [];
     const controller = new AbortController();
     const transport = createSessionReadBatchHttpBoundary(async request => {
-        if (request.method === 'PATCH') {
+        // The loaded Sync singleton runs its own list maintenance over these
+        // served Sessions under its own budget; measure only the declared caller.
+        if (request.method === 'PATCH' && request.signal === controller.signal) {
+            declaredPatches.push(request.path);
             active++;
             maximum = Math.max(maximum, active);
             try { await held; }
@@ -289,5 +295,5 @@ it.each(['complete', 'cancel'] as const)('keeps declared maintenance PATCH work 
             expect([...results.values()].every(result => result.ok)).toBe(true);
         }
     }
-    expect(persisted.writes).toHaveLength(disposition === 'cancel' ? limit : ids.length);
+    expect(declaredPatches).toHaveLength(disposition === 'cancel' ? limit : ids.length);
 });

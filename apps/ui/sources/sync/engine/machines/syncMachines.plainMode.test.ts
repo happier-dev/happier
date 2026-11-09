@@ -2,14 +2,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
     MACHINE_PLAIN_DATA_KEY_MARKER,
-    encodePlainMachineStoredContent,
+    encodePlainMachineStoredContent} from '@happier-dev/protocol/machines/machineStoredContent';
+import {
     encodeBase64,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/crypto/base64';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { Encryption } from '@/sync/encryption/encryption';
 import { createDeferred } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storage';
+import { readMachineActivity } from '@/sync/domains/machines/machineActivity';
+import { StoredMachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 
 import { buildUpdatedMachineFromSocketUpdate, fetchAndApplyMachines, type MachineDataKeyCacheEntry } from './syncMachines';
 
@@ -18,6 +21,108 @@ afterEach(() => {
 });
 
 describe('fetchAndApplyMachines plaintext account storage', () => {
+    it('preserves a published Plain content refusal in the actual Machine row without key advice', async () => {
+        const row = createPlainMachineRowFixture({ id: 'plain-unpublished', accountId: 'alice' });
+        const applied: Machine[] = [];
+        await fetchAndApplyMachines({
+            credentials: { token: 'header.eyJzdWIiOiJib2IifQ==.signature' },
+            encryption: null, machineDataKeys: new Map(),
+            request: async () => Response.json([{ ...row, metadata: null, daemonState: null,
+                access: { custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'use',
+                    resourceMode: 'plain', accessState: 'refused', reason: 'content_unpublished' } }]),
+            applyMachines: machines => { applied.splice(0, applied.length, ...machines); },
+        });
+        expect(applied).toMatchObject([{ id: row.id, storageMode: 'plain', metadata: null,
+            access: { accessState: 'refused', reason: 'content_unpublished' },
+            availability: { kind: 'locked', reason: 'content_unpublished' } }]);
+    });
+    it('keeps an equal-clock offline transition across a held census and admits a newer recovery heartbeat', async () => {
+        const initialState = storage.getState();
+        storage.setState({ machines: {}, machineDisplayById: {}, machineListByServerId: {},
+            machinePresenceById: {}, machinePresenceByServerId: {} });
+        const fixture = createMachineFixture({ id: 'held-presence', activeAt: Date.now() });
+        const row = createPlainMachineRowFixture({ id: fixture.id, accountId: 'bob', machine: fixture });
+        const entered = createDeferred<void>();
+        const release = createDeferred<void>();
+        const params: Parameters<typeof fetchAndApplyMachines>[0] = {
+            credentials: { token: 'header.eyJzdWIiOiJib2IifQ==.signature' },
+            encryption: null, machineDataKeys: new Map(), replace: true,
+            getMachineSnapshot: () => storage.getState().machines,
+            getExistingMachine: id => storage.getState().machines[id],
+            request: async () => Response.json([row]),
+            applyMachineDisplayEntries: (machines, options) => storage.getState().replaceMachineDisplays(machines, options),
+            applyMachines: (machines, replace, publishedRows) => storage.getState().applyMachines(machines, replace, {
+                activityUpdates: publishedRows.map(({ id, active, activeAt }) => ({ id, active, activeAt })),
+            }),
+        };
+        try {
+            await fetchAndApplyMachines(params);
+            const pending = fetchAndApplyMachines({ ...params, request: async () => {
+                entered.resolve(); await release.promise; return Response.json([row]);
+            } });
+            await entered.promise;
+            storage.getState().applyMachineActivityUpdates([{ id: row.id, active: false, activeAt: row.activeAt }]);
+            release.resolve(); await pending;
+            expect(readMachineActivity(storage.getState().machines[row.id])).toMatchObject({ active: false, activeAt: row.activeAt });
+            storage.getState().applyMachines([{ ...storage.getState().machines[row.id]!, active: true, activeAt: row.activeAt + 1 }]);
+            expect(readMachineActivity(storage.getState().machines[row.id])).toMatchObject({ active: true, activeAt: row.activeAt + 1 });
+        } finally { release.resolve(); storage.setState(initialState, true); }
+    });
+
+    it('keeps a same-content live census root quiet while admitting its newer activity and real content changes', async () => {
+        const initialState = storage.getState();
+        storage.setState({ machines: {}, machineDisplayById: {}, machineListByServerId: {} });
+        const fixture = createMachineFixture({ id: 'census-activity', activeAt: Date.now() });
+        let row = createPlainMachineRowFixture({ id: fixture.id, accountId: 'bob', machine: fixture });
+        const params: Parameters<typeof fetchAndApplyMachines>[0] = {
+            credentials: { token: 'header.eyJzdWIiOiJib2IifQ==.signature' },
+            encryption: null, machineDataKeys: new Map(), replace: true,
+            getMachineSnapshot: () => storage.getState().machines,
+            getExistingMachine: (id) => storage.getState().machines[id],
+            request: async () => Response.json([row]),
+            applyMachineDisplayEntries: (machines, options) => storage.getState().replaceMachineDisplays(machines, options),
+            applyMachines: (machines, replace, publishedRows) => storage.getState().applyMachines(machines, replace, {
+                activityUpdates: publishedRows.map(({ id, active, activeAt }) => ({ id, active, activeAt })),
+            }),
+        };
+        let unsubscribe = () => {};
+        try {
+            await fetchAndApplyMachines(params);
+            const retained = storage.getState().machines[fixture.id]!;
+            const snapshot = storage.getState();
+            let publications = 0;
+            unsubscribe = storage.subscribe(() => { publications += 1; });
+            const parse = vi.spyOn(StoredMachinePublishedMetadataV1Schema, 'safeParse');
+            // Server presence persistence also advances updatedAt, without a
+            // content/version change. Neither timestamp is an inventory fact.
+            for (let arrival = 1; arrival <= 20; arrival += 1) {
+                row = { ...row, activeAt: fixture.activeAt + Math.ceil(arrival / 2),
+                    updatedAt: fixture.updatedAt + arrival };
+                await fetchAndApplyMachines(params);
+            }
+            expect(publications).toBe(0);
+            expect(storage.getState()).toBe(snapshot);
+            expect(storage.getState().machines[fixture.id]).toBe(retained);
+            expect(retained.activeAt).toBe(fixture.activeAt);
+            expect(readMachineActivity(retained).activeAt).toBe(row.activeAt);
+            expect(parse).not.toHaveBeenCalled();
+
+            // HTTP and socket observations may carry differently ordered
+            // persistence timestamps; payload revisions remain the fence.
+            row = { ...row, updatedAt: fixture.updatedAt - 1 };
+            await fetchAndApplyMachines(params);
+            expect(publications).toBe(0);
+            expect(storage.getState()).toBe(snapshot);
+
+            row = { ...row, metadata: encodePlainMachineStoredContent({ ...fixture.metadata!, host: 'changed-host' }),
+                metadataVersion: row.metadataVersion + 1, updatedAt: row.updatedAt + 1 };
+            await fetchAndApplyMachines(params);
+            expect(publications).toBeGreaterThan(0);
+            expect(storage.getState().machines[fixture.id]?.metadata?.host).toBe('changed-host');
+            expect(parse).toHaveBeenCalled();
+        } finally { unsubscribe(); storage.setState(initialState, true); }
+    });
+
     it('admits a newly discovered Plain Machine when the snapshot and exact reader both lack its row', async () => {
         const initialState = storage.getState();
         storage.setState({ machines: {}, machineDisplayById: {}, machineListByServerId: {} });
@@ -110,28 +215,65 @@ describe('fetchAndApplyMachines plaintext account storage', () => {
             release.resolve(); storage.setState(initialState, true);
         }
     });
-    it('projects retained decrypted warm content through the same stored publication reader', async () => {
+    it('admits legacy encrypted fields at ingress and retains their parsed warm identities', async () => {
+        const initialState = storage.getState();
         const secret = new Uint8Array(32).fill(17);
         const encryption = await Encryption.create(secret);
         encryption.configureNativeCryptoWorker({ routing: { mode: 'off' } });
         const fixture = createMachineFixture({ id: 'warm', storageMode: 'e2ee', availability: { kind: 'available' },
             daemonState: { status: 'running' }, daemonStateVersion: 1 });
         await encryption.initializeMachines(new Map([[fixture.id, null]]));
-        const encryptedMetadata = await encryption.getMachineEncryption(fixture.id)!.encryptMetadata(fixture.metadata!);
-        const retainedMetadata = { ...fixture.metadata!, privateSessionPaths: ['/private/work'] };
-        const retainedDaemonState = { status: 'running', privateSessionIds: ['private-session'] };
-        const retainedMachine = { ...fixture, metadata: retainedMetadata, daemonState: retainedDaemonState };
-        let applied: Machine[] = [];
-        await fetchAndApplyMachines({
+        const cipher = encryption.getMachineEncryption(fixture.id)!;
+        // Legacy stored ciphertext is the real boundary. Do not seed private
+        // fields into an already-admitted typed row and revalidate it per fetch.
+        const encryptedMetadata = await cipher.encryptRaw({ ...fixture.metadata!, privateSessionPaths: ['/private/work'] });
+        const encryptedDaemonState = await cipher.encryptRaw({ status: 'running', privateSessionIds: ['private-session'] });
+        storage.setState({ machines: {}, machineDisplayById: {}, machineListByServerId: {} });
+        const params = {
             credentials: { token: 'header.eyJzdWIiOiJib2IifQ==.signature', secret: encodeBase64(secret, 'base64url') },
-            sourceServerId: 'home', expectedAccountMode: 'e2ee', encryption, machineDataKeys: new Map(),
-            getExistingMachine: () => retainedMachine,
+            sourceServerId: 'home', expectedAccountMode: 'e2ee' as const, encryption, machineDataKeys: new Map(),
+            getExistingMachine: (id: string) => storage.getState().machines[id],
+            getMachineSnapshot: () => storage.getState().machines,
             request: async () => Response.json([{ ...fixture, dataEncryptionKey: null, metadata: encryptedMetadata,
-                daemonState: 'retained-ciphertext' }]),
-            applyMachineDisplayEntries: () => {}, applyMachines: (machines) => { applied = machines; },
-        });
-        expect(applied[0]?.metadata).toEqual(fixture.metadata);
-        expect(applied[0]?.daemonState).toEqual({ status: 'running' });
+                daemonState: encryptedDaemonState }]),
+            applyMachineDisplayEntries: (machines: Parameters<typeof initialState.replaceMachineDisplays>[0], options: Parameters<typeof initialState.replaceMachineDisplays>[1]) =>
+                storage.getState().replaceMachineDisplays(machines, options),
+            applyMachines: (machines: Machine[], replace: boolean) => storage.getState().applyMachines(machines, replace),
+        };
+        try {
+            await fetchAndApplyMachines(params);
+            const retained = storage.getState().machines[fixture.id]!;
+            expect(retained.metadata).toEqual(fixture.metadata);
+            expect(retained.daemonState).toEqual({ status: 'running' });
+            await fetchAndApplyMachines(params);
+            expect(storage.getState().machines[fixture.id]).toBe(retained);
+            expect(storage.getState().machines[fixture.id]?.metadata).toBe(retained.metadata);
+            expect(storage.getState().machines[fixture.id]?.daemonState).toBe(retained.daemonState);
+        } finally { storage.setState(initialState, true); }
+    });
+    it('refuses a Home-reported Plain own Machine row while this device holds active Account keys', async () => {
+        // An own row's mode is the Account mode: the same admission as the Account
+        // reader, so a hostile Home cannot select plaintext Machine writes per row.
+        const owned = createPlainMachineRowFixture({ id: 'own-plain', accountId: 'bob' });
+        const { access: _access, ...unscoped } = createPlainMachineRowFixture({ id: 'own-unscoped', accountId: 'bob' });
+        const hydrate = async (custody?: 'historical') => {
+            let applied: Machine[] = [];
+            await fetchAndApplyMachines({
+                credentials: { token: 'header.eyJzdWIiOiJib2IifQ==.signature', secret: 'viewer-secret', ...(custody ? { custody } : {}) },
+                encryption: null, machineDataKeys: new Map(), expectedAccountMode: 'e2ee',
+                request: async () => Response.json([owned, { ...unscoped, storageMode: 'plain', dataEncryptionKey: null }]),
+                applyMachines: (machines) => { applied = machines; },
+            });
+            return applied;
+        };
+        expect(await hydrate()).toMatchObject([
+            { id: owned.id, metadata: null, availability: { kind: 'locked' } },
+            { id: 'own-unscoped', metadata: null, availability: { kind: 'locked' } },
+        ]);
+        expect(await hydrate('historical')).toMatchObject([
+            { id: owned.id, storageMode: 'plain', availability: { kind: 'available' } },
+            { id: 'own-unscoped', storageMode: 'plain', availability: { kind: 'available' } },
+        ]);
     });
     it('opens a shared Plain resource for an E2EE viewer without Account or Machine keys', async () => {
         let applied: Machine[] = [];
@@ -205,10 +347,14 @@ describe('fetchAndApplyMachines plaintext account storage', () => {
         expect(appliedMachines[0]).toMatchObject({
             operationProtocolCapabilities: {}, operationProtocolCapabilitiesRevision: 2,
         });
-        await hydrate({ sessionSpawnPlacementOrigin: { protocolVersions: [2] } }, 3);
+        await hydrate({ sessionSpawnPlacementOrigin: { protocolVersions: [2] },
+            sessionSpawn: { protocolVersions: [1] } }, 3);
         expect(appliedMachines[0]).toMatchObject({
-            operationProtocolCapabilities: null, operationProtocolCapabilitiesRevision: null,
+            operationProtocolCapabilities: { sessionSpawn: { protocolVersions: [1] } },
+            operationProtocolCapabilitiesRevision: 3,
         });
+        // The canonical stored reader withdraws the invalid optional leaf only.
+        expect(appliedMachines[0]?.operationProtocolCapabilities?.sessionSpawnPlacementOrigin).toBeUndefined();
     });
 
     it('hydrates machine metadata and daemon state without account encryption material', async () => {

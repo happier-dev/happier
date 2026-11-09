@@ -1,10 +1,11 @@
 import type {
-    PeerFlowKindV1,
+    PeerFlowKindV1} from '@happier-dev/protocol/machines/peer/mediation/flowKind';
+import type {
     PeerMediationObservabilityEventV1,
     PeerMediationObservabilityFlowRefV1,
     PeerMediationObservabilityFlowSnapshotV1,
     PeerMediationObservabilityScopeV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/machines/peer/mediation/observability/v1';
 
 export type PeerMediationObservabilitySource = 'server' | 'daemon';
 
@@ -35,9 +36,7 @@ export type PeerMediationObservabilityScopeState = Readonly<{
     status: PeerMediationObservabilityScopeStatus;
     /**
      * A sequence gap or scope mismatch was observed, so this scope's flows may be incomplete until a
-     * fresh snapshot lands. PMS-9 REQ "resubscribe-on-gap" is NOT implemented: nothing re-emits
-     * `subscribe`. The predecessor carried a second boolean, `resubscribeRequired`, that was assigned
-     * exactly this value at all five write sites and read by nothing — one concept, two fields.
+     * fresh snapshot lands. The subscription requests a fresh snapshot when it observes a sequence gap.
      */
     stale: boolean;
     unavailableReasonCode: string | null;
@@ -81,22 +80,3 @@ export type PeerMediationObservabilityFlowSummary = Readonly<{
         lastUpdatedAtMs: number;
     }>>>;
 }>;
-
-export type PeerMediationPreviewProxyDiagnostics = Readonly<
-    | {
-        status: 'unavailable';
-        reasonCode: string;
-      }
-    | {
-        status: 'stale';
-        attribution: 'traffic_for_preview_all_views';
-        activeFlowCount: number;
-        flows: readonly PeerMediationObservabilityFlowSummary[];
-      }
-    | {
-        status: 'available';
-        attribution: 'traffic_for_preview_all_views';
-        activeFlowCount: number;
-        flows: readonly PeerMediationObservabilityFlowSummary[];
-      }
->;

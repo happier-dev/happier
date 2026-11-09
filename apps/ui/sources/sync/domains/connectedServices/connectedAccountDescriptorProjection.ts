@@ -1,5 +1,6 @@
 import {
   ConnectedAccountUiProjectionEntryV1Schema,
+  projectConnectedAccountDescriptorV1,
   type ConnectedAccountUiProjectionEntryV1,
 } from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';
 import type { DaemonContributionRegistryProjection } from '@/sync/api/daemon/daemonContributionRegistryProjectionProtocol';
@@ -126,10 +127,10 @@ function prepareDescriptor(entry: ConnectedAccountUiProjectionEntryV1, descripti
   // The admitted manifest owns bundled declarations. Machines only supply
   // availability, diagnostics and occurrence facts, including across builds.
   if (bundled) entry = {
-    ...bundled, serviceId: bundled.id, pluginId: entry.pluginId,
-    provenance: entry.provenance, sourceKind: entry.sourceKind,
-    capabilities: bundled.capabilities ?? [],
-    availability: entry.availability, diagnostics: entry.diagnostics,
+    ...projectConnectedAccountDescriptorV1({ descriptor: bundled,
+      serviceId: bundled.id, pluginId: entry.pluginId,
+      provenance: entry.provenance, sourceKind: entry.sourceKind,
+      availability: entry.availability, diagnostics: entry.diagnostics }),
     ...(entry.occurrenceId === undefined ? {} : { occurrenceId: entry.occurrenceId }),
   };
   // Runtime occurrences never participate in Account declaration agreement.

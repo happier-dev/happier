@@ -4,7 +4,8 @@ import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExec
     computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import nacl from 'tweetnacl';
-import { FeaturesResponseSchema, SessionCurrentProjectionRecordV1Schema } from '@happier-dev/protocol';
+import { FeaturesResponseSchema} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { SessionCurrentProjectionRecordV1Schema } from '@happier-dev/protocol/sessions/listing/response';
 import { createSessionFixture, createExistingSessionDirectoryPreflightResult } from '@/dev/testkit';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
@@ -146,8 +147,38 @@ describe('default Action original Home selection', () => {
             .toBe('captured-home');
     });
 
-    it.each(['session.spawn_new', 'session.open', 'rich-resume'] as const)('uses the authenticated Action relay for shared %s with the original Home intact', async (operation) => {
-        const actionId = operation === 'rich-resume' ? 'session.open' : operation;
+    it('captures the declared terminal Home for a Voice caller without a caller Home', () => {
+        const input = { serverId: 'terminal-home', machineId: 'terminal-machine' };
+        expect(resolveDefaultActionInvocationServerId('machines.terminal.list', input, { surface: 'voice' }))
+            .toBe('terminal-home');
+        expect(resolveDefaultActionInvocationServerId('machines.terminal.list', input, { surface: 'ui', serverId: 'captured-home' }))
+            .toBe('captured-home');
+    });
+
+    it.each([
+        { actionId: 'projects.prepare', input: { workspace: { serverId: 'operand-home', workspaceId: 'checkout', machineId: 'machine', rootPath: '/repo' }, phase: 'setup' } },
+        { actionId: 'memory.read', input: { ref: { kind: 'doc', artifactId: 'memory', serverId: 'operand-home' } } },
+        { actionId: 'memory.remember', input: { sessionRef: { serverId: 'operand-home', sessionId: 'session' }, expectedMetadataRevision: 1, text: 'Remember this' } },
+        { actionId: 'memory.remember', input: { scope: 'project', projectRef: { serverId: 'operand-home', projectKey: 'project' }, text: 'Remember this' } },
+        { actionId: 'memory.list', input: { serverId: 'operand-home' } },
+        { actionId: 'projects.context.update', input: { target: { serverId: 'operand-home', projectKey: 'project' }, expectedRevision: 'absent',
+            intent: { kind: 'attach', entry: { id: 'instructions', ref: { kind: 'doc', artifactId: 'doc' }, placement: 'system_append' } } } },
+    ] as const)('preserves the domain Home operand for $actionId', ({ actionId, input }) => {
+        expect(resolveDefaultActionInvocationServerId(actionId, input, { surface: 'voice' })).toBe('operand-home');
+    });
+
+    it('does not treat reviewed source evidence or malformed input as an invocation Home', () => {
+        expect(resolveDefaultActionInvocationServerId('memory.remember', { scope: 'account', text: 'Remember this',
+            reviewedTarget: { ref: { kind: 'doc', artifactId: 'memory', serverId: 'evidence-home' },
+                expectedRevision: { headerVersion: 1, bodyVersion: 1 } },
+        }, { surface: 'voice' })).toBeUndefined();
+        expect(resolveDefaultActionInvocationServerId('memory.list', { serverId: 'malformed-home', unexpected: true },
+            { surface: 'voice' })).toBeUndefined();
+    });
+
+    it.each(['session.spawn_new', 'session.open', 'rich-resume', 'spawn acknowledgement loss', 'spawn canonical uncertainty'] as const)('uses the authenticated Action relay for shared %s with the original Home intact', async (operation) => {
+        const actionId = operation === 'rich-resume' ? 'session.open'
+            : operation === 'spawn acknowledgement loss' || operation === 'spawn canonical uncertainty' ? 'session.spawn_new' : operation;
         const localStorage = installLocalStorageMock();
         try {
             const profile = await upsertServerProfile({ serverUrl: 'https://requester-spawn-original-home.test' });
@@ -185,6 +216,10 @@ describe('default Action original Home selection', () => {
                 if (url.pathname === '/v1/sessions/bob-session/turns') return Response.json({ error: 'not_found' }, { status: 404 });
                 if (url.pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
                 if (url.pathname === '/v1/machines') return Response.json([machine]);
+                if (url.pathname === '/v1/machines/managed/actions/list') {
+                    expect(JSON.parse(String(init?.body))).toEqual({ homeId, enrolledMachineId: 'alice-machine' });
+                    return Response.json({ machines: [] });
+                }
                 if (url.pathname === '/v1/machines/read-batch' && init?.method === 'POST') {
                     return createMachineReadBatchResponseFixture(init.body, id => id === machine.id ? machine : null);
                 }
@@ -210,8 +245,11 @@ describe('default Action original Home selection', () => {
                     expect(JSON.stringify(request)).not.toContain(token);
                     if (request.envelope.v !== 1) throw new Error('Expected Plain Account Action');
                     relayedInput = request.envelope.input;
+                    if (operation === 'spawn acknowledgement loss') return new Response(null, { status: 502 });
                     return Response.json({ v: 1, actionId, requestId: request.envelope.requestId,
-                        execution: { ok: true, result: operation === 'rich-resume' ? { type: 'success', sessionId: 'bob-session' } : actionId === 'session.spawn_new'
+                        execution: operation === 'spawn canonical uncertainty'
+                            ? { ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown' }
+                            : { ok: true, result: operation === 'rich-resume' ? { type: 'success', sessionId: 'bob-session' } : actionId === 'session.spawn_new'
                             ? { type: 'pending', retryWithSameCreationKey: true, outcome: 'unknown' }
                             : { ok: true, status: 'opened', sessionId: 'bob-session', serverId: homeId } } });
                 }

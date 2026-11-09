@@ -3,7 +3,7 @@ import { createDecipheriv } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 
 import { decodeBase64 } from '@/encryption/base64';
-import { parseSerializedJsonValue } from '@happier-dev/protocol';
+import { parseSerializedJsonValue } from '@happier-dev/protocol/crypto/serializedJsonValue';
 
 import { AES256Encryption, SecretBoxEncryption } from './encryptor';
 

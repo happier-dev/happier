@@ -1,11 +1,17 @@
-import type { BrowserAdapterCapabilitiesV1, BrowserContextCapabilities } from '@happier-dev/protocol';
+import type { BrowserAdapterCapabilitiesV1} from '@happier-dev/protocol/browser/adapters/v1';
+import type { BrowserContextCapabilities } from '@happier-dev/protocol/features/payload/capabilities/browserCapabilities';
 import { describe, expect, it } from 'vitest';
+import { BrowserContextMessageMetaV1Schema } from '@happier-dev/protocol/browser/context/v1';
 
 import {
     attachBrowserContextToComposer,
     captureBrowserPageReference,
     createBrowserContextState,
     markBrowserContextViewNavigation,
+    addBrowserAnnotationElement,
+    commitBrowserAnnotationDraft,
+    setBrowserAnnotationDraftComment,
+    startBrowserAnnotationDraft,
 } from '@/sync/domains/browser/context';
 import {
     buildBrowserContextMessageMetaOverrides,
@@ -122,6 +128,39 @@ function createAttachedSecretUrlContextState() {
 }
 
 describe('buildBrowserContextMessageMetaOverrides', () => {
+    it('sends one annotation marks document and element source facts through the real context envelope', () => {
+        const binding = { browserSessionId: 'browser_1', viewId: 'view_1', navigationGeneration: 1 };
+        let state = startBrowserAnnotationDraft(createBrowserContextState(), {
+            ...binding, nowMs: 1,
+            source: { uri: 'blob:annotation', width: 100, height: 80, scale: 2 },
+            capture: { bytes: new Uint8Array([1]), mimeType: 'image/png', width: 100, height: 80, sizeBytes: 1 },
+            pageTitle: 'Checkout', pageUrl: 'https://shop.example/checkout?token=private',
+        });
+        const sourceLocation = { file: 'src/Checkout.tsx', line: 24, column: 8 };
+        state = addBrowserAnnotationElement(state, { viewId: binding.viewId, markId: 'submit', color: 'blue',
+            element: { rect: { x: 10, y: 20, width: 30, height: 40 }, label: 'Submit', selectorPath: '#submit',
+                accessibleName: 'Submit', componentName: 'Checkout', sourceLocation } });
+        state = setBrowserAnnotationDraftComment(state, { viewId: binding.viewId, comment: 'Describe the spacing.' });
+        const document = state.annotationDraftByViewId[binding.viewId]?.document;
+        const imageRef = { mediaId: 'flattened_1', mediaKind: 'image' as const, width: 100, height: 80, sizeBytes: 100 };
+        const committed = commitBrowserAnnotationDraft({ ...binding, state, imageRef, adapterKind: 'localPreview', capturedAtMs: 2 });
+        if (committed.status !== 'committed') throw new Error('annotation fixture failed to commit');
+        const attached = attachBrowserContextToComposer(committed.state, { attachmentId: 'attachment_1', contextId: committed.itemIds[0]! });
+        if (attached.status !== 'attached') throw new Error('annotation fixture failed to attach');
+        const result = buildBrowserContextMessageMetaOverrides({ state: attached.state });
+        if (!result.ok) throw new Error('annotation fixture failed to project');
+
+        const meta = BrowserContextMessageMetaV1Schema.parse(result.metaOverrides.happierBrowserContext);
+        expect(meta.payload.contexts).toHaveLength(1);
+        expect(meta.payload.contexts[0]).toMatchObject({ kind: 'browserAnnotation', imageRef, marks: document,
+            elements: [{ markId: 'submit', selectorPath: '#submit', accessibleName: 'Submit', componentName: 'Checkout', sourceLocation }] });
+        expect(meta.payload.attachments[0]?.structuredBlock).toMatchObject({ kind: 'browser.annotation.v2', imageRef, marks: document });
+        expect(meta.payload.contexts[0]).not.toHaveProperty('media');
+        expect(meta.payload.contexts[0]).not.toHaveProperty('comment');
+        expect(meta.payload.attachments[0]?.structuredBlock).not.toHaveProperty('comment');
+        expect(JSON.stringify(meta)).not.toContain('private');
+    });
+
     it('builds a separate browser-context metadata envelope without replacing existing message meta owners', () => {
         const result = buildBrowserContextMessageMetaOverrides({
             state: createAttachedContextState(),

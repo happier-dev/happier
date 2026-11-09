@@ -1,5 +1,5 @@
 import { act } from 'react-test-renderer';
-import { beforeEach, expect, it } from 'vitest';
+import { beforeEach, expect, it, vi } from 'vitest';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { getStorage } from '@/sync/domains/state/storageStore';
@@ -7,6 +7,7 @@ import { useActiveMachineFacts, useLaunchSelectionMachines, useMachineListByServ
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { readMachineActivity } from '@/sync/domains/machines/machineActivity';
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import { useMachinePresenceSnapshot } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import { selectActiveTestHomeForTests } from '@/dev/testkit/fixtures/persistedHomeProfiles';
 
 beforeEach(async () => { await selectActiveTestHomeForTests(); });
@@ -58,6 +59,48 @@ it('shares inventory projection work and visits no rows for unchanged input publ
         await first.unmount(); await second.unmount(); await addressed.unmount();
         await firstActive.unmount(); await secondActive.unmount();
         await firstLaunch.unmount(); await secondLaunch.unmount();
+        store.setState(previous);
+    }
+});
+
+it('projects one settled presence snapshot for a 171-clock arrival burst on a 196-Machine fleet', async () => {
+    const store = getStorage();
+    const previous = store.getState();
+    const serverId = getActiveServerSnapshot().serverId;
+    const options = { sourceServerId: serverId };
+    const now = Date.now();
+    const rows = Array.from({ length: 196 }, (_, index) => createMachineFixture({
+        id: `presence-burst-${index}`, active: true, activeAt: now,
+    }));
+    store.getState().applyMachines(rows, true, options);
+    store.getState().markMachineListSettled(serverId);
+    const readMachines = () => store.getState().machineListByServerId[serverId] ?? [];
+    const project = vi.fn(() => readMachines().map(row => ({ id: row.id, ...readMachineActivity(row) })));
+    const targets = [{ serverId }];
+    const hook = await renderHook(() => useMachinePresenceSnapshot(readMachines, project, targets));
+    try {
+        project.mockClear();
+        const updates = rows.slice(0, 171).map(row => ({ id: row.id, active: true, activeAt: now + 1 }));
+        await act(async () => store.getState().applyMachineActivityUpdates(updates, options));
+        expect(project).toHaveBeenCalledTimes(1);
+        expect(hook.getCurrent().map(row => row.activeAt)).toEqual(rows.map((_, index) => now + (index < 171 ? 1 : 0)));
+        project.mockClear();
+        await act(async () => store.getState().applyMachineActivityUpdates(updates, options));
+        expect(project).not.toHaveBeenCalled();
+        await act(async () => store.getState().applyMachineActivityUpdates([
+            { ...updates[0], active: false, activeAt: now + 2 },
+        ], options));
+        expect(hook.getCurrent()[0]).toMatchObject({ active: false, activeAt: now + 2 });
+        await act(async () => store.getState().applyMachineActivityUpdates([
+            { ...updates[0], active: true, activeAt: now + 2 },
+        ], options));
+        expect(hook.getCurrent()[0].active).toBe(false);
+        await act(async () => store.getState().applyMachineActivityUpdates([
+            { ...updates[0], active: true, activeAt: now + 3 },
+        ], options));
+        expect(hook.getCurrent()[0]).toMatchObject({ active: true, activeAt: now + 3 });
+    } finally {
+        await hook.unmount();
         store.setState(previous);
     }
 });

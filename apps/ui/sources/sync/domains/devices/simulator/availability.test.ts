@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { DEFAULT_SIMULATOR_STREAM_CONTROLS_V1, type SimulatorDeviceResourceV1, type SimulatorSidebandMessageV1 } from '@happier-dev/protocol';
+import { DEFAULT_SIMULATOR_STREAM_CONTROLS_V1, type SimulatorDeviceResourceV1} from '@happier-dev/protocol/devices/simulator/v1';
+import { type SimulatorSidebandMessageV1 } from '@happier-dev/protocol/devices/simulator/sidebandV1';
 
 const availableResource: SimulatorDeviceResourceV1 = {
     v: 1,

@@ -2,8 +2,9 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { upsertSessionOrganizationFolder as upsertSessionOrganizationFolderApi } from '@/sync/api/session/sessionOrganizationApi';
 import { buildSessionOrganizationServerKey } from '@/sync/domains/session/organization';
 import { getStorage } from '@/sync/domains/state/storageStore';
+import { sessionOrganizationStoreFor } from './sessionOrganizationAccountStore';
 import type { UiSessionOrganizationFolder } from '@/sync/domains/session/organization';
-import type { CreateOrUpdateSessionOrganizationFolderRequest } from '@happier-dev/protocol';
+import type { CreateOrUpdateSessionOrganizationFolderRequest } from '@happier-dev/protocol/sessions/organization/mutations';
 import { createSessionOrganizationOpaqueId } from './sessionOrganizationIdAllocation';
 import {
     openSessionOrganizationFolderDisplay,
@@ -41,6 +42,7 @@ export async function upsertSessionFolder(params: Readonly<{
         folderId: params.request.folderId ?? allocateSessionOrganizationFolderId(params.serverId),
         display: await prepareSessionOrganizationDisplayEnvelopeForWrite({
             credentials: params.credentials,
+            serverUrl: params.serverUrl,
             envelope: params.request.display,
             request: params.requestAtEndpoint,
         }),
@@ -57,7 +59,7 @@ export async function upsertSessionFolder(params: Readonly<{
         folder: response.folder,
     });
     params.assertCurrent?.();
-    const recordId = getStorage().getState().upsertSessionOrganizationFolderOptimistic(params.serverId, folder);
-    getStorage().getState().commitSessionOrganizationOptimistic(recordId);
+    const recordId = sessionOrganizationStoreFor(params).upsertSessionOrganizationFolderOptimistic(params.serverId, folder);
+    sessionOrganizationStoreFor(params).commitSessionOrganizationOptimistic(recordId);
     return folder;
 }

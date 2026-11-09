@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { openAccountScopedBlobCiphertext } from '@happier-dev/protocol';
+import { openAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { AUTOMATION_TEMPLATE_V02_EXISTING_PLAIN, AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED }
     from '../../../../../../packages/protocol/src/automations/automationTemplateV02.testFixtures';
 import { decodeAutomationTemplate } from './automationTemplateCodec';

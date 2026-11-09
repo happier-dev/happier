@@ -1,5 +1,6 @@
 import { applyMcpServerCatalogMutationV1 } from '@happier-dev/protocol/mcp/servers/serverCatalogV1';
-import type { McpServerCatalogMutationV1, McpServerCatalogV1 } from '@happier-dev/protocol';
+import type { McpServerCatalogMutationV1} from '@happier-dev/protocol/mcp/servers/serverCatalogV1';
+import type { McpServerCatalogV1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 import type { McpServerRuleV1, McpServerCatalogEntryV1, McpServersSettingsV1 } from '@happier-dev/protocol/mcp/servers/settingsV1';
 
 /** Compatibility projection only; all entity decisions belong to the row owner. */

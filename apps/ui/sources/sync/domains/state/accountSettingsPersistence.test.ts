@@ -14,7 +14,8 @@ type AccountSettingsPersistenceModule = Readonly<{
     prepareAccountSettingsScopeForActivation: (scope: AccountSettingsScope, legacyScopes?: readonly AccountSettingsScope[]) => void;
     loadPendingAccountSettings: (scope: AccountSettingsScope) => Partial<Settings>;
     savePendingAccountSettings: (scope: AccountSettingsScope, settings: Partial<Settings>) => void;
-    subscribeAccountSettingsPersistenceMutations: (listener: (scope: AccountSettingsScope) => void) => () => void;
+    subscribeAccountSettingsPersistenceMutations: (listener: (scope: AccountSettingsScope) => void,
+        options?: Readonly<{ scope: AccountSettingsScope; keys: readonly (keyof Settings)[] }>) => () => void;
 }>;
 
 const store = vi.hoisted(() => new Map<string, string>());
@@ -94,6 +95,39 @@ describe('accountSettingsPersistence', () => {
         store.clear();
     });
 
+    it('retains the theme acknowledgement checkpoint across ordinary pending flushes', async () => {
+        const mod = await loadAccountSettingsPersistenceModule();
+        expect(mod).not.toBeNull(); if (!mod) return;
+        const profile = { schemaVersion: 1, id: 'local_2', name: 'Edited local',
+            createdAt: '2026-10-01', updatedAt: '2026-10-01', base: { light: 'light', dark: 'dark' },
+            overrides: { light: {}, dark: {} } };
+        const checkpoint = { edits: [{ target: { kind: 'legacy', id: 'local' }, profile }],
+            legacyProfileIds: { local: 'local_2' }, acknowledged: true };
+        writeLegacyPendingAccountSettingsCache(scopeA, { themeProfiles: [profile], __themeProfileMigrationEditsV1: checkpoint });
+        mod.savePendingAccountSettings(scopeA, { analyticsOptOut: true });
+        const saved = JSON.parse(store.get(pendingAccountSettingsStorageKey(scopeA))!);
+        expect(saved).toMatchObject({ analyticsOptOut: true, themeProfiles: [profile], __themeProfileMigrationEditsV1: checkpoint });
+        mod.savePendingAccountSettings(scopeA, {});
+        expect(JSON.parse(store.get(pendingAccountSettingsStorageKey(scopeA))!)).toMatchObject({ themeProfiles: [profile],
+            __themeProfileMigrationEditsV1: checkpoint });
+        expect(mod.loadPendingAccountSettings(scopeA)).not.toHaveProperty('__themeProfileMigrationEditsV1');
+    });
+    it('moves the pending theme acknowledgement with a proven server identity alias', async () => {
+        const mod = await loadAccountSettingsPersistenceModule();
+        expect(mod).not.toBeNull(); if (!mod) return;
+        const identityScope = { serverId: 'srv_identity', accountId: 'account-a' };
+        const legacyScope = { serverId: 'localhost-18829', accountId: 'account-a' };
+        const profile = { schemaVersion: 1, id: 'local_2', name: 'Edited local', createdAt: '2026-10-01', updatedAt: '2026-10-01',
+            base: { light: 'light', dark: 'dark' }, overrides: { light: {}, dark: {} } };
+        const checkpoint = { edits: [{ target: { kind: 'legacy', id: 'local' }, profile }],
+            legacyProfileIds: { local: 'local_2' }, acknowledged: true };
+        writeLegacyPendingAccountSettingsCache(legacyScope, { themeProfiles: [profile], __themeProfileMigrationEditsV1: checkpoint });
+        await mod.prepareAccountSettingsScopeForActivation(identityScope, [legacyScope]);
+        expect(JSON.parse(store.get(pendingAccountSettingsStorageKey(identityScope))!)).toMatchObject({ themeProfiles: [profile],
+            __themeProfileMigrationEditsV1: checkpoint });
+        expect(store.has(pendingAccountSettingsStorageKey(legacyScope))).toBe(false);
+        expect(mod.loadPendingAccountSettings(sameServerDifferentAccount)).toEqual({});
+    });
     it('recovers scoped pending preferences without giving retired fields mutation meaning', async () => {
         const mod = await loadAccountSettingsPersistenceModule();
         expect(mod).not.toBeNull();
@@ -180,6 +214,41 @@ describe('accountSettingsPersistence', () => {
         } finally {
             unsubscribe();
         }
+    });
+
+    it('publishes keyed demand only for a changed preference on its exact Account', async () => {
+        const mod = await loadAccountSettingsPersistenceModule();
+        expect(mod).not.toBeNull();
+        if (!mod) return;
+        const mutations: AccountSettingsScope[] = [];
+        const unsubscribe = mod.subscribeAccountSettingsPersistenceMutations(scope => mutations.push(scope), {
+            scope: scopeA, keys: ['managedMachineCreationEnabled', 'machineRetentionDefaultsV1'],
+        });
+        try {
+            mod.saveAccountSettings(scopeA, settingsDefaults, 1);
+            expect(mutations).toEqual([scopeA]);
+            mutations.length = 0;
+            for (let version = 2; version <= 33; version++) {
+                mod.saveAccountSettings(scopeA, { ...settingsDefaults, analyticsOptOut: version % 2 === 0 }, version);
+                mod.saveAccountSettings(sameAccountDifferentServer, settingsDefaults, version);
+                mod.saveAccountSettings(sameServerDifferentAccount, settingsDefaults, version);
+            }
+            expect(mutations).toHaveLength(0);
+            const changed = { ...settingsDefaults, managedMachineCreationEnabled: !settingsDefaults.managedMachineCreationEnabled };
+            mod.saveAccountSettings(scopeA, changed, 34);
+            expect(mutations).toEqual([scopeA]);
+            mod.saveAccountSettings(scopeA, structuredClone(changed), 35);
+            expect(mutations).toHaveLength(1);
+            const retained: Settings = { ...changed, machineRetentionDefaultsV1: { v: 1, local: {
+                retention: { kind: 'unused', afterMs: 17_500, effect: 'stop' }, wakeOnAcceptedMessage: true,
+            } } };
+            mod.saveAccountSettings(scopeA, retained, 36);
+            expect(mutations).toHaveLength(2);
+            mod.saveAccountSettings(scopeA, structuredClone(retained), 37);
+            expect(mutations).toHaveLength(2);
+        } finally { unsubscribe(); }
+        mod.saveAccountSettings(scopeA, settingsDefaults, 38);
+        expect(mutations).toHaveLength(2);
     });
 
     it('persists account settings separately for each server/account scope', async () => {
@@ -502,10 +571,11 @@ describe('accountSettingsPersistence', () => {
         expect(mod.loadPendingAccountSettings(legacyScope)).toEqual({});
         expect(mod.loadAccountSettings(identityScope)).toMatchObject({
             version: null,
-            settings: expect.objectContaining({
-                lastUsedAgent: 'codex',
-            }),
         });
+        // newSessionTargetUiState.ts:87–114 owns observation import and scope adoption.
+        const { readLastUsedBackendSelection } = await import('./newSessionTargetUiState');
+        expect(readLastUsedBackendSelection(identityScope).lastUsedAgent).toBe('codex');
+        expect(mod.loadAccountSettings(identityScope).settings).not.toHaveProperty('lastUsedAgent');
         expect(mod.loadAccountSettings(identityScope).settings).not.toMatchObject({
             analyticsOptOut: true,
         });

@@ -27,6 +27,7 @@ import {
     type HomeSettingsProjectionV1,
     type HomeAuthenticationPolicyV1,
     type HomeGovernanceActionIdV1,
+    type HomePublicProfileHandleReclaimInputV1,
     type HomeIdentityNetworkPolicyV1,
     type HomeRoleV1,
     type HomeTeamProviderPolicyV1,
@@ -246,6 +247,32 @@ export async function deleteHomeAccount(params: Readonly<{
         return INCOMPLETE;
     }
     return parsed.data.status === 'deleted' ? SUCCEEDED : INCOMPLETE;
+}
+
+/**
+ * Takes one Account's public profile down, or lifts that takedown (`restore` never republishes: the
+ * owner publishes again). The reason is audited and, for a restriction, shown to the owner. The Home
+ * rechecks the operator's authority and answers `unavailable` only for an Account it cannot act on.
+ */
+export function moderateHomePublicProfile(params: Readonly<{
+    scope: ServerAccountScope;
+    accountId: string;
+    operation: 'restrict' | 'restore';
+    reason: string;
+}>): Promise<HomeGovernanceAcknowledgedOutcome> {
+    return mutate({
+        scope: params.scope,
+        actionId: params.operation === 'restrict' ? 'home.public_profiles.restrict' : 'home.public_profiles.restore',
+        input: { accountId: params.accountId, reason: params.reason },
+    });
+}
+
+/** Reclaims exactly the reviewed username; the Home owns authorization, audit and owner notice. */
+export function reclaimHomePublicProfileHandle(params: Readonly<
+    HomePublicProfileHandleReclaimInputV1 & { scope: ServerAccountScope }
+>): Promise<HomeGovernanceAcknowledgedOutcome> {
+    const { scope, ...input } = params;
+    return mutate({ scope, actionId: 'home.public_profiles.handle_reclaim', input });
 }
 
 export function setHomeTeamCreationPolicy(params: Readonly<{

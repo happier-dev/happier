@@ -7,7 +7,7 @@ import {
     type PeerMediationObservabilityFlowSnapshotV1,
     type PeerMediationObservabilityScopeV1,
     type PeerMediationObservabilitySnapshotV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/machines/peer/mediation/observability/v1';
 
 async function loadStoreModule() {
     return storeModule;
@@ -359,8 +359,7 @@ describe('peer mediation observability UI store', () => {
         expect(mod.applyPeerMediationObservabilitySnapshot).toBeTypeOf('function');
         expect(selectors.selectPeerMediationObservabilityHttpMetadata).toBeTypeOf('function');
         expect(selectors.selectPeerMediationObservabilityWebSocketMetadata).toBeTypeOf('function');
-        expect(selectors.selectPeerMediationPreviewProxyDiagnostics).toBeTypeOf('function');
-        if (!mod.createPeerMediationObservabilityUiStore || !mod.applyPeerMediationObservabilitySnapshot || !selectors.selectPeerMediationObservabilityHttpMetadata || !selectors.selectPeerMediationObservabilityWebSocketMetadata || !selectors.selectPeerMediationPreviewProxyDiagnostics) return;
+        if (!mod.createPeerMediationObservabilityUiStore || !mod.applyPeerMediationObservabilitySnapshot || !selectors.selectPeerMediationObservabilityHttpMetadata || !selectors.selectPeerMediationObservabilityWebSocketMetadata) return;
 
         const next = mod.applyPeerMediationObservabilitySnapshot(
             mod.createPeerMediationObservabilityUiStore(),
@@ -406,14 +405,6 @@ describe('peer mediation observability UI store', () => {
         })).toEqual({
             subprotocol: 'vite-hmr',
             messagesIn: 2,
-        });
-        expect(selectors.selectPeerMediationPreviewProxyDiagnostics(next, {
-            scope: machineScope,
-            previewId: 'preview_1',
-        })).toMatchObject({
-            status: 'available',
-            attribution: 'traffic_for_preview_all_views',
-            activeFlowCount: 1,
         });
     });
 });

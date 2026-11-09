@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { buildSessionMessageObservationFactsV1 } from '@happier-dev/protocol';
+import { buildSessionMessageObservationFactsV1 } from '@happier-dev/protocol/sessions';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { NormalizedMessage } from "@happier-dev/session-core/raw";
 import { handleMessageUpdatedSocketUpdate } from './sessionSocketUpdate';

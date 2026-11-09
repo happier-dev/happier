@@ -83,7 +83,7 @@ export type SessionListRowPlacementFacts = Readonly<{
 
 /** Whether every selector of this query is decided by the published row facts. */
 export function isSessionListQueryRowPlaceable(query: SessionListQueryV1): boolean {
-    return query.membership === undefined
+    return (query.membership === undefined || isSessionListMembershipFilterRowDecided(query.membership.filter))
         && query.audiences.length === 0
         && query.tagIds.length === 0
         && !query.folderIds?.length
@@ -104,5 +104,24 @@ export function resolveSessionListQueryRowMembership(
     const inScope = query.scope === 'all_accessible' || facts.relevant;
     // Hidden-inactive corpora admit an inactive row only through attention.
     const live = query.includeInactive || facts.active || facts.needsAttention;
-    return inScope && live;
+    if (!inScope || !live || !query.membership) return inScope && live;
+    // A Space answers `manual tag OR smart filter` inside the outer lens. A row write never
+    // moves tag assignments, so a filter match decides membership; a miss leaves the
+    // manual branch to the Home, whose tag assignments the batch-read row does not carry.
+    const { membership } = query;
+    if (membership.mode === 'filter_or_manual' && membership.filter
+        && (membership.filter.scope === 'all_accessible' || facts.relevant)
+        && (membership.filter.attention !== 'needs_my_attention' || facts.needsAttention)) return true;
+    return membership.tagIds.length === 0 ? false : null;
+}
+
+/** A Space's smart filter that the row's published facts decide (no organization or relation selector). */
+function isSessionListMembershipFilterRowDecided(filter: NonNullable<SessionListQueryV1['membership']>['filter']): boolean {
+    return filter === undefined || (filter.audiences.length === 0
+        && filter.tagIds.length === 0
+        && !filter.folderIds?.length
+        && !filter.projectKeys?.include.length && !filter.projectKeys?.exclude.length
+        && filter.underSessionId === undefined
+        && filter.coordinator === undefined
+        && (filter.scope === 'my_work' || filter.scope === 'all_accessible'));
 }

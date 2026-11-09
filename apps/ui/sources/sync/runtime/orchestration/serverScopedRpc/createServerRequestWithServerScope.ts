@@ -168,7 +168,7 @@ type ServerAccountRequestTarget =
 
 type CaptureServerAccountRequestParams = ServerAccountRequestTarget & Readonly<{
     activeRequest: RawServerAccountRequest;
-}> & Pick<Parameters<typeof resolveServerAccountRequestContext>[0], 'signal' | 'prepareRequest'>;
+}> & Pick<Parameters<typeof resolveServerAccountRequestContext>[0], 'signal' | 'networkMode' | 'prepareRequest'>;
 
 export async function captureServerRequestAuthorityForServerAccountScope(params: CaptureServerAccountRequestParams): Promise<ServerAccountRequestAuthority> {
     const serverId = params.scope?.serverId ?? params.serverId;
@@ -177,6 +177,7 @@ export async function captureServerRequestAuthorityForServerAccountScope(params:
         serverId,
         preferScoped: true,
         ...(params.signal ? { signal: params.signal } : {}),
+        ...(params.networkMode ? { networkMode: params.networkMode } : {}),
         ...(params.prepareRequest ? { prepareRequest: params.prepareRequest } : {}),
     });
     if (context.scope !== 'scoped') {

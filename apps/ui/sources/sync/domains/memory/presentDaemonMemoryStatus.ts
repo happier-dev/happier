@@ -1,4 +1,4 @@
-import type { MemoryStatusV1 } from '@happier-dev/protocol';
+import type { MemoryStatusV1 } from '@happier-dev/protocol/memory/memoryStatus';
 import { formatHappierDataBytes } from '@happier-dev/plugin-ui/presentation';
 import {
   hasKnownEmptyMemoryIndexContent,

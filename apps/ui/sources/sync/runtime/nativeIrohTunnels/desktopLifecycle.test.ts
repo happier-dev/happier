@@ -145,7 +145,7 @@ describe('sync/runtime/nativeIrohTunnels desktop lifecycle bridge', () => {
         });
         const malformedOrigin = await module!.ensureHomeTunnel(makeRequest()).catch((error: unknown) => error);
         expect(malformedOrigin).toMatchObject({ name: 'IrohError', code: 'unknown' });
-        expect(classifyIrohHomeCarrierFailure(malformedOrigin).fallbackAllowed).toBe(false);
+        expect(classifyIrohHomeCarrierFailure(malformedOrigin).fallbackAllowed).toBe(true);
     });
 
     it('accepts any literal IPv4 loopback origin owned by the desktop host', async () => {
@@ -167,7 +167,7 @@ describe('sync/runtime/nativeIrohTunnels desktop lifecycle bridge', () => {
         const module = createDesktopIrohLifecycleModule();
         expect(module).not.toBeNull();
 
-        // Identity/protocol/config failures stay fail closed across the bridge.
+        // Identity and descriptor refusals stay fail closed across the bridge.
         hostInvoke.mockRejectedValueOnce(new Error('iroh_native_error:endpoint-identity-mismatch:wrong home'));
         const identityError = await module!.ensureHomeTunnel(makeRequest()).catch((error: unknown) => error);
         expect(identityError).toMatchObject({ name: 'IrohError', code: 'identity_mismatch' });
@@ -180,7 +180,7 @@ describe('sync/runtime/nativeIrohTunnels desktop lifecycle bridge', () => {
         hostInvoke.mockRejectedValueOnce(new Error('iroh_native_error:endpoint_key_unavailable:key unavailable'));
         const keyError = await module!.ensureHomeTunnel(makeRequest()).catch((error: unknown) => error);
         expect(keyError).toMatchObject({ name: 'IrohError', code: 'endpoint_key_unavailable' });
-        expect(classifyIrohHomeCarrierFailure(keyError).fallbackAllowed).toBe(false);
+        expect(classifyIrohHomeCarrierFailure(keyError).fallbackAllowed).toBe(true);
 
         // Availability/transport failures keep the honest fallback-allowed class.
         hostInvoke.mockRejectedValueOnce(new Error('iroh_native_error:unavailable:addon missing'));
@@ -194,7 +194,7 @@ describe('sync/runtime/nativeIrohTunnels desktop lifecycle bridge', () => {
         hostInvoke.mockRejectedValueOnce(new Error('iroh_native_error:transport_closed:peer disconnected'));
         const closedError = await module!.ensureHomeTunnel(makeRequest()).catch((error: unknown) => error);
         expect(closedError).toMatchObject({ name: 'IrohError', code: 'transport_closed' });
-        expect(classifyIrohHomeCarrierFailure(closedError).fallbackAllowed).toBe(false);
+        expect(classifyIrohHomeCarrierFailure(closedError).fallbackAllowed).toBe(true);
     });
 
     it('supervisor default composition selects the desktop bridge without bypassing the shared supervisor', async () => {

@@ -1,27 +1,27 @@
 import type {
-    ExecutionRunPublicState,
+    ExecutionRunPublicState} from '@happier-dev/protocol/execution/runs/responseSchemas';
+import type {
     ScmDiffSummaryGenerateInput,
     ScmDiffSummaryGenerateOutput,
     ScmDiffSummaryGenerateSuccess,
-    ScmDiffSummaryGenerationState,
     ScmDiffSummaryCostMetadata,
-    ScmDiffSummaryTruncation,
-    ScmComparison, ScmComparisonFile,
     ScmDiffSummaryOutputs,
     ScmDiffSummaryOutputKind,
-    ScmDiffSummaryAnalysisCoverage,
+    ScmDiffSummaryAnalysisCoverage} from '@happier-dev/protocol/scm/diffSummary';
+import type {
+    ScmComparison, ScmComparisonFile} from '@happier-dev/protocol/scm/comparison';
+import type {
     ScmDiffSummaryResult,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/scm/diffSummaryResult';
 import { buildScmComparisonSourceKey } from '@happier-dev/protocol/scm';
 import { isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
-
 import type { ScmReviewComparisonSelector } from './selection';
 
 export const SCM_DIFF_SUMMARY_GENERATE_ACTION_ID = 'scm.diffSummary.generate' as const;
 
 export type ScmDiffSummaryRequestStatus = 'idle' | 'starting' | 'running' | 'unknown' | 'succeeded' | 'failed';
 export type ScmDiffSummaryRestoreState = 'idle' | 'restoring' | 'ready' | 'unavailable';
-export type ScmDiffSummaryOperationIntent = 'generate' | 'regenerate' | 'copy';
+export type ScmDiffSummaryOperationIntent = 'generate' | 'regenerate';
 
 export type ScmDiffSummaryRequestKeyInput = Readonly<{
     sessionId: string | null;
@@ -34,8 +34,6 @@ export type ScmDiffSummaryRequestKeyInput = Readonly<{
 export type ScmDiffSummaryPayload = Readonly<{
     summaryMarkdown: string | null;
     output: ScmDiffSummaryGenerateSuccess;
-    truncation: ScmDiffSummaryTruncation | null;
-    generationState: ScmDiffSummaryGenerationState | null;
     cost: ScmDiffSummaryCostMetadata | null;
     risks: readonly string[];
     testImpact: string | null;
@@ -64,8 +62,8 @@ export type ScmDiffSummaryEntry = Readonly<{
     latestOutput: ScmDiffSummaryGenerateOutput | null;
     /** Display-only retained values; latestOutput remains the producer's wire facts. */
     displayOutputs: ScmDiffSummaryOutputs | null;
-    error: Readonly<{ message: string; code?: string }> | null;
-    retryAttempt: number;
+    /** `endedPartway`: the output kept what it wrote and stopped before the end (an unclassified cause stays diagnostic). */
+    error: Readonly<{ message: string; code?: string; endedPartway?: true }> | null;
 }>;
 
 /** Captured reads follow the same Account/host owner as generated readings, across view lifetimes. */
@@ -82,7 +80,6 @@ export type ScmDiffSummaryState = Readonly<{
     capturedReadsByKey?: Readonly<Record<string, Readonly<{ scopeKey: string; hostKey: string; value: CapturedScmRead }>>>;
     capturedFilesByKey?: Readonly<Record<string, Readonly<{ scopeKey: string; hostKey: string; files: ReadonlyMap<string, ScmComparisonFile> }>>>;
     reviewComparisonsByHostKey?: Readonly<Record<string, Readonly<{ scopeKey: string; hostKey: string; comparison: ScmReviewComparisonSelector }>>>;
-
 }>;
 
 export type ScmDiffSummaryEvent =
@@ -99,7 +96,7 @@ export type ScmDiffSummaryEvent =
         sidechainId?: string;
         structuredOutput?: ScmDiffSummaryGenerateOutput;
         requestedAtMs: number;
-        intent: Exclude<ScmDiffSummaryOperationIntent, 'copy'>;
+        intent: ScmDiffSummaryOperationIntent;
     }>
     | Readonly<{
         type: 'run_snapshot';
@@ -120,29 +117,13 @@ export type ScmDiffSummaryEvent =
         error: string;
         errorCode?: string;
         failedAtMs: number;
-        intent: Exclude<ScmDiffSummaryOperationIntent, 'copy'>;
-    }>
-    | Readonly<{
-        type: 'cache_hit';
-        key: string;
-        sessionId: string | null;
-        machineId?: string;
-        scopeKey?: string;
-        actionId: typeof SCM_DIFF_SUMMARY_GENERATE_ACTION_ID;
-        input: ScmDiffSummaryGenerateInput;
-        output: ScmDiffSummaryGenerateSuccess;
-        observedAtMs: number;
+        intent: ScmDiffSummaryOperationIntent;
     }>
     | Readonly<{
         type: 'saved_result';
         key: string;
         result: ScmDiffSummaryResult;
         observedAtMs: number;
-    }>
-    | Readonly<{
-        type: 'copy_requested';
-        key: string;
-        requestedAtMs: number;
     }>;
 
 export type ScmDiffSummaryViewModel = Readonly<{
@@ -161,15 +142,12 @@ export type ScmDiffSummaryViewModel = Readonly<{
     summaryMarkdown: string | null;
     isShowingLastKnownSummary: boolean;
     isPartial: boolean;
-    truncation: ScmDiffSummaryTruncation | null;
-    generationState: ScmDiffSummaryGenerationState | null;
     cost: ScmDiffSummaryCostMetadata | null;
     risks: readonly string[];
     testImpact: string | null;
     suggestedPrBody: string | null;
     error: (NonNullable<ScmDiffSummaryEntry['error']> & ScmDiffSummaryFailurePresentation) | null;
     canRetry: boolean;
-    retryAttempt: number;
     latestRun: ExecutionRunPublicState | null;
     comparison: ScmComparison | null;
     requestedOutputs: readonly ScmDiffSummaryOutputKind[];
@@ -198,10 +176,14 @@ export function selectScmDiffSummaryProducerModel(viewModel: Pick<ScmDiffSummary
 export type ScmDiffSummaryFailurePresentation =
     | Readonly<{ reason: 'invalidRequest'; messageKey: 'walkthrough.generationFailure.invalidRequest'; nextAction: 'reviewRequest'; nextActionKey: 'walkthrough.generationFailure.reviewRequest' }>
     | Readonly<{ reason: 'modelUnavailable'; messageKey: 'walkthrough.generationFailure.modelUnavailable'; nextAction: 'chooseModel'; nextActionKey: 'walkthrough.notice.chooseModel' }>
+    | Readonly<{ reason: 'modelCatalogUnavailable'; messageKey: 'walkthroughSettings.loadModelsFailed'; nextAction: 'chooseModel'; nextActionKey: 'walkthrough.notice.chooseModel' }>
     | Readonly<{ reason: 'machineUnavailable'; messageKey: 'walkthrough.generationFailure.machineUnavailable'; nextAction: 'reconnectMachine'; nextActionKey: 'walkthrough.generationFailure.reconnectMachine' }>
     | Readonly<{ reason: 'disabled'; messageKey: 'walkthrough.generationFailure.disabled'; nextAction: 'enableExplain'; nextActionKey: 'walkthrough.generationFailure.enableExplain' }>
     | Readonly<{ reason: 'cancelled'; messageKey: 'walkthrough.notice.cancelled'; nextAction: 'retry'; nextActionKey: 'walkthrough.notice.tryAgain' }>
-    | Readonly<{ reason: 'generationFailed'; messageKey: 'walkthrough.notice.failedGeneric'; nextAction: 'retry'; nextActionKey: 'walkthrough.notice.tryAgain' }>;
+    | Readonly<{ reason: 'generationFailed'; messageKey: 'walkthrough.notice.failedGeneric'; nextAction: 'retry'; nextActionKey: 'walkthrough.notice.tryAgain' }>
+    | Readonly<{ reason: 'inputTooLarge'; messageKey: 'walkthrough.generationFailure.inputTooLarge'; nextAction: 'narrowChange'; nextActionKey: 'walkthrough.generationFailure.narrowChange' }>
+    | Readonly<{ reason: 'contextTooSmall'; messageKey: 'walkthrough.generationFailure.contextTooSmall'; nextAction: 'chooseModel'; nextActionKey: 'walkthrough.notice.chooseModel' }>
+    | Readonly<{ reason: 'endedPartway'; messageKey: 'walkthrough.notice.endedPartway'; nextAction: 'retry'; nextActionKey: 'walkthrough.notice.tryAgain' }>;
 
 /** A walkthrough that stopped for a reason nobody classified; the native reason and code stay in diagnostics. */
 export const SCM_DIFF_SUMMARY_GENERIC_FAILURE = {
@@ -209,10 +191,28 @@ export const SCM_DIFF_SUMMARY_GENERIC_FAILURE = {
     nextAction: 'retry', nextActionKey: 'walkthrough.notice.tryAgain',
 } as const satisfies ScmDiffSummaryFailurePresentation;
 
+/** An output that kept what it wrote and stopped before the end for a reason nobody classified; Try again is the one recovery. */
+export const SCM_DIFF_SUMMARY_ENDED_PARTWAY_FAILURE = {
+    reason: 'endedPartway', messageKey: 'walkthrough.notice.endedPartway',
+    nextAction: 'retry', nextActionKey: 'walkthrough.notice.tryAgain',
+} as const satisfies ScmDiffSummaryFailurePresentation;
+
 /** Explain changes (`scm.diffSummary.enabled`) is off: no model work starts until the person turns it on. */
 export const SCM_DIFF_SUMMARY_DISABLED_FAILURE = {
     reason: 'disabled', messageKey: 'walkthrough.generationFailure.disabled',
     nextAction: 'enableExplain', nextActionKey: 'walkthrough.generationFailure.enableExplain',
+} as const satisfies ScmDiffSummaryFailurePresentation;
+
+/** An observed unavailable selection needs a model choice before another generation request. */
+export const SCM_DIFF_SUMMARY_MODEL_UNAVAILABLE_FAILURE = {
+    reason: 'modelUnavailable', messageKey: 'walkthrough.generationFailure.modelUnavailable',
+    nextAction: 'chooseModel', nextActionKey: 'walkthrough.notice.chooseModel',
+} as const satisfies ScmDiffSummaryFailurePresentation;
+
+/** A failed catalog read cannot establish that a model disappeared; the picker offers its existing Retry. */
+export const SCM_DIFF_SUMMARY_MODEL_CATALOG_UNAVAILABLE_FAILURE = {
+    reason: 'modelCatalogUnavailable', messageKey: 'walkthroughSettings.loadModelsFailed',
+    nextAction: 'chooseModel', nextActionKey: 'walkthrough.notice.chooseModel',
 } as const satisfies ScmDiffSummaryFailurePresentation;
 
 function presentScmDiffSummaryFailure(error: NonNullable<ScmDiffSummaryEntry['error']>): ScmDiffSummaryFailurePresentation {
@@ -233,8 +233,14 @@ function presentScmDiffSummaryFailure(error: NonNullable<ScmDiffSummaryEntry['er
         case 'SCM_DIFF_SUMMARY_MODEL_UNAVAILABLE':
         case 'SCM_DIFF_SUMMARY_MODEL_UNSUPPORTED':
         case 'model_structured_output_unsupported':
-            return { reason: 'modelUnavailable', messageKey: 'walkthrough.generationFailure.modelUnavailable',
+            return SCM_DIFF_SUMMARY_MODEL_UNAVAILABLE_FAILURE;
+        case 'agent_context_window_exceeded':
+            return { reason: 'contextTooSmall', messageKey: 'walkthrough.generationFailure.contextTooSmall',
                 nextAction: 'chooseModel', nextActionKey: 'walkthrough.notice.chooseModel' };
+        // The runtime's own input limit: another model reads through the same runtime, so no model choice and no plain retry fixes it.
+        case 'provider_input_too_large':
+            return { reason: 'inputTooLarge', messageKey: 'walkthrough.generationFailure.inputTooLarge',
+                nextAction: 'narrowChange', nextActionKey: 'walkthrough.generationFailure.narrowChange' };
         case 'target_unavailable':
         case 'RPC_SESSION_MACHINE_CONTROL_UNAVAILABLE':
             return { reason: 'machineUnavailable', messageKey: 'walkthrough.generationFailure.machineUnavailable',
@@ -242,7 +248,7 @@ function presentScmDiffSummaryFailure(error: NonNullable<ScmDiffSummaryEntry['er
         case 'SCM_DIFF_SUMMARY_DISABLED':
             return SCM_DIFF_SUMMARY_DISABLED_FAILURE;
         default:
-            return SCM_DIFF_SUMMARY_GENERIC_FAILURE;
+            return error.endedPartway ? SCM_DIFF_SUMMARY_ENDED_PARTWAY_FAILURE : SCM_DIFF_SUMMARY_GENERIC_FAILURE;
     }
 }
 
@@ -269,7 +275,7 @@ export function buildScmDiffSummaryRequestKey(input: ScmDiffSummaryRequestKeyInp
         cwd,
         `schema:${schemaVersion}`,
         `selector:${selectorCatalogId}`,
-        `model:${JSON.stringify([input.input.modelSelector?.profileId ?? null, input.input.modelSelector?.modelId ?? null, input.input.modelSelector?.backendTargetKey ?? null])}`,
+        `model:${JSON.stringify(input.input.modelSelector ?? null)}`,
         `outputs:${[...new Set(input.input.outputs ?? ['summary'])].sort().join(',')}`,
         ...(input.input.outputLanguage ? [`language:${input.input.outputLanguage}`] : []),
         ...(input.input.investigateSurroundingFiles === true ? ['investigation:surrounding-files'] : []),
@@ -283,8 +289,6 @@ function readPayload(output: ScmDiffSummaryGenerateOutput | null | undefined): S
     return {
         summaryMarkdown: summary?.summaryMarkdown ?? output.summaryMarkdown ?? null,
         output,
-        truncation: output.truncation ?? null,
-        generationState: output.generationState ?? null,
         cost: output.cost ?? null,
         risks: summary?.risks ?? output.risks ?? [],
         testImpact: summary?.testImpact ?? output.testImpact ?? null,
@@ -298,11 +302,12 @@ function statusFromOutput(output: ScmDiffSummaryGenerateOutput | null, input: Sc
     if (!output.outputs) return output.success && output.summaryMarkdown && (input.outputs ?? ['summary']).every((kind) => kind === 'summary') ? 'succeeded' : 'running';
     const requested: readonly ScmDiffSummaryOutputKind[] = input.outputs ?? ['summary'];
     const states = requested.map((kind) => output.outputs?.[kind]?.state);
-    if (states.some((status) => status === 'failed' || status === 'cancelled')) return 'failed';
+    if (states.some((status) => status === 'failed' || status === 'cancelled' || status === 'partial')) return 'failed';
     if (output.admission === 'outcomeUnknown' && states.some(status => status === 'pending' || status === 'writing')) return 'unknown';
     return states.every((status) => status === 'complete' || status === 'partial') ? 'succeeded' : 'running';
 }
 
+/** The one place that decides an output failed or ended partway, and why: a partial output keeps its value and reads as stopped early. */
 function errorFromOutput(output: ScmDiffSummaryGenerateOutput | null | undefined, input: ScmDiffSummaryGenerateInput): ScmDiffSummaryEntry['error'] {
     if (!output) return null;
     if (!output.success) return { message: output.error, code: output.errorCode };
@@ -310,7 +315,11 @@ function errorFromOutput(output: ScmDiffSummaryGenerateOutput | null | undefined
         const progress = output.outputs?.[kind];
         if (progress?.state === 'failed' || progress?.state === 'cancelled') {
             return { message: progress.reason ?? SCM_DIFF_SUMMARY_NO_REASON_MESSAGE,
-                ...(progress.state === 'cancelled' && progress.reasonCode ? { code: progress.reasonCode } : {}) };
+                ...(progress.reasonCode ? { code: progress.reasonCode } : {}) };
+        }
+        if (progress?.state === 'partial') {
+            return { message: progress.reason ?? SCM_DIFF_SUMMARY_NO_REASON_MESSAGE,
+                ...(progress.reasonCode ? { code: progress.reasonCode } : {}), endedPartway: true };
         }
     }
     return null;
@@ -379,7 +388,6 @@ function makeStartedEntry(
         lastKnownSummary: previous?.finalSummary ?? previous?.lastKnownSummary ?? null,
         latestOutput: event.structuredOutput ?? null,
         error: errorFromOutput(event.structuredOutput, event.input),
-        retryAttempt: event.intent === 'regenerate' ? previous?.retryAttempt ?? 0 : 0,
     };
 }
 
@@ -415,46 +423,8 @@ export function applyScmDiffSummaryEvent(state: ScmDiffSummaryState, event: ScmD
                 message: event.error,
                 ...(event.errorCode ? { code: event.errorCode } : {}),
             },
-            retryAttempt: (previous?.retryAttempt ?? 0) + 1,
         };
         return writeEntry(state, entry);
-    }
-
-    if (event.type === 'cache_hit') {
-        const payload = readPayload(event.output);
-        if (!payload) return state;
-        const entry: Omit<ScmDiffSummaryEntry, 'displayOutputs'> = {
-            key: event.key,
-            sessionId: event.sessionId,
-            machineId: event.machineId,
-            scopeKey: event.scopeKey ?? previous?.scopeKey,
-            input: event.input,
-            status: statusFromOutput(event.output, event.input),
-            actionId: event.actionId,
-            executionRunId: event.output.runId ?? null,
-            callId: null,
-            sidechainId: null,
-            pendingIntent: null,
-            requestedAtMs: previous?.requestedAtMs ?? event.observedAtMs,
-            observedAtMs: event.observedAtMs,
-            streamingMarkdown: null,
-            latestRun: null,
-            finalSummary: payload,
-            lastKnownSummary: payload,
-            latestOutput: event.output,
-            error: null,
-            retryAttempt: previous?.retryAttempt ?? 0,
-        };
-        return writeEntry(state, entry);
-    }
-
-    if (event.type === 'copy_requested') {
-        if (!previous) return state;
-        return writeEntry(state, {
-            ...previous,
-            pendingIntent: 'copy',
-            requestedAtMs: event.requestedAtMs,
-        });
     }
 
     if (!previous) return state;
@@ -467,10 +437,11 @@ export function applyScmDiffSummaryEvent(state: ScmDiffSummaryState, event: ScmD
         const output = reconcileSnapshotFacts(previous.latestOutput, {
             ...savedResult.output, resultId: savedResult.resultId, revision: savedResult.revision,
         });
-        // Machine reads can echo unchanged results while commit progress is polled.
+        const error = reconcileSnapshotFacts(previous.error, errorFromOutput(output, previous.input));
+        // Machine reads can echo unchanged results while observing result revisions.
         // Equal revisions alone are insufficient: apply progress and Undo availability
         // can change independently, and a successful reread must clear a read error.
-        if (output.success && previous.error === null
+        if (error === previous.error
             && previous.status === statusFromOutput(output, previous.input)
             && savedResult === previous.savedResult
             && output === previous.latestOutput) return state;
@@ -486,7 +457,7 @@ export function applyScmDiffSummaryEvent(state: ScmDiffSummaryState, event: ScmD
             executionRunId: nextRunId,
             latestRun: previous.latestRun?.runId === nextRunId ? previous.latestRun : null,
             observedAtMs: event.observedAtMs,
-            error: errorFromOutput(output, previous.input),
+            error,
         });
     }
     if (previous.executionRunId && previous.executionRunId !== event.run.runId) return state;
@@ -574,16 +545,13 @@ export function selectScmDiffSummaryViewModel(state: ScmDiffSummaryState, key: s
         streamingMarkdown: entry?.streamingMarkdown ?? null,
         summaryMarkdown: summary?.summaryMarkdown ?? null,
         isShowingLastKnownSummary,
-        isPartial: summary?.generationState === 'partial' || Boolean(summary?.truncation) || requestedOutputs.some((kind) => output?.outputs?.[kind]?.state === 'partial' || summary?.output.outputs?.[kind]?.state === 'partial'),
-        truncation: summary?.truncation ?? null,
-        generationState: summary?.generationState ?? null,
+        isPartial: requestedOutputs.some((kind) => output?.outputs?.[kind]?.state === 'partial' || summary?.output.outputs?.[kind]?.state === 'partial'),
         cost: summary?.cost ?? null,
         risks: summary?.risks ?? [],
         testImpact: summary?.testImpact ?? null,
         suggestedPrBody: summary?.suggestedPrBody ?? null,
         error: error ? { ...error, ...presentScmDiffSummaryFailure(error) } : null,
         canRetry: Boolean(entry && (status === 'failed' || status === 'succeeded')),
-        retryAttempt: entry?.retryAttempt ?? 0,
         latestRun: entry?.latestRun ?? null,
         comparison: output?.comparison ?? summary?.output.comparison ?? null,
         requestedOutputs,

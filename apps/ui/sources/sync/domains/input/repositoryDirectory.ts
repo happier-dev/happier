@@ -33,6 +33,7 @@ export function setCachedRepositoryDirectoryEntries(input: {
     directoryPath: string;
     entries: RepositoryDirectoryEntry[];
     gitIgnoreAvailable?: boolean;
+    truncated?: boolean;
 }): void {
     const target = resolveWorkspaceTargetForSession(input.sessionId);
     if (!target) return;
@@ -41,6 +42,7 @@ export function setCachedRepositoryDirectoryEntries(input: {
         directoryPath: input.directoryPath,
         entries: input.entries,
         gitIgnoreAvailable: input.gitIgnoreAvailable,
+        truncated: input.truncated,
     });
 }
 

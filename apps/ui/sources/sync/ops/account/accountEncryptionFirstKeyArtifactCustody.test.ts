@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import { installLocalStorageMock, type LocalStorageMockHandle } from '@/auth/storage/tokenStorage.web.testHelpers';
-import { AccountEncryptionMigrateRequestSchema, createAccountEncryptionMigrateRequestBindingDigestV1 } from '@happier-dev/protocol';
+import { AccountEncryptionMigrateRequestSchema, createAccountEncryptionMigrateRequestBindingDigestV1 } from '@happier-dev/protocol/account/encryptionMigrate';
 import { HappyError } from '@/utils/errors/errors';
 import { buildContentKeyBinding } from '@/auth/oauth/contentKeyBinding';
 import { deriveAccountSigningPublicKey } from '@/auth/flows/challenge';

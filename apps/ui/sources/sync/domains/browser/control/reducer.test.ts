@@ -1,4 +1,7 @@
-import type { BrowserAdapterCapabilitiesV1, BrowserCommandV1, BrowserEventV1, BrowserViewTargetV1 } from '@happier-dev/protocol';
+import type { BrowserAdapterCapabilitiesV1} from '@happier-dev/protocol/browser/adapters/v1';
+import type { BrowserCommandV1} from '@happier-dev/protocol/browser/control/v1';
+import type { BrowserEventV1} from '@happier-dev/protocol/browser/events/v1';
+import type { BrowserViewTargetV1 } from '@happier-dev/protocol/browser/target/v1';
 import { describe, expect, it, vi } from 'vitest';
 
 import { buildBrowserAdapterCapabilities } from '../adapters/capabilities';
@@ -124,6 +127,40 @@ describe('browser control reducer', () => {
         const reopened = applyBrowserControlEvent(hydrated, { ...authoritative, target: externalTarget });
         expect(reopened.viewsById.view_1).toMatchObject({ target: externalTarget, canGoBack: false, navigationGeneration: 0 });
         expect(reopened.viewsById.view_1?.automationController).toBeUndefined();
+    });
+
+    it('preserves a real preview adapter refusal and clears it after the view recovers', async () => {
+        const { proxyLocalServicePreviewHttpRequest } = await import('@happier-dev/peer-mediation/localServices/preview/httpAdapter');
+        const { resolveBrowserPreviewRefusal } = await import('../adapters/targets/localPreview');
+        const { browserViewLifecycleEvent } = await import('./lifecycle');
+        const { applyBrowserControlEvent, createBrowserControlState } = await import('./reducer');
+        let status = 0;
+        const chunks: Uint8Array[] = [];
+        const result = await proxyLocalServicePreviewHttpRequest({
+            preview: { previewId: 'preview_1', machineId: 'machine_1', owner: { kind: 'user', id: 'owner' },
+                target: { scheme: 'http', host: 'localhost', port: 5173 }, initialPath: { pathname: '/', search: '' },
+                display: { title: 'Reading desk', addressLabel: 'localhost:5173' }, originMode: 'host' },
+            request: { method: 'GET', path: '/', search: '', headers: {} },
+            // The signed transport admission is the system boundary; the adapter and outcome remain real.
+            openTunnel: async () => { throw Object.assign(new Error('destination_port_not_allowed'), { reasonCode: 'destination_port_not_allowed' }); },
+            response: { writeHead(code) { status = code; }, write(chunk) { chunks.push(chunk); }, end() {}, destroy(error) { throw error; } },
+        });
+        expect(result).toEqual({ ok: false, reasonCode: 'destination_port_not_allowed' });
+        expect(status).toBe(403);
+        const body: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        expect(body).toEqual({ error: 'preview_access_denied', reasonCode: 'destination_port_not_allowed', port: 5173 });
+        const refusal = resolveBrowserPreviewRefusal(status, body);
+        expect(refusal).toEqual({ reasonCode: 'destination_port_not_allowed', port: 5173 });
+        if (!refusal) throw Error('Missing typed policy refusal');
+        const event = browserViewLifecycleEvent({ browserSessionId: 'browser_session_1', viewId: 'view_1' }, {
+            kind: 'loadFailed', errorCode: refusal.reasonCode,
+        });
+        if (!event) throw Error('Missing failure outcome');
+        const state = applyBrowserControlEvent(openLocalPreviewEvents().reduce(applyBrowserControlEvent, createBrowserControlState()), event);
+        expect(state.viewsById.view_1).toMatchObject({ loadingState: 'failed', lastError: 'destination_port_not_allowed' });
+        const recovered = browserViewLifecycleEvent({ browserSessionId: 'browser_session_1', viewId: 'view_1' }, { kind: 'loadFinished' });
+        if (!recovered) throw Error('Missing recovery outcome');
+        expect(applyBrowserControlEvent(state, recovered).viewsById.view_1).toMatchObject({ loadingState: 'ready', lastError: null });
     });
 
     it('reconciles one navigation fact delivered through command results and live metadata without republishing it', async () => {

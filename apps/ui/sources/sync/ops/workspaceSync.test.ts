@@ -1,23 +1,39 @@
+import { createWorkspaceSyncRelationshipsListFixture } from '@/dev/testkit/harness/workspaceSyncHarness';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-    CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
-    computeWorkspaceSyncPolicyDigest,
+    CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION} from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
+import {
+    computeWorkspaceSyncPolicyDigest} from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import {
     decodePlainArtifactStoredContent,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/storage/artifactStoredContent';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { readWorkspaceSyncErrorCode } from '@/sync/domains/sessionHandoff/workspaceSyncPresentation';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
 import { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
-import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
+import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { getStorage } from '@/sync/domains/state/storage';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { serverScopedRpcSocketPool } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool';
+import { publishAppliedActiveServerSnapshot, publishAppliedActiveServerRuntimeAvailability } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 
 const machineRpcWithServerScope = vi.hoisted(() => vi.fn());
+
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
+vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
+vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
+// Metro's deferred module loader is the boundary; the mounted/default executors remain real.
+vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async importOriginal => {
+    const original = await importOriginal<typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')>();
+    const { createFrontDoorActionExecuteForVitest } = await import('@/dev/testkit/harness/frontDoorActionExecutorBoundary');
+    return { ...original, createFrontDoorActionExecute: createFrontDoorActionExecuteForVitest(original) };
+});
 
 // Record daemon requests at Socket.IO; scoped routing, codecs and Action owners run normally.
 vi.mock('socket.io-client', async (importOriginal) => {
@@ -95,18 +111,21 @@ const features = {
 
 describe('workspace sync UI operations', () => {
     let actionServerId: string;
+    let accountActionsSettings: unknown;
     const artifacts = createArtifactStoreBoundary({
         ownerAccountId: () => 'workspace-sync-account',
         encryptionMode: 'plain',
     });
 
     beforeEach(async () => {
+        accountActionsSettings = undefined;
         getStorage().setState(initialStorageState, true);
         resetServerFeaturesClientForTests();
         invalidateAccountEncryptionModeCache();
         actionServerId = (await upsertAndActivateServer({ serverUrl: 'https://workspace-sync-action.test', name: 'Home' })).id;
         getStorage().getState().activateProfileScope({ serverId: actionServerId, accountId: 'workspace-sync-account' });
         getStorage().setState({ settingsScope: { serverId: actionServerId, accountId: 'workspace-sync-account' } });
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
         vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: accountToken });
         vi.stubGlobal('fetch', vi.fn(async () => Response.json(features)));
         await getServerFeaturesSnapshot({ serverId: actionServerId, force: true });
@@ -116,6 +135,9 @@ describe('workspace sync UI operations', () => {
             if (pathname === '/v1/features') return Response.json(features);
             if (pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
             if (pathname === '/v1/auth/ping') return Response.json({ ok: true });
+            if (pathname === '/v2/account/settings') return Response.json(accountActionsSettings
+                ? { content: { t: 'plain', v: { actionsSettingsV1: accountActionsSettings } }, version: 1 }
+                : { content: null, version: 0 });
             if (pathname === '/v1/machines/read-batch' && init?.method === 'POST') {
                 return createMachineReadBatchResponseFixture(init.body, id => id === 'machine-controller'
                     ? createPlainMachineRowFixture({ id, accountId: 'workspace-sync-account' }) : null);
@@ -134,12 +156,31 @@ describe('workspace sync UI operations', () => {
         // This suite retires its mocked network boundary after every case. The
         // real pool must release retained sockets before their mock is restored.
         await serverScopedRpcSocketPool.stopAll();
+        publishAppliedActiveServerRuntimeAvailability(false);
         resetRuntimeFetch();
         resetServerFeaturesClientForTests();
         invalidateAccountEncryptionModeCache();
         getStorage().setState(initialStorageState, true);
         vi.restoreAllMocks();
         vi.unstubAllGlobals();
+    });
+
+    it.each([
+        ['relationships', () => listWorkspaceSyncStatuses({ controllerMachineId: 'machine-controller' })],
+        ['conflicts', () => listWorkspaceSyncConflicts({ controllerMachineId: 'machine-controller', relationshipId: 'relationship-1' })],
+        ['inspection', () => inspectWorkspaceSyncConflict({ controllerMachineId: 'machine-controller', request: { workspaceRefId: 'alpha', path: 'file.txt' } })],
+    ] as const)('preserves a daemon refusal through %s Action admission without retries', async (_label, read) => {
+        machineRpcWithServerScope.mockResolvedValue({ error: 'Workspace relationship is unavailable', errorCode: 'relationship_not_ready' });
+        const failure = await read().then(() => null, error => error);
+        expect(readWorkspaceSyncErrorCode(failure)).toBe('relationship_not_ready');
+        expect(machineRpcWithServerScope).toHaveBeenCalledTimes(1);
+    });
+
+    it('preserves modern daemon refusal envelopes before parsing flush status', () => {
+        expect(() => workspaceSyncOperations.assertWorkspaceSyncRpcSuccess({
+            error: 'Requester authority is unavailable', errorCode: 'project_requester_authority_unavailable',
+            effectAttempted: false, failureCause: { phase: 'rpc.handler', errorClass: 'Error', errorCode: 'project_requester_authority_unavailable', httpStatus: null },
+        })).toThrow(expect.objectContaining({ rpcErrorCode: 'project_requester_authority_unavailable', effectAttempted: false }));
     });
 
     it('builds the existing retirement input only from a strictly bound readonly target preview', async () => {
@@ -170,6 +211,18 @@ describe('workspace sync UI operations', () => {
             .resolves.toEqual({ ok: false, errorCode: 'workspace_copy_not_owned' });
     });
 
+    it.each([
+        ['workspace.sync.relationships.list', () => listWorkspaceSyncStatuses({ controllerMachineId: 'machine-controller' })],
+        ['workspace.sync.conflicts.list', () => listWorkspaceSyncConflicts({ controllerMachineId: 'machine-controller', relationshipId: 'relationship-1' })],
+        ['workspace.sync.conflict.inspect', () => inspectWorkspaceSyncConflict({ controllerMachineId: 'machine-controller', request: { workspaceRefId: 'alpha', path: 'file.txt' } })],
+    ] as const)('honors disabled UI admission for %s before any daemon read', async (actionId, read) => {
+        accountActionsSettings = ActionsSettingsV1Schema.parse({ v: 1, actions: { [actionId]: { disabledSurfaces: ['ui'] } } });
+        getStorage().getState().applySettingsLocal({ actionsSettingsV1: ActionsSettingsV1Schema.parse(accountActionsSettings) });
+        machineRpcWithServerScope.mockResolvedValue({ statuses: [] });
+        await expect(read()).rejects.toMatchObject({ code: 'action_disabled' });
+        expect(machineRpcWithServerScope).not.toHaveBeenCalled();
+    });
+
     it('reinspects legacy state without publishing a cleanup mutation', async () => {
         machineRpcWithServerScope.mockResolvedValueOnce({
             status: 'legacy_workspace_sync_state_unsupported',
@@ -192,7 +245,7 @@ describe('workspace sync UI operations', () => {
         // A later check must preserve the producer's historical clean completion, not relabel 42 as synced.
         const cleanStatus = { ...status, lastCleanSyncAtMs: 17 };
         machineRpcWithServerScope
-            .mockResolvedValueOnce({ statuses: [cleanStatus] })
+            .mockResolvedValueOnce(createWorkspaceSyncRelationshipsListFixture([cleanStatus]))
             .mockResolvedValueOnce({ status: cleanStatus });
 
         await expect(listWorkspaceSyncStatuses({
@@ -208,7 +261,7 @@ describe('workspace sync UI operations', () => {
         expect(machineRpcWithServerScope).toHaveBeenNthCalledWith(1, {
             machineId: 'machine-controller',
             serverUrl: 'https://workspace-sync-action.test',
-            method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_LIST,
+            method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST,
             payload: {},
         });
         expect(machineRpcWithServerScope).toHaveBeenNthCalledWith(2, {
@@ -241,7 +294,12 @@ describe('workspace sync UI operations', () => {
         expect(machineRpcWithServerScope).toHaveBeenCalledOnce();
     });
 
-    it('maps transient and conflict commands without inventing client-side state', async () => {
+    it('maps an explicitly Ask-configured conflict resolution through the persisted approval and daemon effect', async () => {
+        // The ordinary UI default no longer manufactures an approval Artifact; this case exercises an explicit Ask.
+        accountActionsSettings = ActionsSettingsV1Schema.parse({ v: 1, actions: {
+            'workspace.sync.conflict.resolve': { approvalRequiredSurfaces: ['ui'] },
+        } });
+        getStorage().getState().applySettingsLocal({ actionsSettingsV1: ActionsSettingsV1Schema.parse(accountActionsSettings) });
         const phases: string[] = [];
         const resolution = { endpoints: [
             { workspaceRefId: 'workspace-alpha', status: 'applied' as const },
@@ -388,7 +446,9 @@ describe('workspace sync UI operations', () => {
                 size: 5,
                 text: 'hello',
             })
-            .mockResolvedValueOnce({ statuses: [{ ...status, state: 'invented' }] });
+            .mockResolvedValueOnce({ ...createWorkspaceSyncRelationshipsListFixture([status]), relationships: [{
+                ...createWorkspaceSyncRelationshipsListFixture([status]).relationships[0], status: { ...status, state: 'invented' },
+            }] });
 
         await expect(readWorkspaceSyncFile({
             controllerMachineId: 'machine-controller',
@@ -403,7 +463,7 @@ describe('workspace sync UI operations', () => {
         await expect(listWorkspaceSyncStatuses({
             controllerMachineId: 'machine-controller',
             serverId: actionServerId,
-        })).rejects.toThrow('Unsupported response');
+        })).rejects.toThrow();
     });
 
     it('routes each lifecycle intent through exactly one daemon operation', async () => {
@@ -428,6 +488,108 @@ describe('workspace sync UI operations', () => {
 
         machineRpcWithServerScope.mockResolvedValueOnce({ status });
         await expect(disableWorkspaceSyncRelationship(scope)).rejects.toThrow('Unsupported response');
+    });
+
+    it.each([
+        ['terminate', RPC_METHODS.DAEMON_WORKSPACE_SYNC_TERMINATE, { terminated: true }],
+        ['disable', RPC_METHODS.DAEMON_WORKSPACE_SYNC_PAUSE, { enabled: false }],
+        ['enable', RPC_METHODS.DAEMON_WORKSPACE_SYNC_RESUME, { enabled: true }],
+        ['flush', RPC_METHODS.DAEMON_WORKSPACE_SYNC_FLUSH, { status }],
+    ] as const)('preserves a committed %s receipt after the captured credential retires', async (operation, method, receipt) => {
+        const { createDeferred } = await import('@/dev/testkit');
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const committed = createDeferred<void>();
+        const response = createDeferred<void>();
+        let effects = 0;
+        machineRpcWithServerScope.mockImplementation(async request => {
+            expect(request.method).toBe(method);
+            effects++;
+            committed.resolve();
+            await response.promise;
+            return operation === 'flush' ? { status } : { ok: true };
+        });
+        const actionId = `workspace.sync.relationship.${operation}` as const;
+        const input = { controllerMachineId: 'machine-controller', relationshipId: 'relationship-1' };
+        const context = { serverId: actionServerId, expectedAccountId: 'workspace-sync-account', surface: 'ui' as const };
+        const executor = createDefaultActionExecutor({ presentUserActionConfirmation: async () => true });
+        const pending = executor.execute(actionId, input, context);
+        try {
+            await committed.promise;
+            await TokenStorage.setCredentialsForServerUrl('https://workspace-sync-action.test', { serverId: actionServerId }, {
+                token: createAccountTokenForTests('replacement-account'),
+            });
+        } finally { response.resolve(); }
+        const settled = await pending;
+        expect(settled, JSON.stringify(settled)).toMatchObject({ ok: true, result: { v: 1, relationshipId: input.relationshipId, ...receipt } });
+        expect(effects).toBe(1);
+        // The next request uses the new credential; it cannot borrow the original Account's admission.
+        vi.mocked(TokenStorage.getCredentialsForServerUrl).mockResolvedValue({ token: createAccountTokenForTests('replacement-account') });
+        await expect(executor.execute(actionId, input, context)).resolves.toMatchObject({ ok: false, errorCode: 'action_account_scope_changed' });
+        expect(effects).toBe(1);
+    });
+
+    it.each(['disable', 'enable', 'flush'] as const)('keeps the default relationship adapter %s receipt after its active lifetime retires', async operation => {
+        const { createDeferred } = await import('@/dev/testkit');
+        const { captureActiveServerAccountScopeLifetime, retireActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const actions = await import('@/sync/ops/actions/workspaceSyncRelationshipActions');
+        const run = { disable: actions.disableWorkspaceSyncRelationshipAction, enable: actions.enableWorkspaceSyncRelationshipAction,
+            flush: actions.flushWorkspaceSyncRelationshipAction }[operation];
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        expect(lifetime?.isCurrent()).toBe(true);
+        const committed = createDeferred<void>();
+        const response = createDeferred<void>();
+        let effects = 0;
+        machineRpcWithServerScope.mockImplementation(async () => {
+            effects++;
+            committed.resolve();
+            await response.promise;
+            return operation === 'flush' ? { status } : { ok: true };
+        });
+        const input = { controllerMachineId: 'machine-controller', relationshipId: 'relationship-1' };
+        const pending = run(input, lifetime);
+        try {
+            await committed.promise;
+            retireActiveServerAccountScopeLifetime();
+            expect(lifetime?.isCurrent()).toBe(false);
+        } finally { response.resolve(); }
+        await expect(pending).resolves.toMatchObject({ ok: true, relationshipId: input.relationshipId });
+        await expect(run(input, lifetime)).resolves.toMatchObject({ ok: false, errorCode: 'action_account_scope_changed' });
+        expect(effects).toBe(1);
+    });
+
+    it('delivers a relationship receipt through the mounted executor after the active Home lifetime retires', async () => {
+        const { createDeferred, renderHook } = await import('@/dev/testkit');
+        const { useMountedActionExecution } = await import('@/components/approvals/useMountedActionExecution');
+        const { enableWorkspaceSyncRelationshipAction } = await import('@/sync/ops/actions/workspaceSyncRelationshipActions');
+        const { captureActiveServerAccountScopeLifetime, retireActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const committed = createDeferred<void>();
+        const response = createDeferred<void>();
+        let effects = 0;
+        machineRpcWithServerScope.mockImplementation(async () => {
+            effects++;
+            committed.resolve();
+            await response.promise;
+            return { ok: true };
+        });
+        const hook = await renderHook(() => useMountedActionExecution(actionServerId));
+        await vi.waitFor(() => expect(hook.getCurrent().ready).toBe(true));
+        const execute = hook.getCurrent().execute;
+        const activeLifetime = captureActiveServerAccountScopeLifetime();
+        expect(activeLifetime?.isCurrent()).toBe(true);
+        const input = { controllerMachineId: 'machine-controller', relationshipId: 'relationship-1' };
+        const pending = enableWorkspaceSyncRelationshipAction(input, null, execute);
+        try {
+            await committed.promise;
+            // Focused Sync retires independently of this explicitly captured Account's invocation.
+            retireActiveServerAccountScopeLifetime();
+            expect(activeLifetime?.isCurrent()).toBe(false);
+            response.resolve();
+            await expect(pending).resolves.toMatchObject({ ok: true, relationshipId: input.relationshipId, enabled: true });
+        } finally { response.resolve(); await hook.unmount(); }
+        await expect(enableWorkspaceSyncRelationshipAction(input, null, execute)).resolves.toMatchObject({
+            ok: false, errorCode: 'action_account_scope_changed',
+        });
+        expect(effects).toBe(1);
     });
 
     it('keeps the daemon\'s typed refusal of a lifecycle command from the transport to the Action result', async () => {

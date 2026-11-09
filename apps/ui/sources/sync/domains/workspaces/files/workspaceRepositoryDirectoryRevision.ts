@@ -37,6 +37,11 @@ export function subscribeWorkspaceRepositoryDirectoryRevision(
     };
 }
 
+/** Every mounted tree re-reads: what it showed belonged to an Account that left. */
+export function markMountedWorkspaceRepositoryDirectoriesChanged(): void {
+    for (const key of [...workspaceRepositoryDirectoryListeners.keys()]) markWorkspaceRepositoryDirectoryChanged(key);
+}
+
 export function markWorkspaceRepositoryDirectoryChanged(workspaceCacheKey: string | null | undefined): void {
     const key = normalizeWorkspaceCacheKey(workspaceCacheKey);
     if (!key) return;

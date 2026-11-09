@@ -31,7 +31,7 @@ import {
 } from './sessionDraftRepository';
 import { SessionDraftContextUnavailableError } from './sessionDraftCipherError';
 import { getSessionDraftDocumentField } from './sessionDraftDocumentFields';
-import { parseSerializedSessionDraftScope } from './sessionDraftSerializedScope';
+import { sessionDraftRowKey } from './sessionDraftSerializedScope';
 import { HappyError } from '@/utils/errors/errors';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 
@@ -50,9 +50,15 @@ function createMemoryStorage() {
     return {
         values,
         getString: (key: string) => values.get(key),
+        getAllKeys: () => [...values.keys()],
         set: (key: string, value: string) => values.set(key, value),
         delete: (key: string) => values.delete(key),
     };
+}
+
+/** The stored record of one draft (see `sessionDraftRowKey`). */
+function draftRecordKey(replicaKey: string, recordScope: { serverId: string; accountId: string } = scope): string {
+    return sessionDraftRowKey(`session-drafts-repository-v1:${serverAccountScopeKeySuffix(recordScope)}`, replicaKey);
 }
 
 it('re-reads only the transferred draft after subscribe while retaining sibling draft ownership', async () => {
@@ -319,8 +325,8 @@ describe('sessionDraftRepository', () => {
         const repository = createSessionDraftRepository({ storage, cipher, syncEnabled: false, randomUUID: () => uuid(4) });
         expect(repository.getSessionDraftSnapshot(scope, { kind: 'newDiscussion' })).toBeNull();
         repository.writeDiscussionSessionDraft({ scope, address: { kind: 'newDiscussion' }, patch: { text: 'Independent' } });
-        const retained = parseSerializedSessionDraftScope(storage.getString(storageKey)!);
-        expect(retained?.replicas[oldKey]).toEqual(oldReplica);
+        expect(JSON.parse(storage.getString(draftRecordKey(oldKey))!)).toEqual(oldReplica);
+        expect(storage.getString(storageKey)).toBeUndefined();
         expect(repository.getSessionComposerDraftSnapshot(scope, { kind: 'newDiscussion' })?.composer.text.value).toBe('Independent');
     });
 
@@ -378,10 +384,9 @@ describe('sessionDraftRepository', () => {
         const repository = createSessionDraftRepository({ storage, cipher: plainCipher(), syncEnabled: false, randomUUID: () => uuid(992) });
         repository.writeProjectOpenDraft({ scope, draftId, patch: { selection: { serverId: scope.serverId } } });
         const [key, raw] = [...storage.values.entries()][0]!;
-        const persisted = JSON.parse(raw);
-        const replica = Object.values(persisted.replicas)[0] as { localRawDocument: Record<string, unknown> };
+        const replica = JSON.parse(raw) as { localRawDocument: Record<string, unknown> };
         replica.localRawDocument.retired = true;
-        storage.values.set(key, JSON.stringify(persisted));
+        storage.values.set(key, JSON.stringify(replica));
         const restored = createSessionDraftRepository({ storage, cipher: plainCipher(), syncEnabled: false, randomUUID: () => uuid(993) });
         restored.writeProjectOpenDraft({ scope, draftId, patch: { result: { kind: 'outcomeUnknown' } } });
         expect(restored.getSessionDraftSnapshot(scope, { kind: 'projectOpen', draftId })?.document)
@@ -393,10 +398,9 @@ describe('sessionDraftRepository', () => {
         const pullRequest = { title: 'Keep draft', body: 'Review', draft: true, base: null };
         repository.writeExistingSessionDraft({ scope, sessionId: 'session-a', patch: { scmPullRequestV1: pullRequest } });
         const [key, raw] = [...storage.values.entries()][0]!;
-        const persisted = JSON.parse(raw);
-        const replica = Object.values(persisted.replicas)[0] as { localRawDocument: { extensions: { happier: { scmPullRequestV1: { value: Record<string, unknown> } } } } };
+        const replica = JSON.parse(raw) as { localRawDocument: { extensions: { happier: { scmPullRequestV1: { value: Record<string, unknown> } } } } };
         replica.localRawDocument.extensions.happier.scmPullRequestV1.value.retired = true;
-        storage.values.set(key, JSON.stringify(persisted));
+        storage.values.set(key, JSON.stringify(replica));
         const restored = createSessionDraftRepository({ storage, cipher: plainCipher(), syncEnabled: false });
         expect(readSessionScmDraftFromDraft(restored.getSessionDraftSnapshot(scope, sessionAddress)?.document).pullRequest)
             .toEqual(pullRequest);
@@ -435,10 +439,8 @@ describe('sessionDraftRepository', () => {
 
         const stored = [...storage.values.entries()][0];
         if (!stored) throw new Error('Expected retained Open storage');
-        const [key, raw] = stored;
-        const serialized = parseSerializedSessionDraftScope(raw);
-        if (!serialized) throw new Error('Expected a draft storage envelope');
-        const replica = Object.values(serialized.replicas)[0];
+        const [, raw] = stored;
+        const replica: unknown = JSON.parse(raw);
         if (!replica || typeof replica !== 'object' || Array.isArray(replica)) throw new Error('Expected a retained draft replica');
         const openDocument = restored.getSessionDraftSnapshot(scope, address)?.document;
         if (!openDocument || !('selection' in openDocument)) throw new Error('Expected a retained Open document');
@@ -449,9 +451,8 @@ describe('sessionDraftRepository', () => {
         const retainedDocument = { ...openDocument, composer,
             ...(unsupportedKnownField ? { result: { ...openDocument.result, value: { kind: 'retained-unknown-result' } } } : {}),
         };
-        const mismatchedRaw = JSON.stringify({ ...serialized, replicas: { ...serialized.replicas,
-            [canonicalSessionDraftAddressV1(sessionAddress)]: { ...replica, address: sessionAddress, localRawDocument: retainedDocument },
-        } });
+        const key = draftRecordKey(canonicalSessionDraftAddressV1(sessionAddress));
+        const mismatchedRaw = JSON.stringify({ ...replica, address: sessionAddress, localRawDocument: retainedDocument });
         storage.values.set(key, mismatchedRaw);
         const mismatched = createSessionDraftRepository({ storage, cipher: plainCipher(), syncEnabled: false });
         expect(mismatched.getSessionDraftSnapshot(scope, sessionAddress)?.document)
@@ -470,14 +471,11 @@ describe('sessionDraftRepository', () => {
         repository.writeNewSessionDraft({ scope, draftId, patch: { text: 'Retained New Session' }, materializationIntent: 'seeded' });
         const stored = [...storage.values.entries()][0];
         if (!stored) throw new Error('Expected retained draft storage');
-        const [key, raw] = stored;
-        const serialized = parseSerializedSessionDraftScope(raw);
-        if (!serialized) throw new Error('Expected retained draft envelope');
-        const replica = Object.values(serialized.replicas)[0];
+        const [, raw] = stored;
+        const replica: unknown = JSON.parse(raw);
         if (!replica || typeof replica !== 'object' || Array.isArray(replica)) throw new Error('Expected retained replica');
-        const retainedRaw = JSON.stringify({ ...serialized, replicas: { ...serialized.replicas,
-            [canonicalSessionDraftAddressV1(sessionAddress)]: { ...replica, address: sessionAddress },
-        } });
+        const key = draftRecordKey(canonicalSessionDraftAddressV1(sessionAddress));
+        const retainedRaw = JSON.stringify({ ...replica, address: sessionAddress });
         storage.values.set(key, retainedRaw);
         const restored = createSessionDraftRepository({ storage, cipher: plainCipher(), syncEnabled: false });
         expect(restored.getSessionComposerDraftSnapshot(scope, sessionAddress)).toMatchObject({ targetKind: 'newSession', composer: { text: { value: 'Retained New Session' } } });
@@ -503,16 +501,13 @@ describe('sessionDraftRepository', () => {
         const stored = [...storage.values.entries()][0];
         if (!stored) throw new Error('Expected retained composer storage');
         const [key, raw] = stored;
-        const serialized = parseSerializedSessionDraftScope(raw);
-        if (!serialized) throw new Error('Expected a draft storage envelope');
-        const replica = serialized.replicas[canonicalSessionDraftAddressV1(address)];
+        expect(key).toBe(draftRecordKey(canonicalSessionDraftAddressV1(address)));
+        const replica: unknown = JSON.parse(raw);
         if (!replica || typeof replica !== 'object' || Array.isArray(replica)) throw new Error('Expected a retained composer replica');
         const retainedDocument = malformation === 'unsupported version' ? { ...document, v: 99 } : { ...document, composer: kind === 'session' ? null : {
             ...document.composer, text: { ...document.composer.text, value: 123 },
         } };
-        const retainedRaw = JSON.stringify({ ...serialized, replicas: { ...serialized.replicas,
-            [canonicalSessionDraftAddressV1(address)]: { ...replica, localRawDocument: retainedDocument },
-        } });
+        const retainedRaw = JSON.stringify({ ...replica, localRawDocument: retainedDocument });
         storage.values.set(key, retainedRaw);
         const restored = createSessionDraftRepository({ storage, cipher: plainCipher(), syncEnabled: false });
         expect(restored.getSessionDraftSnapshot(scope, address)?.document).toEqual(retainedDocument);
@@ -843,23 +838,72 @@ describe('sessionDraftRepository', () => {
         expect(movedBack.getSessionDraftSnapshot(targetScope, sessionAddress)).toBeNull();
     });
 
-    it('retains opaque envelope fields and the predecessor entry pointer when editing a hydrated scope', () => {
+    it.each([
+        { name: 'draft records', unreadableRows: 3, unreadableEnvelope: false, count: 3 },
+        { name: 'the scope record', unreadableRows: 0, unreadableEnvelope: true, count: 1 },
+    ])('warns once per load with only a count when $name cannot be read', ({ unreadableRows, unreadableEnvelope, count }) => {
         const storage = createMemoryStorage();
-        const repository = createSessionDraftRepository({ storage, cipher: plainCipher(), syncEnabled: false });
-        repository.writeExistingSessionDraft({ scope, sessionId: 'session-a', patch: { text: 'before' } });
-        repository.writeNewSessionDraft({ scope, draftId: uuid(991), patch: { text: 'ordinary entry' }, materializationIntent: 'userEdit' });
-        const key = [...storage.values.keys()][0]!;
-        storage.set(key, JSON.stringify({
-            ...JSON.parse(storage.values.get(key)!),
-            ordinaryEntryDraftId: uuid(991),
-            futureEnvelopeField: { preserved: ['opaque', 42] },
+        const secret = 'private draft text';
+        const addressKeys = Array.from({ length: unreadableRows }, (_, index) =>
+            canonicalSessionDraftAddressV1({ kind: 'session', sessionId: `unreadable-${index}` }));
+        for (const key of addressKeys) storage.set(draftRecordKey(key), `{${secret}`);
+        if (unreadableEnvelope) storage.set(`session-drafts-repository-v1:${serverAccountScopeKeySuffix(scope)}`, `{${secret}`);
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+            const repository = createSessionDraftRepository({ storage, cipher: plainCipher(), syncEnabled: false });
+            repository.getSessionDraftSnapshot(scope, sessionAddress);
+            repository.getSessionDraftSnapshot(scope, sessionAddress);
+            expect(warn).toHaveBeenCalledTimes(1);
+            const message = String(warn.mock.calls[0]?.[0]);
+            expect(message).toContain(String(count));
+            for (const leaked of [secret, scope.accountId, scope.serverId, ...addressKeys]) expect(message).not.toContain(leaked);
+        } finally {
+            warn.mockRestore();
+        }
+    });
+
+    it('migrates a 0.2 whole-scope record into per-draft records without loss, then writes only the edited draft', () => {
+        const storage = createMemoryStorage();
+        const scopeRecordKey = `session-drafts-repository-v1:${serverAccountScopeKeySuffix(scope)}`;
+        // Shape written by the 0.2 repository (0.2 sessionDraftRepository.ts `persist`): every replica
+        // inline in one `v: 2` record, duplicates compacted (no `baseRawDocument` or mutation `field`
+        // equal to the local document), plus the 0.2 `ordinaryEntryDraftId` envelope pointer.
+        const sessionDocument = createSessionDocument('typed in 0.2', uuid(970));
+        const sessionReplica = {
+            address: sessionAddress, baseRevision: 'absent', localRawDocument: sessionDocument,
+            pendingFieldMutations: [{ path: { kind: 'composer', field: 'text' }, mutationId: uuid(971), intent: 'edit', baseMutationId: null }],
+            status: 'pending', conflict: null, createdAt: 1, updatedAt: 2, materialized: true, deleteWhenEmpty: false, localSupplement: {},
+        };
+        const otherAddress = { kind: 'session', sessionId: 'session-b' } as const;
+        const otherReplica = { ...sessionReplica, address: otherAddress,
+            localRawDocument: createSessionDocument('another 0.2 draft', uuid(972)), pendingFieldMutations: [] , status: 'clean' };
+        const sessionKey = canonicalSessionDraftAddressV1(sessionAddress);
+        const otherKey = canonicalSessionDraftAddressV1(otherAddress);
+        storage.set(scopeRecordKey, JSON.stringify({
+            v: 2, ordinaryEntryDraftId: uuid(991), futureEnvelopeField: { preserved: ['opaque', 42] },
+            replicas: { [sessionKey]: sessionReplica, [otherKey]: otherReplica },
         }));
-        const restored = createSessionDraftRepository({ storage, cipher: plainCipher(), syncEnabled: false });
-        restored.writeExistingSessionDraft({ scope, sessionId: 'session-a', patch: { text: 'after' } });
-        expect(JSON.parse(storage.values.get(key)!)).toMatchObject({
-            ordinaryEntryDraftId: uuid(991),
-            futureEnvelopeField: { preserved: ['opaque', 42] },
+        const repository = createSessionDraftRepository({ storage, cipher: plainCipher(), syncEnabled: false });
+        const migrated = repository.getSessionDraftSnapshot(scope, sessionAddress);
+        expect(requireComposerDraftDocument(migrated?.document)?.composer.text.value).toBe('typed in 0.2');
+        expect(migrated?.status).toBe('pending');
+        expect(requireComposerDraftDocument(repository.getSessionDraftSnapshot(scope, otherAddress)?.document)?.composer.text.value)
+            .toBe('another 0.2 draft');
+        // The envelope keeps only its fields; each draft is its own record with its 0.2 bytes.
+        expect(JSON.parse(storage.values.get(scopeRecordKey)!)).toEqual({
+            v: 3, ordinaryEntryDraftId: uuid(991), futureEnvelopeField: { preserved: ['opaque', 42] },
         });
+        expect(storage.values.get(draftRecordKey(sessionKey))).toBe(JSON.stringify(sessionReplica));
+        expect(storage.values.get(draftRecordKey(otherKey))).toBe(JSON.stringify(otherReplica));
+
+        const otherBytes = storage.values.get(draftRecordKey(otherKey));
+        const envelopeBytes = storage.values.get(scopeRecordKey);
+        repository.writeExistingSessionDraft({ scope, sessionId: 'session-a', patch: { text: 'typed in 0.3' } });
+        expect(storage.values.get(draftRecordKey(otherKey))).toBe(otherBytes);
+        expect(storage.values.get(scopeRecordKey)).toBe(envelopeBytes);
+        const reopened = createSessionDraftRepository({ storage, cipher: plainCipher(), syncEnabled: false });
+        expect(requireComposerDraftDocument(reopened.getSessionDraftSnapshot(scope, sessionAddress)?.document)?.composer.text.value).toBe('typed in 0.3');
+        expect(requireComposerDraftDocument(reopened.getSessionDraftSnapshot(scope, otherAddress)?.document)?.composer.text.value).toBe('another 0.2 draft');
     });
 
     it.each([false, true])('exposes automatic persistence failures and clears the error after retry (sync=%s)', async (syncEnabled) => {
@@ -1612,10 +1656,9 @@ describe('sessionDraftRepository', () => {
         });
 
         const [key, raw] = [...storage.values.entries()][0]!;
-        const persisted = JSON.parse(raw);
-        const replica = Object.values(persisted.replicas)[0] as { localSupplement: { discussionMutationAttempt: { currentness: { address: Record<string, unknown> } } } };
+        const replica = JSON.parse(raw) as { localSupplement: { discussionMutationAttempt: { currentness: { address: Record<string, unknown> } } } };
         replica.localSupplement.discussionMutationAttempt.currentness.address.retired = true;
-        storage.values.set(key, JSON.stringify(persisted));
+        storage.values.set(key, JSON.stringify(replica));
 
         const restored = createSessionDraftRepository({ storage, syncEnabled: false, cipher: plainCipher() });
         expect(restored.getSessionDraftSnapshot(scope, address)?.localSupplement.discussionMutationAttempt).toEqual({
@@ -1890,11 +1933,8 @@ describe('sessionDraftRepository', () => {
             patch: { text: 'keep this', authoring: { directory: 'mine' } },
             materializationIntent: 'userEdit',
         });
-        const storageKey = [...storage.values.keys()][0]!;
-        const persisted = JSON.parse(storage.values.get(storageKey)!) as {
-            replicas: Record<string, Record<string, unknown>>;
-        };
-        const replica = persisted.replicas[canonicalSessionDraftAddressV1(address)]!;
+        const storageKey = draftRecordKey(canonicalSessionDraftAddressV1(address));
+        const replica = JSON.parse(storage.values.get(storageKey)!) as Record<string, unknown>;
         const original = SessionDraftDocumentV1Schema.parse(replica.localRawDocument);
         assertNewSessionDocument(original);
         const baseMutationId = original.target.authoring.directory!.mutationId;
@@ -1923,7 +1963,7 @@ describe('sessionDraftRepository', () => {
                 }],
             },
         });
-        storage.set(storageKey, JSON.stringify(persisted));
+        storage.set(storageKey, JSON.stringify(replica));
         const remote = createRemote({
             revision: 2,
             content: await cipher.seal(address, remoteDocument),

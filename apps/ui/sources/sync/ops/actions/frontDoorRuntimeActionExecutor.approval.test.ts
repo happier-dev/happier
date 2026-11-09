@@ -4,6 +4,7 @@ import { ActionsSettingsV1Schema, type ActionsSettingsV1 } from '@happier-dev/pr
 import { DEFAULT_ACTIONS_SETTINGS_V1 } from '@happier-dev/protocol/account/settings/accountSettings';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+import { applyActionPolicyMutation } from '@happier-dev/protocol/actions/actionAudiencePolicy';
 import type { ActionExecutorContext, ActionExecutorDeps, RuntimeActionExecute } from '@happier-dev/protocol/actions/executor/types';
 
 import { createFrontDoorRuntimeActionExecutor, createFrontDoorUiActionExecutor } from './frontDoorRuntimeActionExecutor';
@@ -12,6 +13,8 @@ import { createVoiceSessionLifecycleController } from '@/voice/session/voiceSess
 import { registerVoiceAdapters, resetVoiceAdapterRegistryForTests } from '@/voice/session/voiceAdapterRegistry';
 import type { VoiceAdapterController, VoiceSessionSnapshot } from '@/voice/session/types';
 import { getVoiceSessionEndedAttempt, resetVoiceSessionStoreForTests, setVoiceSessionSnapshot } from '@/voice/session/voiceSessionStore';
+import { resolveActionSettingsTargetControlState, resolveActionSettingsTargetPolicyInput } from '@/components/settings/actions/resolveActionSettingsControlState';
+import { isActionApprovalRequiredByAccountSettings } from '@/sync/domains/settings/actionsSettings';
 
 /**
  * End-to-end proof (FINALIZATION-PLAN §3.4 / §4.2 / §12.8): once a runtime action is routed
@@ -88,6 +91,70 @@ function createTestExecutor(overrides: Partial<ActionExecutorDeps>) {
 }
 
 describe('front door approval default (agent vs ui)', () => {
+    it('persists Settings Reload choices through the canonical mutation and applies the same host policy (UI-17 / DG8-B-01)', async () => {
+        let settings = ActionsSettingsV1Schema.parse({ v: 1 });
+        // Runtime transport is the system boundary; the executor and policy stay real.
+        const runtimeLeaf = vi.fn<RuntimeActionExecute>(async () => ({ v: 1, status: 'dispatched',
+            commandId: 'own-reload', adapterKind: 'localPreview', events: [] }));
+        const executor = createTestExecutor({ runtimeActionExecute: runtimeLeaf,
+            isActionApprovalRequired: (actionId, context, input) =>
+                isActionApprovalRequiredByAccountSettings(actionId, { actionsSettingsV1: settings }, context, { input }) });
+        const input = { browserSessionId: 'mounted-session', viewId: 'mounted-view', kind: 'reload', commandId: 'own-reload' };
+        const human = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
+        const state = () => resolveActionSettingsTargetControlState({ settings, actionId: 'browser.reload', targetId: 'contextual_ui' });
+        const select = (value: 'default' | 'ask_first' | 'allowed') => {
+            // The detail screen produces this semantic intent; the canonical Account
+            // mutation consumes it. Round-trip the stored bytes before execution.
+            const mutationInput = resolveActionSettingsTargetPolicyInput({ settings,
+                actionId: 'browser.reload', targetId: 'contextual_ui', value });
+            settings = ActionsSettingsV1Schema.parse(JSON.parse(JSON.stringify(applyActionPolicyMutation(settings, mutationInput).settings)));
+            return mutationInput;
+        };
+        expect(state()).toMatchObject({ value: 'default', approvalRequiredByPolicy: false });
+        expect(await executor.execute('browser.reload', input, human)).toMatchObject({ ok: true,
+            result: { status: 'dispatched', commandId: 'own-reload' } });
+        expect(runtimeLeaf).toHaveBeenCalledTimes(1);
+        const neighbours = [
+            { surface: 'agent', authority: 'account_automation' },
+            { surface: 'ui', authority: 'account_automation', actionCaller: { kind: 'host' } },
+            { surface: 'plugin', authority: 'account_automation', actionCaller: { kind: 'plugin', pluginId: 'external-plugin' } },
+            { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'plugin', pluginId: 'external-plugin' } },
+            { surface: 'ui', authority: 'present_user' },
+            {},
+        ] as const;
+        const assertNeighbourFloors = async () => {
+            for (const context of neighbours) {
+                expect(isActionApprovalRequiredByAccountSettings('browser.reload', { actionsSettingsV1: settings }, context)).toBe(true);
+                expect(await executor.execute('browser.reload', input, context)).toMatchObject({ ok: false });
+            }
+            for (const targetId of ['agent', 'plugin'] as const) {
+                expect(resolveActionSettingsTargetControlState({ settings, actionId: 'browser.reload', targetId }))
+                    .toMatchObject({ approvalRequiredByPolicy: true });
+            }
+        };
+        await assertNeighbourFloors();
+
+        expect(select('ask_first')).toMatchObject({ audience: 'ui', mode: 'ask_first' });
+        expect(settings.actions['browser.reload']?.approvalRequiredSurfaces).toContain('ui');
+        expect(state()).toMatchObject({ value: 'ask_first', approvalRequiredByPolicy: true });
+        expect(await executor.execute('browser.reload', input, human)).toMatchObject({ ok: false });
+        expect(runtimeLeaf).toHaveBeenCalledTimes(1);
+
+        // Allowed equals the reversible host default: remove Ask instead of retaining
+        // a redundant UI waiver, and leave all other audiences' floors unchanged.
+        expect(select('allowed')).toMatchObject({ audience: 'ui', mode: 'default' });
+        expect(settings.actions['browser.reload']?.approvalRequiredSurfaces ?? []).not.toContain('ui');
+        expect(settings.approvalWaivedSurfaces?.['browser.reload'] ?? []).not.toContain('ui');
+        expect(state()).toMatchObject({ value: 'default', approvalRequiredByPolicy: false });
+        expect(await executor.execute('browser.reload', input, human)).toMatchObject({ ok: true });
+        await assertNeighbourFloors();
+        expect(select('ask_first')).toMatchObject({ mode: 'ask_first' });
+        expect(select('default')).toMatchObject({ mode: 'default' });
+        expect(state()).toMatchObject({ value: 'default', approvalRequiredByPolicy: false });
+        expect(await executor.execute('browser.reload', input, human)).toMatchObject({ ok: true });
+        expect(runtimeLeaf).toHaveBeenCalledTimes(3);
+    });
+
     it('keeps pending custody out of completed-value clients and preserves its typed artifact details', async () => {
         const runtimeLeaf = vi.fn<RuntimeActionExecute>(async () => VALID_OUTPUT);
         const executor = createTestExecutor({

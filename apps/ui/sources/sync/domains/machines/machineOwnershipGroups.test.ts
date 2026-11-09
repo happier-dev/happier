@@ -16,6 +16,11 @@ describe('describeMachineSharedOwnership', () => {
     );
   });
 
+  it('names the owner alone when a locked machine has published no platform, never a dangling separator', () => {
+    const locked = { ...shared('Ana Ruiz'), metadata: null } as Parameters<typeof describeMachineSharedOwnership>[0];
+    expect(describeMachineSharedOwnership(locked)).toBe("Ana Ruiz's");
+  });
+
   it('says only the platform when the owner has no public name, never a bare possessive', () => {
     for (const name of ['', '   ', null]) {
       expect(describeMachineSharedOwnership(shared(name))).toBe('Linux');

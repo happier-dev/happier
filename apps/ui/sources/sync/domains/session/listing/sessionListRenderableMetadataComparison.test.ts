@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Metadata } from '@happier-dev/session-core/state';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
-import { buildSessionListRenderableFromSession } from './sessionListRenderable';
+import { buildSessionListRenderableFromSession, deriveSessionListRenderableHasUnreadMessagesFromMetadataPatch } from './sessionListRenderable';
 
 import {
     areSessionListRenderableExternalSessionIdentitiesEqual,
@@ -19,6 +19,24 @@ const canonicalExternalSessionLink = {
 };
 
 describe('sessionListRenderableMetadataComparison', () => {
+    it('retains external unread inputs through compact metadata reconciliation', () => {
+        const metadata = { path: '/repo', externalSessionV1: canonicalExternalSessionLink,
+            externalSessionAttentionV1: { v: 1 as const, observedProgressToken: '20:msg-2',
+                viewedProgressToken: '10:msg-1', observedAtMs: 20, viewedAtMs: 10 } };
+        const unread = buildSessionListRenderableMetadataComparison(metadata);
+        const isUnread = (projection: typeof unread) => deriveSessionListRenderableHasUnreadMessagesFromMetadataPatch({
+            metadata: projection, nextSessionSeq: 9, nextLastViewedSessionSeq: 9,
+            nextLatestReadyEventSeq: 9, recomputeUnread: true,
+        });
+        expect(isUnread(unread)).toBe(true);
+        expect(buildSessionListRenderableMetadataComparison(metadata, unread)).toBe(unread);
+        const read = buildSessionListRenderableMetadataComparison({ ...metadata,
+            externalSessionAttentionV1: { ...metadata.externalSessionAttentionV1,
+                viewedProgressToken: '20:msg-2', viewedAtMs: 20 } }, unread);
+        expect(isUnread(read)).toBe(false);
+        expect(read).not.toBe(unread);
+    });
+
     it('carries last observed branch with unavailable distinct from detached, reusing unrelated rows', () => {
         const metadata = { path: '/checkout', host: 'host', branch: 'feature/actual' };
         const first = buildSessionListRenderableMetadataComparison(metadata);
@@ -75,6 +93,21 @@ describe('sessionListRenderableMetadataComparison', () => {
         const demoted = normalizeSessionListRenderableMetadataComparison(snapshot, promoted);
         expect(demoted.bot).toBeUndefined();
         expect(demoted).not.toBe(promoted);
+    });
+    it('publishes a changed face once and retains its identity across unrelated row refreshes', () => {
+        const metadata = { path: '/repo', host: 'host', bot: { kind: 'bot' as const }, botFace: { seed: 'first' } };
+        const first = buildSessionListRenderableMetadataComparison(metadata);
+        if (!first) throw new Error('Expected an admitted Bot metadata projection');
+        expect(first.botFace).toEqual(metadata.botFace);
+        for (let i = 0; i < 100; i++) {
+            expect(buildSessionListRenderableMetadataComparison({ ...metadata, unrelatedClock: i }, first)).toBe(first);
+        }
+        const changed = buildSessionListRenderableMetadataComparison({ ...metadata, botFace: { seed: 'picked' } }, first);
+        if (!changed) throw new Error('Expected the changed Bot face projection');
+        expect(changed).not.toBe(first);
+        expect(changed.botFace).toEqual({ seed: 'picked' });
+        expect(changed.bot).toBe(first.bot);
+        expect(buildSessionListRenderableMetadataComparison({ ...metadata, name: 'Named' }, first)?.botFace).toBe(first.botFace);
     });
     it('compares normalized external-session source identity independent of object key order', () => {
         expect(areSessionListRenderableExternalSessionIdentitiesEqual(
@@ -201,6 +234,7 @@ describe('sessionListRenderableMetadataComparison', () => {
             externalSessionV1: canonicalExternalSessionLink,
             externalAgentObservationV1: null,
             readStateV1: null,
+            sessionWorkspaceLocationV1: null,
             sessionDirectoryV1: null,
             hiddenSystemSession: true,
             terminalControlServiceabilityV1: null,

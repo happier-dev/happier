@@ -1,11 +1,14 @@
 import type {
-    MachineLiveStreamCodecIdV1,
+    MachineLiveStreamCodecIdV1} from '@happier-dev/protocol/machines/peer/mediation/stream/codecsV1';
+import type {
     MachineLiveStreamControlLeaseV1,
-    MachineLiveStreamControlSidebandV1,
-    SimulatorDeviceResourceV1,
+    MachineLiveStreamControlSidebandV1} from '@happier-dev/protocol/machines/peer/mediation/stream/controlV1';
+import type {
+    SimulatorDeviceResourceV1} from '@happier-dev/protocol/devices/simulator/v1';
+import type {
     SimulatorSidebandKindV1,
     SimulatorSidebandMessageV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/devices/simulator/sidebandV1';
 
 import type { LiveStreamPlayerState } from '@/sync/domains/machines/peer/mediation/stream';
 

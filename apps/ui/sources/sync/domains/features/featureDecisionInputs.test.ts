@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { FeaturesResponseSchema, type FeaturesResponse } from '@happier-dev/protocol';
+import { FeaturesResponseSchema, type FeaturesResponse } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 
 import { storage } from '@/sync/domains/state/storage';
 import {
@@ -47,28 +47,27 @@ describe('featureDecisionInputs', () => {
         resetServerFeaturesClientForTests();
     });
 
-    it('returns a local-policy disabled decision when experiments are off', async () => {
+    it.each([undefined, false, true])('enables Friends with experiments off and retained preference %s', storedChoice => {
         storage.getState().applySettingsLocal({
             experiments: false,
-            featureToggles: { 'social.friends': true },
+            featureToggles: storedChoice === undefined ? {} : { 'social.friends': storedChoice },
         });
 
-        vi.stubGlobal(
-            'fetch',
-            vi.fn(async () => ({
-                ok: true,
-                status: 200,
-                json: async () => createFeaturesResponse(true),
-            })) as unknown as typeof fetch,
-        );
-
-        const decision = await resolveRuntimeFeatureDecision({
+        primeServerFeaturesSnapshot({ serverId: 'server-1', snapshot: {
+            status: 'ready', features: createFeaturesResponse(true),
+        } });
+        return expect(resolveRuntimeFeatureDecision({
             featureId: 'social.friends',
-        });
+        })).resolves.toMatchObject({ state: 'enabled', blockedBy: null });
+    });
 
-        expect(decision.state).toBe('disabled');
-        expect(decision.blockedBy).toBe('local_policy');
-        expect(decision.blockerCode).toBe('flag_disabled');
+    it.each([false, undefined, 'true'])('keeps Friends unavailable for server bit %s', async enabled => {
+        storage.getState().applySettingsLocal({ experiments: false, featureToggles: {} });
+        vi.stubGlobal('fetch', vi.fn(async () => Response.json({
+            features: { social: { friends: enabled === undefined ? {} : { enabled } } }, capabilities: {},
+        })) as unknown as typeof fetch);
+
+        expect(await isRuntimeFeatureEnabled({ featureId: 'social.friends' })).toBe(false);
     });
 
     it('fails closed when /v1/features is missing', async () => {

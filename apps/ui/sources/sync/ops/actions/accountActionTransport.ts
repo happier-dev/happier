@@ -1,8 +1,6 @@
 import { type ActionExecutorContext, type ActionId } from '@happier-dev/protocol/actions';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { ExternalActionRequesterInvocationV1Schema, type ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
-import { parseAgentPermissionIntentV1Alias } from '@happier-dev/protocol/runtime/permissionIntentV1';
-import { readHostReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { projectExternalActionRequesterInvocationV1, type ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { randomUUID } from '@/platform/randomUUID';
 import type { LazyActionAccountContext } from './actionAccountContext';
 
@@ -29,52 +27,10 @@ export type UiAccountActionExecute = (args: Readonly<{
     signal?: AbortSignal;
 }>) => Promise<unknown>;
 
-/** Project process-local Plugin descriptors onto the incumbent private caller contract. */
-export function projectUiAccountRequesterCaller(caller: ActionExecutorContext['actionCaller']): unknown {
-    if (caller?.kind !== 'plugin') return caller;
-    // Live descriptors also contain display/version/initiator facts. The closed
-    // requester carrier owns its identity fields; retain those without teaching
-    // each sender another copy of that schema. Admission still validates below.
-    const fields = ExternalActionRequesterInvocationV1Schema.shape.caller._zod.def.options
-        .flatMap(option => Object.keys(option.shape));
-    return Object.fromEntries(Object.entries(caller).filter(([key]) => fields.includes(key)));
-}
-
-/** Preserve the executor's admitted caller and exact review across Account transport. */
-export function projectUiAccountRequesterInvocation(args: Readonly<{
-    actionId: string;
-    context: ActionExecutorContext;
-    account: Pick<LazyActionAccountContext, 'accountId' | 'serverId'>;
-    target: Extract<NonNullable<ActionExecutorContext['externalActionTarget']>, { kind: 'machine' }>;
-}>): ExternalActionRequesterInvocationV1 | null {
-    const review = args.context.presentUserApproval;
-    const reviewedParent = readHostReviewedParentV1(args.context);
-    const confirmation = args.context.presentUserConfirmation?.inputDigest !== undefined
-        ? args.context.presentUserConfirmation
-        : review?.actionId === args.actionId ? {
-            actionId: review.actionId, inputDigest: review.inputDigest, requestId: review.requestId,
-            accountId: args.account.accountId, serverId: args.context.serverIdentityId ?? args.account.serverId,
-            target: args.target,
-        } : undefined;
-    const workspaceWrites = args.context.workspaceWrites === 'deny' || args.context.agentStartWorkspaceWrites === 'deny'
-        ? 'deny' : args.context.workspaceWrites ?? args.context.agentStartWorkspaceWrites;
-    const provenance = !args.context.externalActionCredential
-        ? ExternalActionRequesterInvocationV1Schema.safeParse({ caller: projectUiAccountRequesterCaller(args.context.actionCaller),
-            surface: args.context.surface, authority: args.context.authority,
-            ...(args.context.callerPermissionMode !== undefined ? { callerPermissionMode: typeof args.context.callerPermissionMode === 'string'
-                ? parseAgentPermissionIntentV1Alias(args.context.callerPermissionMode) ?? args.context.callerPermissionMode : args.context.callerPermissionMode } : {}),
-            ...(args.context.callerInputConstraints !== undefined ? { callerInputConstraints: args.context.callerInputConstraints } : {}),
-            ...(workspaceWrites !== undefined ? { workspaceWrites } : {}),
-            ...(args.context.defaultSessionId != null ? { defaultSessionId: args.context.defaultSessionId } : {}),
-            ...(confirmation ? { presentUserConfirmation: confirmation } : {}),
-            ...(reviewedParent ? { reviewedParent } : {}),
-        }) : null;
-    return provenance?.success ? provenance.data : null;
-}
-
 /** Shared Account-to-daemon relay; reachability does not create a resource target. */
 export function createUiAccountActionTransport(params: Readonly<{
-    account: Pick<LazyActionAccountContext, 'serverId' | 'accountId' | 'assertCurrent' | 'assertResultCurrent'>;
+    account: Pick<LazyActionAccountContext, 'serverId' | 'accountId' | 'assertCurrent' | 'assertResultCurrent'>
+        & Partial<Pick<LazyActionAccountContext, 'serverIdentityId'>>;
     resolveFallbackMachineId: (args: Parameters<UiAccountActionExecute>[0]) => string | null | Promise<string | null>;
     transport: AccountActionTransport;
 }>): UiAccountActionExecute {
@@ -95,7 +51,7 @@ export function createUiAccountActionTransport(params: Readonly<{
             : await params.resolveFallbackMachineId(args);
         if (!machineId) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
         const relayTarget = target?.kind === 'machine' ? { ...target, machineId } : { kind: 'machine' as const, machineId };
-        const provenance = projectUiAccountRequesterInvocation({ ...args, account: params.account, target: relayTarget });
+        const provenance = projectExternalActionRequesterInvocationV1({ ...args, account: params.account, target: relayTarget });
         if (!provenance) return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
         if (target && target.kind !== 'machine') return { ok: false, errorCode: 'target_not_local', error: 'target_not_local' };
         if (args.actionId === 'session.agent.transition' && (target?.kind !== 'machine' || !target.machineId.trim())) {

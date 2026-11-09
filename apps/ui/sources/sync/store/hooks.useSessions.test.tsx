@@ -1,7 +1,8 @@
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createSessionFixture, createProjectAccountRowsFixture, applyProjectAccountRowsFixture, renderHook, standardCleanup } from '@/dev/testkit';
+import { createSessionFixture, createMachineFixture, createProjectAccountRowsFixture, applyProjectAccountRowsFixture, renderHook, standardCleanup } from '@/dev/testkit';
+import { observeStorageSubscriptionDeliveries } from '@/dev/testkit/performance/storageSubscriptionCensus';
 
 import {
     buildSessionListReachabilityRenderableKey,
@@ -22,12 +23,16 @@ import {
     useSessionServerId,
     useSession,
     useMachine,
+    useMachineField,
     useSessions,
 } from '@/sync/domains/state/storage';
 import { buildSessionFolderAssignmentKey } from '@/sync/domains/session/folders/assignmentKeys';
 import { setServerProfileIdentityForUrl, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { setActiveServer } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storageStore';
+import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
+import { projectLastMobileSurfaceState, sessionLastMobileSurfaceState } from '@/sync/domains/state/navigationUiState';
+import { replacePersistentUiStateForTest } from '@/dev/testkit/harness/persistentUiState';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { buildSessionListRenderableFromSession, type SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
@@ -105,6 +110,40 @@ describe('useSessions', () => {
 });
 
 describe('useSession exact Home lookup', () => {
+    it('delivers only the normalized requested Session and releases demand when no Session is requested', async () => {
+        const first = createSessionFixture({ id: 'first', seq: 1 });
+        const second = createSessionFixture({ id: 'second', seq: 1 });
+        storage.setState({ sessions: { first, second } });
+        const delivery = observeStorageSubscriptionDeliveries();
+        const hook = await renderHook(({ id }: { id: string }) => useSession(id), { initialProps: { id: ' first ' } });
+        const write = async (id: string, seq: number) => act(async () => {
+            storage.setState(state => ({ sessions: { ...state.sessions, [id]: { ...state.sessions[id]!, seq } } }));
+        });
+        try {
+            expect(hook.getCurrent()).toBe(first);
+            delivery.reset();
+            for (let seq = 2; seq < 7; seq++) await write('second', seq);
+            expect(delivery.count).toBe(0);
+            await write('first', 7);
+            expect(delivery.count).toBeGreaterThan(0);
+            expect(hook.getCurrent()?.seq).toBe(7);
+            await hook.rerender({ id: 'second' });
+            delivery.reset();
+            await write('first', 8);
+            expect(delivery.count).toBe(0);
+            await write('second', 8);
+            expect(hook.getCurrent()?.seq).toBe(8);
+            await hook.rerender({ id: '' });
+            delivery.reset();
+            await write('second', 9);
+            expect(delivery.count).toBe(0);
+            expect(hook.getCurrent()).toBeNull();
+        } finally {
+            await hook.unmount();
+            delivery.restore();
+        }
+    });
+
     it('uses an unqualified legacy carrier only for its active applied Home', async () => {
         const previousState = storage.getState();
         const legacy = createSessionFixture({ id: 'same', serverId: undefined, activeAt: 90_000 });
@@ -120,6 +159,11 @@ describe('useSession exact Home lookup', () => {
                 homeA: useSession('same', 'home-a'),
                 homeB: useSession('same', 'home-b'),
             }));
+            expect(hook.getCurrent()).toEqual({ homeA: legacy, homeB: null });
+
+            await act(async () => { storage.setState({ sessionLocalStateScope: { serverId: 'home-b', accountId: 'account-a' } }); });
+            expect(hook.getCurrent()).toEqual({ homeA: null, homeB: null });
+            await act(async () => { storage.setState({ sessionLocalStateScope: { serverId: 'home-a', accountId: 'account-a' } }); });
             expect(hook.getCurrent()).toEqual({ homeA: legacy, homeB: null });
 
             // Selection may publish Home B before Sync retires Home A's carrier.
@@ -369,6 +413,74 @@ describe('useSessionServerId', () => {
 });
 
 describe('useMachine', () => {
+    it('retains the adopted-service watch field across unrelated arrivals and wakes only its actual change', async () => {
+        const watch = { v: 1 as const, watchId: 'watch-one', name: 'Worker',
+            adapter: { pluginId: 'acme.native', localId: 'service' }, nativeResourceId: 'user/worker.service',
+            lifecyclePurpose: 'development' as const };
+        const row = createMachineFixture({ metadata: { ...createMachineFixture().metadata!,
+            serviceWatchesV1: { v: 1, watches: [watch] } } });
+        storage.getState().applyMachines([row]);
+        let renders = 0;
+        const hook = await renderHook(() => {
+            renders++;
+            return useMachineField(row.id, 'metadata', 'serviceWatchesV1');
+        });
+        try {
+            const initial = hook.getCurrent();
+            expect(initial?.watches).toEqual([watch]);
+            const mounted = renders;
+            for (let version = 1; version <= 3; version++) {
+                const current = storage.getState().machines[row.id];
+                await act(async () => storage.getState().applyMachines([{ ...structuredClone(current),
+                    activeAt: current.activeAt + 1, metadataVersion: current.metadataVersion + 1,
+                    metadata: { ...structuredClone(current.metadata!), displayName: `Unrelated ${version}` },
+                    daemonStateVersion: current.daemonStateVersion + 1,
+                    daemonState: { ...structuredClone(current.daemonState), status: 'running', pid: version } }]));
+                expect(hook.getCurrent()).toBe(initial);
+                expect(renders).toBe(mounted);
+            }
+            const current = storage.getState().machines[row.id];
+            await act(async () => storage.getState().applyMachines([{ ...current,
+                metadataVersion: current.metadataVersion + 1,
+                metadata: { ...current.metadata!, serviceWatchesV1: { v: 1, watches: [] } } }]));
+            expect(hook.getCurrent()?.watches).toEqual([]);
+            expect(renders).toBe(mounted + 1);
+            await act(async () => storage.getState().applyMachines([{ ...storage.getState().machines[row.id],
+                metadata: null, daemonState: null, availability: { kind: 'locked', reason: 'content_unreadable' } }]));
+            expect(hook.getCurrent()).toBeNull();
+        } finally { await hook.unmount(); }
+    });
+
+    it('subscribes to the requested admitted field and retires it on locked content or removal', async () => {
+        const row = createMachineFixture({ metadata: { ...createMachineFixture().metadata!,
+            agentInventory: { checkedAt: 1, installedAgentIds: ['codex'] } },
+            daemonState: { status: 'running', managedActivity: { kind: 'idle', since: 1 } } });
+        storage.getState().applyMachines([row]);
+        let renders = 0;
+        const hook = await renderHook(() => {
+            renders++;
+            return useMachineField(row.id, 'metadata', 'agentInventory');
+        });
+        const initial = hook.getCurrent();
+        const mounted = renders;
+        await act(async () => storage.getState().applyMachines([{ ...structuredClone(row),
+            daemonStateVersion: row.daemonStateVersion + 1,
+            daemonState: { ...structuredClone(row.daemonState), pid: 99 } }]));
+        expect(renders).toBe(mounted);
+        expect(hook.getCurrent()).toBe(initial);
+        await act(async () => storage.getState().applyMachines([{ ...storage.getState().machines[row.id],
+            metadataVersion: row.metadataVersion + 1,
+            metadata: { ...row.metadata!, agentInventory: { checkedAt: 2, installedAgentIds: ['codex', 'claude'] } } }]));
+        expect(hook.getCurrent()?.installedAgentIds).toEqual(['codex', 'claude']);
+        expect(renders).toBe(mounted + 1);
+        await act(async () => storage.getState().applyMachines([{ ...storage.getState().machines[row.id],
+            metadata: null, daemonState: null, availability: { kind: 'locked', reason: 'content_unreadable' } }]));
+        expect(hook.getCurrent()).toBeNull();
+        await act(async () => storage.getState().applyMachines([], true));
+        expect(hook.getCurrent()).toBeNull();
+        await hook.unmount();
+    });
+
     it('subscribes only when its consumer enables the machine target', async () => {
         const subscribeSpy = vi.spyOn(storage, 'subscribe');
         try {
@@ -520,10 +632,16 @@ describe('useSessionListIndexByServerId', () => {
     });
 });
 
-describe('mobile cockpit surface local-setting selectors', () => {
+describe('mobile cockpit surface device-state selectors', () => {
     beforeEach(() => {
+        replacePersistentUiStateForTest(sessionLastMobileSurfaceState, {});
+        replacePersistentUiStateForTest(projectLastMobileSurfaceState, {});
         storage.setState(state => ({ settings: settingsParse({ ...state.settings,
             actionsSettingsV1: { v: 1, actions: { 'settings.set': { disabledSurfaces: ['ui'] } } } }) }));
+    });
+    afterEach(() => {
+        replacePersistentUiStateForTest(sessionLastMobileSurfaceState, {});
+        replacePersistentUiStateForTest(projectLastMobileSurfaceState, {});
     });
 
     it('does not read a legacy bare session selection without a resolved Account realm', async () => {
@@ -532,14 +650,11 @@ describe('mobile cockpit surface local-setting selectors', () => {
             storage.setState((state) => ({
                 ...state,
                 profileScope: null,
-                localSettings: {
-                    ...state.localSettings,
-                    sessionLastMobileSurfaceBySessionId: {
-                        'session-1': 'git',
-                        'session-2': 'terminal',
-                    },
-                },
             }));
+            replacePersistentUiStateForTest(sessionLastMobileSurfaceState, {
+                'session-1': 'git',
+                'session-2': 'terminal',
+            });
 
             const hook = await renderHook(() => useSessionLastMobileSurface('session-1'), {
                 flushOptions: { cycles: 1, turns: 4 },
@@ -547,16 +662,7 @@ describe('mobile cockpit surface local-setting selectors', () => {
             expect(hook.getCurrent()).toBeNull();
 
             await act(async () => {
-                storage.setState((state) => ({
-                    ...state,
-                    localSettings: {
-                        ...state.localSettings,
-                        sessionLastMobileSurfaceBySessionId: {
-                            ...state.localSettings.sessionLastMobileSurfaceBySessionId,
-                            'session-2': 'chat',
-                        },
-                    },
-                }));
+                sessionLastMobileSurfaceState.set('session-2', 'chat');
             });
 
             expect(hook.getCurrent()).toBeNull();
@@ -573,15 +679,6 @@ describe('mobile cockpit surface local-setting selectors', () => {
                 ...state,
                 profileScope: { serverId: 'active-server', accountId: 'account-a' },
                 ordinarySessionListMembershipByServerId: { 'active-server': ['session-1'] },
-                localSettings: {
-                    ...state.localSettings,
-                    sessionLastMobileSurfaceBySessionId: {
-                        'session-1': 'git',
-                        'active-server:session-1': 'browser',
-                        'mobile-surface-selection:v2:session:13:active-server9:account-b:9:session-1': 'services',
-                        'mobile-surface-selection:v2:session:13:active-server9:account-a:9:session-1': 'terminal',
-                    },
-                },
                 sessionListIndexByServerId: {
                     'active-server': [
                         {
@@ -594,17 +691,40 @@ describe('mobile cockpit surface local-setting selectors', () => {
                 },
             }));
 
-            const hook = await renderHook(() => ({
-                surface: useSessionLastMobileSurface('session-1'),
-                explicitSurface: useSessionLastMobileSurface('session-1', 'active-server'),
-                resolvedServerId: useSessionServerId('session-1'),
-            }), {
+            replacePersistentUiStateForTest(sessionLastMobileSurfaceState, {
+                'session-1': 'git',
+                'active-server:session-1': 'browser',
+                'mobile-surface-selection:v2:session:13:active-server9:account-b:9:session-1': 'services',
+                'mobile-surface-selection:v2:session:13:active-server9:account-a:9:session-1': 'terminal',
+            });
+            let renders = 0;
+            const hook = await renderHook(() => {
+                renders += 1;
+                return {
+                    surface: useSessionLastMobileSurface('session-1'),
+                    explicitSurface: useSessionLastMobileSurface('session-1', 'active-server'),
+                    resolvedServerId: useSessionServerId('session-1'),
+                };
+            }, {
                 flushOptions: { cycles: 1, turns: 4 },
             });
 
             expect(hook.getCurrent().resolvedServerId).toBe('active-server');
             expect(hook.getCurrent().explicitSurface).toBe('terminal');
             expect(hook.getCurrent().surface).toBe('terminal');
+
+            const settledRenders = renders;
+            await act(async () => {
+                for (let index = 0; index < 100; index += 1) {
+                    sessionLastMobileSurfaceState.set(`unrelated-session-${index}`, 'chat');
+                }
+            });
+            expect(renders).toBe(settledRenders);
+            await act(async () => {
+                sessionLastMobileSurfaceState.set('mobile-surface-selection:v2:session:13:active-server9:account-a:9:session-1', 'git');
+            });
+            expect(hook.getCurrent().surface).toBe('git');
+            expect(hook.getCurrent().explicitSurface).toBe('git');
 
             await hook.unmount();
         } finally {
@@ -619,17 +739,6 @@ describe('mobile cockpit surface local-setting selectors', () => {
                 ...state,
                 profileScope: { serverId: 'active-server', accountId: 'account-a' },
                 ordinarySessionListMembershipByServerId: { 'active-server': ['session-1'] },
-                localSettings: {
-                    ...state.localSettings,
-                    sessionLastMobileSurfaceBySessionId: {
-                        // The current remote-dev predecessor writes this exact
-                        // server-qualified shape. The bare key is deliberately
-                        // conflicting: it must not become a realm fallback.
-                        'active-server:session-1': 'browser',
-                        'session-1': 'git',
-                        'mobile-surface-selection:v2:session:13:active-server9:account-b:9:session-1': 'services',
-                    },
-                },
                 sessionListIndexByServerId: {
                     'active-server': [
                         {
@@ -642,6 +751,13 @@ describe('mobile cockpit surface local-setting selectors', () => {
                 },
             }));
 
+            replacePersistentUiStateForTest(sessionLastMobileSurfaceState, {
+                // This predecessor carrier has already crossed the local-settings
+                // import boundary; only its server-qualified key can bind a realm.
+                'active-server:session-1': 'browser',
+                'session-1': 'git',
+                'mobile-surface-selection:v2:session:13:active-server9:account-b:9:session-1': 'services',
+            });
             const hook = await renderHook(() => useSessionLastMobileSurface('session-1'), {
                 flushOptions: { cycles: 1, turns: 4 },
             });
@@ -652,7 +768,7 @@ describe('mobile cockpit surface local-setting selectors', () => {
                 await Promise.resolve();
             });
 
-            expect(storage.getState().localSettings.sessionLastMobileSurfaceBySessionId).toEqual({
+            expect(sessionLastMobileSurfaceState.readAll()).toEqual({
                 'session-1': 'git',
                 'mobile-surface-selection:v2:session:13:active-server9:account-b:9:session-1': 'services',
                 'mobile-surface-selection:v2:session:13:active-server9:account-a:9:session-1': 'browser',
@@ -669,13 +785,8 @@ describe('mobile cockpit surface local-setting selectors', () => {
             storage.setState((state) => ({
                 ...state,
                 profileScope: null,
-                localSettings: {
-                    ...state.localSettings,
-                    sessionLastMobileSurfaceBySessionId: {
-                        existing: 'git',
-                    },
-                },
             }));
+            replacePersistentUiStateForTest(sessionLastMobileSurfaceState, { existing: 'git' });
 
             const hook = await renderHook(() => usePersistSessionLastMobileSurface(), {
                 flushOptions: { cycles: 1, turns: 4 },
@@ -684,7 +795,7 @@ describe('mobile cockpit surface local-setting selectors', () => {
                 hook.getCurrent()('session-1', 'chat');
             });
 
-            expect(storage.getState().localSettings.sessionLastMobileSurfaceBySessionId).toEqual({
+            expect(sessionLastMobileSurfaceState.readAll()).toEqual({
                 existing: 'git',
             });
             await hook.unmount();
@@ -693,19 +804,13 @@ describe('mobile cockpit surface local-setting selectors', () => {
         }
     });
 
-    it('persists a session selection with the resolved Account realm key', async () => {
+    it('persists repeated session and project surface changes without writing settings', async () => {
         const previousState = storage.getState();
         try {
             storage.setState((state) => ({
                 ...state,
                 profileScope: { serverId: 'active-server', accountId: 'account-a' },
                 ordinarySessionListMembershipByServerId: { 'active-server': ['session-1'] },
-                localSettings: {
-                    ...state.localSettings,
-                    sessionLastMobileSurfaceBySessionId: {
-                        existing: 'git',
-                    },
-                },
                 sessionListIndexByServerId: {
                     'active-server': [
                         {
@@ -718,16 +823,44 @@ describe('mobile cockpit surface local-setting selectors', () => {
                 },
             }));
 
-            const hook = await renderHook(() => usePersistSessionLastMobileSurface(), {
+            replacePersistentUiStateForTest(sessionLastMobileSurfaceState, { existing: 'git' });
+
+            applyProjectAccountRowsFixture(storage, { workspaceRefs: [{
+                id: 'workspace-1', serverId: 'active-server', machineId: 'machine-1', rootPath: '/repo', createdAtMs: 1,
+            }] });
+
+            const hook = await renderHook(() => ({
+                session: usePersistSessionLastMobileSurface(), project: usePersistProjectLastMobileSurface(),
+            }), {
                 flushOptions: { cycles: 1, turns: 4 },
             });
+            const physicalWrites = vi.spyOn(getPersistenceStorage(), 'set');
             await act(async () => {
-                hook.getCurrent()('session-1', 'chat');
+                for (const surface of ['browse', 'git', 'git', 'terminal'] as const) {
+                    hook.getCurrent().session('session-1', surface);
+                    hook.getCurrent().project('workspace-1', surface);
+                }
             });
 
-            expect(storage.getState().localSettings.sessionLastMobileSurfaceBySessionId).toEqual({
+            const writes = [...physicalWrites.mock.calls];
+            physicalWrites.mockRestore();
+            expect(writes.filter(([key]) => key === 'settings' || key === 'local-settings')).toEqual([]);
+
+            expect(sessionLastMobileSurfaceState.readAll()).toEqual({
                 existing: 'git',
-                'mobile-surface-selection:v2:session:13:active-server9:account-a:9:session-1': 'chat',
+                'mobile-surface-selection:v2:session:13:active-server9:account-a:9:session-1': 'terminal',
+            });
+            expect(projectLastMobileSurfaceState.readAll()).toEqual({
+                'mobile-surface-selection:v2:project:13:active-server9:account-a:11:workspace-1': 'terminal',
+            });
+            // Three real changes per owner; repeating git must perform no write.
+            const writesByKey = writes.reduce<Record<string, number>>((counts, [key]) => {
+                counts[key] = (counts[key] ?? 0) + 1;
+                return counts;
+            }, {});
+            expect(writesByKey).toEqual({
+                'ui-state:session-mobile-surfaces-v1:mobile-surface-selection:v2:session:13:active-server9:account-a:9:session-1': 3,
+                'ui-state:project-mobile-surfaces-v1:mobile-surface-selection:v2:project:13:active-server9:account-a:11:workspace-1': 3,
             });
             await hook.unmount();
         } finally {
@@ -740,18 +873,18 @@ describe('mobile cockpit surface local-setting selectors', () => {
             machineId: 'machine', rootPath: '/repo', createdAtMs: 1 }));
         const activeKey = 'mobile-surface-selection:v2:project:13:active-server9:account-a:4:same';
         const values = { [activeKey]: 'git' as const, same: 'browser' as const };
-        storage.setState(state => ({ ...state, profileScope: { serverId: 'active-server', accountId: 'account-a' },
-            localSettings: { ...state.localSettings, projectLastMobileSurfaceByWorkspaceRefId: values } }));
+        storage.setState({ profileScope: { serverId: 'active-server', accountId: 'account-a' } });
+        replacePersistentUiStateForTest(projectLastMobileSurfaceState, values);
         applyProjectAccountRowsFixture(storage, { workspaceRefs: refs });
         const hook = await renderHook(() => ({ foreign: useProjectLastMobileSurface('same', 'other-server'),
             active: useProjectLastMobileSurface('same', 'active-server'), persist: usePersistProjectLastMobileSurface() }));
         expect(hook.getCurrent().active).toBe('git');
         expect(hook.getCurrent().foreign).toBeNull();
         await act(async () => { hook.getCurrent().persist('same', 'context', 'other-server'); });
-        expect(storage.getState().localSettings.projectLastMobileSurfaceByWorkspaceRefId).toEqual(values);
+        expect(projectLastMobileSurfaceState.readAll()).toEqual(values);
         await act(async () => { hook.getCurrent().persist('same', 'context', 'active-server'); });
         expect(hook.getCurrent().active).toBe('context');
-        expect(storage.getState().localSettings.projectLastMobileSurfaceByWorkspaceRefId.same).toBe('browser');
+        expect(projectLastMobileSurfaceState.read('same')).toBe('browser');
         await hook.unmount();
     });
 
@@ -804,16 +937,14 @@ describe('mobile cockpit surface local-setting selectors', () => {
                         },
                     ],
                 }),
-                localSettings: {
-                    ...state.localSettings,
-                    projectLastMobileSurfaceByWorkspaceRefId: {
-                        wr_1: 'git',
-                        wr_2: 'terminal',
-                        'mobile-surface-selection:v2:project:13:active-server9:account-b:4:wr_1': 'browser',
-                        'mobile-surface-selection:v2:project:13:active-server9:account-a:4:wr_1': 'git',
-                    },
-                },
             }));
+
+            replacePersistentUiStateForTest(projectLastMobileSurfaceState, {
+                wr_1: 'git',
+                wr_2: 'terminal',
+                'mobile-surface-selection:v2:project:13:active-server9:account-b:4:wr_1': 'browser',
+                'mobile-surface-selection:v2:project:13:active-server9:account-a:4:wr_1': 'git',
+            });
 
             const selectedHook = await renderHook(() => useProjectLastMobileSurface('wr_1', 'active-server'), {
                 flushOptions: { cycles: 1, turns: 4 },
@@ -828,7 +959,7 @@ describe('mobile cockpit surface local-setting selectors', () => {
             });
 
             expect(selectedHook.getCurrent()).toBe('git');
-            expect(storage.getState().localSettings.projectLastMobileSurfaceByWorkspaceRefId).toEqual({
+            expect(projectLastMobileSurfaceState.readAll()).toEqual({
                 wr_1: 'git',
                 wr_2: 'terminal',
                 'mobile-surface-selection:v2:project:13:active-server9:account-b:4:wr_1': 'browser',

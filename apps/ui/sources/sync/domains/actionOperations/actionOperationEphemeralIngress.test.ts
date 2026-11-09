@@ -13,7 +13,7 @@ import '@/sync/syncEngine';
 vi.mock('socket.io-client', async importOriginal => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 vi.mock('@react-navigation/native', async () => (await import('@/dev/testkit/mocks/reactNavigation')).createReactNavigationNativeMock());
 
-import { ActionOperationSnapshotV1Schema, type ActionOperationSnapshotV1 } from '@happier-dev/protocol';
+import { ActionOperationSnapshotV1Schema, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { ACTION_OPERATION_RPC_METHODS_V2, projectActionOperationSnapshotForV1Reader } from '@happier-dev/protocol/actions/operations/v1';
 import { RpcError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 
@@ -132,6 +132,8 @@ describe('normalizeActionOperationEphemeralIngress', () => {
         const heldRead = new Promise<void>(resolve => { releaseRead = resolve; });
         let modeReads = 0;
         let currentnessReads = 0;
+        let machineReads = 0;
+        let operationReads = 0;
         const snapshot: ActionOperationSnapshotV1 = { version: 1, operationId: 'plain-restored-script', revision: 1,
             actionId: 'projects.script.run', state: 'accepted', scope: { accountId: 'plain-restored-account', machineId: 'machine-1' },
             title: 'Run Script', createdAt: 1, cancellation: 'supported', domainRef: { kind: 'projectCommand', purpose: 'script',
@@ -145,6 +147,7 @@ describe('normalizeActionOperationEphemeralIngress', () => {
             socket.emitWithAck = vi.fn<typeof socket.emitWithAck>(async (event, request: SocketRpcRequestPayload) => {
                 if (event !== SOCKET_RPC_EVENTS.CALL) throw new Error(`Unexpected socket event: ${event}`);
                 if (request.method === `machine-1:${ACTION_OPERATION_RPC_METHODS_V2.get}`) {
+                    operationReads += 1;
                     if (holdRead) { readStarted?.(); await heldRead; }
                     return { ok: true, result: { kind: 'found', operation: rpcSnapshot } };
                 }
@@ -167,7 +170,7 @@ describe('normalizeActionOperationEphemeralIngress', () => {
                     return Response.json(createPlainAccountEncryptionCurrentnessFixture());
                 }
                 const machineResponse = createPlainMachineReadHttpResponseFixture(path, init, 'plain-restored-account');
-                if (machineResponse) return machineResponse;
+                if (machineResponse) { machineReads += 1; return machineResponse; }
                 return Response.json({ error: 'not_found' }, { status: 404 });
             } });
         const { actionOperationStore } = await import('./actionOperationStore');
@@ -186,12 +189,16 @@ describe('normalizeActionOperationEphemeralIngress', () => {
             await apiSocket.getAccountEncryptionObservationBinding(connection.credentials)!.read();
             const beforeMode = modeReads;
             const beforeCurrentness = currentnessReads;
+            const beforeMachine = machineReads;
+            const beforeOperation = operationReads;
             deliver(snapshot);
             await vi.waitFor(() => expect([...actionOperationStore.getSnapshot().operationsByKey.values()])
                 .toEqual([{ serverId: connection.home.id, snapshot }]));
-            // Initial descriptive mode borrows the warm Account observation;
-            // the independent qualified Machine RPC retains one fresh admission.
-            expect(modeReads).toBe(beforeMode + 1);
+            // Identity-mode reads share the warm Account observation; the new
+            // operation revision still needs exact, fresh Machine authority.
+            expect(modeReads).toBe(beforeMode);
+            expect(machineReads).toBe(beforeMachine + 1);
+            expect(operationReads).toBe(beforeOperation + 1);
             expect(currentnessReads).toBe(beforeCurrentness);
             holdRead = true;
             deliver({ ...snapshot, operationId: 'late-retired-script' });

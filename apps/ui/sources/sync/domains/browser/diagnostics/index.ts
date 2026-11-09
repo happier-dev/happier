@@ -1,8 +1,4 @@
 export {
-    buildBrowserPreviewProxyDiagnosticsProjection,
-    selectBrowserPreviewProxyDiagnostics,
-} from './previewProxy';
-export {
     fetchBrowserDiagnosticsSnapshotViaMachineRpc,
     fetchBrowserDiagnosticsRequestDetailViaMachineRpc,
 } from './machineRpc';

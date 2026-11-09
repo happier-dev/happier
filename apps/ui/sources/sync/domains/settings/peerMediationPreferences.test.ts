@@ -5,7 +5,7 @@ import {
     PeerMediationFlowKindV1Schema,
     type PeerMediationFlowKindV1,
     type PeerMediationPreferencesV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/account/settings/peerMediationPreferencesV1';
 import { resolveEffectivePeerDirectRoutePolicy } from '@happier-dev/peer-mediation';
 
 import {

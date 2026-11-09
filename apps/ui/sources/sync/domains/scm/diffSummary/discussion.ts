@@ -56,6 +56,16 @@ export function selectScmDiffSummaryDiscussionResult(state: ScmDiffSummaryState,
     return null;
 }
 
+/** The loaded saved result a walkthrough generator Run wrote, so a composer addressing that Run can name its model. */
+export function selectScmDiffSummaryResultByRunId(state: ScmDiffSummaryState, runId: string | null): ScmDiffSummaryResult | null {
+    if (!runId) return null;
+    for (const entry of Object.values(state.entriesByKey)) {
+        const saved = entry.savedResult;
+        if (saved?.output.success && saved.output.runId === runId) return saved;
+    }
+    return null;
+}
+
 /** Open the generating Run itself; transcript reconstructions never grant interaction. */
 export function resolveScmDiffSummaryDiscussionTarget(params: Readonly<{
     sessionId: string;

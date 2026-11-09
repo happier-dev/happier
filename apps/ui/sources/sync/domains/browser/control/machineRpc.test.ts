@@ -1,4 +1,4 @@
-import type { BrowserCommandV1 } from '@happier-dev/protocol';
+import type { BrowserCommandV1 } from '@happier-dev/protocol/browser/control/v1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import { beforeEach, describe, expect, it, vi } from 'vitest';

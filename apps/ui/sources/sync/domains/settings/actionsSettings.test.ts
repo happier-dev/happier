@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { settingsParse } from './settings';
 import { isActionEnabledInState, isActionApprovalRequiredByAccountSettings, isActionApprovalRequiredInState, resolveActionsSettingsV1FromState } from './actionsSettings';
 
 describe('actionsSettings', () => {
@@ -7,21 +8,21 @@ describe('actionsSettings', () => {
         const context = { surface: 'ui', authority: 'present_user' } as const;
         const defaults = { defaultUiConfirmation: true };
         expect(isActionApprovalRequiredByAccountSettings(actionId, {}, context, defaults)).toBe(true);
-        const waived = { actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { [actionId]: ['ui'] } } };
+        const waived = settingsParse({ actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { [actionId]: ['ui'] } } });
         expect(isActionApprovalRequiredByAccountSettings(actionId, waived, context, defaults)).toBe(false);
-        const ask = { actionsSettingsV1: { ...waived.actionsSettingsV1,
-            actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } } } };
+        const ask = settingsParse({ actionsSettingsV1: { ...waived.actionsSettingsV1,
+            actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } } } });
         expect(isActionApprovalRequiredByAccountSettings(actionId, ask, context, defaults)).toBe(true);
     });
 
-    it('reuses the normalized policy across checks and immediately admits a replacement revision', () => {
+    it('reuses admitted policy across checks and immediately reads a replacement revision', () => {
         const state = {
-            settings: {
+            settings: settingsParse({
                 actionsSettingsV1: {
                     v: 1,
                     actions: { 'session.stop': { enabled: false, approvalRequiredSurfaces: ['ui'] } },
                 },
-            },
+            }),
         };
         const initial = resolveActionsSettingsV1FromState(state);
         expect(isActionEnabledInState(state, 'session.stop', { surface: 'ui' })).toBe(false);
@@ -29,13 +30,13 @@ describe('actionsSettings', () => {
         expect(resolveActionsSettingsV1FromState({ settings: { ...state.settings } })).toBe(initial);
 
         const changed = {
-            settings: {
+            settings: settingsParse({
                 actionsSettingsV1: {
                     v: 1,
                     actions: { 'session.stop': { enabled: true } },
                     approvalWaivedSurfaces: { 'session.stop': ['ui'] },
                 },
-            },
+            }),
         };
         expect(isActionEnabledInState(changed, 'session.stop', { surface: 'ui' })).toBe(true);
         expect(isActionApprovalRequiredInState(changed, 'session.stop', { surface: 'ui', authority: 'present_user' })).toBe(false);
@@ -45,7 +46,7 @@ describe('actionsSettings', () => {
 
     it('treats per-action overrides as disabled and supports per-surface gating', () => {
         const state: any = {
-            settings: {
+            settings: settingsParse({
                 experiments: true,
                 featureToggles: { 'execution.runs': true },
                 actionsSettingsV1: {
@@ -55,7 +56,7 @@ describe('actionsSettings', () => {
                         'subagents.plan.start': { disabledSurfaces: ['mcp'] },
                     },
                 },
-            },
+            }),
         };
 
         expect(isActionEnabledInState(state, 'review.start' as any, { surface: 'ui', placement: 'command_palette' } as any)).toBe(false);
@@ -65,7 +66,7 @@ describe('actionsSettings', () => {
 
     it('preserves valid sibling policy when one Action row is malformed', () => {
         const state: any = {
-            settings: {
+            settings: settingsParse({
                 actionsSettingsV1: {
                     v: 1,
                     actions: {
@@ -73,7 +74,7 @@ describe('actionsSettings', () => {
                         'session.stop': { disabledSurfaces: 'api' },
                     },
                 },
-            },
+            }),
         };
 
         expect(isActionEnabledInState(state, 'session.message.send', { surface: 'ui' } as any)).toBe(false);
@@ -82,18 +83,18 @@ describe('actionsSettings', () => {
 
     it('treats review.start as an execution-runs-gated action', () => {
         const disabledState: any = {
-            settings: {
+            settings: settingsParse({
                 experiments: false,
                 featureToggles: {},
                 actionsSettingsV1: { v: 1, actions: {} },
-            },
+            }),
         };
         const enabledState: any = {
-            settings: {
+            settings: settingsParse({
                 experiments: true,
                 featureToggles: { 'execution.runs': true },
                 actionsSettingsV1: { v: 1, actions: {} },
-            },
+            }),
         };
 
         expect(isActionEnabledInState(disabledState, 'review.start' as any, { surface: 'ui', placement: 'command_palette' } as any)).toBe(false);

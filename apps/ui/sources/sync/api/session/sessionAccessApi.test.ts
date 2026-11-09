@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { readTransientAvailabilityFailure } from '@/utils/errors/transientAvailability';
 import { sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
 import { AES256Encryption } from '@/sync/encryption/encryptor';
 import { createDataKeyAccountEncryptionCurrentnessFixture, createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
@@ -80,6 +81,46 @@ async function setup(options?: Readonly<{ accountEncryption?: 'plain' | 'e2ee' }
 }
 
 describe('Session access exact Account transport', () => {
+    it('opens an exact transferable Session key on the interactive worker for sharing', async () => {
+        const { Encryption } = await import('@/sync/encryption/encryption');
+        const { createFakeCryptoWorker } = await import('@/sync/encryption/nativeCryptoWorker/fakeCryptoWorker');
+        const { readTransferableSessionDataKey } = await import('@/sync/encryption/readTransferableSessionDataKey');
+        const { encodeBase64 } = await import('@/encryption/base64');
+        const encryption = await Encryption.create(new Uint8Array(32).fill(87));
+        const expected = new Uint8Array(32).fill(88);
+        const callerDataKeyEnvelope = encodeBase64(await encryption.encryptEncryptionKey(expected), 'base64');
+        const [sharedMetadata] = await new AES256Encryption(expected).encrypt([{ v: 1 }]);
+        const session = { dataEncryptionKey: callerDataKeyEnvelope, metadataLayoutVersion: 1, metadata: encodeBase64(sharedMetadata!, 'base64') };
+        const worker = createFakeCryptoWorker();
+        const openings: Array<{ workClass: string; count: number }> = [];
+        encryption.configureNativeCryptoWorker({ worker: { ...worker,
+            decryptDataKeyEnvelopeV1: async request => {
+                openings.push({ workClass: request.workClass ?? 'bulk', count: request.items.length });
+                return worker.decryptDataKeyEnvelopeV1(request);
+            },
+        }, routing: { mode: 'auto', minPayloadBytes: 0 } });
+        await expect(readTransferableSessionDataKey({ encryption, session })).resolves.toEqual(expected);
+        expect(openings).toEqual([{ workClass: 'interactive', count: 1 }]);
+    });
+    it.each([true, false])('presents only a confirmed rollback without replaying the physical mutation (strict=%s)', async (strict) => {
+        const env = await setup();
+        const { executeSessionAccessHttpAction } = await import('./sessionAccessApi');
+        const { presentSessionAccessFailure } = await import('@/components/sessions/access/presentSessionAccessFailure');
+        // Global storage refusals include statusCode; the protocol owns strict admission.
+        env.request.mockImplementation(async () => Response.json({
+            error: 'database_transaction_conflict_exhausted', ...(strict ? { statusCode: 503 } : {}),
+        }, { status: 503 }));
+        const error = await executeSessionAccessHttpAction({
+            scope: { serverId: env.target.id, accountId: 'target-account' },
+            availability: 'available', actionId: 'session.public_link.remove', input: { sessionId: 'same' },
+        }).catch((error: unknown) => error);
+        expect(presentSessionAccessFailure(error, { outcomeUnknown: true })).toMatchObject({
+            code: strict ? 'database_transaction_conflict_exhausted' : 'session_access_request_failed',
+            retryable: true,
+        });
+        expect(env.request.mock.calls).toHaveLength(1);
+    });
+
     it.each([
         { payload: { error: 'credential_scope_denied' }, code: 'credential_scope_denied' },
         { payload: { error: 'credential_scope_denied', details: {} }, code: 'session_access_request_failed' },
@@ -120,6 +161,10 @@ describe('Session access exact Account transport', () => {
         let storedItem: unknown = item;
         let repeated = false;
         let repeatedRevision = revision;
+        let repeatedItemId = 'visual';
+        let repeatedItemCount = 1;
+        let activeRecordReads = 0;
+        let maximumActiveRecordReads = 0;
         let recordPresent = true;
         let mode: 'plain' | 'encrypted' = 'plain';
         let current = true;
@@ -142,24 +187,37 @@ describe('Session access exact Account transport', () => {
                 return new Response(JSON.stringify({ messages: [{ id: older ? 'call-message' : 'answer-message', seq: older ? 1 : 2,
                     localId: null, createdAt: 1, content: mode === 'plain' ? { t: 'plain', v: older ? rawCall : rawResult } : { t: 'encrypted', c: 'unopenable' },
                     ...(referencesAvailable ? { surfaceItemReference: older || !visualAdmitted ? null : reference } : {}) },
-                    ...(!older && repeated ? [
-                        { id: 'repeat-call', seq: 3, createdAt: 1, surfaceItemReference: null, content: { t: 'plain', v: { ...rawCall, content: {
-                            ...rawCall.content, data: { ...rawCall.content.data, callId: 'repeat', id: 'repeat',
-                                input: { ...rawCall.content.data.input, expectedItemRevision: repeatedRevision === revision ? null : revision } } } } } },
-                        { id: 'repeat-answer', seq: 4, createdAt: 1, surfaceItemReference: {
-                            ...reference, references: [{ ...reference.references[0], itemRevision: repeatedRevision }] },
+                    ...(!older && repeated ? Array.from({ length: repeatedItemCount }, (_, index) => {
+                        const itemId = index === 0 ? repeatedItemId : `${repeatedItemId}-${index}`;
+                        const callId = `repeat-${index}`;
+                        return [
+                        { id: `${callId}-call`, seq: 3 + index * 2, createdAt: 1, surfaceItemReference: null, content: { t: 'plain', v: { ...rawCall, content: {
+                            ...rawCall.content, data: { ...rawCall.content.data, callId, id: callId,
+                                input: { ...rawCall.content.data.input, itemId,
+                                    expectedItemRevision: repeatedRevision === revision ? null : revision } } } } } },
+                        { id: `${callId}-answer`, seq: 4 + index * 2, createdAt: 1, surfaceItemReference: {
+                            ...reference, references: [{ ...reference.references[0], itemId, itemRevision: repeatedRevision }] },
                             content: { t: 'plain', v: { ...rawResult, content: { ...rawResult.content,
-                                data: { ...rawResult.content.data, callId: 'repeat', id: 'repeat-answer', output: JSON.stringify({
+                                data: { ...rawResult.content.data, callId, id: `${callId}-answer`, output: JSON.stringify({
                                     v: 1, serverId: env.target.id, sessionId: 'same', destination: null, itemDestination: 'transcript',
-                                    result: { operation: 'upsert_item', itemId: 'visual', outcome: repeatedRevision === revision ? 'created' : 'updated',
+                                    result: { operation: 'upsert_item', itemId, outcome: repeatedRevision === revision ? 'created' : 'updated',
                                         itemRevision: repeatedRevision } }) } } } } },
-                    ] : [])],
+                        ];
+                    }).flat() : [])],
                     ...(older ? { hasMore: complete ? false : undefined, nextBeforeSeq: null } : { hasMore: true, nextBeforeSeq: 2 }) }));
             }
-            if (address.pathname.endsWith('/system-records/record')) return new Response(JSON.stringify({ record: recordPresent ? {
-                id: 'row', revision: recordRevision, address: { owner: 'host', namespace: 'surface', kind: 'item.v1', localId: 'visual' },
-                content: { t: 'plain', v: storedItem }, createdAt: '2026-09-05T00:00:00.000Z', updatedAt: '2026-09-05T00:00:00.000Z',
-            } : null }));
+            if (address.pathname.endsWith('/system-records/record')) {
+                activeRecordReads++;
+                maximumActiveRecordReads = Math.max(maximumActiveRecordReads, activeRecordReads);
+                // HTTP is the genuine async boundary: observe overlapping exact reads without replacing Board logic.
+                await Promise.resolve();
+                activeRecordReads--;
+                const localId = address.searchParams.get('localId');
+                return new Response(JSON.stringify({ record: recordPresent ? {
+                    id: `row-${localId}`, revision: recordRevision, address: { owner: 'host', namespace: 'surface', kind: 'item.v1', localId },
+                    content: { t: 'plain', v: storedItem }, createdAt: '2026-09-05T00:00:00.000Z', updatedAt: '2026-09-05T00:00:00.000Z',
+                } : null }));
+            }
             throw new Error(`Unexpected public consequence request ${address.pathname}`);
         });
         const client = createSessionAccessClient({ scope: { serverId: env.target.id, accountId: 'target-account' },
@@ -176,6 +234,26 @@ describe('Session access exact Account transport', () => {
         visualAdmitted = true;
         repeated = true;
         await expect(client.readPublicVisualNetworkConsequence()).resolves.toMatchObject({ status: 'ready', visualCount: 2, networkVisualCount: 2 });
+        repeatedItemId = 'second-visual';
+        maximumActiveRecordReads = 0;
+        env.request.mockClear();
+        await expect(client.readPublicVisualNetworkConsequence()).resolves.toEqual({ status: 'ready', visualCount: 2, networkVisualCount: 2,
+            policies: [{ network: 'open', networkOrigins: [] }] });
+        const distinctReads = env.request.mock.calls.filter(([url]) => new URL(url).pathname.endsWith('/system-records/record'));
+        expect(distinctReads.map(([url]) => new URL(url).searchParams.get('localId')).sort()).toEqual(['second-visual', 'visual']);
+        expect(maximumActiveRecordReads).toBe(2);
+        // A full transcript can exceed one Board Action: use its actual bound and retain every visual.
+        const { SESSION_BOARD_GET_MAX_LIMIT_V1 } = await import('@happier-dev/protocol/sessions/board/actions');
+        repeatedItemCount = SESSION_BOARD_GET_MAX_LIMIT_V1 + 1;
+        maximumActiveRecordReads = 0;
+        env.request.mockClear();
+        await expect(client.readPublicVisualNetworkConsequence()).resolves.toEqual({ status: 'ready',
+            visualCount: repeatedItemCount + 1, networkVisualCount: repeatedItemCount + 1,
+            policies: [{ network: 'open', networkOrigins: [] }] });
+        expect(env.request.mock.calls.filter(([url]) => new URL(url).pathname.endsWith('/system-records/record'))).toHaveLength(repeatedItemCount + 1);
+        expect(maximumActiveRecordReads).toBe(SESSION_BOARD_GET_MAX_LIMIT_V1);
+        repeatedItemCount = 1;
+        repeatedItemId = 'visual';
         // Historical acknowledgements point to the current content of this durable record.
         recordRevision = repeatedRevision = 'ssr1.AAAACHN5c3JlY18xAAAAAg';
         env.request.mockClear();
@@ -194,6 +272,14 @@ describe('Session access exact Account transport', () => {
             definition: { kind: 'inline', definition } } } };
         await expect(client.readPublicVisualNetworkConsequence()).resolves.toEqual({ status: 'ready', visualCount: 1, networkVisualCount: 1,
             policies: [{ network: 'origins', networkOrigins: ['https://data.example'] }] });
+        const definitionOverride = { ...definition, networkOverride: { network: 'open' } };
+        storedItem = { ...item, source: { kind: 'widget', instance: { v: 1, id: 'visual', bindings: {},
+            definition: { kind: 'inline', definition: definitionOverride } } } };
+        await expect(client.readPublicVisualNetworkConsequence()).resolves.toEqual({ status: 'ready', visualCount: 1, networkVisualCount: 1,
+            policies: [{ network: 'open', networkOrigins: [] }] });
+        storedItem = { ...item, source: { kind: 'widget', instance: { v: 1, id: 'visual', bindings: {}, networkOverride: { network: 'none' },
+            definition: { kind: 'inline', definition: definitionOverride } } } };
+        await expect(client.readPublicVisualNetworkConsequence()).resolves.toEqual({ status: 'ready', visualCount: 1, networkVisualCount: 0, policies: [] });
         storedItem = { ...item, source: { kind: 'widget', instance: { v: 1, id: 'visual', bindings: {},
             definition: { kind: 'inline', definition: { ...definition, body: { ...definition.body,
                 requestedCapabilities: { ...definition.body.requestedCapabilities, resources: [{ pluginId: 'acme.data', localId: 'records' }] } } } } } } };
@@ -273,7 +359,7 @@ describe('Session access exact Account transport', () => {
         const { encodeBase64, decodeBase64 } = await import('@/encryption/base64');
         const { encodeHex } = await import('@/encryption/hex');
         const { encryptDataKeyForRecipientV0 } = await import('@/sync/encryption/directShareEncryption');
-        const { openEncryptedDataKeyEnvelopeV1, signAccountContentKeyBindingV1 } = await import('@happier-dev/protocol');
+        const [{ openEncryptedDataKeyEnvelopeV1}, { signAccountContentKeyBindingV1}] = await Promise.all([import('@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1'), import('@happier-dev/protocol/crypto/accountContentKeyBindingV1')]);
         const sessionDataKey = new Uint8Array(32).fill(11);
         const callerEnvelope = encryptDataKeyForRecipientV0(
             sessionDataKey,
@@ -415,7 +501,7 @@ describe('Session access exact Account transport', () => {
         const { encodeBase64 } = await import('@/encryption/base64');
         const { encodeHex } = await import('@/encryption/hex');
         const { encryptDataKeyForRecipientV0 } = await import('@/sync/encryption/directShareEncryption');
-        const { signAccountContentKeyBindingV1 } = await import('@happier-dev/protocol');
+        const { signAccountContentKeyBindingV1} = await import('@happier-dev/protocol/crypto/accountContentKeyBindingV1');
         const sessionDataKey = new Uint8Array(32).fill(11);
         const callerEnvelope = encryptDataKeyForRecipientV0(
             sessionDataKey,
@@ -527,7 +613,7 @@ describe('Session access exact Account transport', () => {
         const { encodeBase64 } = await import('@/encryption/base64');
         const { encodeHex } = await import('@/encryption/hex');
         const { encryptDataKeyForRecipientV0 } = await import('@/sync/encryption/directShareEncryption');
-        const { signAccountContentKeyBindingV1 } = await import('@happier-dev/protocol');
+        const { signAccountContentKeyBindingV1} = await import('@happier-dev/protocol/crypto/accountContentKeyBindingV1');
         const sessionDataKey = new Uint8Array(32).fill(14);
         const callerEnvelope = encryptDataKeyForRecipientV0(
             sessionDataKey,
@@ -593,7 +679,7 @@ describe('Session access exact Account transport', () => {
         const directShare = await import('@/sync/encryption/directShareEncryption');
         const { encodeBase64 } = await import('@/encryption/base64');
         const { encodeHex } = await import('@/encryption/hex');
-        const { signAccountContentKeyBindingV1 } = await import('@happier-dev/protocol');
+        const { signAccountContentKeyBindingV1} = await import('@happier-dev/protocol/crypto/accountContentKeyBindingV1');
         const sessionDataKey = new Uint8Array(32).fill(11); // opens the fixture's shared metadata
         const callerEnvelope = directShare.encryptDataKeyForRecipientV0(
             sessionDataKey,
@@ -665,7 +751,7 @@ describe('Session access exact Account transport', () => {
         const { createSessionAccessClient } = await import('./sessionAccessApi');
         const { encodeBase64 } = await import('@/encryption/base64');
         const { encodeHex } = await import('@/encryption/hex');
-        const { signAccountContentKeyBindingV1 } = await import('@happier-dev/protocol');
+        const { signAccountContentKeyBindingV1} = await import('@happier-dev/protocol/crypto/accountContentKeyBindingV1');
         const recipient = { content: tweetnacl.box.keyPair(), signing: tweetnacl.sign.keyPair() };
         const grant = {
             subject: { kind: 'account' as const, accountId: 'recipient' },
@@ -756,7 +842,7 @@ describe('Session access exact Account transport', () => {
         const grant = { subject, accessLevel: 'view' as const, canApprovePermissions: false };
         const physicalBodies: unknown[] = [];
         let recipientReadiness: unknown = { status: 'unavailable', reason: 'plain_account' };
-        let recipientRequestFails = false;
+        let recipientRequestFailure: string | null = null;
         env.request.mockImplementation(async (url, init) => {
             const path = new URL(url).pathname;
             if (path === '/v1/account/encryption') {
@@ -792,7 +878,7 @@ describe('Session access exact Account transport', () => {
             }
             if (path.endsWith('/turns')) return Response.json({ error: 'not_found' }, { status: 404 });
             if (path === '/v1/user/recipient') {
-                if (recipientRequestFails) return new Response('{}', { status: 503 });
+                if (recipientRequestFailure) return Response.json({ error: recipientRequestFailure, statusCode: 503 }, { status: 503 });
                 return new Response(JSON.stringify({ user: {
                     id: 'recipient', firstName: 'Recipient', lastName: null, avatar: null,
                     username: 'recipient', bio: null, badges: [], status: 'friend',
@@ -846,18 +932,31 @@ describe('Session access exact Account transport', () => {
             })).rejects.toMatchObject({ code });
         }
         recipientReadiness = { status: 'unavailable', reason: 'encryption_inconsistent' };
-        recipientRequestFails = true;
-        await expect(executeSessionAccessHttpAction({
-            scope: { serverId: env.target.id, accountId: 'target-account' },
-            availability: 'available',
-            actionId: 'session.access.grant.set',
-            input: { sessionId: 'same/id', ...grant },
-        })).rejects.toMatchObject({ code: 'session_access_request_failed', status: 503 });
+        for (const [failure, code] of [
+            ['unrecognized_failure', 'session_access_request_failed'],
+            ['database_transaction_conflict_exhausted', 'database_transaction_conflict_exhausted'],
+            ['database_connection_unavailable', 'database_connection_unavailable'],
+            ['database_transaction_timeout', 'database_transaction_timeout'],
+        ] as const) {
+            recipientRequestFailure = failure;
+            await expect(executeSessionAccessHttpAction({
+                scope: { serverId: env.target.id, accountId: 'target-account' },
+                availability: 'available',
+                actionId: 'session.access.grant.set',
+                input: { sessionId: 'same/id', ...grant },
+            })).rejects.toMatchObject({ code, status: 503 });
+        }
         expect(physicalBodies).toEqual([
             { sessionId: 'same/id', ...grant },
             { sessionId: 'same/id', ...grant },
             { sessionId: 'same/id', ...grant },
         ]);
+        expect(readTransientAvailabilityFailure('database_transaction_timeout')).toMatchObject({
+            code: 'database_transaction_timeout', effectMayHaveApplied: true,
+        });
+        expect(readTransientAvailabilityFailure('database_transaction_conflict_exhausted')).toMatchObject({
+            effectMayHaveApplied: false,
+        });
     });
 
     it('publishes a public link through the declared Action transport at the exact Home', async () => {

@@ -1,4 +1,4 @@
-import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol';
+import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     teamDirectoryQueryKeyV1,

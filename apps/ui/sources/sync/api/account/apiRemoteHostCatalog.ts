@@ -13,7 +13,7 @@ import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/a
 import type { ServerFetch } from '@/sync/http/client';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { withProfileAccount, type ProfileAccountContext } from './apiProfileCatalog';
-import { classifyAccountStorageReadFailure, resolveAccountStorageContext } from '@/sync/encryption/accountStorageContext';
+import { classifyAccountStorageReadFailure, resolveAccountStorageContext, resolveAccountStorageContextForDisclosure } from '@/sync/encryption/accountStorageContext';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import { captureSavedSecretReferenceRevisionsInContext, readSavedSecretCatalogInContext, readSavedSecretReferenceInContext,
     type SavedSecretReferenceRevisionProof } from './apiSavedSecretCatalog';
@@ -79,7 +79,7 @@ async function readAdmittedRemoteHostCatalog(context: RemoteHostAccountContext, 
             try { context.assertCurrent(); return true; } catch { return false; }
         } }, signal) });
     const { encryption } = await context.resolveAccountEncryption();
-    const current = await resolveAccountStorageContext(context.credentials, { encryption, request: context.request, usage: 'fresh-authority' });
+    const current = await resolveAccountStorageContextForDisclosure(context.credentials, { encryption, request: context.request });
     context.assertCurrent();
     return current.mode === mode ? catalog : { status: 'unavailable', reason: 'account-mode-mismatch' };
 }
@@ -124,7 +124,7 @@ async function readCapturedRemoteHostCatalogProjection(context: RemoteHostAccoun
     publication?: Readonly<{ onReady?(catalog: RemoteHostCatalogSnapshotV1, current: () => boolean): void; hasPendingCleanup?(): boolean }>): Promise<RemoteHostCatalogSnapshotV1> {
     const assertModeCurrent = async () => {
         const { encryption } = await context.resolveAccountEncryption();
-        const current = await resolveAccountStorageContext(context.credentials, { encryption, request: context.request, usage: 'fresh-authority' });
+        const current = await resolveAccountStorageContextForDisclosure(context.credentials, { encryption, request: context.request });
         context.assertCurrent();
         if (current.mode !== mode) throw new RemoteHostCatalogOperationError('account-mode-mismatch');
     };

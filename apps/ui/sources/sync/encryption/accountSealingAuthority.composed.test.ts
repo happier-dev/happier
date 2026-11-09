@@ -22,7 +22,7 @@ import * as nativeCrypto from 'rn-encryption';
 import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import { ReviewCommentPrepareMutationRequestV1Schema, ReviewCommentPrepareMutationResponseV1Schema,
-    deriveReviewCommentStructuralMutationV1 } from '@happier-dev/protocol';
+    deriveReviewCommentStructuralMutationV1 } from '@happier-dev/protocol/reviews/comments/mutation';
 
 vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));

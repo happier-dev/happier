@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createServerUrlComparableKey as createProtocolServerUrlComparableKey } from '@happier-dev/protocol';
+import { createServerUrlComparableKey as createProtocolServerUrlComparableKey } from '@happier-dev/protocol/server/urls/serverUrlComparableKey';
 
 import {
     canonicalizeServerUrl,

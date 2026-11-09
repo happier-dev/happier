@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import type { BrowserViewTargetV1, LocalServicePreviewResourceV1 } from '@happier-dev/protocol';
+import type { BrowserViewTargetV1} from '@happier-dev/protocol/browser/target/v1';
+import type { LocalServicePreviewResourceV1 } from '@happier-dev/protocol/local/services/preview/v1';
 
 type PreviewStoreModule = typeof import('./store');
 

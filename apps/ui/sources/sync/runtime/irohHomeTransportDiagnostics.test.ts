@@ -1,4 +1,4 @@
-import type { DoctorSnapshotHomeTransportDiagnostics } from '@happier-dev/protocol';
+import type { DoctorSnapshotHomeTransportDiagnostics } from '@happier-dev/protocol/diagnostics/doctorSnapshot';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 function diagnostics(input: Readonly<{

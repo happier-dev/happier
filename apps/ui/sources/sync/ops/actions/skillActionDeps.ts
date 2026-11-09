@@ -9,6 +9,7 @@ import type { LazyActionAccountContext } from './actionAccountContext';
 import { SKILL_ACTION_INPUT_SCHEMAS_V1, SKILL_ACTION_OUTPUT_SCHEMAS_V1, SkillInstallAcknowledgedEffectsV1Schema } from '@happier-dev/protocol/prompts/library/skills/skillActionSchemasV1';
 import { isPluginSkillIdV1, readSkillLockV1 } from '@happier-dev/protocol/prompts/library/skills/skillLibraryItemV1';
 import { readUiPluginSkillBundleV1, readUiPluginSkillItemsV1 } from './pluginSkillActionDeps';
+import { artifactSavedByFromActionContextV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 
 /** Projection never rewrites a received content ACK as a failed mutation. */
 export async function refreshUiSkillActionAcknowledgements(account: LazyActionAccountContext, skillIds: readonly string[]) {
@@ -34,11 +35,14 @@ export function createUiSkillActionExecuteV1(account: LazyActionAccountContext, 
         let privateSourceId: string | undefined;
         if (actionId === 'skills.updates.diff' || actionId === 'skills.updates.apply') {
             const inputValue = SKILL_ACTION_INPUT_SCHEMAS_V1[actionId].parse(input);
-            const artifact = await store.read(inputValue.skillId, { signal: context.signal });
-            const provenance = artifact ? readSkillLockV1(artifact.header).provenance : undefined;
-            if (provenance?.kind === 'registry') privateSourceId = provenance.registry.sourceId;
+            if (!inputValue.candidate) {
+                const artifact = await store.read(inputValue.skillId, { signal: context.signal });
+                const provenance = artifact ? readSkillLockV1(artifact.header).provenance : undefined;
+                if (provenance?.kind === 'registry') privateSourceId = provenance.registry.sourceId;
+            }
         }
-        if (privateSourceId && (await registry.readRegistrySource(privateSourceId)).token) {
+        const privateSource = privateSourceId ? await registry.readRegistrySource(privateSourceId) : undefined;
+        if (privateSourceId && privateSource && 'token' in privateSource && privateSource.token) {
             // Keep pinned file reads and their mutation in the existing Node
             // Action, under this requester's captured private Account custody.
             const result = await registry.executeActionForSource(privateSourceId, actionId, input);
@@ -62,6 +66,7 @@ export function createUiSkillActionExecuteV1(account: LazyActionAccountContext, 
             ? { ...skillRules, readCatalog: store.organization.readCatalog }
             : skillRules;
         const output = await createSkillActionExecuteV1({ store, skillRules: catalogRules, includeInSession, readFoundSkillBundle,
+            savedBy: artifactSavedByFromActionContextV1(context),
             readPluginSkills: async (signal, skillIds) => Promise.all([...new Set(skillIds ?? [])].filter(isPluginSkillIdV1)
                 .map(skillId => readUiPluginSkillBundleV1(account, skillId, { ...context, signal: signal ?? context.signal }))),
             readRegistryItem: registry.readRegistryItem, readRegistrySource: registry.readRegistrySource,
@@ -81,6 +86,7 @@ export function createUiSkillActionExecuteV1(account: LazyActionAccountContext, 
             readLinkSkills: registry.readLinkSkills, fetchLinkSkillFiles: registry.fetchLinkSkillFiles,
             randomId: randomUUID,
         })(actionId, input, { surface: context.surface ?? null,
+            invocationServices: context.invocationServices,
             ...(context.approvedActionReplay ? { approvedActionReplay: context.approvedActionReplay } : {}),
             ...(context.defaultSessionId ? { sessionId: context.defaultSessionId } : {}) }, context.signal);
         if (actionId === 'skills.list') {

@@ -4,7 +4,7 @@ import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import { encryptAESGCMString } from '@/encryption/aes';
 import * as webAes from '@/encryption/aes.web';
 import { decodeHex } from '@/encryption/hex';
-import { parseSerializedJsonValue } from '@happier-dev/protocol';
+import { parseSerializedJsonValue } from '@happier-dev/protocol/crypto/serializedJsonValue';
 
 import { AES256Encryption, SecretBoxEncryption } from './encryptor';
 import { UI_CRYPTO_GOLDEN_VECTORS } from './nativeCryptoWorker/cryptoGoldenVectors';

@@ -2,7 +2,6 @@ import {
     PluginUiArtifactDigestV1Schema,
     type PluginUiArtifactDigestV1,
 } from '@happier-dev/protocol/plugins/ui';
-import { computePluginUiArtifactSha256Digest } from './artifactIntegrity';
 
 import {
     createPluginUiPersistentArtifactAccessClock,
@@ -221,10 +220,7 @@ export function createBrowserPluginUiPersistentArtifactStore(
                     const response = await cache.match(`${prefix}/file/${index}`);
                     if (!response) return await discardIncompleteRecord();
                     const bytes = new Uint8Array(await response.arrayBuffer());
-                    if (
-                        bytes.byteLength !== declared.byteSize
-                        || await computePluginUiArtifactSha256Digest(bytes) !== declared.digest
-                    ) return await discardIncompleteRecord();
+                    if (bytes.byteLength !== declared.byteSize) return await discardIncompleteRecord();
                     files.push(Object.freeze({ ...declared, bytes }));
                 }
                 const entry = files.find((file) => file.relativePath === manifest.entryRelativePath);

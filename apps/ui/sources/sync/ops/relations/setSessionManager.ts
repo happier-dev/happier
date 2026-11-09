@@ -1,4 +1,4 @@
-import type { ActionExecuteResult } from '@happier-dev/protocol';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 

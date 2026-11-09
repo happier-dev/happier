@@ -20,7 +20,7 @@ import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { getStorage, useCurrentSecretBindingsByProfileIdMutable } from '@/sync/domains/state/storage';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { refreshProfileCatalog, resetProfileCatalogEngineForTests } from '@/sync/engine/settings/profileCatalogEngine';
-import { getProfileCatalogSnapshot, resetProfileCatalogSnapshotsForTests } from '@/sync/store/settings/profileCatalogSnapshot';
+import { beginProfileCatalogLoad, getProfileCatalogSnapshot, resetProfileCatalogSnapshotsForTests } from '@/sync/store/settings/profileCatalogSnapshot';
 import { PROFILE_RECORDS_ROUTE_V1, PROFILE_RECORD_READ_ROUTE_V1, ProfileRowReadRequestV1Schema,
     ProfileRecordV1Schema, ProfileRowMutationV1Schema, type ProfileRecordV1, type ProfileRowMutationV1,
     type ProfileRowV1 } from '@happier-dev/protocol/profiles/profileRecordV1';
@@ -50,10 +50,12 @@ import { LegacyLastUsedProfileSchema } from '@happier-dev/protocol/account/setti
 import { useApplyProfileSave, useDeleteAiLaunchProfile, useProfileFavoriteIdsMutable } from '@/sync/store/settingsWriters';
 import { useProfilesCollection } from '@/components/settings/profiles/useProfilesCollection';
 import { useSaveLaunchProfile } from '@/components/profiles/edit/useSaveLaunchProfile';
+import { useLegacyProfileSecretRequirements } from '@/components/profiles/edit/legacy/useLegacyProfileSecretRequirements';
 import { useProfilePromptStack } from '@/sync/store/useProfilePromptStack';
 import { Modal } from '@/modal';
-import { StoredApprovalRequestSchema } from '@happier-dev/protocol';
+import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { createArtifactListHttpResponse, projectArtifactStoredKind } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { EnvironmentVariablesList } from '@/components/profiles/environmentVariables/EnvironmentVariablesList';
 
 vi.mock('socket.io-client', async original => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(original));
 installDisconnectedServerSocketBoundary();
@@ -263,6 +265,8 @@ async function fixture() {
             }
             return Response.json({ status: 'updated', revision, cursor: revision, referenceGuardRevision });
         }
+        if (target.pathname === '/v1/account/saved-secrets/resources')
+            return Response.json({ resources: savedSecretResources.resources.map(resource => resource.entry) });
         if (target.pathname === '/v1/account/saved-secrets/resources/materials') return Response.json(savedSecretResources);
         if (approvalEnabled || ownedArtifactEnabled) {
             const response = approvalArtifacts.handle(`${target.pathname}${target.search}`, init);
@@ -619,6 +623,36 @@ describe('UI Profile Action front door', () => {
         expect(f.profileMutations).toHaveLength(concurrentEdit ? 0 : 1);
         expect(pendingNotification).toMatchObject({ artifactId: approval.id,
             scope: { serverId: f.context.serverId, accountId: 'owner' } });
+        await hook.unmount();
+    });
+
+    it.each([false, true])('submits the captured Profile draft during display refresh and presents canonical conflict=%s', async concurrentEdit => {
+        const f = await fixture();
+        f.setProfile({ enabled: true, promptStack: [], secretBindings: { MASKED: null } });
+        await f.mountHome();
+        const hook = await renderHook(() => ({ save: useSaveLaunchProfile(), collection: useProfilesCollection() }));
+        const profile = hook.getCurrent().collection.resolveProfile('editable');
+        if (!profile) throw new Error('Fixture Profile unavailable');
+        const requirements = await renderHook(() => useLegacyProfileSecretRequirements({ profile, profileName: profile.name,
+            environmentVariables: [] }));
+        if (concurrentEdit) f.advanceProfileRevision();
+        await act(async () => { beginProfileCatalogLoad(getStorage().getState().settingsScope!); });
+        const bindings = requirements.getCurrent().readPrivateSecretBindingsForSave();
+        expect(bindings).toEqual({ MASKED: null });
+        if (bindings === null) throw new Error('Display refresh blocked the captured draft');
+        vi.mocked(Modal.alert).mockClear();
+        let saved: Awaited<ReturnType<ReturnType<typeof useSaveLaunchProfile>>> = null;
+        await act(async () => { saved = await hook.getCurrent().save({ ...profile, name: 'Saved during refresh' }, bindings); });
+        expect(f.profileRows()[0]?.content).toMatchObject({ t: 'plain', v: { secretBindings: { MASKED: null },
+            definition: { profile: { name: concurrentEdit ? 'Editable' : 'Saved during refresh' } } } });
+        if (concurrentEdit) {
+            expect(saved).toBeNull();
+            expect(Modal.alert).toHaveBeenCalledWith('common.error', 'profile_revision_conflict');
+        } else {
+            expect(saved).not.toBeNull();
+            expect(Modal.alert).not.toHaveBeenCalled();
+        }
+        await requirements.unmount();
         await hook.unmount();
     });
 
@@ -1080,6 +1114,69 @@ describe('UI Profile Action front door', () => {
         await expect(f.executor.execute('launch_profiles.draft.discard', { draftId }, f.context))
             .resolves.toMatchObject({ ok: true, result: { status: 'unavailable' } });
         expect(f.settingsMutations).toEqual([]);
+    });
+    it('saves and reopens a zero-Machine Profile environment with an existing Saved Secret reference', async () => {
+        const f = await fixture();
+        const reference = formatSharedSavedSecretRefV1('private-key');
+        f.setProfile();
+        await f.mountHome();
+        expect(getStorage().getState().machines).toEqual({});
+        const alert = vi.spyOn(Modal, 'alert');
+        const screen = await renderScreen(React.createElement(ProfileDetailScreen, { target: { kind: 'profile', profileId: 'editable' } }));
+        const environment = () => screen.root.findByType(EnvironmentVariablesList);
+        expect(environment().props.machineId).toBeNull();
+        const variables = [{ name: 'API_KEY', value: '', isSecret: true }, { name: 'TEAM_FLAG', value: '1' }];
+        // Connection and collection readiness have their own reads. Measure the
+        // reference edit/save itself after that mounted surface has settled.
+        await vi.waitFor(() => expect(environment().props.getDefaultSecretNameForSourceVar('API_KEY', reference)).not.toBeNull());
+        const beforeSave = f.requests.length;
+        await act(async () => {
+            environment().props.onAddVariable({ variable: variables[0],
+                requirement: { name: 'API_KEY', required: true, useSecretVault: true, secretId: reference } });
+            environment().props.onAddVariable({ variable: variables[1], requirement: null });
+        });
+        await act(async () => {
+            const save = screen.root.findAll(node => node.props.testID === 'settings.profiles.detail.save'
+                && typeof node.props.onPress === 'function')[0];
+            if (!save) throw new Error('profile_editor_save_missing');
+            await save.props.onPress();
+        });
+        expect(alert).not.toHaveBeenCalled();
+        expect(f.profileMutations).toHaveLength(1);
+        expect(f.profileRows()[0]).toMatchObject({ revision: 5, content: { t: 'plain', v: {
+            secretBindings: { API_KEY: reference }, definition: { profile: { extraEnvironmentVariables: variables } },
+        } } });
+        expect(f.requests.slice(beforeSave).filter(request => /\/machines(?:\/|$)|\/rpc|\/declarations|\/materials/.test(request))).toEqual([]);
+        await act(async () => { screen.unmount(); });
+        await refreshProfileCatalog({ serverId: f.context.serverId, accountId: 'owner' });
+        const reopened = await renderScreen(React.createElement(ProfileDetailScreen, { target: { kind: 'profile', profileId: 'editable' } }));
+        const reopenedEnvironment = reopened.root.findByType(EnvironmentVariablesList);
+        expect(reopenedEnvironment.props.environmentVariables).toEqual(variables);
+        expect(reopenedEnvironment.props.sourceRequirementsByName.API_KEY).toMatchObject({ required: true, useSecretVault: true });
+        expect(reopenedEnvironment.props.getDefaultSecretNameForSourceVar('API_KEY', reference)).not.toBeNull();
+        expect(f.settingsMutations).toEqual([]);
+        await act(async () => { reopened.unmount(); });
+    });
+    it('saves and reopens a zero-Machine Profile reference through the headless Account Action', async () => {
+        const f = await fixture();
+        f.setProfile();
+        const stored = f.profileRows()[0]?.content;
+        const row = ProfileRecordV1Schema.parse(stored?.t === 'plain' ? stored.v : null);
+        if (row.definition.kind !== 'inline') throw new Error('Expected inline Profile');
+        const reference = formatSharedSavedSecretRefV1('private-key');
+        const profile = { ...row.definition.profile, extraEnvironmentVariables: [{ name: 'API_KEY', value: '', isSecret: true }] };
+        expect(await f.executor.execute('launch_profiles.save', { id: row.id, profile, expectedRevision: 4,
+            secretBindings: { API_KEY: reference } }, { ...f.context, surface: 'mcp' }))
+            .toMatchObject({ ok: true, result: { status: 'updated', revision: 5 } });
+        const context = await captureLazyActionAccountContext(f.context.serverId);
+        try {
+            const catalog = await readProfileCatalogInContext(context);
+            expect(catalog).toMatchObject({ status: 'ready', records: [{ revision: 5, record: {
+                secretBindings: { API_KEY: reference }, definition: { profile: { extraEnvironmentVariables: profile.extraEnvironmentVariables } },
+            } }] });
+        } finally { context.dispose(); }
+        expect(f.requests.filter(request => /\/machines(?:\/|$)|\/rpc|\/declarations|\/materials/.test(request))).toEqual([]);
+        expect(f.profileMutations).toHaveLength(1);
     });
     it('keeps the mounted Profile editor dirty until its row save is acknowledged', async () => {
         const f = await fixture();

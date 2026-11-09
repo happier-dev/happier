@@ -1,6 +1,7 @@
 import { PROJECT_ACTION_INPUT_SCHEMAS_V1, PROJECT_ACTION_OUTPUT_SCHEMAS_V1, PROJECT_FINITE_ACTION_RPC_METHODS_V1,
     readProjectSetupTrustRequestOperationV1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { ActionApprovalRequestCreatedResultSchema, ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { resolveProjectActionMachineV1 } from '@happier-dev/protocol/actions/executor/projectActionPlacement';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
@@ -12,7 +13,7 @@ import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverSc
 import { withActionAccountRequestSignal, type LazyActionAccountContext } from './actionAccountContext';
 import { executeOriginalAccountMachineAction } from '@/sync/api/externalActionAccountTransport';
 import { getActionOperation } from '@/sync/ops/actionOperations';
-import { decideProjectSetupConsent } from '@/components/projects/projectSetup/projectSetupConsentDecision';
+import { rememberAdmittedProjectSetupConsent } from './projectSetupTrustConsent';
 
 /** Delivery only: the incumbent executor already owns invocation authority, settings and approvals. */
 export function createUiProjectAction(account?: LazyActionAccountContext): NonNullable<ActionExecutorDeps['projectAction']> {
@@ -37,8 +38,8 @@ export function createUiProjectAction(account?: LazyActionAccountContext): NonNu
                 if (!retained || retained.scope.accountId !== account.accountId || !source) {
                     return { ok: false, errorCode: 'project_setup_review_unavailable', error: 'project_setup_review_unavailable' };
                 }
-                const decision = await decideProjectSetupConsent({ scope: { serverId: account.serverId, accountId: account.accountId },
-                    workspace: source, reviewedEffectDigest: request.data.expectedEffectDigest!, decision: 'untilChanged',
+                const decision = await rememberAdmittedProjectSetupConsent({ scope: { serverId: account.serverId, accountId: account.accountId },
+                    workspace: source, reviewedEffectDigest: request.data.expectedEffectDigest!,
                     operation: { serverId: account.serverId, snapshot: retained }, signal: context.signal });
                 if (decision.kind === 'remembered') return { operation: decision.operation };
                 const code = decision.kind === 'changed' ? 'project_setup_effect_changed'
@@ -105,7 +106,8 @@ export function createUiProjectAction(account?: LazyActionAccountContext): NonNu
                 const result = PROJECT_ACTION_OUTPUT_SCHEMAS_V1[actionId].safeParse(raw);
                 return result.success ? result.data : { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
             } catch (error) {
-                const code = error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'project_transport_unavailable';
+                const code = readRpcErrorCode(error)
+                    ?? (error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'project_transport_unavailable');
                 return { ok: false, errorCode: code, error: code };
             }
         }

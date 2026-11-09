@@ -339,7 +339,7 @@ describe('warmCacheAdapters', () => {
 
     it('keeps the settled content fact across a cold restore so an own readable row never reads as locked', async () => {
         const { projectUiSessionAwareness } = await import('@/sync/domains/session/awareness/sessionAwareness');
-        const { isSessionAwarenessContentReadableV1 } = await import('@happier-dev/protocol');
+        const { isSessionAwarenessContentReadableV1} = await import('@happier-dev/protocol/sessions/awareness/availability');
         const roundtrip = (renderable: SessionListRenderableSession) => {
             const entry = SessionListCacheEntryV1Schema.parse(
                 JSON.parse(JSON.stringify(buildSessionListCacheEntryFromRenderable(renderable))),

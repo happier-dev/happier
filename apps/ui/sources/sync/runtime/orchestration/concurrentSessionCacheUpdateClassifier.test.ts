@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+    classifyConcurrentSessionCacheUpdate,
     shouldRefreshConcurrentSessionCacheForUpdate,
     isAccountChangeUpdate,
 } from './concurrentSessionCacheUpdateClassifier';
@@ -37,5 +38,12 @@ describe('shouldRefreshConcurrentSessionCacheForUpdate', () => {
         const wake = { body: { t: 'account-change' } };
         expect(isAccountChangeUpdate(wake)).toBe(true);
         expect(shouldRefreshConcurrentSessionCacheForUpdate(wake)).toBe(true);
+    });
+
+    it('classifies recipient-access AccountChange wakes as Machine refreshes', () => {
+        expect(classifyConcurrentSessionCacheUpdate(
+            { body: { t: 'account-change' } },
+            { serverId: 'home', source: 'socket', changeKinds: ['machineRecipientAccess'], entityIds: ['machine-a'] },
+        )).toBe('machines');
     });
 });

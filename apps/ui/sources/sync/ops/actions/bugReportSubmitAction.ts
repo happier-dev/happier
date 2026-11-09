@@ -12,6 +12,7 @@ import { submitBugReportFromDraft, validateBugReportDraft } from '@/components/s
 import { submitBugReportToService } from '@/components/settings/bugReports/bugReportServiceClient';
 import { openBugReportFallbackFromDraft } from '@/components/settings/bugReports/bugReportFallbackSubmission';
 import type { LazyActionAccountContext } from './actionAccountContext';
+import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 
 export function createBugReportSubmitAction(account: LazyActionAccountContext | null): NonNullable<ActionExecutorDeps['bugReportSubmit']> {
   return async (raw, context) => {
@@ -36,9 +37,9 @@ export function createBugReportSubmitAction(account: LazyActionAccountContext | 
     if (providerUrl !== input.destination.providerUrl) {
       return { ok: false, errorCode: 'bug_report_destination_changed', error: 'bug_report_destination_changed' };
     }
-    // Diagnostics currently belong to the focused client's Home. Do not borrow
-    // that collection for another captured Home merely because it answers here.
-    if (input.draft.includeDiagnostics && !areServerProfileIdentifiersEquivalent(account.serverId, getActiveServerSnapshot().serverId)) {
+    // Legacy callers without a prepared selection still collect from the focused Home.
+    // Prepared form diagnostics already retain their explicit target and exclusions.
+    if (input.draft.includeDiagnostics && !input.preparedDiagnostics && !areServerProfileIdentifiersEquivalent(account.serverId, getActiveServerSnapshot().serverId)) {
       return { ok: false, errorCode: 'bug_report_diagnostics_scope_unavailable', error: 'bug_report_diagnostics_scope_unavailable' };
     }
     const inventory = storage.getState().machineListByServerId;
@@ -56,12 +57,20 @@ export function createBugReportSubmitAction(account: LazyActionAccountContext | 
         openFallbackIssue: async environment => {
           account.assertCurrent();
           context.signal?.throwIfAborted();
-          await openBugReportFallbackFromDraft({ ...input.draft, environment });
+          await openBugReportFallbackFromDraft({ ...input.draft, environment }, async value => {
+            // This port is part of the admitted bugreport.submit operation; the
+            // fallback button must retain its original Account and cancellation.
+            try {
+              account.assertCurrent();
+              if (context.signal?.aborted) return false;
+              return await setClipboardStringSafe(value);
+            } catch { return false; }
+          });
         },
         collectDiagnosticsArtifacts: async args => {
           account.assertCurrent();
           context.signal?.throwIfAborted();
-          return await collectBugReportDiagnosticsArtifacts({ ...args, pastedCliDoctorSnapshotJson: input.pastedCliDoctorSnapshotJson });
+          return input.preparedDiagnostics ?? await collectBugReportDiagnosticsArtifacts({ ...args, pastedCliDoctorSnapshotJson: input.pastedCliDoctorSnapshotJson });
         },
         submitBugReport: async args => {
           account.assertCurrent();

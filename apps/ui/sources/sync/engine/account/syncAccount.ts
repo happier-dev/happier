@@ -5,7 +5,7 @@ import { deletePushToken as deletePushTokenApi, registerPushToken as registerPus
 import type { Encryption } from '@/sync/encryption/encryption';
 import type { Profile } from '@/sync/domains/profiles/profile';
 import { profileParse, tryParseProfile } from '@/sync/domains/profiles/profile';
-import { settingsParse, SUPPORTED_SCHEMA_VERSION } from '@/sync/domains/settings/settings';
+import { SUPPORTED_SCHEMA_VERSION } from '@/sync/domains/settings/settings';
 import {
     areAccountSettingsScopesEqual,
     type AccountSettingsScope,
@@ -58,6 +58,7 @@ import { clearActivityNotificationContext } from '../../../../modules/happier-ac
 import { persistHomeRemoteAlertPreparedContext } from './homeRemoteAlertPreparedContext';
 import { refreshAuthenticatedServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { subscribeLocalAttentionSettingsMutations } from '@/sync/domains/state/settingsPersistence';
+import { retainAccountSettingsRawSnapshot } from '@/sync/engine/settings/accountSettingsRawSnapshot';
 
 type HomeNotificationSettingsTarget = Readonly<{
     id: string;
@@ -292,14 +293,6 @@ export async function handleUpdateAccountSocketUpdate(params: {
             encryption,
             ...(paramsForSettings.source === 'v1' ? { expectedMode: 'e2ee' as const } : {}),
         });
-        const parsedSettings = settingsParse(opened.raw ?? {});
-        const settingsSchemaVersion = parsedSettings.schemaVersion ?? 1;
-        if (settingsSchemaVersion > SUPPORTED_SCHEMA_VERSION) {
-            console.warn(
-                `⚠️ Received settings schema v${settingsSchemaVersion}, `
-                    + `we support v${SUPPORTED_SCHEMA_VERSION}. Update app for full functionality.`,
-            );
-        }
         const normalizedSettings = normalizeAccountSettingsForLocalStorage({
             raw: opened.raw,
             mode: opened.mode,
@@ -307,7 +300,16 @@ export async function handleUpdateAccountSocketUpdate(params: {
             settingsSecretsReadKeys,
             localSettings: getLocalSettings?.(),
         });
+        const settingsSchemaVersion = normalizedSettings.schemaVersion ?? 1;
+        if (settingsSchemaVersion > SUPPORTED_SCHEMA_VERSION) {
+            console.warn(
+                `⚠️ Received settings schema v${settingsSchemaVersion}, `
+                    + `we support v${SUPPORTED_SCHEMA_VERSION}. Update app for full functionality.`,
+            );
+        }
         applyAccountSettings(normalizedSettings, paramsForSettings.version);
+        // The socket carries the full document: catalog wakes for this write read it here, not over HTTP.
+        if (settingsScope) retainAccountSettingsRawSnapshot(settingsScope, paramsForSettings.version, opened.raw);
         if (pushWasEnabled !== isExpoPushNotificationChannelEnabled(normalizedSettings)) {
             schedulePushTokenReconciliation();
         }

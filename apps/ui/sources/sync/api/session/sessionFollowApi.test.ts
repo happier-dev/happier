@@ -1,3 +1,4 @@
+import { createSessionListSourceFixture, createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
@@ -5,13 +6,15 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createPlainSessionByIdResponseFixture, createSessionFixture, createSessionOwnerViewerFixture } from '@/dev/testkit/fixtures/sessionFixtures';
-import { SessionListQueryResponseV1Schema } from '@happier-dev/protocol/sessions/listing/response';
+import { SessionAutoFollowPreferencesV1Schema } from '@happier-dev/protocol/sessions/follow/accountFollow';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { resetRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { normalizeSessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import { act } from 'react-test-renderer';
 import { renderHook } from '@/dev/testkit';
+
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module);
 
 installDisconnectedServerSocketBoundary();
 await loadSyncSingletonForTests();
@@ -82,6 +85,28 @@ describe('Follow exact Home Action transport', () => {
         const address = { serverId: env.target.id, sessionId: 'source' };
         expect(await api.sessionFollowSet(address, { policy: { preset: 'quiet' } })).toMatchObject({ kind: 'failed' });
         expect(await api.sessionFollowRemove(address)).toMatchObject({ kind: 'failed' });
+        expect(env.request.mock.calls.filter(([url, init]) => url.includes('/follow') && init?.method !== 'GET')).toHaveLength(0);
+    });
+    it('admits Session Follow authoring and rule edits through the shared Action settings', async () => {
+        const env = await setup();
+        env.actionSettings.value = { actionsSettingsV1: { v: 1, actions: {
+            'follow.set': { enabled: false }, 'follow.remove': { enabled: false },
+        } } };
+        env.request.mockImplementation(async (_url, init) => Response.json(init?.method === 'DELETE' ? { changed: true }
+            : { changed: true, source: { sourceSessionId: 'source', destinationSessionId: 'destination',
+                policy: { preset: 'quiet' }, deliveryState: 'eligible', hasPendingUpdates: false } }));
+        const api = await import('./sessionFollowSourcesApi');
+        const { writeSessionFollowRuleDefinition } = await import('./sessionFollowRuleEdits');
+        const pair = { serverId: env.target.id, sourceSessionId: 'source', destinationSessionId: 'destination' };
+        expect(await api.setSessionFollowSource({ ...pair, policy: { preset: 'quiet' } }))
+            .toMatchObject({ kind: 'failed', actionFailure: { errorCode: 'action_disabled' } });
+        expect(await api.removeSessionFollowSource(pair))
+            .toMatchObject({ kind: 'failed', actionFailure: { errorCode: 'action_disabled' } });
+        expect(await writeSessionFollowRuleDefinition(env.target.id, { ruleId: 'rule',
+            receiver: { kind: 'session', sessionId: 'destination' }, version: 1,
+            definition: { v: 1, enabled: true, filter: normalizeSessionListFilterV1({ homeServerIds: [env.target.id] }),
+                policy: { preset: 'quiet' } },
+        }, 1)).toMatchObject({ kind: 'failed', actionFailure: { errorCode: 'action_disabled' } });
         expect(env.request.mock.calls.filter(([url, init]) => url.includes('/follow') && init?.method !== 'GET')).toHaveLength(0);
     });
     it('evaluates one source through fresh exact-Home reads without a Session corpus query', async () => {
@@ -165,7 +190,7 @@ describe('Follow exact Home Action transport', () => {
                 content: { t: 'plain', v: { v: 1, enabled: true, filter, policy: { preset: 'quiet' } } } }] } });
             homes.answer(serverId, '/v2/account/session-follow-preferences', { body: { assigned: true, direct: false, team: false, group: false } });
             homes.answer(serverId, '/v2/sessions/query', { respondAfter: releaseQuery.promise,
-                body: SessionListQueryResponseV1Schema.parse({ sessions: [{ ...createPlainSessionByIdResponseFixture(session).session,
+                body: createSessionListSourceFixture({ sessions: [{ ...createPlainSessionByIdResponseFixture(session).session,
                     viewer: createSessionOwnerViewerFixture(session) }], hasNext: false, nextCursor: null,
                     attentionHasNext: false, attentionNextCursor: null }) });
             let authorityReads = 0;
@@ -194,8 +219,9 @@ describe('Follow exact Home Action transport', () => {
             else await expect(reading).resolves.toMatchObject({ kind: 'ok', value: { matchCount: 1,
                 overlaps: [{ ruleId: 'private-other-rule', matches: [{ serverId, source: { kind: 'session', sessionId: session.id } }] }] } });
             expect(authorityReads - readsBeforeQueryRelease).toBe(1);
-            // Preserve the two observed reads in this composed flow; moving Follow's final check must not add a third.
-            expect(authorityReads).toBe(supplied ? 3 : 2);
+            // Captured identity may reuse a current observation; the final fresh
+            // check above is mandatory and must not add redundant authority reads.
+            expect(authorityReads).toBeLessThanOrEqual(supplied ? 3 : 2);
         } finally {
             releaseQuery.resolve(undefined);
             await pending;
@@ -345,14 +371,14 @@ describe('Follow exact Home Action transport', () => {
         const address = { serverId: env.target.id, sessionId: 'source' };
         const hook = await renderHook(() => useSessionFollowers(address, true));
         try {
-            await act(async () => { await vi.waitFor(() => expect(hook.getCurrent().projection?.peopleCount).toBe(3)); });
+            await vi.waitFor(() => expect(hook.getCurrent().projection?.peopleCount).toBe(3));
             env.request.mockResolvedValue(Response.json({ error: 'service_unavailable' }, { status: 503 }));
             await act(async () => { hook.getCurrent().refresh(); });
-            await act(async () => { await vi.waitFor(() => expect(hook.getCurrent().error).toBe('unavailable')); });
+            await vi.waitFor(() => expect(hook.getCurrent().error).toBe('unavailable'));
             expect(hook.getCurrent().projection?.peopleCount).toBe(3);
             env.request.mockResolvedValue(Response.json({ error: 'session_not_found' }, { status: 404 }));
             await act(async () => { hook.getCurrent().refresh(); });
-            await act(async () => { await vi.waitFor(() => expect(hook.getCurrent().error).toBe('session_not_found')); });
+            await vi.waitFor(() => expect(hook.getCurrent().error).toBe('session_not_found'));
             expect(hook.getCurrent().projection).toBeNull();
         } finally { await hook.unmount(); }
     });
@@ -621,7 +647,8 @@ describe('Follow exact Home Action transport', () => {
             expect(new URL(url).origin).toBe('https://target.example');
             expect(new URL(url).pathname).toBe('/v2/account/session-follow-preferences');
             expect(new Headers(init?.headers).get('Authorization')).toBe(`Bearer ${env.token('target-account')}`);
-            if (init?.method === 'PUT') preferences = JSON.parse(String(init.body));
+            // The real Home admits both wire forms before persisting its four Account columns.
+            if (init?.method === 'PUT') preferences = SessionAutoFollowPreferencesV1Schema.parse(JSON.parse(String(init.body)));
             return Response.json(preferences);
         });
         const listing = await executor.execute('settings.list', { pageId: 'coordination' }, context);
@@ -654,6 +681,61 @@ describe('Follow exact Home Action transport', () => {
         expect(new Headers(call?.[1]?.headers).get('Authorization')).toBe(`Bearer ${env.token('target-account')}`);
     });
 
+    it.each([false, true])('shares one demanded rule census across Following and rule consumers (active Home: %s)', async (activeHome) => {
+        const env = await setup();
+        const serverId = activeHome ? env.active.id : env.target.id;
+        const { useSessionFollowing } = await import('@/components/sessions/follow/useSessionFollowing');
+        const { useSessionFollowRules } = await import('@/components/sessions/follow/useSessionFollowRules');
+        const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+        const { ACCOUNT_SESSION_FOLLOW_CHANGE_ENTITY_ID } = await import('@happier-dev/protocol/sessions/follow/changes');
+        const rule = { ruleId: 'payments', receiver: { kind: 'session', sessionId: 'coordinator' }, version: 4,
+            content: { t: 'plain', v: { v: 1, enabled: true, filter: normalizeSessionListFilterV1(), policy: { preset: 'important' } } } };
+        env.request.mockImplementation(async url => Response.json(url.endsWith('/session-follow-rules') ? { rules: [rule] } : { sources: [] }));
+        const censusReads = () => env.request.mock.calls.filter(([url]) => url.endsWith('/session-follow-rules')).length;
+        const hidden = await renderHook(() => useSessionFollowRules(serverId, false));
+        expect(censusReads()).toBe(0);
+        await hidden.unmount();
+        const hook = await renderHook(() => ({
+            following: useSessionFollowing({ serverId, sessionId: 'coordinator' }, true),
+            rules: useSessionFollowRules(serverId, true),
+        }));
+        try {
+            await vi.waitFor(() => {
+                expect(hook.getCurrent().following.projection?.rules).toHaveLength(1);
+                expect(hook.getCurrent().rules.snapshot?.status).toBe('ready');
+            });
+            expect(censusReads()).toBe(1);
+            expect(hook.getCurrent().following.ruleInputs.snapshot).toBe(hook.getCurrent().rules.snapshot);
+            for (let i = 0; i < 20; i++) await act(async () => publishHomeAccountChange(serverId,
+                [`unrelated-${i}`], { changeKinds: ['artifact'] }));
+            expect(censusReads()).toBe(1);
+            rule.version = 5;
+            await act(async () => publishHomeAccountChange(serverId, [ACCOUNT_SESSION_FOLLOW_CHANGE_ENTITY_ID], { changeKinds: ['account'] }));
+            await vi.waitFor(() => expect(hook.getCurrent().following.projection?.rules[0]?.version).toBe(5));
+            expect(censusReads()).toBe(2);
+            expect(hook.getCurrent().following.ruleInputs.snapshot).toBe(hook.getCurrent().rules.snapshot);
+        } finally { await hook.unmount(); }
+        const readsAfterUnmount = censusReads();
+        await act(async () => publishHomeAccountChange(serverId, [ACCOUNT_SESSION_FOLLOW_CHANGE_ENTITY_ID], { changeKinds: ['account'] }));
+        expect(censusReads()).toBe(readsAfterUnmount);
+    });
+
+    it('shares one demanded rule census after active Home restoration', async () => {
+        const env = await setup();
+        const { useSessionFollowing } = await import('@/components/sessions/follow/useSessionFollowing');
+        const { publishAppliedActiveServerRuntimeAvailability } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+        const profile = env.storage.getState().profileScope;
+        publishAppliedActiveServerRuntimeAvailability(false);
+        const hook = await renderHook(() => useSessionFollowing({ serverId: env.active.id, sessionId: 'coordinator' }, true));
+        try {
+            expect(hook.getCurrent().projection).toBeNull();
+            await act(async () => { publishAppliedActiveServerRuntimeAvailability(true); });
+            expect(env.storage.getState().profileScope).toBe(profile);
+            await vi.waitFor(() => expect(hook.getCurrent().projection).toMatchObject({ rules: [], coverage: 'complete' }));
+            expect(hook.getCurrent().ruleInputs.lifetime?.isCurrent()).toBe(true);
+        } finally { await hook.unmount(); publishAppliedActiveServerRuntimeAvailability(true); }
+    });
+
     it('retains a rule-only census in the reusable Following projection', async () => {
         const env = await setup();
         const { useSessionFollowing } = await import('@/components/sessions/follow/useSessionFollowing');
@@ -666,21 +748,25 @@ describe('Follow exact Home Action transport', () => {
         const address = { serverId: env.target.id, sessionId: receiver.sessionId };
         const hook = await renderHook(() => useSessionFollowing(address, true));
         try {
-            await act(async () => { await vi.waitFor(() => expect(hook.getCurrent().projection).not.toBeNull()); });
+            await vi.waitFor(() => expect(hook.getCurrent().projection).not.toBeNull());
             expect(hook.getCurrent().projection).toEqual({ sources: [], coverage: 'complete', rules: [{
                 ruleId: rule.ruleId, receiver, version: rule.version, definition,
             }] });
             expect(hook.getCurrent().loading).toBe(false);
             expect(hook.getCurrent().error).toBeNull();
             const committed = hook.getCurrent().projection;
-            env.request.mockResolvedValue(Response.json({ error: 'service_unavailable' }, { status: 503 }));
+            const sourceReads = () => env.request.mock.calls.filter(([url]) => url.endsWith('/follows/sessions')).length;
+            const beforeRefresh = sourceReads();
+            env.request.mockImplementation(async () => Response.json({ error: 'service_unavailable' }, { status: 503 }));
             await act(async () => { await hook.getCurrent().refresh(); });
             expect(hook.getCurrent().projection).toBe(committed);
             expect(hook.getCurrent().error).toBe('unavailable');
-            env.request.mockResolvedValue(Response.json({ error: 'session_not_found' }, { status: 404 }));
+            expect(sourceReads()).toBe(beforeRefresh + 1);
+            env.request.mockImplementation(async () => Response.json({ error: 'session_not_found' }, { status: 404 }));
             await act(async () => { await hook.getCurrent().refresh(); });
             expect(hook.getCurrent().projection).toBeNull();
             expect(hook.getCurrent().error).toBe('session_not_found');
+            expect(sourceReads()).toBe(beforeRefresh + 2);
         } finally { await hook.unmount(); }
     });
 
@@ -700,6 +786,9 @@ describe('Follow exact Home Action transport', () => {
         const releaseCensus = createDeferred<void>();
         let holdCensus = false;
         env.request.mockImplementation(async (url, init) => {
+            if (new URL(url).pathname === '/v2/sessions/coordinator') return Response.json(createPlainSessionByIdResponseFixture(
+                createSessionFixture({ id: receiver.sessionId, serverId, encryptionMode: 'plain' }),
+            ));
             if (url.endsWith('/session-follow-rules/payments')) {
                 const body = SetSessionFollowRuleRequestV1Schema.parse(JSON.parse(String(init?.body)));
                 if (body.content.t !== 'plain') throw new Error('Expected keyless plain rule fixture');
@@ -717,7 +806,7 @@ describe('Follow exact Home Action transport', () => {
         });
         const hook = await renderHook(() => useSessionFollowing({ serverId, sessionId: receiver.sessionId }, true));
         try {
-            await act(async () => { await vi.waitFor(() => expect(hook.getCurrent().projection?.rules[0]?.version).toBe(4)); });
+            await vi.waitFor(() => expect(hook.getCurrent().projection?.rules[0]?.version).toBe(4));
             const previous = hook.getCurrent().projection!.rules[0]!;
             const edited = { ...previous, definition: { ...previous.definition,
                 filter: normalizeSessionListFilterV1({ statuses: ['failed'] }) } };
@@ -730,13 +819,14 @@ describe('Follow exact Home Action transport', () => {
                 releaseCensus.resolve();
                 await Promise.all([reading!, refresh]);
             });
-            expect(hook.getCurrent().projection?.rules[0]).toMatchObject({ version: 5, definition: edited.definition });
+            await vi.waitFor(() => expect(hook.getCurrent().projection?.rules[0])
+                .toMatchObject({ version: 5, definition: edited.definition }));
             expect(hook.getCurrent().loading).toBe(false);
             expect(hook.getCurrent().error).toBeNull();
         } finally { releaseCensus.resolve(); await hook.unmount(); }
     });
 
-    it('executes Account preferences and source mutations through their strict domain resources', async () => {
+    it('executes Account preferences and plain source mutations through their strict domain resources', async () => {
         const env = await setup();
         const api = await import('./sessionFollowApi');
         const sources = await import('./sessionFollowSourcesApi');
@@ -744,21 +834,29 @@ describe('Follow exact Home Action transport', () => {
         const preferences = { assigned: false, direct: true, team: false, group: true };
         const follow = { sessionId: address.sessionId, following: true, notificationLevel: 'none', includeInVoice: true };
         const source = { sourceSessionId: 'source/id', destinationSessionId: address.sessionId, policy: { preset: 'important' }, deliveryState: 'eligible', hasPendingUpdates: false };
-        env.request.mockImplementation(async (url, init) => {
+        // Preparation must read the plain source through the current batch wire before deciding no DEK is needed.
+        env.request.mockImplementation(createSessionReadBatchFetchBoundary(async (input, init) => {
+            const url = input instanceof Request ? input.url : String(input);
+            const sessionId = decodeURIComponent(new URL(url).pathname.replace('/v2/sessions/', ''));
+            if (sessionId === 'source/id' || sessionId === address.sessionId) return Response.json(createPlainSessionByIdResponseFixture(
+                createSessionFixture({ id: sessionId, serverId: env.target.id, encryptionMode: 'plain' }),
+            ));
             const value = url.endsWith('session-follow-preferences') ? preferences
                 : init?.method === 'DELETE' ? { changed: false }
                     : url.includes('/follows/sessions/') ? { changed: true, source }
                         : init?.method === 'PUT' ? { changed: true, follow, voiceInitialSnapshotPending: true }
                             : { follow: null, isSessionOwner: false, capabilities: { manageFollow: true }, voiceInitialSnapshotPending: false };
             return new Response(JSON.stringify(value), { status: 200 });
-        });
+        }));
         await expect(api.sessionFollowGet(address)).resolves.toEqual({ kind: 'ok', value: { follow: null, isSessionOwner: false, capabilities: { manageFollow: true }, voiceInitialSnapshotPending: false } });
         await expect(api.sessionFollowSet(address, { policy: { preset: 'quiet', voice: true } })).resolves.toEqual({ kind: 'ok', value: { changed: true, follow, voiceInitialSnapshotPending: true } });
         await expect(api.sessionFollowRemove(address)).resolves.toEqual({ kind: 'ok', value: { changed: false } });
         await expect(api.sessionAutoFollowPreferencesGet(env.target.id)).resolves.toEqual({ kind: 'ok', value: preferences });
         await expect(api.sessionAutoFollowPreferencesSet(env.target.id, preferences)).resolves.toEqual({ kind: 'ok', value: preferences });
         const pair = { serverId: env.target.id, destinationSessionId: address.sessionId, sourceSessionId: 'source/id' };
-        await expect(sources.setSessionFollowSource({ ...pair, policy: { preset: 'important' } })).resolves.toEqual({ kind: 'ok', value: { changed: true, source } });
+        await expect(sources.setSessionFollowSource({ ...pair, policy: { preset: 'important' } })).resolves.toEqual({
+            kind: 'ok', value: { changed: true, source },
+        });
         await expect(sources.removeSessionFollowSource(pair)).resolves.toEqual({ kind: 'ok', value: { changed: false } });
         const requests = env.request.mock.calls.filter(([url]) => url.includes('follow'));
         expect(requests.map(([url, init]) => [new URL(url).origin, init?.method, init?.body ? JSON.parse(String(init.body)) : null])).toEqual([
@@ -766,7 +864,7 @@ describe('Follow exact Home Action transport', () => {
             ['https://target.example', 'PUT', { policy: { preset: 'quiet', voice: true } }],
             ['https://target.example', 'DELETE', null],
             ['https://target.example', 'GET', null],
-            ['https://target.example', 'PUT', preferences],
+            ['https://target.example', 'PUT', { defaultRules: preferences }],
             ['https://target.example', 'PUT', { policy: { preset: 'important' } }],
             ['https://target.example', 'DELETE', null],
         ]);
@@ -780,7 +878,7 @@ describe('Follow exact Home Action transport', () => {
             retireActiveServerAccountScopeLifetime();
             return new Response(JSON.stringify({ changed: true }), { status: 200 });
         });
-        await expect(api.sessionFollowRemove({ serverId: env.target.id, sessionId: 'same' })).resolves.toEqual({ kind: 'failed', error: 'unavailable' });
+        await expect(api.sessionFollowRemove({ serverId: env.target.id, sessionId: 'same' })).resolves.toMatchObject({ kind: 'failed', error: 'unavailable' });
         expect(env.request.mock.calls.filter(([url]) => url.includes('/follow')).map(([url]) => new URL(url).origin)).toEqual(['https://target.example']);
     });
 
@@ -791,9 +889,9 @@ describe('Follow exact Home Action transport', () => {
         env.request.mockImplementation(async () => new Response(JSON.stringify({ error: 'session_archived' }), { status: 409 }));
         await expect(api.sessionFollowSet(address, { policy: { preset: 'important', voice: false } })).resolves.toEqual({ kind: 'failed', error: 'session_archived' });
         env.request.mockImplementation(async () => new Response(JSON.stringify({ changed: true, frontier: 'private' }), { status: 200 }));
-        await expect(api.sessionFollowRemove(address)).resolves.toEqual({ kind: 'failed', error: 'unavailable' });
+        await expect(api.sessionFollowRemove(address)).resolves.toMatchObject({ kind: 'failed', error: 'unavailable' });
         env.request.mockImplementation(async () => new Response(JSON.stringify({ error: 'session_follow_source_forbidden' }), { status: 403 }));
-        await expect(api.sessionFollowGet(address)).resolves.toEqual({ kind: 'failed', error: 'unavailable' });
+        await expect(api.sessionFollowGet(address)).resolves.toMatchObject({ kind: 'failed', error: 'unavailable' });
     });
 
     it('cancels on a credential change at an inactive target Home', async () => {
@@ -803,7 +901,7 @@ describe('Follow exact Home Action transport', () => {
             await env.TokenStorage.setCredentialsForServerUrl('https://target.example', { serverId: env.target.id }, { token: env.token('new-target-account') });
             return new Response(JSON.stringify({ changed: true }), { status: 200 });
         });
-        await expect(api.sessionFollowRemove({ serverId: env.target.id, sessionId: 'same' })).resolves.toEqual({ kind: 'failed', error: 'unavailable' });
+        await expect(api.sessionFollowRemove({ serverId: env.target.id, sessionId: 'same' })).resolves.toMatchObject({ kind: 'failed', error: 'unavailable' });
     });
 
     it('cancels a delayed Voice inclusion replacement when the target Home credential changes', async () => {
@@ -833,7 +931,7 @@ describe('Follow exact Home Action transport', () => {
         } }), { status: 200 }));
         await expect(api.sessionFollowSet({ serverId: env.target.id, sessionId: 'same' }, {
             policy: { preset: 'quiet', voice: true },
-        })).resolves.toEqual({ kind: 'failed', error: 'unavailable' });
+        })).resolves.toMatchObject({ kind: 'failed', error: 'unavailable' });
     });
 
     it('edits the other rule with a visible Project exclusion and CAS Undo without overwriting a later edit', async () => {
@@ -847,6 +945,9 @@ describe('Follow exact Home Action transport', () => {
         let definition = SessionFollowRuleDefinitionV1Schema.parse(original.definition);
         env.request.mockImplementation(async (url, init) => {
             const path = new URL(url).pathname;
+            if (path === '/v2/sessions/daily-coordinator') return Response.json(createPlainSessionByIdResponseFixture(
+                createSessionFixture({ id: original.receiver.sessionId, serverId: env.target.id, encryptionMode: 'plain' }),
+            ));
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
             if (path === '/v1/account/encryption/currentness') return Response.json({ mode: 'plain', version: 1,
                 signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
@@ -877,11 +978,11 @@ describe('Follow exact Home Action transport', () => {
     it('executes the public Account Action through the real family adapter and preserves its result envelope', async () => {
         const env = await setup();
         const { sessionFollowAction } = await import('./sessionFollowApi');
-        const { createActionExecutor } = await import('@happier-dev/protocol');
+        const { createActionExecutor} = await import('@happier-dev/protocol/actions/actionExecutor');
         const preferences = { assigned: true, direct: false, team: false, group: false };
         env.request.mockImplementation(async () => new Response(JSON.stringify(preferences), { status: 200 }));
         // Unrelated required ports are never reached by this Account Action.
-        const executor = createActionExecutor({ sessionFollowAction } as unknown as import('@happier-dev/protocol').ActionExecutorDeps);
+        const executor = createActionExecutor({ sessionFollowAction } as unknown as import('@happier-dev/protocol/actions/executor/types').ActionExecutorDeps);
         await expect(executor.execute('follow.preferences.get', {}, {
             surface: 'ui', authority: 'present_user', serverId: env.target.id, actionCaller: { kind: 'host' },
         })).resolves.toEqual({ ok: true, result: preferences });

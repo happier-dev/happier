@@ -31,11 +31,3 @@ export function readProjectSelectionPreference(
         ?? (keys.predecessorStorageKey ? values?.[keys.predecessorStorageKey] : undefined);
     return typeof value === 'string' && value.trim().length > 0 ? value : null;
 }
-
-export function writeProjectSelectionPreference(
-    values: Readonly<Record<string, string>> | null | undefined,
-    keys: ProjectSelectionPreferenceKeys | null,
-    value: string,
-): Record<string, string> {
-    return keys ? { ...values, [keys.storageKey]: value } : { ...values };
-}

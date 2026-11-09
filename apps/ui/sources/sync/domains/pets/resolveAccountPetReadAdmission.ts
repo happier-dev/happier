@@ -1,5 +1,5 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import { fetchAccountEncryptionCurrentness } from '@/sync/api/account/apiAccountEncryptionMode';
+import { fetchAccountEncryptionIdentity } from '@/sync/api/account/apiAccountEncryptionMode';
 import type { ServerFetch } from '@/sync/http/client';
 import { shouldRetryError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 
@@ -22,9 +22,12 @@ export async function resolveAccountPetReadAdmission(
     if (!credentials) return UNAVAILABLE;
 
     try {
-        const currentness = options.request
-            ? await fetchAccountEncryptionCurrentness(credentials, { request: options.request })
-            : await fetchAccountEncryptionCurrentness(credentials);
+        // This is descriptive readiness: the Home admits each pet list/asset
+        // request against persisted mode. No Account/Settings cursor is needed.
+        const currentness = await fetchAccountEncryptionIdentity(credentials, {
+            ...options,
+            usage: 'identity',
+        });
         return currentness.mode === 'plain'
             ? { status: 'ready' }
             : UNAVAILABLE;

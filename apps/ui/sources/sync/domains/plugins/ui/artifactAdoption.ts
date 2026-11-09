@@ -1,9 +1,5 @@
 import {
-    DaemonPluginUiArtifactByteIdentityV1Schema,
-} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
-import {
     deriveGeneratedHostedWebAssetPolicyV1,
-    PluginUiArtifactsManifestEntryV2Schema,
     type HostedWebAssetPolicyInput,
     type PluginUiArtifactsManifestEntryV2,
     type PluginUiChannelV1,
@@ -11,8 +7,10 @@ import {
 } from '@happier-dev/protocol/plugins/ui';
 
 import {
+    derivePluginReactNativeBundleCacheKey,
     getInstalledPluginReactNativeBundleCache,
 } from '@/components/plugins/reactNative/bundleCache';
+import { getInstalledPluginReactNativeModuleRegistry } from '@/components/plugins/reactNative/moduleRegistry';
 import {
     loadPluginReactNativeBundleModule,
     type PluginReactNativeLoaderBackend,
@@ -21,6 +19,7 @@ import {
 import type { PluginReactNativeSurfaceModule } from '@/components/plugins/reactNative/PluginReactNativeSurface';
 import {
     acquirePluginHostedWebArtifactAvailability,
+    acquirePluginHostedWebBrowserArtifactAvailability,
     type PluginHostedWebArtifactIdentity,
     type PluginHostedWebArtifactAvailabilityInput,
 } from '@/sync/domains/plugins/availability/hostedWebArtifactLease';
@@ -36,6 +35,7 @@ import type {
     PluginArtifactDaemonTransport,
 } from '@/sync/domains/plugins/availability/artifactLease';
 import { readPluginUiContributionOrigin, readPluginUiContributionSupplies } from './projectionUnion';
+import { readDaemonPluginUiArtifactByteIdentity, readPluginUiArtifactGraph } from './artifactIdentityRead';
 import type { PluginReactNativeBundleCacheIdentity } from './reactNativeRuntime';
 import type { PluginAccountHostedArtifactPublicationResult } from '@/sync/domains/plugins/availability/accountHostedArtifactPublication';
 
@@ -48,7 +48,7 @@ type PluginUiArtifactAvailabilityResult<Handle extends PluginUiArtifactDisposabl
     | Readonly<{ kind: 'available'; handle: Handle }>
     | Readonly<{ kind: 'unavailable'; code: string }>;
 
-export type PluginUiArtifactAdoptionKind = 'hostedWebNative' | 'reactNative';
+export type PluginUiArtifactAdoptionKind = 'hostedWebNative' | 'hostedWebBrowser' | 'reactNative';
 
 export type PluginUiArtifactRetirementReason = 'disabled' | 'revoked' | 'uninstalled' | 'withdrawn' | 'accountRetired' | 'ownerDisposed';
 
@@ -318,6 +318,20 @@ export class PluginUiArtifactAdoptionOwner {
         });
     }
 
+    public async adoptHostedWebBrowser(
+        input: PluginUiHostedWebNativeArtifactAdoptionInput,
+    ) {
+        return await this.adopt({
+            kind: 'hostedWebBrowser' as const,
+            desiredArtifactKey: input.cacheIdentity.artifactDigest,
+            acquire: (signal) => acquirePluginHostedWebBrowserArtifactAvailability({
+                ...input,
+                signal,
+                isCurrent: () => !signal.aborted && this.isActive(),
+            }),
+        });
+    }
+
     public async adoptReactNative(
         input: PluginUiReactNativeArtifactAdoptionInput,
     ) {
@@ -473,6 +487,7 @@ export function readPluginUiDaemonProjectionSelection(
 /** React dependency facts only; never a cache or persistence identity. */
 export function createPluginUiHostedWebArtifactRequestFactsKey(input: Readonly<{
     platform: string | undefined;
+    executionOrigin?: PluginMachineExecutionOriginV1 | null;
     source: PluginUiArtifactDaemonSource | null;
     sources?: readonly PluginUiArtifactDaemonSource[];
     admission: PluginUiHostedWebArtifactTechnicalAdmission | null;
@@ -480,6 +495,7 @@ export function createPluginUiHostedWebArtifactRequestFactsKey(input: Readonly<{
     const sourceMaps = input.admission?.hostedWebPolicy.sourceMaps;
     return JSON.stringify({
         platform: input.platform ?? null,
+        executionOrigin: input.executionOrigin ?? null,
         source: input.source ?? null,
         sources: input.sources ?? [],
         graph: input.admission
@@ -520,8 +536,7 @@ export function readPluginUiGeneratedArtifactGraph(
     contribution: Readonly<Record<string, unknown>> | null,
 ): PluginUiArtifactsManifestEntryV2 | null {
     if (contribution?.generatedV2 !== true) return null;
-    const parsed = PluginUiArtifactsManifestEntryV2Schema.safeParse(contribution.artifactGraph);
-    return parsed.success ? parsed.data : null;
+    return readPluginUiArtifactGraph(contribution.artifactGraph);
 }
 
 export function readPluginUiHostedWebArtifactReadIdentity(
@@ -532,11 +547,11 @@ export function readPluginUiHostedWebArtifactReadIdentity(
         artifactId: string;
     }>,
 ): PluginHostedWebArtifactIdentity | null {
-    const parsed = DaemonPluginUiArtifactByteIdentityV1Schema.safeParse(
+    const parsed = readDaemonPluginUiArtifactByteIdentity(
         readRecord(contribution?.runtime)?.artifactReadIdentity,
     );
-    return parsed.success
-        ? Object.freeze({ ...context, artifactDigest: parsed.data.artifactDigest, platform: 'web' })
+    return parsed
+        ? Object.freeze({ ...context, artifactDigest: parsed.artifactDigest, platform: 'web' })
         : null;
 }
 
@@ -555,8 +570,8 @@ export function readPluginUiReactNativeBundleCacheIdentity(
         platform: 'web' | 'ios' | 'android';
     }>,
 ): PluginReactNativeBundleCacheIdentity | null {
-    const parsed = DaemonPluginUiArtifactByteIdentityV1Schema.safeParse(value);
-    return parsed.success ? Object.freeze({ ...context, artifactDigest: parsed.data.artifactDigest }) : null;
+    const parsed = readDaemonPluginUiArtifactByteIdentity(value);
+    return parsed ? Object.freeze({ ...context, artifactDigest: parsed.artifactDigest }) : null;
 }
 
 export function readPluginUiGeneratedReactNativeModuleReference(
@@ -646,6 +661,12 @@ export function createPluginUiReactNativeInstalledArtifactLoad(
     input: PluginUiReactNativeInstalledArtifactLoadInput,
 ): (signal?: AbortSignal) => Promise<PluginReactNativeSurfaceModule> {
     return async (signal) => {
+        // Surface renderers of one active digest share an evaluated module; executable
+        // exports keep their per-activation namespace in the executable host.
+        const moduleRegistry = getInstalledPluginReactNativeModuleRegistry();
+        const sharedModuleFence = (input.moduleReference?.exportName ?? 'renderSurface') === 'renderSurface'
+            ? moduleRegistry.captureWriteFence(derivePluginReactNativeBundleCacheKey(input.identity))
+            : null;
         const owner = new PluginUiArtifactAdoptionOwner({ isCurrent: input.isCurrent });
         const retire = () => owner.dispose();
         signal?.addEventListener('abort', retire, { once: true });
@@ -675,13 +696,16 @@ export function createPluginUiReactNativeInstalledArtifactLoad(
             if (!acquired.adoption.isCurrent()) {
                 return throwReactNativeArtifactLoadFailure('artifact_lease_revoked');
             }
-            const result = await loadPluginReactNativeBundleModule({
-                cache: getInstalledPluginReactNativeBundleCache(),
-                identity: input.identity,
-                hostPlatform: input.hostPlatform,
-                ...(input.moduleReference ? { moduleReference: input.moduleReference } : {}),
-                ...(input.backend ? { backend: input.backend } : {}),
-            });
+            const sharedModule = sharedModuleFence ? moduleRegistry.read(sharedModuleFence.cacheKey) : null;
+            const result = sharedModule
+                ? Object.freeze({ ok: true as const, module: sharedModule })
+                : await moduleRegistry.shareEvaluation(sharedModuleFence, () => loadPluginReactNativeBundleModule({
+                    cache: getInstalledPluginReactNativeBundleCache(),
+                    identity: input.identity,
+                    hostPlatform: input.hostPlatform,
+                    ...(input.moduleReference ? { moduleReference: input.moduleReference } : {}),
+                    ...(input.backend ? { backend: input.backend } : {}),
+                }));
             if (!acquired.adoption.isCurrent()) {
                 return throwReactNativeArtifactLoadFailure('artifact_lease_revoked');
             }

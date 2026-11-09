@@ -15,11 +15,14 @@ import {
 } from '@/dev/testkit';
 import { createSessionListRenderableSessionFixture, createSessionViewerFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import {
-    projectLegacySessionAccessCapabilitiesV1,
-    buildSessionMessageObservationFactsV1,
-    type SessionListQueryV1,
+    projectLegacySessionAccessCapabilitiesV1} from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
+import {
+    buildSessionMessageObservationFactsV1} from '@happier-dev/protocol/sessions';
+import {
+    type SessionListQueryV1} from '@happier-dev/protocol/sessions/listing/query';
+import {
     type V2SessionRecord,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/control/contract';
 import * as cache from './concurrentSessionCache';
 import { storage } from '@/sync/domains/state/storageStore';
 import { useServerCredentialAccountScopes } from '@/sync/domains/scope/useServerCredentialAccountScopes';
@@ -29,6 +32,8 @@ import type { RuntimeFetch } from '@/utils/system/runtimeFetch';
 import { subscribeSessionListQueryHomeInvalidation } from '@/sync/domains/session/listing/sessionListQueryInvalidation';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createCompactSessionListFetchBoundary, createSessionListSourceFixture } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
+import { buildOrdinarySessionListHomeState } from '@/sync/domains/session/listing/ordinarySessionListHomeState';
+import { resolveSessionListQueryPresentation } from '@/sync/domains/session/listing/sessionListIndexPresentation';
 
 const secureStore = vi.hoisted(() => new Map<string, string>());
 type TelemetrySocket = Socket & Readonly<{ dispatch: (event: string, payload: unknown) => void }>;
@@ -112,6 +117,47 @@ afterEach(async () => {
 });
 
 describe('concurrent session cache telemetry', () => {
+    it('keeps a settled secondary Home free of polling reads and retires a pushed Session removal', async () => {
+        process.env.EXPO_PUBLIC_HAPPY_MULTI_SERVER_CONCURRENT = '1';
+        restoreLocalStorage = installLocalStorageMock().restore;
+        let reads = 0;
+        vi.stubGlobal('fetch', compactFetch(async input => {
+            const path = new URL(String(input)).pathname;
+            if (path === '/v1/auth/ping') return Response.json({ ok: true });
+            if (path === '/v1/features') return Response.json({ features: {}, capabilities: {} });
+            if (path.includes('/encryption')) return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+            if (path.startsWith('/v2/sessions') || path === '/v1/machines') reads++;
+            if (path === '/v1/machines') return Response.json([]);
+            if (path === '/v2/sessions/active' || path === '/v2/sessions/attention') return Response.json({ sessions: [], nextCursor: null, hasNext: false });
+            if (path === '/v2/sessions') return sessionPage('idle-secondary', null);
+            throw new Error(`Unexpected request: ${path}`);
+        }));
+        const bridge = await loadSyncSingletonForTests();
+        registerStandardCleanupTarget({ unmount: bridge.dispose });
+        const profiles = await import('@/sync/domains/server/serverProfiles');
+        const runtime = await import('@/sync/domains/server/serverRuntime');
+        const active = await runtime.upsertAndActivateServer({ serverUrl: 'https://idle-a.example.test', scope: 'tab' });
+        const secondary = await profiles.upsertServerProfile({ serverUrl: 'https://idle-b.example.test', name: 'Idle B' });
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const token = `header.${Buffer.from(JSON.stringify({ sub: 'idle-account-b' })).toString('base64url')}.signature`;
+        await TokenStorage.setCredentialsForServerUrl(secondary.serverUrl, { serverId: secondary.id }, { token });
+        await profiles.saveHomeViewState({ version: 1,
+            groups: [{ id: 'idle-group', name: 'Idle', serverIds: [active.id, secondary.id] }],
+            activeTargetKind: 'group', activeTargetId: 'idle-group' });
+        vi.useFakeTimers();
+        cache.startConcurrentSessionCacheSync();
+        await vi.waitFor(() => expect(storage.getState().concurrentSessionListCacheByServerId[secondary.id]?.listObservation?.phase).toBe('ready'));
+        await cache.refreshConcurrentMachineList(secondary.id);
+        const before = reads;
+        await vi.advanceTimersByTimeAsync(10 * 60_000);
+        expect(reads - before).toBe(0);
+        expect(storage.getState().sessionListRowsByServerId[secondary.id]?.['idle-secondary']).toBeDefined();
+        socketState.byUrl.get(secondary.serverUrl)!.dispatch('update', { id: 'idle-removal', seq: 2, createdAt: Date.now(),
+            body: { t: 'delete-session', sid: 'idle-secondary' } });
+        expect(storage.getState().sessionListRowsByServerId[secondary.id]?.['idle-secondary']).toBeUndefined();
+        expect(reads - before).toBe(0);
+    });
+
     it('waits for a blocked head before continuing and coalesces demand during the continuation', async () => {
         process.env.EXPO_PUBLIC_HAPPY_MULTI_SERVER_CONCURRENT = '1';
         restoreLocalStorage = installLocalStorageMock().restore;
@@ -274,14 +320,78 @@ describe('concurrent session cache telemetry', () => {
         expect(storage.getState().sessions['hint-unknown']).toBeUndefined();
     });
 
+    it('carries ordinary HTTP and decode failures through observation to Retry while transport failures settle', async () => {
+        process.env.EXPO_PUBLIC_HAPPY_MULTI_SERVER_CONCURRENT = '1';
+        restoreLocalStorage = installLocalStorageMock().restore;
+        let reply: 'ready' | 'http' | 'invalid' | 'network' = 'ready';
+        let listReads = 0;
+        vi.stubGlobal('fetch', compactFetch(vi.fn(async (input: RequestInfo | URL) => {
+            const url = new URL(String(input));
+            if (url.pathname === '/v1/auth/ping') return Response.json({ ok: true });
+            if (url.pathname === '/v1/features') return Response.json({ features: {}, capabilities: {} });
+            if (url.pathname.includes('/encryption')) return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+            if (url.pathname === '/v2/sessions/active' || url.pathname === '/v2/sessions/attention') return Response.json({ sessions: [], nextCursor: null, hasNext: false });
+            if (url.pathname === '/v1/machines') return Response.json([]);
+            if (url.pathname === '/v2/sessions') {
+                listReads += 1;
+                if (reply === 'http') return Response.json({ error: 'list_failed' }, { status: 500 });
+                if (reply === 'network') throw new TypeError('Failed to fetch');
+                if (reply === 'invalid') return Response.json({ sessions: [{ id: 'broken', metadataLayoutVersion: 1 }], nextCursor: null, hasNext: false });
+                return sessionPage('retained', null);
+            }
+            throw new Error(`Unexpected request: ${url.pathname}`);
+        })));
+        const profiles = await import('@/sync/domains/server/serverProfiles');
+        const runtime = await import('@/sync/domains/server/serverRuntime');
+        const active = await runtime.upsertAndActivateServer({ serverUrl: 'https://failure-a.example.test', scope: 'tab' });
+        const secondary = await profiles.upsertServerProfile({ serverUrl: 'https://failure-b.example.test', name: 'Failure B' });
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const token = `header.${Buffer.from(JSON.stringify({ sub: 'failure-account' })).toString('base64url')}.signature`;
+        await TokenStorage.setCredentialsForServerUrl(secondary.serverUrl, { serverId: secondary.id }, { token });
+        await profiles.saveHomeViewState({ version: 1, groups: [{ id: 'failures', name: 'Failures', serverIds: [active.id, secondary.id] }],
+            activeTargetKind: 'group', activeTargetId: 'failures' });
+        cache.startConcurrentSessionCacheSync();
+        await vi.waitFor(() => expect(storage.getState().concurrentSessionListCacheByServerId[secondary.id]?.listObservation?.phase).toBe('ready'), { timeout: 15_000 });
+        const ordinary = () => buildOrdinarySessionListHomeState({ serverId: secondary.id, requestedQueryKey: 'ordinary',
+            sessionIds: storage.getState().ordinarySessionListMembershipByServerId[secondary.id] ?? [],
+            observation: storage.getState().concurrentSessionListCacheByServerId[secondary.id]?.listObservation,
+            lifecycle: cache.readConcurrentOrdinarySessionListLifecycle(secondary.id),
+            online: cache.getConcurrentSessionListQueryHomeAvailability(secondary.id) === 'online' ? true
+                : cache.getConcurrentSessionListQueryHomeAvailability(secondary.id) === 'pending' ? null : false });
+        const presentation = () => resolveSessionListQueryPresentation({ selectedServerIds: [secondary.id],
+            statesByServerId: { [secondary.id]: ordinary() }, coverageComplete: false, retainedRowCount: 1,
+            settlingHomeServerId: secondary.id });
+        for (const failure of ['http', 'invalid'] as const) {
+            reply = failure;
+            const before = listReads;
+            await cache.refreshConcurrentOrdinarySessionList(secondary.id);
+            expect(listReads - before).toBe(1);
+            expect(ordinary().failureReason).toBe('response');
+            expect(presentation()).toEqual({ kind: 'error', retainedRows: true });
+            expect(ordinary().addresses.map(address => address.sessionId)).toEqual(['retained']);
+        }
+        // Mis-binding a response to the network class must visibly change the composed result.
+        const failed = ordinary();
+        expect(resolveSessionListQueryPresentation({ selectedServerIds: [secondary.id],
+            statesByServerId: { [secondary.id]: { ...failed, failureReason: 'network' } },
+            coverageComplete: false, retainedRowCount: 1, settlingHomeServerId: secondary.id,
+        })).toEqual({ kind: 'refreshing', retainedRows: true });
+        reply = 'ready';
+        await cache.refreshConcurrentOrdinarySessionList(secondary.id);
+        expect(ordinary()).toMatchObject({ phase: 'ready', failureReason: null, failureCode: null });
+        reply = 'network';
+        await cache.refreshConcurrentOrdinarySessionList(secondary.id);
+        // This Home's independent reachability probe still answers: the failed
+        // list transport remains a network error while that Home settles.
+        expect(ordinary()).toMatchObject({ phase: 'error', failureReason: 'network' });
+        expect(presentation()).toEqual({ kind: 'refreshing', retainedRows: true });
+    });
 
-
-    it('reconciles retained pages through exact access reads after a secondary Home Account change', async () => {
+    it.each(['account-change', 'session-share-revoked'] as const)('does not sweep retained pages and retires withdrawn access through real %s ingress', async withdrawal => {
         process.env.EXPO_PUBLIC_HAPPY_MULTI_SERVER_CONCURRENT = '1';
         const localStorageHandle = installLocalStorageMock();
         restoreLocalStorage = localStorageHandle.restore;
         let accessWithdrawn = false;
-        let failRetainedRead = false;
         const exactReads: string[] = [];
         const cursors: Array<string | null> = [];
         const teamRow = sessionRow('team-withdrawn', {
@@ -327,7 +437,6 @@ describe('concurrent session cache telemetry', () => {
                 const id = decodeURIComponent(url.pathname.slice('/v2/sessions/'.length));
                 exactReads.push(id);
                 if (id === 'team-withdrawn' && accessWithdrawn) return Response.json({ error: 'Session not found' }, { status: 404 });
-                if (id === 'temporarily-unavailable' && failRetainedRead) return Response.json({ error: 'session_read_unavailable' }, { status: 503 });
                 return Response.json({ session: id === 'team-withdrawn' ? teamRow
                     : sessionRow(id, { seq: accessWithdrawn ? 2 : 1, updatedAt: accessWithdrawn ? 2 : 1 }) });
             }
@@ -379,37 +488,53 @@ describe('concurrent session cache telemetry', () => {
         registerStandardCleanupTarget({ unmount: () => { disposeQueryInvalidation(); controller.dispose(); } });
         // Cold compact display reads precede the access-change operation under test.
         exactReads.length = 0;
-        failRetainedRead = true;
         accessWithdrawn = true;
         const socket = socketState.byUrl.get(secondary.serverUrl);
         expect(socket).toBeDefined();
-        socket!.dispatch('update', { body: { t: 'account-change' } });
+        socket!.dispatch('update', { id: 'coarse-access-change', seq: 1, createdAt: 1,
+            body: { t: 'account-change', changeKinds: ['session'] } });
+        await vi.waitFor(() => expect(cursors).toEqual([null, 'second-page', null]));
+        await vi.waitFor(() => expect(storage.getState().concurrentSessionListCacheByServerId[secondary.id]?.listObservation?.phase).toBe('ready'));
+        expect(exactReads).toEqual([]);
+        expect(storage.getState().sessionListRowsByServerId[secondary.id]?.['team-withdrawn']).toBeDefined();
+        const { fetchSessionByIdWithServerScope } = await import('./serverScopedRpc/fetchSessionByIdWithServerScope');
+        const nextRead = await fetchSessionByIdWithServerScope({ sessionId: 'team-withdrawn', serverId: secondary.id,
+            contentDemand: 'list-projection', activeCredentials: { token: 'active-home' },
+            activeRequest: async (path, init) => fetch(new URL(path, active.serverUrl), init),
+            sessionDataKeys: new Map(), includeTurnsProjection: false, applySessions() {}, log: { log() {} },
+        });
+        expect(nextRead).toMatchObject({ ok: false, errorCode: 'not_found' });
+        const admittedRead = await fetchSessionByIdWithServerScope({ sessionId: 'still-admitted', serverId: secondary.id,
+            contentDemand: 'list-projection', activeCredentials: { token: 'active-home' },
+            activeRequest: async (path, init) => fetch(new URL(path, active.serverUrl), init),
+            sessionDataKeys: new Map(), includeTurnsProjection: false, applySessions() {}, log: { log() {} },
+        });
+        expect(admittedRead).toMatchObject({ ok: true, sessionListRenderable: { id: 'still-admitted', seq: 2 } });
+        exactReads.length = 0;
+        socket!.dispatch('update', { id: 'explicit-access-loss', seq: 2, createdAt: 2,
+            body: withdrawal === 'account-change'
+                ? { t: 'account-change', changeKinds: ['session'], entityIds: ['team-withdrawn', 'not-retained', 'team-withdrawn'] }
+                : { t: 'session-share-revoked', sessionId: 'team-withdrawn', shareId: 'direct-share' } });
         await vi.waitFor(() => expect(storage.getState().sessionListRowsByServerId[secondary.id]?.['team-withdrawn'])
             .toBeUndefined(), { timeout: 5_000 });
-        await vi.waitFor(() => expect(storage.getState().concurrentSessionListCacheByServerId[secondary.id]?.listObservation?.phase).toBe('error'));
+        const expectedCursors = withdrawal === 'account-change'
+            ? [null, 'second-page', null, null] : [null, 'second-page', null];
+        await vi.waitFor(() => expect(cursors).toEqual(expectedCursors));
+        await vi.waitFor(() => expect(storage.getState().concurrentSessionListCacheByServerId[secondary.id]?.listObservation?.phase).toBe('ready'));
         expect(storage.getState().ordinarySessionListMembershipByServerId[secondary.id])
             .toEqual(['current-head', 'still-admitted', 'temporarily-unavailable']);
         expect(storage.getState().archivedSessionListMembershipByServerId[secondary.id]).not.toContain('team-withdrawn');
         expect(storage.getState().sessions['team-withdrawn']).toBeUndefined();
         expect(controller.getSnapshot().addresses).toEqual([]);
         expect(storage.getState().sessionListRowsByServerId[active.id]?.['team-withdrawn']).toBeDefined();
-        expect(storage.getState().sessionListRowsByServerId[secondary.id]?.['still-admitted']?.seq).toBe(2);
+        expect(storage.getState().sessionListRowsByServerId[secondary.id]?.['still-admitted']?.seq).toBe(1);
         expect(storage.getState().sessionListRowsByServerId[secondary.id]?.['temporarily-unavailable']).toBeDefined();
         expect(storage.getState().sessions['still-admitted']).toBeUndefined();
         expect(cache.readConcurrentOrdinarySessionListLifecycle(secondary.id).frontier).toBe(frontier);
-        expect(exactReads).not.toContain('current-head');
-        expect(cursors).toEqual([null, 'second-page', null]);
-
-        failRetainedRead = false;
-        socket!.dispatch('update', { body: { t: 'account-change' } });
-        await vi.waitFor(() => expect(storage.getState().sessionListRowsByServerId[secondary.id]?.['temporarily-unavailable']?.seq).toBe(2));
         expect(storage.getState().concurrentSessionListCacheByServerId[secondary.id]?.listObservation?.phase).toBe('ready');
         expect(cache.readConcurrentOrdinarySessionListLifecycle(secondary.id).frontier).toBe(frontier);
-        expect(cursors).toEqual([null, 'second-page', null, null]);
-        expect([...exactReads].sort()).toEqual([
-            'still-admitted', 'still-admitted', 'team-withdrawn',
-            'temporarily-unavailable', 'temporarily-unavailable',
-        ]);
+        expect(cursors).toEqual(expectedCursors);
+        expect(exactReads).toEqual(withdrawal === 'account-change' ? ['team-withdrawn'] : []);
     });
 
     it('retires only an auth-failed secondary Home corpus and repopulates after exact credential replacement', async () => {

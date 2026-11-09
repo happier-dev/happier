@@ -1,4 +1,5 @@
-import { PluginProjectionV2Schema, type PluginSourceCustodyV1 } from '@happier-dev/protocol';
+import { PluginProjectionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { type PluginSourceCustodyV1 } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import { PluginUiTargetedContributionsV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -51,6 +52,40 @@ const ACCOUNT_A = { serverId: 'server-a', accountId: 'account-a' } as const;
 const ACCOUNT_B = { serverId: 'server-a', accountId: 'account-b' } as const;
 const MACHINE_ID = 'machine-1';
 const TARGET_KEY = pluginUiProjectionAdmissionTargetKey({ serverId: 'server-1', machineId: MACHINE_ID });
+
+it('admits 100 Machine snapshots without reparsing transport-admitted projections, and never rewrites equal replays', async () => {
+    await prepareWarmCacheEncryptionKey();
+    const scope = { serverId: 'restore-home', accountId: 'restore-account' };
+    forgetPluginUiProjectionAdmissionSnapshots(scope);
+    const projection = projectionAtGeneration('restore-admitted', 77);
+    const machines = Array.from({ length: 100 }, (_, index) => `restore-machine-${index}`);
+    const parse = vi.spyOn(PluginProjectionV2Schema, 'safeParse');
+    try {
+        for (const machineId of machines) savePluginUiProjectionAdmissionSnapshot({ scope, machineId,
+            targetKey: pluginUiProjectionAdmissionTargetKey({ serverId: scope.serverId, machineId }), projection });
+        expect.soft(parse).toHaveBeenCalledTimes(0);
+        const previous = loadPluginUiProjectionWarmCacheEntries(scope.serverId, scope.accountId);
+        const normalize = vi.spyOn(projectionNormalizer, 'normalizePluginUiProjection');
+        const stringify = vi.spyOn(JSON, 'stringify');
+        try {
+            for (const machineId of machines) savePluginUiProjectionAdmissionSnapshot({ scope, machineId,
+                targetKey: pluginUiProjectionAdmissionTargetKey({ serverId: scope.serverId, machineId }), projection: structuredClone(projection) });
+            expect(stringify).not.toHaveBeenCalled();
+            expect(normalize).not.toHaveBeenCalled();
+            expect(loadPluginUiProjectionWarmCacheEntries(scope.serverId, scope.accountId)).toBe(previous);
+            const changedMachine = machines[0]!;
+            savePluginUiProjectionAdmissionSnapshot({ scope, machineId: changedMachine,
+                targetKey: pluginUiProjectionAdmissionTargetKey({ serverId: scope.serverId, machineId: changedMachine }),
+                projection: { ...projection, generation: 78 } });
+            expect(normalize).toHaveBeenCalledTimes(1);
+            const after = loadPluginUiProjectionWarmCacheEntries(scope.serverId, scope.accountId);
+            for (const machineId of machines.slice(1)) {
+                const key = pluginUiProjectionAdmissionTargetKey({ serverId: scope.serverId, machineId });
+                expect(after[key]).toBe(previous[key]);
+            }
+        } finally { normalize.mockRestore(); stringify.mockRestore(); }
+    } finally { parse.mockRestore(); forgetPluginUiProjectionAdmissionSnapshots(scope); }
+});
 
 it('serializes retained plugin UI state only when published content changes', async () => {
     await prepareWarmCacheEncryptionKey();

@@ -1,4 +1,4 @@
-import type { PromptFolderEntryV1, PromptFoldersV1 } from '@happier-dev/protocol';
+import type { PromptFolderEntryV1, PromptFoldersV1 } from '@happier-dev/protocol/prompts/library/promptFoldersV1';
 import { normalizeArtifactTagsV1 } from '@happier-dev/protocol/artifacts/artifactOrganizationV1';
 import type { ArtifactFolderCreateActionInputV1 } from '@happier-dev/protocol/prompts/library/promptFolderActionSchemasV1';
 import { createPromptFolderV1,

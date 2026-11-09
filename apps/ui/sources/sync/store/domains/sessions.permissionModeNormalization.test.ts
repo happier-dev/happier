@@ -14,6 +14,7 @@ function createHarness() {
         machines: {},
         machineDisplayById: {},
         sessionMessages: {},
+        sessionMessageToolVersion: 0,
         settings: {},
     };
 

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol';
+import { CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 import { createSocketIoBoundaryStub } from '@/dev/testkit/mocks/socketIo';
+import { SERVER_PEER_LIVENESS_WINDOW_MS } from '@/sync/runtime/connectivity/serverReachabilityTuning';
 
 function createSocketStub() { return createSocketIoBoundaryStub().socket; }
 
@@ -24,7 +25,7 @@ describe('createConcurrentServerSocketTransport', () => {
             token: 'token-a',
         });
 
-        expect(socket.io.timeout()).toBe(false);
+        expect(socket.io.timeout()).toBe(SERVER_PEER_LIVENESS_WINDOW_MS);
 
         expect(ioSpy).toHaveBeenCalledWith(
             'https://api.example.test',

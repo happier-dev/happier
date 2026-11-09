@@ -1,4 +1,5 @@
-import type { FeaturesResponse, ServerRetentionPolicyV2 } from '@happier-dev/protocol';
+import type { FeaturesResponse} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import type { ServerRetentionPolicyV2 } from '@happier-dev/protocol/retention/serverRetentionPolicyV2';
 
 export type LegacyServerRetentionPolicy = NonNullable<FeaturesResponse['capabilities']['server']['retention']>;
 

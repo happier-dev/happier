@@ -1,11 +1,33 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import type { Message } from '@happier-dev/session-core/messages';
 import type { Metadata } from '@happier-dev/session-core/state';
 import { readSessionPresentationCompletedRequests } from '@/sync/domains/session/presentation/readSessionPresentationCompletedRequests';
-import { listPendingSessionRequests } from './listPendingSessionRequests';
+import { derivePendingRequestFlagsFromSession, listPendingSessionRequests } from './listPendingSessionRequests';
+import { sessionRuntimeObservations } from '../sessionRuntimeObservation';
+
+afterEach(() => sessionRuntimeObservations.clear());
 
 describe('pending request facts adapter', () => {
+    it.each([undefined, 1_200])('orders projected pending fallback against the full-publication witness (observedAt %s)', observedAt => {
+        const session = createSessionFixture({ id: 'pending-witness', serverId: 'pending-witness-home',
+            active: true, updatedAt: 1_000, metadata: null, agentState: null,
+            pendingPermissionRequestCount: 1, pendingUserActionRequestCount: 0,
+            ...(observedAt !== undefined ? { pendingRequestObservedAt: observedAt } : {}) });
+        const messages: Message[] = [{ id: 'terminal-permission', kind: 'tool-call', localId: null, createdAt: 1_500,
+            tool: { id: 'terminal-tool', name: 'Bash', state: 'completed', input: {}, createdAt: 1_500,
+                startedAt: 1_500, completedAt: 1_600, description: null,
+                permission: { id: 'terminal-permission', status: 'approved' } }, children: [] }];
+        const address = { serverId: 'pending-witness-home', sessionId: session.id };
+        sessionRuntimeObservations.observe(address, { active: true, activeAt: 1_000 });
+        sessionRuntimeObservations.recordFullPublication(address, 2_000);
+
+        expect(derivePendingRequestFlagsFromSession(session, messages).hasPendingPermissionRequests).toBe(observedAt === undefined);
+        expect(derivePendingRequestFlagsFromSession({ ...session, serverId: 'different-home' }, messages).hasPendingPermissionRequests).toBe(false);
+        expect(derivePendingRequestFlagsFromSession({ ...session, serverId: undefined }, messages).hasPendingPermissionRequests).toBe(false);
+        expect(session.updatedAt).toBe(1_000);
+    });
+
     it('uses stored public completions for recipients, ignoring additive fields but rejecting invalid known fields', () => {
         const requestId = 'permission-publicly-completed';
         const createdAt = 1_000;

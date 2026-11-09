@@ -128,8 +128,7 @@ describe('sessions domain: no voice side effects', () => {
             },
         });
 
-        const state = get();
-        state.sessions.s1 = createSessionFixture({
+        domain.applySessions([createSessionFixture({
             id: 's1',
             serverId: 'server_1',
             seq: 0,
@@ -154,7 +153,8 @@ describe('sessions domain: no voice side effects', () => {
             thinking: false,
             thinkingAt: 0,
             presence: 'online',
-        });
+        })]);
+        const state = get();
         state.sessionMessages.s1 = createSessionMessagesFixture({
             messageIdsOldestFirst: ['m1'],
             messagesById: {
@@ -213,43 +213,20 @@ describe('sessions domain: no voice side effects', () => {
         }) } };
         state.ordinarySessionListMembershipByServerId = { ...state.ordinarySessionListMembershipByServerId, server_1: ['s1'] };
 
-        domain.applySessions([
-            createSessionFixture({
-                id: 's1',
-                serverId: 'server_1',
-                seq: 0,
-                createdAt: 1,
-                updatedAt: 2,
-                active: true,
-                activeAt: 2,
-                metadata: null,
-                metadataVersion: 1,
-                agentState: {
-                    requests: {
-                        req1: {
-                            tool: 'AskUserQuestion',
-                            kind: 'user_action',
-                            arguments: { q: 'continue?' },
-                            createdAt: 100,
-                        },
-                    },
-                    completedRequests: null,
-                },
-                agentStateVersion: 1,
-                thinking: false,
-                thinkingAt: 0,
-                presence: 'online',
-            }),
-        ]);
+        const previousSessions = state.sessions;
+        const previousToolVersion = state.sessionMessageToolVersion;
+        domain.applySessions([state.sessions.s1]);
 
         const nextState = get();
         const updatedMessage = nextState.sessionMessages.s1.messagesById.m1;
+        expect(nextState.sessions).toBe(previousSessions);
         expect(updatedMessage?.kind).toBe('tool-call');
         if (updatedMessage?.kind !== 'tool-call') throw new Error('Expected the restored permission tool call');
         expect(updatedMessage.tool?.permission?.status).toBe('pending');
         expect(updatedMessage.tool?.state).toBe('running');
         expect(updatedMessage.tool?.completedAt).toBeNull();
         expect(updatedMessage.tool?.result).toBeUndefined();
+        expect(nextState.sessionMessageToolVersion).toBeGreaterThan(previousToolVersion);
         expect(nextState.sessionListRowsByServerId.server_1.s1?.hasPendingPermissionRequests).toBe(false);
         expect(buildSessionListRenderableFromSession(nextState.sessions.s1,
             nextState.sessionListRowsByServerId.server_1.s1,

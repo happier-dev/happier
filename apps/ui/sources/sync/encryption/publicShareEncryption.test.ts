@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PUBLIC_SHARE_ENCRYPTED_DATA_KEY_CURRENT_V0_BYTES } from '@happier-dev/protocol';
+import { PUBLIC_SHARE_ENCRYPTED_DATA_KEY_CURRENT_V0_BYTES } from '@happier-dev/protocol/crypto/publicShareEncryptedDataKeyEnvelopeV0';
 
 import { decodeBase64 } from '@/encryption/base64';
 import {

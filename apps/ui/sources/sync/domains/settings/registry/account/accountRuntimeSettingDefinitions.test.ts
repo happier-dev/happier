@@ -1,4 +1,4 @@
-import { ACCOUNT_SETTING_ARTIFACTS } from '@happier-dev/protocol';
+import { ACCOUNT_SETTING_ARTIFACTS } from '@happier-dev/protocol/account/settings/accountSettings';
 import { describe, expect, it } from 'vitest';
 
 describe('Account runtime settings analytics presentation', () => {

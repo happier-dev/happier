@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { HappyError } from '@/utils/errors/errors';
+import { t } from '@/text';
 
 import { isServerFetchConnectivityProbeRequest } from '@/dev/testkit/mocks/serverFetch';
 import { getAccountEncryptionModeCacheRevision } from './apiAccountEncryptionMode';
@@ -60,6 +61,18 @@ describe('migrateAccountEncryptionMode', () => {
     const { stopAllEndpointSupervisorsForTests } = await import('@/sync/runtime/connectivity/endpointSupervisorPool');
     await stopAllEndpointSupervisorsForTests();
     vi.unstubAllGlobals();
+  });
+
+  it.each([
+    { status: 400, body: { error: 'invalid-params', reason: 'migration_inventory_changed' },
+      code: 'migration_inventory_changed', messageKey: 'settingsAccount.encryptionInventoryChanged' },
+    { status: 403, body: { error: 'e2ee-required' }, code: 'e2ee-required', messageKey: 'settingsAccount.encryptionRequiredByHome' },
+    { status: 403, body: { error: 'plaintext-only' }, code: 'plaintext-only', messageKey: 'settingsAccount.encryptionPlainOnlyHome' },
+  ] as const)('presents the typed $code refusal without losing its code or status', async ({ status, body, code, messageKey }) => {
+    fetchBoundary.mockResolvedValueOnce(jsonResponse(body, status));
+    await expect(migrateAccountEncryptionMode({ token: 't' }, PLAIN_REQUEST, { retry: 'none' }))
+      .rejects.toSatisfy((error: unknown) => error instanceof HappyError && error.code === code
+        && error.status === status && error.message === t(messageKey));
   });
 
   it('retains committed authoring-memory rows through the canonical migration response adapter', async () => {

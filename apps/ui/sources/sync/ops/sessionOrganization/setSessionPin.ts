@@ -5,6 +5,7 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { setSessionPin as setSessionPinApi } from '@/sync/api/session/sessionOrganizationApi';
 import { buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization';
 import { getStorage } from '@/sync/domains/state/storageStore';
+import { sessionOrganizationStoreFor } from './sessionOrganizationAccountStore';
 import { t } from '@/text';
 import { HappyError } from '@/utils/errors/errors';
 
@@ -20,7 +21,7 @@ export async function setSessionPin(params: Readonly<{
     sortKey?: string | null;
 }>): Promise<SetSessionPinResponse> {
     params.assertCurrent?.();
-    const previous = getStorage().getState().sessionOrganizationPinsBySessionKey[
+    const previous = sessionOrganizationStoreFor(params).sessionOrganizationPinsBySessionKey[
         buildSessionOrganizationSessionKey(params.serverId, params.sessionId)
     ];
     const listPinned = params.surface !== 'rail' ? params.pinned : previous?.listPinned === true;
@@ -32,7 +33,7 @@ export async function setSessionPin(params: Readonly<{
         listPinned,
         railPinned,
     } : null;
-    const recordId = getStorage().getState().setSessionPinOptimistic(params.serverId, params.sessionId, optimisticPin);
+    const recordId = sessionOrganizationStoreFor(params).setSessionPinOptimistic(params.serverId, params.sessionId, optimisticPin);
     try {
         const response = await setSessionPinApi({
             credentials: params.credentials,
@@ -44,7 +45,7 @@ export async function setSessionPin(params: Readonly<{
         params.assertCurrent?.();
         // Same rule as every other organization write: confirm this response's own key instead
         // of republishing it over a newer pin change that is still in flight.
-        getStorage().getState().confirmSessionOrganizationOptimistic(
+        sessionOrganizationStoreFor(params).confirmSessionOrganizationOptimistic(
             recordId,
             'sessionOrganizationPinsBySessionKey',
             buildSessionOrganizationSessionKey(params.serverId, params.sessionId),

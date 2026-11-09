@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createHomeCredentialDestinationDigestV1 } from '@happier-dev/protocol';
+import { createHomeCredentialDestinationDigestV1 } from '@happier-dev/protocol/auth/accountDirectory';
 
 const endpointFetchMock = vi.hoisted(() => vi.fn());
 const createServerFetchAtEndpointMock = vi.hoisted(() => vi.fn(() => endpointFetchMock));

@@ -12,10 +12,12 @@ import {
 import type { WorkflowEditorDraft } from './workflowEditorDraft';
 import type { WorkflowAuthoringTarget } from './workflowProjectTarget';
 
+type OneShotSessionTarget = Exclude<AutomationRunExecutionTargetV1, { kind: 'contributedAction' }>;
+
 /** Read-only current one-shot composer handoff. Retained 0.2 conversion belongs to Protocol. */
 export type AutomationWorkflowEditorProjection = Readonly<{
     draft: WorkflowEditorDraft;
-    origin: Readonly<{ kind: 'legacy'; target: AutomationRunExecutionTargetV1 }>;
+    origin: Readonly<{ kind: 'legacy'; target: OneShotSessionTarget }>;
     /** The exact placement the recipe already records, when it records one. */
     project: WorkflowAuthoringTarget | null;
 }>;
@@ -24,7 +26,7 @@ export type AutomationWorkflowEditorProjection = Readonly<{
 export { LEGACY_AUTOMATION_WORKFLOW_STEP_ID };
 
 function legacyProject(
-    target: AutomationRunExecutionTargetV1,
+    target: OneShotSessionTarget,
     machineId: string | null,
 ): WorkflowAuthoringTarget | null {
     if (target.kind === 'newSession') {
@@ -40,7 +42,7 @@ function legacyProject(
 
 /** Presentation of current one-shot targets, not retained-0.2 conversion authority. */
 function oneShotExecutionSelection(
-    target: AutomationRunExecutionTargetV1,
+    target: OneShotSessionTarget,
     machineId: string | null,
 ): WorkflowStepExecutionSelection {
     if (target.kind === 'existingSession') {
@@ -70,7 +72,7 @@ export function projectLegacyAutomationRecipeToEditorDraft(params: Readonly<{
     draftId: string;
     name: string;
     program: AutomationRunTemplateV1;
-    target: AutomationRunExecutionTargetV1;
+    target: OneShotSessionTarget;
     /** The Automation's enabled assignment, used only where the target omits one. */
     machineId: string | null;
 }>): AutomationWorkflowEditorProjection {

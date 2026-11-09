@@ -26,11 +26,57 @@ const { getDiscussionRepository, clearDiscussionRepositoryRegistryForTests, read
 const { useDiscussionListSearch } = await import('./useDiscussionListSearch');
 const { getStorage } = await import('@/sync/domains/state/storageStore');
 const { useDiscussionRepositorySnapshot } = await import('./useDiscussionRepositorySnapshot');
+const { createDiscussionAttachmentPreviewInput } = await import('./discussionAttachmentPreview');
 
 beforeEach(async () => { await homes.reset(); });
 afterEach(async () => { standardCleanup(); clearDiscussionRepositoryRegistryForTests(); await homes.reset(); });
 
 describe('shared Discussion repository Account custody', () => {
+    it('shares a cold plugin-only summary read through the default Account repository', async () => {
+        const serverId = await homes.addHome({ name: 'Plugin Discussion', serverUrl: 'https://plugin-discussion.test', accountId: 'alice', currentAccount: true });
+        const scope = { serverId, accountId: 'alice' };
+        answerDiscussionThreadForTests(homes, serverId, { loseCreate: false, loseFirstRejoin: false });
+        const client = createDiscussionClient({ scope, availability: 'available' });
+        expect(await client.create({ creationLocalId: 'plugin-topic', messageLocalId: 'plugin-first', title: 'Private topic',
+            content: { v: 1, parts: [{ t: 'text', text: 'Private content' }] } })).toMatchObject({ kind: 'succeeded' });
+        const binding = await renderHook(() => useServerCredentialAccountScopeBindings([serverId]));
+        const lifetime = binding.getCurrent().get(serverId)!;
+        const { createPluginDiscussionHostReadStore } = await import('@/components/plugins/surfaces/pluginDiscussionHostRead');
+        const stores = Array.from({ length: 3 }, () => createPluginDiscussionHostReadStore({ lifetime }));
+        const resource = { hostRead: 'discussion.get', input: { discussionId: 'committed-thread' } } as const;
+        homes.requests.length = 0;
+        try {
+            const snapshots = await Promise.all(stores.map(store => store.getEntry(resource).refresh()));
+            for (const snapshot of snapshots) {
+                expect(snapshot.error).toBeUndefined();
+                expect(JSON.parse(new TextDecoder().decode(snapshot.value?.bytes))).toEqual({ discussionId: 'committed-thread', revision: 0 });
+            }
+            expect(homes.requestsFor('/v1/discussions/committed-thread')).toHaveLength(1);
+            expect(homes.requestsFor('/v1/discussions/committed-thread/messages')).toHaveLength(0);
+            expect(readRegisteredDiscussionRepository(scope, scope)?.getSnapshot().threads['committed-thread']?.summary?.title).toBe('Private topic');
+        } finally { stores.forEach(store => store.dispose()); await binding.unmount(); }
+    });
+    it('retires an attachment preview on exact Discussion denial without acquiring bytes', async () => {
+        const serverId = await homes.addHome({ name: 'Attachment preview', serverUrl: 'https://attachment-preview.test', accountId: 'alice', currentAccount: true });
+        const scope = { serverId, accountId: 'alice' };
+        answerDiscussionThreadForTests(homes, serverId, { loseCreate: false, loseFirstRejoin: false });
+        const client = createDiscussionClient({ scope, availability: 'available' });
+        await client.create({ creationLocalId: 'preview-topic', messageLocalId: 'preview-first', title: 'Topic', content: { v: 1, parts: [{ t: 'text', text: 'First' }] } });
+        const repository = getDiscussionRepository({ scope, address: { serverId }, client });
+        await repository.refreshDiscussion('committed-thread');
+        const preview = createDiscussionAttachmentPreviewInput({ repository, client, discussionId: 'committed-thread', messageId: 'message',
+            reference: { blobId: 'e8eb80ae-7e18-4bbe-8c0e-c9d762787a86', mime: 'image/png', sizeBytes: 1, sha256: 'a'.repeat(64) }, name: 'image.png', enabled: false });
+        if (preview.source.kind !== 'resource') throw new Error('Expected a qualified resource source');
+        expect(preview.source.lifetime.isCurrent()).toBe(true);
+        let retired = 0;
+        const subscription = preview.source.lifetime.onRetire(() => { retired++; });
+        // A real Discussion read denial flows through the existing repository's current-grant purge.
+        homes.answer(serverId, 'GET /v1/discussions/committed-thread', { status: 403, body: { error: 'discussion_read_denied' } });
+        await repository.refreshSummary('committed-thread');
+        expect(preview.source.lifetime.isCurrent()).toBe(false);
+        expect(retired).toBe(1);
+        subscription.dispose();
+    });
     it('opens a cold encrypted thread through the detail subscription without a connected socket', async () => {
         const secret = new Uint8Array(32).fill(17);
         const credentials = { token: createAccountTokenForTests('alice', { currentAccount: true }), secret: encodeBase64(secret, 'base64url') };
@@ -81,6 +127,7 @@ describe('shared Discussion repository Account custody', () => {
         timings.afterLastResponse = timings.firstMessageCommit! - timings.lastHttpResponse!;
         // Intentional timing output for the reported post-HTTP opening stall;
         // this is a cold data-hook measurement, not loaded-browser paint timing.
+        console.info('Discussion cold-open timings (ms)', timings);
     });
 
     it('completes a delayed whole-list search under the canonical StrictMode wrapper and keeps unrelated thread updates local', async () => {

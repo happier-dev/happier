@@ -1,12 +1,13 @@
 import { getActionSpec } from '@happier-dev/protocol/actions';
 import type {
-    PluginPermissionGrantActionIdV1,
+    PluginPermissionGrantActionIdV1} from '@happier-dev/protocol/plugins/permissions/actions';
+import type {
     PluginPermissionGrantDismissRequestActionInputV1,
     PluginPermissionGrantGrantActionInputV1,
     PluginPermissionGrantListActionInputV1,
     PluginPermissionGrantRequestActionInputV1,
     PluginPermissionGrantRevokeActionInputV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/permissions/grants';
 
 import { serverFetch, type ServerFetch } from '@/sync/http/client';
 

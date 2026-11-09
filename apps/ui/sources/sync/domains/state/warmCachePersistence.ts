@@ -22,7 +22,7 @@ import { SessionTerminalControlServiceabilityV1Schema } from '@happier-dev/proto
 import { ExternalAgentObservationSnapshotV1Schema } from '@happier-dev/protocol/sessions/external/externalAgentObservationV1';
 import { SessionUsageLimitRecoveryDisplayV1Schema } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
 import { SessionOwnerDisplayV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionDisplaySchemasV1';
-import { PendingActivationAuthorizationV1Schema } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
+import { PendingActivationAuthorizationV1Schema, PendingActivationFailureDetailsV1Schema } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 import { PluginUiTargetedContributionsV1Schema, type PluginUiTargetedContributionsV1 } from '@happier-dev/protocol/plugins/ui';
 import { z } from 'zod/mini';
 import * as zMini from 'zod/mini';
@@ -344,6 +344,7 @@ export const SessionListCacheEntryV1Schema = z.object({
         admissionFingerprint: z.string().check(z.regex(/^[a-f0-9]{64}$/)),
         metadataVersion: z.number().check(z.int(), z.nonnegative()),
     })),
+    projectKey: z.optional(z.nullable(z.string())),
     ownerAccountId: z.optional(z.string()),
     seq: z.optional(z.number().check(z.int(), z.nonnegative())),
     metadataLayoutVersion: z.optional(z.number().check(z.int(), z.nonnegative())),
@@ -361,6 +362,7 @@ export const SessionListCacheEntryV1Schema = z.object({
     pendingBlockedCount: z.optional(z.number().check(z.int(), z.nonnegative())),
     pendingVersion: z.optional(z.number().check(z.int(), z.nonnegative())),
     pendingActivationAuthorization: zMini.optional(zMini.nullable(PendingActivationAuthorizationV1Schema)),
+    pendingActivationFailureDetails: zMini.optional(zMini.nullable(PendingActivationFailureDetailsV1Schema)),
     latestTurnStatus: zMini.optional(zMini.nullable(PrimaryTurnStatusV1Schema)),
     latestTurnStatusObservedAt: z.optional(z.nullable(z.number().check(z.int(), z.nonnegative()))),
     lastRuntimeIssue: zMini.optional(zMini.nullable(SessionRuntimeIssueV1Schema)),
@@ -631,6 +633,35 @@ export function saveUsageSummaryWarmCache(
     value: UsageSummaryCacheV1,
 ): void {
     saveScopedRecord(buildScopedKey(USAGE_SUMMARY_WARM_CACHE_PREFIX, serverId, accountId), value);
+}
+
+const WORK_BOARD_SUMMARIES_WARM_CACHE_PREFIX = 'work-board-summaries-warm-cache-v1';
+
+/**
+ * The Account's Board headers as last read on this device (names, Sessions-list pinning), so chrome that
+ * shows them (boards pinned at the top of the Sessions column) paints them with the first frame instead of
+ * inserting them above the list when the inventory read returns. The read stays authoritative.
+ */
+const WorkBoardSummariesWarmCacheSchema = z.object({
+    boards: z.array(z.object({
+        id: z.string().check(z.minLength(1)),
+        name: z.string(),
+        pinnedInSessions: z.boolean(),
+        readsNeedsYou: z.boolean(),
+    })),
+});
+export type WorkBoardSummariesWarmCache = z.infer<typeof WorkBoardSummariesWarmCacheSchema>;
+
+export function loadWorkBoardSummariesWarmCache(serverId: string | null | undefined, accountId: string | null | undefined): WorkBoardSummariesWarmCache | null {
+    return loadScopedRecord(buildScopedKey(WORK_BOARD_SUMMARIES_WARM_CACHE_PREFIX, serverId, accountId), WorkBoardSummariesWarmCacheSchema);
+}
+
+export function saveWorkBoardSummariesWarmCache(
+    serverId: string | null | undefined,
+    accountId: string | null | undefined,
+    value: WorkBoardSummariesWarmCache,
+): void {
+    saveScopedRecord(buildScopedKey(WORK_BOARD_SUMMARIES_WARM_CACHE_PREFIX, serverId, accountId), value);
 }
 
 export const SessionListQueryMembershipCacheEntryV1Schema = z.object({

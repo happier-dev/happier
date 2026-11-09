@@ -9,6 +9,7 @@ import { markRpcRequestDisposition } from '@happier-dev/sync-client';
 import { TerminalStreamReadResponseSchema } from '@happier-dev/protocol/terminal/stream';
 import { TerminalStreamInputResponseSchema } from '@happier-dev/protocol/terminal/input';
 import type { FrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import {
@@ -194,14 +195,14 @@ export function createMachineRpcTerminalStreamCarrier(
     // custody or borrows the custodian's private Project/Session catalog.
     const accountBound = Boolean(options.accountId);
     let execute: FrontDoorActionExecute | null = null;
-    const executeStreamAction = async (actionId: 'machines.terminal.read' | 'machines.terminal.write', input: unknown) => {
+    const executeStreamAction = async (actionId: 'machines.terminal.read' | 'machines.terminal.write', input: unknown, signal = options.signal) => {
         if (!options.accountId || !options.serverId) throw Object.assign(new Error('terminal_access_denied'), { code: 'terminal_access_denied' });
         if (!execute) {
             const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
             execute ??= createFrontDoorActionExecute();
         }
         const response = await execute(actionId, input, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
-            serverId: options.serverId, expectedAccountId: options.accountId, signal: options.signal });
+            serverId: options.serverId, expectedAccountId: options.accountId, signal });
         if (!response.ok) {
             const error = Object.assign(new Error(response.error), { code: response.errorCode ?? response.error });
             throw response.effectAttempted === false ? markRpcRequestDisposition(error, 'notSent') : error;
@@ -210,14 +211,22 @@ export function createMachineRpcTerminalStreamCarrier(
         if (approval.success) throw new TerminalStreamInputError(approval.data.kind);
         return response.result;
     };
-    const readMachineBytes = async (request: Parameters<typeof machineTerminalStreamReadBytes>[1]) => accountBound
-        ? TerminalStreamReadResponseSchema.parse(await executeStreamAction('machines.terminal.read', {
-            ...request, serverId: options.serverId, machineId: options.machineId,
-        })) : machineTerminalStreamReadBytes(options.machineId, request, rpcOptions);
+    const readMachineBytes = async (request: Parameters<typeof machineTerminalStreamReadBytes>[1], signal?: AbortSignal) => {
+        const lifetime = mergeAbortSignals([options.signal, signal]);
+        try {
+            return accountBound
+                ? TerminalStreamReadResponseSchema.parse(await executeStreamAction('machines.terminal.read', {
+                    ...request, serverId: options.serverId, machineId: options.machineId,
+                }, lifetime.signal))
+                : await machineTerminalStreamReadBytes(options.machineId, request, {
+                    ...rpcOptions, ...(lifetime.signal ? { signal: lifetime.signal } : {}) });
+        } finally { lifetime.dispose(); }
+    };
     let inputSendTail: Promise<void> = Promise.resolve();
     let controlCursorTerminalId: string | null = null;
     let controlCursor = 0;
     let controlCursorCapability: 'unknown' | 'supported' | 'predecessor' = 'unknown';
+    let holdForOutput = true;
     const readLegacy = async (
         request: TerminalStreamReadRequest,
         cursor: number = request.cursor.value,
@@ -310,7 +319,7 @@ export function createMachineRpcTerminalStreamCarrier(
 
     return {
         kind: 'machine-rpc-base64',
-        read: async (request: TerminalStreamReadRequest) => {
+        read: async (request: TerminalStreamReadRequest, readOptions) => {
             if (request.cursor.mode === 'legacy-event-cursor') {
                 return readLegacy(request);
             }
@@ -329,6 +338,7 @@ export function createMachineRpcTerminalStreamCarrier(
                     terminalId: request.terminalId,
                     byteOffset: request.cursor.value,
                     ...(includeControlCursor ? { controlCursor } : {}),
+                    ...(holdForOutput ? { holdForOutput: true } : {}),
                     ...(request.ackedByteOffset === undefined ? {} : { ackedByteOffset: request.ackedByteOffset }),
                     ...(request.creditBytes === undefined ? {} : { creditBytes: request.creditBytes }),
                     // Byte replay uses the admitted credit window instead of the
@@ -338,9 +348,16 @@ export function createMachineRpcTerminalStreamCarrier(
                     ...(request.rendererId === undefined ? {} : { rendererId: request.rendererId }),
                     ...(request.surfaceEpoch === undefined ? {} : { surfaceEpoch: request.surfaceEpoch }),
                 },
+                readOptions?.signal,
             );
             try {
                 response = await readBytes(controlCursorCapability !== 'predecessor');
+                // A strict peer can support independent control replay while
+                // predating held reads. Remove only the refused extension first.
+                if (holdForOutput && isControlCursorCompatibilityRejection(response)) {
+                    holdForOutput = false;
+                    response = await readBytes(controlCursorCapability !== 'predecessor');
+                }
                 if (
                     controlCursorCapability === 'unknown'
                     && isControlCursorCompatibilityRejection(response)
@@ -353,6 +370,7 @@ export function createMachineRpcTerminalStreamCarrier(
                 } else if (response.ok && response.nextControlCursor !== undefined) {
                     controlCursorCapability = 'supported';
                 }
+                if (response.ok) holdForOutput = response.holdForOutput === true;
             } catch (error) {
                 if (!isPredecessorTerminalStreamRpcError(error)) {
                     throw error;

@@ -1,7 +1,7 @@
 import { BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID } from '@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility';
 import { BUNDLED_ACCOUNT_CONNECTED_SERVICE_DECLARATIONS } from '@/agents/registry/generatedBundledPluginEntries';
 import { buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
-import { ConnectedServiceIdSchema, type ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { ConnectedServiceIdSchema, isBuiltInLegacyConnectedAccountPeerOperationSupported, type ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
 import type { PluginConnectedAccountAuthenticationModeV2, PluginConnectedAccountAuthenticationV2 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import type { ConnectedAccountUiProjectionEntryV1 } from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';
 import type {
@@ -11,6 +11,8 @@ import type {
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { ConnectedAccountUiNegotiation } from './resolveConnectedAccountUiNegotiation';
+import { isAccountDirectConnectedAccountModeV1, resolveConnectedAccountPlanLabel } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
+import { projectConnectedAccountDescriptorV1 } from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';
 
 export type ConnectedServiceDisplayNameKey =
   | 'connectedServices.serviceNames.claudeSubscription'
@@ -41,10 +43,6 @@ const BUILT_IN_SETUP_PRESENTATION = {
   gemini: { order: 2, firstRun: true, catalogDescriptionKey: 'connectedServicesSettings.catalogGemini' },
   anthropic: {
     order: 3, firstRun: false, catalogDescriptionKey: 'connectedServicesSettings.catalogAnthropic',
-    manual: { consoleUrl: 'https://console.anthropic.com/settings/keys',
-      createKeyTitleKey: 'connectedServicesSettings.keyCreateAnthropic',
-      billingNoteKey: 'connectedServicesSettings.keyBillingAnthropic',
-      shapeHintKey: 'connectedServicesSettings.keyShapeAnthropic' },
   },
   openai: { order: 4, firstRun: false, catalogDescriptionKey: 'connectedServicesSettings.catalogOpenAi' },
 } as const;
@@ -102,13 +100,39 @@ export type ConnectedServiceRegistryEntry = Readonly<{
   executable?: boolean;
 }>;
 
-/** Action admission is separate from retained service identity and read-only navigation. */
+/**
+ * Offers Account authoring, not native execution. A retained account does not
+ * consume its service's auth declaration; the Action still admits execution.
+ */
 export function canExecuteConnectedServiceAction(
   entry: ConnectedServiceRegistryEntry,
   transport: ConnectedAccountUiNegotiation,
 ): boolean {
+  const availability = entry.availability ?? entry.projectedDescriptor?.availability;
+  if (entry.projectionStatus === 'conflict' || entry.projectionConflicts?.length
+    || (entry.projectedDescriptorCandidates?.length ?? 0) > 1
+    || availability?.state === 'disabled'
+    || (availability?.state === 'blocked' && availability.reason !== 'execution_origin_unavailable')) return false;
   return entry.executable === true
+    || Boolean(entry.service && (getConnectedAccountAuthentication(entry.service, { entries: [entry] })?.modes.length ?? 0) > 0)
     || (transport === 'legacy' && Boolean(entry.legacyServiceId) && !entry.projectedDescriptor);
+}
+
+function readAccountDirectConnectedServiceModes(
+  entry: ConnectedServiceRegistryEntry,
+): readonly PluginConnectedAccountAuthenticationModeV2[] {
+  if (entry.projectionStatus === 'conflict' || entry.projectionConflicts?.length
+    || (entry.projectedDescriptorCandidates?.length ?? 0) > 1) return [];
+  if (entry.projectionStatus === 'ready' && entry.availability?.state === 'available') {
+    return entry.authenticationModes?.filter(isAccountDirectConnectedAccountModeV1) ?? [];
+  }
+  // prepareDescriptor withdraws native execution with this exact fact. The
+  // admitted bundled manifest still owns Account-only field declarations;
+  // other blocked/disabled policy facts must not borrow that authority.
+  if (entry.availability?.state !== 'blocked' || entry.availability.reason !== 'execution_origin_unavailable'
+    || entry.provenance !== 'first_party' || entry.sourceKind !== 'bundled' || !entry.service) return [];
+  return BUNDLED_ACCOUNT_CONNECTED_SERVICE_DECLARATIONS[buildQualifiedPluginContributionKey(entry.service)]
+    ?.descriptor.authentication.modes.filter(isAccountDirectConnectedAccountModeV1) ?? [];
 }
 
 export type ConnectedServiceRegistrySnapshot = Readonly<{
@@ -126,6 +150,8 @@ let connectedServiceRegistrySnapshot: ConnectedServiceRegistrySnapshot = {
 };
 let connectedServiceRegistryAccountLifetime: ActiveServerAccountScopeLifetime | null = null;
 let connectedServiceRegistryDescriptorProjection: ConnectedAccountDescriptorProjectionState | null = null;
+const EMPTY_ACCOUNT_DESCRIPTORS: readonly ConnectedAccountUiProjectionEntryV1[] = Object.freeze([]);
+let connectedServiceRegistryAccountDescriptors = EMPTY_ACCOUNT_DESCRIPTORS;
 const registryListeners = new Set<() => void>();
 
 export function subscribeConnectedServiceRegistry(listener: () => void): () => void {
@@ -227,23 +253,28 @@ function projectedEntryKey(
 export function installConnectedAccountDescriptorProjection(
   projection: ConnectedAccountDescriptorProjectionState,
   accountLifetime: ActiveServerAccountScopeLifetime | null = null,
-): void {
-  if (accountLifetime && !accountLifetime.isCurrent()) return;
-  if (connectedServiceRegistryDescriptorProjection === projection && connectedServiceRegistryAccountLifetime === accountLifetime) return;
+  accountDescriptors: readonly ConnectedAccountUiProjectionEntryV1[] = EMPTY_ACCOUNT_DESCRIPTORS,
+): boolean {
+  if (accountLifetime && !accountLifetime.isCurrent()) return false;
+  if (connectedServiceRegistryDescriptorProjection === projection && connectedServiceRegistryAccountLifetime === accountLifetime
+    && connectedServiceRegistryAccountDescriptors === accountDescriptors) return false;
   connectedServiceRegistrySnapshot = {
     scopeKey: projection.scopeKey,
     status: projection.status,
-    entries: projectConnectedServiceRegistryEntries(projection),
+    entries: projectConnectedServiceRegistryEntries(projection, accountDescriptors),
     errorReason: projection.errorReason,
   };
   connectedServiceRegistryAccountLifetime = accountLifetime;
   connectedServiceRegistryDescriptorProjection = projection;
+  connectedServiceRegistryAccountDescriptors = accountDescriptors;
   for (const listener of registryListeners) listener();
+  return true;
 }
 
 /** The same descriptor projection for an explicitly captured target, without installing it as focused Account state. */
 export function projectConnectedServiceRegistryEntries(
   projection: ConnectedAccountDescriptorProjectionState,
+  accountDescriptors: readonly ConnectedAccountUiProjectionEntryV1[] = EMPTY_ACCOUNT_DESCRIPTORS,
 ): readonly ConnectedServiceRegistryEntry[] {
   const answeredIdentities = new Set(projection.answeredDescriptorIdentities ?? (
     projection.status === 'ready' || projection.status === 'conflict'
@@ -257,13 +288,44 @@ export function projectConnectedServiceRegistryEntries(
     descriptors.push(descriptor);
     descriptorsByQualifiedService.set(key, descriptors);
   }
+  // Machine publication alone owns native execution. Account declarations may
+  // replace authoring metadata without borrowing its availability or conflicts.
+  const nativeExecutableKeys = new Set([...descriptorsByQualifiedService].flatMap(([key, candidates]) => {
+    const descriptor = candidates[0]!;
+    return candidates.length === 1 && answeredIdentities.has(descriptorIdentity(descriptor))
+      && descriptor.availability.state === 'available'
+      && !projection.conflicts.some(conflict => conflict.kind === 'identity_divergence'
+        && conflict.descriptorIdentity === descriptorIdentity(descriptor)) ? [key] : [];
+  }));
+  const accountAuthoringIdentities = new Set<string>();
+  for (const descriptor of accountDescriptors) {
+    const key = projectedEntryKey(descriptor);
+    if (!descriptor.authentication.account && !descriptor.authentication.modes.some(isAccountDirectConnectedAccountModeV1)) continue;
+    descriptorsByQualifiedService.set(key, [descriptor]);
+    accountAuthoringIdentities.add(descriptorIdentity(descriptor));
+    answeredIdentities.add(descriptorIdentity(descriptor));
+  }
+  for (const [key, declaration] of Object.entries(BUNDLED_ACCOUNT_CONNECTED_SERVICE_DECLARATIONS)) {
+    // Account-runtime authentication is declared by the bundled owner just as
+    // direct-save authentication is; neither needs a Machine census to be offered.
+    const authentication = declaration.descriptor.authentication;
+    if (descriptorsByQualifiedService.has(key)
+      || (!authentication.account && !authentication.modes.some(isAccountDirectConnectedAccountModeV1))) continue;
+    const service = parseQualifiedPluginContributionKey(key);
+    if (!service) continue;
+    const descriptor = projectConnectedAccountDescriptorV1({ descriptor: declaration.descriptor,
+      serviceId: service.localId, pluginId: service.pluginId, provenance: 'first_party', sourceKind: 'bundled',
+      availability: { state: 'available', reason: 'account_direct_declaration' }, diagnostics: [] });
+    descriptorsByQualifiedService.set(key, [descriptor]);
+    answeredIdentities.add(descriptorIdentity(descriptor));
+  }
 
-  const projected = Object.freeze([...descriptorsByQualifiedService.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([, candidates]) => {
+  const projected = Object.freeze([...descriptorsByQualifiedService.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([key, candidates]) => {
     const descriptor = candidates[0]!;
     const service = resolveProjectedService(descriptor);
     const legacyServiceId = resolveLegacyServiceId(service);
     const descriptorIdentityValue = descriptorIdentity(descriptor);
-    const projectionConflicts = projection.conflicts.filter((conflict) => (
+    const projectionConflicts = accountAuthoringIdentities.has(descriptorIdentityValue) ? [] : projection.conflicts.filter((conflict) => (
       conflict.kind === 'identity_divergence'
         && conflict.descriptorIdentity === descriptorIdentityValue
     ));
@@ -289,7 +351,7 @@ export function projectConnectedServiceRegistryEntries(
         : projection.status === 'ready' || projection.status === 'conflict'
           ? 'stale'
           : projection.status;
-    const executable = entryReady && descriptor.availability.state === 'available';
+    const executable = entryReady && nativeExecutableKeys.has(key) && descriptor.availability.state === 'available';
     const supportsToken = executable && executableManualModes.length > 0;
     const oauthModes = modes.filter((mode) => mode.kind !== 'manual');
     const supportsOauth = executable && oauthModes.length > 0;
@@ -351,6 +413,7 @@ export function retireConnectedAccountDescriptorProjection(
   );
   connectedServiceRegistryAccountLifetime = null;
   connectedServiceRegistryDescriptorProjection = null;
+  connectedServiceRegistryAccountDescriptors = EMPTY_ACCOUNT_DESCRIPTORS;
   for (const listener of registryListeners) listener();
 }
 
@@ -376,8 +439,11 @@ export function isConnectedServiceUsageCapable(
   if (entry?.projectedDescriptorCandidates && entry.projectedDescriptorCandidates.length > 1) return false;
   if (entry?.projectedDescriptor?.capabilities.includes('usage')) return true;
   const legacyId = resolveLegacyServiceId(service);
-  const legacy = legacyId ? readBundledLegacyConnectedAccountCompatibility(legacyId) : null;
-  return legacy?.compatibility.peerOperations.revisionedV2V3.some(operation => operation === 'quota_read') === true;
+  return legacyId !== null && isBuiltInLegacyConnectedAccountPeerOperationSupported({
+    serviceId: legacyId,
+    peerClass: 'revisioned_v2_v3',
+    operation: 'quota_read',
+  });
 }
 
 /**
@@ -424,7 +490,10 @@ export function getAccountConnectedServiceConfigurationMode(
   if (!connectedServiceRegistryAccountLifetime?.isCurrent()
     || !areServerAccountScopesEqual(connectedServiceRegistryAccountLifetime.scope, scope)) return null;
   const entry = getQualifiedConnectedServiceRegistryEntry(target.service);
-  if (entry?.projectionStatus !== 'ready') return null;
+  if (!entry) return null;
+  const directMode = readAccountDirectConnectedServiceModes(entry).find(mode => mode.id === target.modeId);
+  if (directMode) return directMode;
+  if (entry.projectionStatus !== 'ready') return null;
   const mode = entry.authenticationModes?.find(candidate => candidate.id === target.modeId);
   return mode && 'configuration' in mode && mode.configuration?.scope === 'service' ? mode : null;
 }
@@ -487,6 +556,8 @@ export function getGeneratedLegacyConnectedServiceRegistryFallback(
  * This entry permits read-only navigation; it declares no authentication modes,
  * installation, availability or native execution authority. Released scalar
  * presentation still belongs to the exact generated compatibility adapter.
+ * Bundled titles come from the admitted declaration, just as they do when a
+ * Machine answers; loading must not publish a different name first.
  */
 export function getConnectedServiceRegistryIdentityFallback(
   service: PluginContributionIdentityV1,
@@ -542,4 +613,13 @@ export function getConnectedAccountAuthentication(
   return entry?.projectedDescriptor?.authentication
     ?? BUNDLED_ACCOUNT_CONNECTED_SERVICE_DECLARATIONS[`${service.pluginId}/${service.localId}`]?.descriptor.authentication
     ?? null;
+}
+
+/** Retained quota reads consume the same plugin-owned labels as fresh observations. */
+export function resolveConnectedServicePlanLabel(
+  service: PluginContributionIdentityV1,
+  planLabel: string | null | undefined,
+): string | null {
+  return resolveConnectedAccountPlanLabel(planLabel,
+    BUNDLED_ACCOUNT_CONNECTED_SERVICE_DECLARATIONS[buildQualifiedPluginContributionKey(service)]?.descriptor.metadata);
 }

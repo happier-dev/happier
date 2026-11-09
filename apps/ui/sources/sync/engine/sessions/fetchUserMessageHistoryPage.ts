@@ -1,4 +1,4 @@
-import type { SessionMessageRole } from '@happier-dev/protocol';
+import type { SessionMessageRole } from '@happier-dev/protocol/sessions/messages/sessionMessageRole';
 
 import { buildSessionMessagesPath } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 import type { NormalizedMessage } from "@happier-dev/session-core/raw";

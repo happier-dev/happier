@@ -7,7 +7,7 @@ import { readSessionDisplayTitleField } from '@/sync/state/selectors';
 import { reconcileSessionLifecycleProjection, type SessionLifecycleProjection } from '../sessionLifecycleProjection';
 import { SESSION_OWNER_METADATA_PROJECTION, type SessionOwnerMetadataAuthority } from '../readSessionOwnerMetadataView';
 import { isSessionContentReadable, readSessionContentAvailability } from '../encryptedContentAvailability';
-import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
+import type { AccountEncryptionIdentity } from '@happier-dev/sync-client';
 
 import type { SessionListRenderableSession } from './sessionListRenderable';
 import type { Message } from '@happier-dev/session-core/messages';
@@ -141,7 +141,7 @@ export function readSessionListRenderableOwnerMetadataView(
     options?: Readonly<{
         /** Caller retains the canonical Account-encryption and Home/credential lifetime fences. */
         requireAdmitted: SessionOwnerMetadataAuthority & Readonly<{
-            accountCurrentness: AccountEncryptionCurrentnessResponse;
+            accountCurrentness: AccountEncryptionIdentity;
             isCurrent: () => boolean;
         }>;
     }>,
@@ -256,6 +256,7 @@ export function createSessionListPresentationSource(
         latestReadyEventAt: row.latestReadyEventAt,
         pendingVersion: row.pendingVersion, pendingCount: row.pendingCount,
         pendingBlockedCount: row.pendingBlockedCount, pendingActivationAuthorization: row.pendingActivationAuthorization,
+        pendingActivationFailureDetails: row.pendingActivationFailureDetails,
         runtimeActivityState: row.runtimeActivityState, runtimeActivityActiveCount: row.runtimeActivityActiveCount,
         runtimeActivityObservedAt: row.runtimeActivityObservedAt, runtimeActivityRevision: row.runtimeActivityRevision,
     });
@@ -407,6 +408,7 @@ export function buildSessionFromListRenderable(
         pendingCount: renderable.pendingCount,
         pendingBlockedCount: renderable.pendingBlockedCount,
         pendingActivationAuthorization: renderable.pendingActivationAuthorization ?? null,
+        pendingActivationFailureDetails: renderable.pendingActivationFailureDetails ?? null,
         lastViewedSessionSeq: renderable.viewer !== undefined
             ? renderable.viewer.readState.state === 'tracking'
                 ? renderable.viewer.readState.lastViewedSessionSeq

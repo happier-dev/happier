@@ -1,12 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-    applySessionFolderTreeToSessionListIndex,
     buildSessionFolderAssignmentKey,
     buildSessionFolderCollapseKey,
     buildSessionFolderTree,
     compareSessionFolderWorkspaceRefs,
-    acquireSessionFolderCreationAttempt,
     createSessionFolder,
     deleteSessionFolder,
     buildSessionFolderMoveTargets,
@@ -16,10 +14,8 @@ import {
     normalizeSessionFolderName,
     normalizeSessionFolders,
     resolveDurableWorkspaceRefForSessionListHeader,
-    resolveSessionFolderFocusScope,
     sessionFolderAddressKey,
     SESSION_FOLDER_MAX_NAME_LENGTH,
-    settleSessionFolderCreationAttempt,
 } from './index';
 import type {
     SessionFolderList,
@@ -99,13 +95,6 @@ describe('session folder domain helpers', () => {
         const normalized = normalizeSessionFolders({ v: 1, folders: [homeA, childA, homeB, childB] });
 
         expect(normalized.folders).toHaveLength(4);
-        const focus = resolveSessionFolderFocusScope(normalized, {
-            serverId: 'server-b',
-            folderId: 'shared',
-            workspace: workspaceHomeB,
-        });
-        expect(focus?.folder.name).toBe('Home B');
-        expect(focus?.folderIds).toEqual(new Set(['shared', 'child-b']));
 
         const renamed = renameSessionFolder({
             current: normalized,
@@ -150,7 +139,7 @@ describe('session folder domain helpers', () => {
         expect(compareSessionFolderWorkspaceRefs(normalized.folders[0]!.workspace, workspaceA)).toBe(true);
     });
 
-    it('builds tree, breadcrumbs, focus scope, and durable collapse keys', () => {
+    it('builds the organization tree and durable collapse keys', () => {
         const normalized = normalizeSessionFolders({
             v: 1,
             folders: [
@@ -162,15 +151,8 @@ describe('session folder domain helpers', () => {
         });
 
         const tree = buildSessionFolderTree(listedFolders(normalized), workspaceA);
-        const focus = resolveSessionFolderFocusScope(normalized, {
-            folderId: 'child',
-            workspace: workspaceA,
-            serverId: 'server-a',
-        });
 
         expect(tree.rootNodes.map((node) => node.id)).toEqual(['root']);
-        expect(focus?.folderIds).toEqual(new Set(['child', 'grandchild']));
-        expect(focus?.breadcrumbs.map((crumb) => crumb.name)).toEqual(['Root', 'Child']);
         expect(buildSessionFolderCollapseKey({ serverId: 'server-a', workspace: workspaceA, folderId: 'child' }))
             .toContain('child');
     });
@@ -204,55 +186,6 @@ describe('session folder domain helpers', () => {
         expect(deleted.deletedFolderIds).toEqual(['child']);
         expect(deleted.replacementFolderId).toBe('parent');
         expect(deleted.next.folders.map((item) => item.id)).toEqual(['parent']);
-    });
-
-    it('retains one normalized creation identity only for a retry of the same folder attempt', () => {
-        let nextId = 0;
-        const createId = () => `folder-attempt-${++nextId}`;
-        const first = acquireSessionFolderCreationAttempt({
-            current: null,
-            workspace: { ...workspaceA, serverId: ' server-a ', rootPath: '/Users/lee/project/' },
-            parentId: ' parent ',
-            name: '  Leads\nToday  ',
-            createId,
-        });
-        const retryable = settleSessionFolderCreationAttempt(first, 'retryable-failure');
-        const retry = acquireSessionFolderCreationAttempt({
-            current: retryable,
-            workspace: workspaceA,
-            parentId: 'parent',
-            name: 'Leads Today',
-            createId,
-        });
-
-        expect(retry.id).toBe(first.id);
-        expect(nextId).toBe(1);
-        expect(acquireSessionFolderCreationAttempt({
-            current: retry,
-            workspace: workspaceA,
-            parentId: 'different-parent',
-            name: 'Leads Today',
-            createId,
-        }).id).not.toBe(first.id);
-        expect(acquireSessionFolderCreationAttempt({
-            current: retry,
-            workspace: workspaceA,
-            parentId: 'parent',
-            name: 'Edited name',
-            createId,
-        }).id).not.toBe(first.id);
-
-        for (const outcome of ['succeeded', 'non-retryable-failure', 'cancelled'] as const) {
-            const settled = settleSessionFolderCreationAttempt(retry, outcome);
-            expect(settled).toBeNull();
-            expect(acquireSessionFolderCreationAttempt({
-                current: settled,
-                workspace: workspaceA,
-                parentId: 'parent',
-                name: 'Leads Today',
-                createId,
-            }).id).not.toBe(first.id);
-        }
     });
 
     it('moves folders between workspace root and subfolders without cycles', () => {
@@ -465,136 +398,4 @@ describe('session folder domain helpers', () => {
         }]);
     });
 
-    it('keeps an assigned locked folder as a typed folder group without using its id as a name', () => {
-        const result = applySessionFolderTreeToSessionListIndex({
-            source: [
-                {
-                    type: 'header',
-                    title: 'Project',
-                    headerKind: 'project',
-                    serverId: 'server-a',
-                    workspaceScopeHint: {
-                        serverId: 'server-a',
-                        machineId: 'machine-a',
-                        rootPath: '/Users/lee/project',
-                    },
-                },
-                {
-                    type: 'session',
-                    sessionId: 'session-a',
-                    serverId: 'server-a',
-                },
-            ],
-            folders: {
-                v: 1,
-                folders: [{
-                    id: 'folder-locked',
-                    serverId: 'server-a',
-                    workspace: null,
-                    parentId: null,
-                    name: '',
-                    sortKey: 'a0',
-                    createdAt: 1,
-                    updatedAt: 1,
-                    displayState: {
-                        status: 'locked',
-                        reason: 'account_key_unavailable',
-                    },
-                }],
-            },
-            assignmentsBySessionKey: {
-                [buildSessionFolderAssignmentKey('server-a', 'session-a')]: 'folder-locked',
-            },
-            collapsedGroupKeys: {},
-            focusedFolder: null,
-        });
-
-        expect(result.items).toEqual([
-            expect.objectContaining({
-                type: 'header',
-                title: 'Project',
-            }),
-            expect.objectContaining({
-                type: 'header',
-                headerKind: 'folder',
-                folderId: 'folder-locked',
-                title: '',
-                displayState: {
-                    status: 'locked',
-                    reason: 'account_key_unavailable',
-                },
-            }),
-            expect.objectContaining({
-                type: 'session',
-                sessionId: 'session-a',
-                folderId: 'folder-locked',
-            }),
-        ]);
-        expect(JSON.stringify(result.items)).not.toContain(
-            '"title":"folder-locked"',
-        );
-    });
-
-    it('keeps unassigned locked folder hierarchy visible after project groups', () => {
-        const locked = {
-            status: 'locked' as const,
-            reason: 'content_unreadable' as const,
-        };
-        const result = applySessionFolderTreeToSessionListIndex({
-            source: [{
-                type: 'header',
-                title: 'Project',
-                headerKind: 'project',
-                serverId: 'server-a',
-                workspaceScopeHint: {
-                    serverId: 'server-a',
-                    machineId: 'machine-a',
-                    rootPath: '/Users/lee/project',
-                },
-            }],
-            folders: {
-                v: 1,
-                folders: [
-                    {
-                        id: 'locked-parent',
-                        serverId: 'server-a',
-                        workspace: null,
-                        parentId: null,
-                        name: '',
-                        sortKey: 'a0',
-                        createdAt: 1,
-                        updatedAt: 1,
-                        displayState: locked,
-                    },
-                    {
-                        id: 'locked-child',
-                        serverId: 'server-a',
-                        workspace: null,
-                        parentId: 'locked-parent',
-                        name: '',
-                        sortKey: 'a1',
-                        createdAt: 2,
-                        updatedAt: 2,
-                        displayState: locked,
-                    },
-                ],
-            },
-            assignmentsBySessionKey: {},
-            collapsedGroupKeys: {},
-            focusedFolder: null,
-        });
-
-        expect(result.items.slice(1)).toEqual([
-            expect.objectContaining({
-                folderId: 'locked-parent',
-                folderDepth: 0,
-                displayState: locked,
-            }),
-            expect.objectContaining({
-                folderId: 'locked-child',
-                folderDepth: 1,
-                displayState: locked,
-            }),
-        ]);
-    });
 });

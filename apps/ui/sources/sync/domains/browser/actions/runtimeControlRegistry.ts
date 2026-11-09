@@ -114,7 +114,8 @@ export function registerBrowserRuntimeControlAdapter(
     };
 }
 
-function readRegistration(browserSessionId: string, viewId?: string, scope?: ServerAccountScope): BrowserRuntimeControlRegistration | null {
+function readRegistration(browserSessionId: string, viewId?: string, scope?: ServerAccountScope,
+    capability?: 'saveDownload'): BrowserRuntimeControlRegistration | null {
     const sessionId = normalizeBrowserSessionId(browserSessionId);
     const registrations = registrationsBySessionId.get(sessionId) ?? [];
     // A Session can have several mounted tabs. Resolve an existing view at its actual host;
@@ -123,6 +124,7 @@ function readRegistration(browserSessionId: string, viewId?: string, scope?: Ser
         const registration = registrations[index];
         if (scope && (!registration.control.accountLifetime?.isCurrent()
             || !areServerAccountScopesEqual(scope, registration.control.accountLifetime.scope))) continue;
+        if (capability && !registration.control[capability]) continue;
         if (!viewId || registration.control.readState()?.viewsById[viewId]?.browserSessionId === sessionId) return registration;
     }
     return null;
@@ -134,6 +136,15 @@ export function readRegisteredBrowserRuntimeControlAdapter(
     scope?: ServerAccountScope,
 ): BrowserRuntimeControlAdapter | null {
     return readRegistration(browserSessionId, viewId, scope)?.control ?? null;
+}
+
+/** A retained copy without an admitted stream cannot shadow the view's live byte owner. */
+export function readRegisteredBrowserRuntimeDownloadSaver(
+    browserSessionId: string,
+    viewId: string,
+    scope: ServerAccountScope,
+): BrowserRuntimeControlAdapter['saveDownload'] | null {
+    return readRegistration(browserSessionId, viewId, scope, 'saveDownload')?.control.saveDownload ?? null;
 }
 
 export function readRegisteredBrowserRuntimeAutomationAdapter(

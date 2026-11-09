@@ -8,9 +8,7 @@ function normalizeFileSearchSeparators(value: string): string {
     return value.replace(/\\/g, '/').replace(/[-_ ]+/g, ' ');
 }
 
-function fileSearchRelevance(file: FileSearchItem, needle: string): number {
-    const name = normalizeFileSearchText(file.fileName).replace(/\/$/, '');
-    const path = normalizeFileSearchText(file.fullPath).replace(/\/$/, '');
+function fileSearchRelevance(file: FileSearchItem, name: string, path: string, needle: string): number {
     if (path === needle || name === needle) return 0;
     if (!needle.includes('/') && !needle.includes('.') && file.fileType === 'file') {
         const extension = name.lastIndexOf('.');
@@ -29,6 +27,9 @@ const FILE_SEARCH_NAME_ORDER = new Intl.Collator('en', { numeric: true });
 
 export type WorkspaceFileSearchMatch = Readonly<{
     item: FileSearchItem;
+    /** Normalized basename and path (no trailing slash), prepared once when the path was indexed. */
+    rankName: string;
+    rankPath: string;
     boundaryBonus: number;
     basenameBonus: number | null;
     boundaryMatch: boolean;
@@ -39,25 +40,54 @@ export type WorkspaceFileSearchIndex = Readonly<{
     search(query: string): WorkspaceFileSearchMatch[];
 }>;
 
-export function rankFileSearchResults(matches: readonly WorkspaceFileSearchMatch[], query: string): FileSearchItem[] {
+type RankedFileSearchMatch = WorkspaceFileSearchMatch & Readonly<{ relevance: number }>;
+
+function compareRankedFileSearchMatches(a: RankedFileSearchMatch, b: RankedFileSearchMatch): number {
+    const relevanceOrder = a.relevance - b.relevance;
+    if (relevanceOrder) return relevanceOrder;
+    if (a.relevance === 8) {
+        const basenameOrder = Number(a.basenameBonus === null) - Number(b.basenameBonus === null);
+        if (basenameOrder) return basenameOrder;
+        const initialsOrder = Number(b.basenameBonus === null ? b.boundaryMatch : b.basenameBoundaryMatch)
+            - Number(a.basenameBonus === null ? a.boundaryMatch : a.basenameBoundaryMatch);
+        if (initialsOrder) return initialsOrder;
+        const boundaryOrder = (b.basenameBonus ?? b.boundaryBonus) - (a.basenameBonus ?? a.boundaryBonus);
+        if (boundaryOrder) return boundaryOrder;
+    }
+    return FILE_SEARCH_NAME_ORDER.compare(a.item.fileName, b.item.fileName)
+        || FILE_SEARCH_NAME_ORDER.compare(a.item.fullPath, b.item.fullPath);
+}
+
+/**
+ * The one file-search ranker. With `limit`, only that many leading results are ordered:
+ * a picker page is 8-12 rows while a short query on a large repository matches most of
+ * it, and a full sort of every match per keystroke was the dominant cost. The leading
+ * page is identical to the full order's prefix (same total comparator).
+ */
+export function rankFileSearchResults(matches: readonly WorkspaceFileSearchMatch[], query: string, limit = Infinity): FileSearchItem[] {
     const needle = normalizeFileSearchText(query.trim()).replace(/\/$/, '');
-    return matches.map(match => ({ ...match, relevance: fileSearchRelevance(match.item, needle) }))
-        .sort((a, b) => {
-            const relevanceOrder = a.relevance - b.relevance;
-            if (relevanceOrder) return relevanceOrder;
-            if (a.relevance === 8) {
-                const basenameOrder = Number(a.basenameBonus === null) - Number(b.basenameBonus === null);
-                if (basenameOrder) return basenameOrder;
-                const initialsOrder = Number(b.basenameBonus === null ? b.boundaryMatch : b.basenameBoundaryMatch)
-                    - Number(a.basenameBonus === null ? a.boundaryMatch : a.basenameBoundaryMatch);
-                if (initialsOrder) return initialsOrder;
-                const boundaryOrder = (b.basenameBonus ?? b.boundaryBonus) - (a.basenameBonus ?? a.boundaryBonus);
-                if (boundaryOrder) return boundaryOrder;
-            }
-            return FILE_SEARCH_NAME_ORDER.compare(a.item.fileName, b.item.fileName)
-                || FILE_SEARCH_NAME_ORDER.compare(a.item.fullPath, b.item.fullPath);
-        })
-        .map(match => match.item);
+    const rank = (match: WorkspaceFileSearchMatch): RankedFileSearchMatch => (
+        { ...match, relevance: fileSearchRelevance(match.item, match.rankName, match.rankPath, needle) }
+    );
+    if (!(limit < matches.length)) return matches.map(rank).sort(compareRankedFileSearchMatches).map(match => match.item);
+    const page: RankedFileSearchMatch[] = [];
+    if (limit < 1) return [];
+    for (const match of matches) {
+        const ranked = rank(match);
+        if (page.length === limit) {
+            if (compareRankedFileSearchMatches(ranked, page[limit - 1]!) >= 0) continue;
+            page.pop();
+        }
+        let low = 0;
+        let high = page.length;
+        while (low < high) {
+            const middle = (low + high) >> 1;
+            if (compareRankedFileSearchMatches(page[middle]!, ranked) <= 0) low = middle + 1;
+            else high = middle;
+        }
+        page.splice(low, 0, ranked);
+    }
+    return page.map(match => match.item);
 }
 
 function prepareSearchText(value: string) {
@@ -105,17 +135,41 @@ function matchSubsequence(text: ReturnType<typeof prepareSearchText>, needle: st
         : null;
 }
 
-/** The existing inventory index prepares paths once; rankFileSearchResults remains the only ranker. */
+type PreparedFileSearchEntry = Readonly<{
+    item: FileSearchItem;
+    text: ReturnType<typeof prepareSearchText>;
+    rankName: string;
+    rankPath: string;
+}>;
+
+/**
+ * The existing inventory index prepares paths once; rankFileSearchResults remains the only ranker.
+ *
+ * Typing narrows: every path matching `abc` also matches `ab` (the needle is a
+ * subsequence and its prefix is too), so a query that extends the previous one scans
+ * only the previous query's matches instead of the whole corpus.
+ */
 export function createWorkspaceFileSearchIndex(files: readonly FileSearchItem[]): WorkspaceFileSearchIndex {
-    const entries = files.map(item => ({ item, text: prepareSearchText(item.fullPath) }));
+    const entries: readonly PreparedFileSearchEntry[] = files.map(item => ({
+        item,
+        text: prepareSearchText(item.fullPath),
+        rankName: normalizeFileSearchText(item.fileName).replace(/\/$/, ''),
+        rankPath: normalizeFileSearchText(item.fullPath).replace(/\/$/, ''),
+    }));
+    let previous: Readonly<{ needle: string; entries: readonly PreparedFileSearchEntry[] }> | null = null;
     return {
         search(query) {
             const needle = prepareSearchQuery(query);
+            const candidates = previous && needle.startsWith(previous.needle) ? previous.entries : entries;
+            const matched: PreparedFileSearchEntry[] = [];
             const matches: WorkspaceFileSearchMatch[] = [];
-            for (const { item, text } of entries) {
-                const match = matchSubsequence(text, needle);
-                if (match !== null) matches.push({ item, ...match });
+            for (const entry of candidates) {
+                const match = matchSubsequence(entry.text, needle);
+                if (match === null) continue;
+                matched.push(entry);
+                matches.push({ item: entry.item, rankName: entry.rankName, rankPath: entry.rankPath, ...match });
             }
+            previous = { needle, entries: matched };
             return matches;
         },
     };

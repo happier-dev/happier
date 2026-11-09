@@ -1,7 +1,7 @@
 import { t } from '@/text';
 import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
 import type { Session } from '@/sync/domains/state/storageTypes';
-import { resolveExternalSessionTranscriptAuthorityState } from '@/sync/runtime/external/externalSessionTranscriptAuthority';
+import { readExternalSessionTranscriptStorageState, resolveExternalSessionTranscriptAuthorityState } from '@/sync/runtime/external/externalSessionTranscriptAuthority';
 import { HappyError } from '@/utils/errors/errors';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
@@ -13,8 +13,7 @@ function unavailableSharingMessage(session: SharingAuthoritySession): string | n
         linked: link !== null,
         agentReachable: false,
         liveSourceKey: null,
-        currentStorageState: session.currentStorageState
-            ?? (link ? 'legacy_external_unknown' : 'hosted'),
+        currentStorageState: readExternalSessionTranscriptStorageState(session.currentStorageState, link !== null),
         acceptedThroughServerSeq: session.acceptedThroughServerSeq ?? null,
         publishedThroughServerSeq: session.publishedThroughServerSeq ?? null,
         materializedThroughSourceAt: session.materializedThroughSourceAt ?? null,

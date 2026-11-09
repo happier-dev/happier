@@ -20,6 +20,7 @@ export function createUiProjectPagesList(account?: LazyActionAccountContext): No
         const placements = projection ? selectPluginPagePlacements(projection, { container: 'appPage', targetKind: 'project' }) : [];
         const admitted = await readProjectActionContext(account, args, context, { readSource: placements.length > 0 });
         if (!admitted.ok) return admitted;
+        if (!projection) return refused('project_page_catalog_unavailable');
         const { ref, projectContext } = admitted;
         const locale = getPreferredLanguage();
         const runtime = readCurrentAppShellPluginUiTranslationRuntime(projection, { scope, declarationsOnly: true });

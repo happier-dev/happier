@@ -89,7 +89,9 @@ async function callScopedSessionRpc<R, A>(params: Readonly<{
       ...(params.context.encryption
         ? {
             decryptEncryptionKey: (value: string) =>
-              params.context.encryption!.decryptEncryptionKey(value),
+              params.context.encryption!.decryptEncryptionKey(value, {
+                serverId: params.context.targetServerId, workClass: 'interactive',
+              }),
           }
         : {}),
     });

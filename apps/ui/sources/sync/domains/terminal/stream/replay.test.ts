@@ -7,32 +7,39 @@ import {
 } from './replay';
 
 describe('terminal stream replay', () => {
+    it('resumes a restored parsed buffer at its completed cursor without replacing its history', () => {
+        const plan = resolveTerminalReplayPlan({ cachedTerminalId: 'term-1', ensuredTerminalId: 'term-1',
+            reused: true, cachedOutput: 'preview tail', replayMode: 'byte-offset',
+            restoredCursor: { mode: 'byte-offset', value: 100_000 } });
+        expect(plan).toEqual({ initialCursor: { mode: 'byte-offset', value: 100_000 },
+            renderPreview: false, clearRenderer: false, replacePreviewOnReplay: false });
+    });
+
     it('keeps cached preview visible while daemon replay starts for a reused terminal', () => {
         const plan = resolveTerminalReplayPlan({
             cachedTerminalId: 'term-1',
             ensuredTerminalId: 'term-1',
             reused: true,
             cachedOutput: 'existing output',
-            cachedCursor: { mode: 'byte-offset', value: 12 },
             replayMode: 'byte-offset',
         });
 
         expect(plan).toEqual({
-            initialCursor: { mode: 'byte-offset', value: 12 },
+            initialCursor: { mode: 'byte-offset', value: 0 },
             renderPreview: true,
             clearRenderer: false,
             replacePreviewOnReplay: true,
         });
     });
 
-    it('resets a byte cursor before replaying a cached preview through the legacy event carrier', () => {
+    it('replays retained output through the legacy event carrier behind a cached preview', () => {
         const plan = resolveTerminalReplayPlan({
             cachedTerminalId: 'term-1',
             ensuredTerminalId: 'term-1',
             reused: true,
             cachedOutput: 'existing output',
-            cachedCursor: { mode: 'byte-offset', value: 12 },
             replayMode: 'legacy-event-cursor',
+            restoredCursor: { mode: 'byte-offset', value: 100 },
         });
 
         expect(plan.initialCursor).toEqual({ mode: 'legacy-event-cursor', value: 0 });
@@ -46,8 +53,8 @@ describe('terminal stream replay', () => {
             ensuredTerminalId: 'term-2',
             reused: false,
             cachedOutput: 'old output',
-            cachedCursor: { mode: 'byte-offset', value: 12 },
             replayMode: 'byte-offset',
+            restoredCursor: { mode: 'byte-offset', value: 100 },
         });
 
         expect(plan.renderPreview).toBe(false);

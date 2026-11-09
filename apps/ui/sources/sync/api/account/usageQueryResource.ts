@@ -586,9 +586,18 @@ function canReuseSessionContext(retained: SessionInputEvidence | undefined, admi
         && retained.session.metadataLayoutVersion === admitted.session.metadataLayoutVersion;
 }
 
+class SessionEvidenceBatchReadError extends RetryableServerResponseError {
+    readonly errorCode: string;
+
+    constructor(httpStatus: number, errorCode: string) {
+        super(httpStatus, 'Session input evidence unavailable');
+        this.errorCode = errorCode;
+    }
+}
+
 function sessionEvidenceBatchReadError(error: unknown): unknown {
     return error instanceof Error && 'httpStatus' in error && typeof error.httpStatus === 'number' && error.httpStatus >= 500
-        ? new RetryableServerResponseError(error.httpStatus, 'Session input evidence unavailable') : error;
+        ? new SessionEvidenceBatchReadError(error.httpStatus, readUsageHistoryFailure(error).errorCode) : error;
 }
 
 type SelectionInputs = Readonly<{ inputs: ReadonlyMap<string, { value: SessionInputEvidence } | { error: unknown }>;
@@ -837,7 +846,7 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
     const recordReadFailure = (sessionId: string, error: unknown) => {
         const failure = readUsageHistoryFailure(error);
         if (!sessionReadFailure || failure.retryable) sessionReadFailure = failure;
-        history?.failed(failure.errorCode, sessionId, failure.retryable);
+        history?.failed(failure.errorCode, error instanceof SessionEvidenceBatchReadError ? undefined : sessionId, failure.retryable);
         if ((typeof __DEV__ !== 'undefined' && __DEV__)
             || ['1', 'true'].includes(String(process.env.EXPO_PUBLIC_DEBUG ?? '').trim().toLowerCase())) {
             // The diagnostic contains typed failure facts only, never Session identity or content.
@@ -1241,6 +1250,8 @@ export async function readUiUsageQueryBatch(
         retainAllowance?: boolean;
         /** Undefined retains full acquisition for legacy and recovery demand. */
         allowanceRecordIds?: readonly string[];
+        /** An allowance-only wake keeps this entry's admitted independent sources. */
+        retainedProjection?: UsageQueryReprojection;
     }>,
 ): Promise<UsageQueryBatchResult> {
     requireCurrent(context, signal);
@@ -1256,6 +1267,19 @@ export async function readUiUsageQueryBatch(
     const requests = reads.map(read => read.query);
     const periods = new Map([...queries.map(query => [getUsageQueryKey(query), resolveUsageQueryPeriod(query, accountingInstants.get(getUsageQueryKey(query))!)] as const),
         ...reads.map(read => [getUsageQueryKey(read.query), read.period] as const)]);
+    if (options?.retainedProjection) {
+        const retainedProjection = options.retainedProjection;
+        let quota = readOpenedQuota(context, previous);
+        const reproject: UsageQueryReprojection = projectionSignal => retainedProjection(projectionSignal, { quota, nowMs: accountingNowMs });
+        let progress: void | Promise<void> = undefined;
+        quota = await readOpenedQuotaHistory(context, queries.filter(query => query.includeQuota !== false && query.includeQuotaHistory)
+            .map(query => periods.get(getUsageQueryKey(query))!), accountingNowMs, signal, value => {
+                quota = value;
+                progress = options.onProgress?.(reproject);
+            }, previous, quota, options.allowanceRecordIds);
+        await progress;
+        return reproject(signal);
+    }
     const priorAccounting = new Map(previous?.results.flatMap(slice => [
         [slice.key, { value: slice.accounting, asOfMs: slice.sources.find(source => source.source === 'accounting')?.asOfMs }] as const,
         ...(slice.comparison ? [[getUsageQueryKey(slice.comparison.query), { value: slice.comparison.accounting,
@@ -1328,12 +1352,13 @@ export async function readUiUsageQueryBatch(
     let pools: readonly UsagePoolSourceSnapshot[] = quotaQueries.length ? readOpenedUsagePools(context, quotaQueries) : [];
     const priorSlices = new Map(previous?.results.map(slice => [slice.key, slice]));
     let admittedPrevious = previous;
+    let projectionNowMs = accountingNowMs;
     // All effects share this read's lifetime; snapshots are published directly
     // into its entry, never cached or rerun just to advance independent sources.
     const compose = (projectionSignal: AbortSignal | undefined): UsageQueryBatchResult => {
         requireCurrent(context, projectionSignal);
         if (quotaQueries.length) quota = projectUsageEnteredPrices(quota, context.accountLifetime.scope);
-        return projectUsageQueryBatch({ context, queries, accountingNowMs, accounting, priorAccounting, calendarQueryKeys, previous, admittedPrevious,
+        return projectUsageQueryBatch({ context, queries, accountingNowMs: projectionNowMs, accounting, priorAccounting, calendarQueryKeys, previous, admittedPrevious,
             prepareAccounting(snapshot, prepare) {
                 const answer = accountingAnswers.get(getUsageQueryKey(snapshot.query));
                 const retained = answer?.prepared;
@@ -1350,7 +1375,8 @@ export async function readUiUsageQueryBatch(
     };
     let projectionPending = true;
     let progress: void | Promise<void> = undefined;
-    const reproject: UsageQueryReprojection = projectionSignal => {
+    const reproject: UsageQueryReprojection = (projectionSignal, allowance) => {
+        if (allowance) { quota = allowance.quota; projectionNowMs = allowance.nowMs; }
         const batch = compose(projectionSignal);
         admittedPrevious = batch;
         projectionPending = false;
@@ -1459,7 +1485,7 @@ export async function readUiUsageQueryBatch(
                 requireCurrent(context, signal);
                 if (!isTransientConnectivityError(error)) throw error;
                 const key = getUsageQueryKey(query);
-                const errorCode = 'usage_session_evidence_read_failed';
+                const errorCode = error instanceof SessionEvidenceBatchReadError ? error.errorCode : 'usage_session_evidence_read_failed';
                 readUsageHistoryEntry(accountOwner, query).failed(errorCode);
                 // Keep any actual partial admission/refusal already published.
                 // Otherwise the shared aggregation owner retains the prior facts.
@@ -1519,6 +1545,7 @@ type UsageQueryReadDemand = Readonly<{
     allowance: boolean | undefined;
     allowanceRecordIds?: readonly string[];
     projectionOnly: boolean;
+    allowanceOnly: boolean;
     authorityChanged: boolean;
     /** Nothing reached this watch since its previous read, whose bytes are therefore still current. */
     unchanged: boolean;
@@ -1818,7 +1845,9 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
         const quotaClockCurrent = !!admission && nowMs >= admission.quotaInterval.fromMs && nowMs < admission.quotaInterval.untilMs;
         const admitted = !snapshot.error && admission?.settled === true && admission.inputs.length === readInputs.length
             && admission.inputs.every((identity, index) => identity === readInputs[index]) && quotaClockCurrent;
-        return { readInputs, nowMs, admission, quotaClockCurrent,
+        const sourcesCurrent = admission?.settled === true && admission.inputs.length === readInputs.length
+            && admission.inputs.every((identity, index) => index === 0 || identity === readInputs[index]);
+        return { readInputs, nowMs, admission, quotaClockCurrent, sourcesCurrent,
             content: admitted ? content : undefined, reusable: admitted && admission?.reusable === true };
     };
     const owner: AccountResourceOwner = {
@@ -2080,17 +2109,26 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     settledRead = true;
                     return await contentFor(reproject(options?.signal));
                 }
+                const retainedProjection = previousReproject && retained.sourcesCurrent && readDemand.length > 0
+                    && readDemand.every(demand => demand.allowanceOnly) ? previousReproject : undefined;
+                if (retainedProjection) {
+                    reproject = retainedProjection;
+                    projectionIsCurrent = () => readDemand.every(demand => demand.isCurrent());
+                }
                 try {
                     // Keep the progressive typed producer. A direct command
                     // enters Action admission once and consumes these same facts.
                     const allowanceDemands = readDemand.filter(demand => demand.allowance !== false);
                     const read = async () => await readUiUsageQueryBatch(readContext, { queries }, options?.signal, previous,
                         {
+                            retainedProjection,
                             retainAllowance: readDemand.length > 0 && readDemand.every(demand => demand.allowance === false),
                             allowanceRecordIds: allowanceDemands.length > 0 && allowanceDemands.every(demand => demand.allowanceRecordIds !== undefined)
                                 ? [...new Set(allowanceDemands.flatMap(demand => demand.allowanceRecordIds!))] : undefined,
                             onProgress: project => {
-                                reproject = project;
+                                // Keep the original admitted closure, rather than
+                                // retaining one wrapper for every allowance wake.
+                                reproject = retainedProjection ?? project;
                                 queuedProgress = project;
                                 drainProgress();
                                 return progressContent ?? undefined;
@@ -2139,7 +2177,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 }
                 const queries = reference.hostRead === 'usage.query' ? normalizeUsageQueryBatchInput(reference.input).queries : [];
                 const readsAllowance = reference.hostRead !== 'usage.query' || queries.some(query => query.includeQuota !== false);
-                const allowanceOnly = reference.hostRead === 'usage.query' && queries.every(query => !query.includeAccounting);
+                const allowanceOnlyQuery = reference.hostRead === 'usage.query' && queries.every(query => !query.includeAccounting);
                 const quotaSourceKey = reference.hostRead === 'connectedServices.quota.get'
                     ? createCanonicalJsonSigningInput(ConnectedServiceQuotaGetInputV1Schema.parse(reference.input).source) : undefined;
                 const readQuotaRecordIds = () => {
@@ -2156,6 +2194,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 // can stay available while its real replacement is outstanding.
                 let activeReadDemand: UsageQueryReadDemand | undefined;
                 let projectionOnly: boolean | undefined;
+                let allowanceOnlyDemand: boolean | undefined;
                 // Closed private demand checks its consumed bases on admission.
                 // Other live Usage watches do not keep this private read active.
                 if (privateEvidence) {
@@ -2191,7 +2230,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     // Session/accounting evidence does not change Capacity.
                     // Material Profile/Settings/Machine inputs still invalidate
                     // through their existing state subscription below.
-                    if (!accountModeChanged && (allowanceOnly || quotaSourceKey !== undefined) && (change === 'session-evidence'
+                    if (!accountModeChanged && (allowanceOnlyQuery || quotaSourceKey !== undefined) && (change === 'session-evidence'
                         || typeof change === 'object' && (!readsAllowance || !isUsageProjectionHomeAccountChange(change, true, readQuotaRecordIds())))) return;
                     // Keep acquisition demand with the existing watch record until
                     // its next read. Only this input's own changes demand quota.
@@ -2207,6 +2246,8 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     allowanceReadDemand = allowanceReadDemand === true || allowanceChanged;
                     projectionOnly = projectionOnly !== false && !accountModeChanged
                         && (change === 'projection-inputs' || change === 'quota-projection-inputs');
+                    allowanceOnlyDemand = allowanceOnlyDemand !== false && !accountModeChanged
+                        && (change === 'quota-inputs' || typeof change === 'object' && isUsageQuotaHomeAccountChange(change));
                     woken = true;
                     // Presentation inputs keep the admitted source facts fresh.
                     // The same-process invalidation keeps the store's existing
@@ -2236,7 +2277,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     reference,
                     requestAllowanceRead() {
                         if (!readsAllowance) return;
-                        allowanceReadDemand = true; allowanceRecordIds = undefined; projectionOnly = false; woken = true;
+                        allowanceReadDemand = true; allowanceRecordIds = undefined; projectionOnly = false; allowanceOnlyDemand = false; woken = true;
                     },
                     isAllowanceReadPending() {
                         return allowanceReadDemand === true || activeReadDemand !== undefined
@@ -2250,12 +2291,14 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                         const demand: UsageQueryReadDemand = { allowance: readsAllowance ? (authorityChanged ? true : allowanceReadDemand) : false,
                             allowanceRecordIds: authorityChanged ? undefined : allowanceRecordIds,
                             projectionOnly: !authorityChanged && projectionOnly === true, authorityChanged,
+                            allowanceOnly: !authorityChanged && allowanceOnlyDemand === true,
                             unchanged: !authorityChanged && !woken, isCurrent: witness.isCurrent,
                             finish() { if (activeReadDemand === demand) activeReadDemand = undefined; } };
                         activeReadDemand = demand;
                         allowanceReadDemand = undefined;
                         allowanceRecordIds = undefined;
                         projectionOnly = undefined;
+                        allowanceOnlyDemand = undefined;
                         woken = false;
                         return demand;
                     },

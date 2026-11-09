@@ -137,7 +137,7 @@ export async function getUserProfile(
     return await backoff(run);
 }
 /**
- * Get multiple user profiles by IDs (fetches individually)
+ * Exact People projection: one request for the consumed page, never one per person.
  */
 export async function getUserProfiles(
     credentials: AuthCredentials,
@@ -147,12 +147,28 @@ export async function getUserProfiles(
     if (userIds.length === 0) return [];
 
     const request = opts.request ?? createServerFetchForActiveServer();
-    // Fetch profiles individually and filter out nulls
-    const profiles = await Promise.all(
-        userIds.map(id => getUserProfile(credentials, id, { ...opts, request }))
-    );
-    
-    return profiles.filter((profile): profile is UserProfile => profile !== null);
+    const ids = [...new Set(userIds)];
+    const load = async (): Promise<UserProfile[]> => {
+        const response = await request('/v1/user/profiles', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${credentials.token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ids }),
+        }, { includeAuth: false, retry: opts.retry });
+        // Released Homes without the batch read retain anonymous presentation;
+        // they must not turn a rendered page into singleton profile requests.
+        if (response.status === 404) return [];
+        if (!response.ok) {
+            if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
+                throw new HappyError('Failed to get user profiles', false);
+            }
+            throw new Error(`Failed to get user profiles: ${response.status}`);
+        }
+        const parsed = UsersSearchResponseSchema.safeParse(await response.json());
+        if (!parsed.success) throw new HappyError('Invalid user profiles response', false, { kind: 'server' });
+        const byId = new Map(parsed.data.users.map(profile => [profile.id, profile]));
+        return ids.flatMap(id => { const profile = byId.get(id); return profile ? [profile] : []; });
+    };
+    return opts.retry === 'none' ? await load() : await backoff(load);
 }
 
 /**

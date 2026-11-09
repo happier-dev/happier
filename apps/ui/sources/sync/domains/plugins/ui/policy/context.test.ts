@@ -2,6 +2,17 @@ import { describe, expect, it } from 'vitest';
 
 import { createPluginUiSessionPolicyEvaluationContext } from './context';
 import { evaluatePluginUiPolicy } from './evaluate';
+import { createPluginUiProjectPolicyEvaluationContext } from './projectContext';
+
+it('adds canonical Project policy facts while preserving other host-owned facts', () => {
+    const context = createPluginUiProjectPolicyEvaluationContext({ platform: 'web', data: { plugin: { enabled: true }, project: { id: 'stale' } } },
+        { kind: 'project', projectKey: 'logical-project', repository: { kind: 'github', deployment: 'https://github.com', repository: 'owner/repo' } });
+    expect(evaluatePluginUiPolicy({ availability: { when: { all: [
+        { fact: 'plugin.enabled', operator: 'equals', value: true },
+        { fact: 'project.id', operator: 'equals', value: 'logical-project' },
+        { fact: 'project.repository.kind', operator: 'equals', value: 'github' },
+    ] } } }, context)).toMatchObject({ visible: true, enabled: true });
+});
 
 describe('createPluginUiSessionPolicyEvaluationContext', () => {
     it('projects the exact mounted Session facts into canonical availability evaluation', () => {

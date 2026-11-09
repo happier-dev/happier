@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { ConnectedAccountUiProjectionEntryV1 } from '@happier-dev/protocol';
+import type { ConnectedAccountUiProjectionEntryV1 } from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';
+import { projectConnectedAccountDescriptorV1 } from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';
 import type { DaemonContributionRegistryProjection } from '@/sync/api/daemon/daemonContributionRegistryProjectionProtocol';
 import { BUNDLED_ACCOUNT_CONNECTED_SERVICE_DECLARATIONS } from '@/agents/registry/generatedBundledPluginEntries';
 
@@ -51,8 +52,6 @@ function projection(entries: Record<string, Readonly<{ id: string }> & Record<st
     installedPackagesById: {},
     agentsById: {},
     actionsById: {},
-
-
     resourcesById: {},
     settingsById: {},
     familiesById: {
@@ -68,9 +67,11 @@ describe('connectedAccountDescriptorProjection', () => {
   it('keeps Machine availability and diagnostics when adopting the admitted bundled declaration', () => {
     const bundled = BUNDLED_ACCOUNT_CONNECTED_SERVICE_DECLARATIONS['happier.agent.codex/openai-codex']!;
     const supplied = descriptor({
-      ...bundled.descriptor, pluginId: bundled.service.pluginId, serviceId: bundled.service.localId,
-      provenance: 'first_party', sourceKind: 'bundled', title: 'Older declaration',
-      availability: { state: 'blocked', reason: 'runtime_unavailable' }, diagnostics: ['machine-a'],
+      ...projectConnectedAccountDescriptorV1({ descriptor: bundled.descriptor,
+        pluginId: bundled.service.pluginId, serviceId: bundled.service.localId,
+        provenance: 'first_party', sourceKind: 'bundled',
+        availability: { state: 'blocked', reason: 'runtime_unavailable' }, diagnostics: ['machine-a'] }),
+      title: 'Older declaration',
     });
     const resolution = createConnectedAccountDescriptorProjectionPublication().publish([
       { kind: 'ready', descriptors: [supplied] },
@@ -78,9 +79,11 @@ describe('connectedAccountDescriptorProjection', () => {
     ]);
     expect(resolution.kind).toBe('ready');
     expect(resolution.descriptors).toHaveLength(1);
-    expect(resolution.descriptors?.[0]).toMatchObject({
-      ...bundled.descriptor, availability: supplied.availability, diagnostics: ['machine-a', 'machine-b'],
-    });
+    expect(resolution.descriptors?.[0]).toEqual(projectConnectedAccountDescriptorV1({
+      descriptor: bundled.descriptor, pluginId: bundled.service.pluginId, serviceId: bundled.service.localId,
+      provenance: 'first_party', sourceKind: 'bundled', availability: supplied.availability,
+      diagnostics: ['machine-a', 'machine-b'],
+    }));
   });
 
   it('compares declarations directly without serializing cold agreement or diagnostics', () => {
@@ -228,6 +231,7 @@ describe('connectedAccountDescriptorProjection', () => {
       executable: true, supportsToken: true, projectionStatus: 'ready',
     });
     expect(getConnectedAccountAuthentication({ pluginId: 'acme.accounts', localId: 'account' }, {
+      scopeKey: state.scopeKey, status: state.status, errorReason: state.errorReason,
       entries: projectConnectedServiceRegistryEntries(state),
     })).toEqual(projected.authentication);
   });
@@ -300,9 +304,9 @@ describe('connectedAccountDescriptorProjection', () => {
     );
     const entries = projectConnectedServiceRegistryEntries(state);
     expect(state).toMatchObject({ status: 'ready', descriptors: [declaration], conflicts: [] });
-    expect(entries).toHaveLength(1);
-    expect(entries[0]).toMatchObject({ executable: true, supportsToken: true });
-    expect(entries[0]?.projectedDescriptor).not.toHaveProperty('occurrenceId');
+    const entry = entries.find(value => value.service?.pluginId === declaration.pluginId && value.service?.localId === declaration.id);
+    expect(entry).toMatchObject({ executable: true, supportsToken: true });
+    expect(entry?.projectedDescriptor).not.toHaveProperty('occurrenceId');
     // The raw machine publication retains its exact admission occurrence.
     expect(left.occurrenceId).toBe('acme.accounts:41');
     expect(right.occurrenceId).toBe('acme.accounts:52');
@@ -326,9 +330,9 @@ describe('connectedAccountDescriptorProjection', () => {
       createConnectedAccountDescriptorProjectionLoadingState('server-a'), resolution,
     ));
     expect(resolution.kind).toBe('conflict');
-    expect(entries).toHaveLength(1);
-    expect(entries[0]).toMatchObject({ executable: false, supportsToken: false, supportsOauth: false });
-    expect(entries[0]?.projectedDescriptorCandidates).toHaveLength(2);
+    const entry = entries.find(value => value.service?.pluginId === left.pluginId && value.service?.localId === left.id);
+    expect(entry).toMatchObject({ executable: false, supportsToken: false, supportsOauth: false });
+    expect(entry?.projectedDescriptorCandidates).toHaveLength(2);
   });
 
   it('keeps Account purpose targets usable when equal declarations carry different machine diagnostics', () => {
@@ -346,14 +350,14 @@ describe('connectedAccountDescriptorProjection', () => {
       );
       const entries = projectConnectedServiceRegistryEntries(state);
       const authentication = getConnectedAccountAuthentication(service, {
-        entries,
+        scopeKey: state.scopeKey, status: state.status, errorReason: state.errorReason, entries,
       });
       expect(state.status).toBe('ready');
-      expect(entries).toHaveLength(1);
-      expect(entries[0]).toMatchObject({ executable: true, projectionStatus: 'ready',
+      const entry = entries.find(value => value.service?.pluginId === service.pluginId && value.service?.localId === service.localId);
+      expect(entry).toMatchObject({ executable: true, projectionStatus: 'ready',
         diagnostics: ['plugin_activation_failed', 'plugin_external_session_source_refused'],
       });
-      expect(entries[0]?.projectedDescriptorCandidates).toHaveLength(1);
+      expect(entry?.projectedDescriptorCandidates).toHaveLength(1);
       expect(resolveConnectedAccountPurposeTargetEligibility({
         target: { kind: 'account', account: { service, accountId: 'work' } },
         declaredServices: [service],

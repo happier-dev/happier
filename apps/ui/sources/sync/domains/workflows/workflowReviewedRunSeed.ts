@@ -1,9 +1,12 @@
 import type {
-    WorkflowDefinitionV1,
-    WorkflowRunAcceptedContextV1,
-    WorkflowRunSummaryV1,
+    WorkflowDefinitionV1} from '@happier-dev/protocol/workflows/workflowV1';
+import type {
+    WorkflowRunAcceptedContextV1} from '@happier-dev/protocol/workflows/actionsV1';
+import type {
+    WorkflowRunSummaryV1} from '@happier-dev/protocol/workflows/workflowProgressV1';
+import type {
     JsonValue,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/json/strictJsonValue';
 import type { WorkflowProjectTargetV1, WorkflowDefinitionMetadataV1 } from '@happier-dev/protocol/workflows';
 
 import { readWorkflowEditorDraftSeed, storeWorkflowEditorDraftSeed } from './workflowEditorDraftSeed';

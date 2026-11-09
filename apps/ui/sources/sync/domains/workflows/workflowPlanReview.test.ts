@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { JsonValue } from '@happier-dev/protocol';
+import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { WorkflowRunAcceptedContextV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { WorkflowDefinitionV1Schema } from '@happier-dev/protocol/workflows/workflowV1';
 import { deriveWorkflowReplacementId } from '@happier-dev/protocol/workflows';

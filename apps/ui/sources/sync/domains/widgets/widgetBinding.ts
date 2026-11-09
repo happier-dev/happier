@@ -7,18 +7,23 @@ import { VoiceTrackedSessionAddressV1Schema } from '@happier-dev/protocol/sessio
 import { QualifiedConnectedAccountRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { createProtocolStoredReadSchema } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
-import type { JsonValue, PluginContributionIdentityV1, PluginProjectedResourceV2, QualifiedConnectedAccountPurposeV1 } from '@happier-dev/protocol';
+import type { JsonValue} from '@happier-dev/protocol/json/strictJsonValue';
+import type { PluginContributionIdentityV1} from '@happier-dev/protocol/plugins/contribution-identity';
+import type { PluginProjectedResourceV2} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import type { QualifiedConnectedAccountPurposeV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeIdentity';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { WorkspaceAddressV1, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { workspaceRefResolutionContextV1 } from '@/sync/domains/workspaces/workspaceRefs';
+import type { ProjectWidgetAreaContextV1 } from './projectWidgetAreaContext';
+import type { SessionRecordingVisibility } from '@/sync/domains/session/listing/recordingPrivacy';
 
 export const WidgetSessionAddressReadSchema = createStoredReadSchema(VoiceTrackedSessionAddressV1Schema);
 export const WidgetConnectedAccountSelectionReadSchema = createProtocolStoredReadSchema(QualifiedConnectedAccountRefSchema);
 
 export type ConfiguredWidgetTargetResolution =
-  | Readonly<{ status: 'ready'; target: InstalledWidgetTarget | Readonly<{ kind: 'workspace'; workspace: WorkspaceAddressV1; checkout: WorkspaceRefV1 }>; runtime: PluginUiProjectionCurrentness; input: Readonly<Record<string, JsonValue>> }>
+  | Readonly<{ status: 'ready'; target: InstalledWidgetTarget | Readonly<{ kind: 'workspace'; workspace: WorkspaceAddressV1; checkout: WorkspaceRefV1 }>; projectContext?: ProjectWidgetAreaContextV1; runtime: PluginUiProjectionCurrentness; input: Readonly<Record<string, JsonValue>> }>
   | Readonly<{ status: 'loading'; reasonCode: string }>
   | Readonly<{ status: 'selection_required' | 'invalid' | 'unavailable' | 'denied'; reasonCode: string; fields?: readonly WidgetInputIssueV1[]; repair?: WidgetInputRepairOutcome }>;
 /** Credential-free facts for one next action; Connect never needs a shared inputs writer. */
@@ -30,6 +35,7 @@ export type WidgetInputRepairOutcome = Readonly<{
 type WidgetRepairContext = Readonly<{ instance: WidgetInstanceV1;
   descriptor: WidgetInputDescriptorV1 & Readonly<{ resources?: readonly PluginContributionIdentityV1[] }>;
   sessionLabel?: string;
+  isSessionVisible?: SessionRecordingVisibility;
   connection?: Readonly<{ scope: ServerAccountScope; machineId: string | null; resources: readonly PluginProjectedResourceV2[] }>;
 }>;
 export type ConfiguredWidgetTargetInput = Readonly<{
@@ -37,7 +43,8 @@ export type ConfiguredWidgetTargetInput = Readonly<{
   definition?: WidgetDefinitionRefV1;
   /** Parsed body from the admitted Account/Session definition, not catalog summary metadata. */
   authoredBody?: WidgetDefinitionV1['body'];
-  targetKind: 'app' | 'session';
+  targetKind: 'app' | 'session' | 'project';
+  projectContext?: ProjectWidgetAreaContextV1 | null;
   descriptor: WidgetInputDescriptorV1;
   providedContext?: Readonly<Record<string, readonly JsonValue[]>>;
   workspaceRefs?: readonly WorkspaceRefV1[];
@@ -71,8 +78,9 @@ export function withWidgetInputRepairOutcome<T extends ConfiguredWidgetTargetRes
     ? WidgetSessionAddressReadSchema.safeParse(binding.value) : null;
   // Prefer the canonical Session name or public choice label. Only a plain literal
   // field may name itself: a missing reference/choice is not a displayable id.
-  const selectedLabel = hint?.widget !== 'secret' && binding?.kind === 'value'
-    ? (sessionRef?.success ? context.sessionLabel : undefined)
+  const selectedLabel = hint && hint.widget !== 'secret' && binding?.kind === 'value'
+    ? sessionRef?.success && context.isSessionVisible?.(sessionRef.data) === false ? hint.title
+      : (sessionRef?.success ? context.sessionLabel : undefined)
       ?? hint?.options?.find(option => isSameInputOptionValue(option.value, binding.value))?.label
       ?? (!hint?.options && !hint?.optionsSourceId && !hint?.inputType && !sessionRef?.success
         && (typeof binding.value === 'string' || typeof binding.value === 'number') ? String(binding.value) : undefined) : undefined;
@@ -94,6 +102,19 @@ function resolveConfiguredWidgetTargetFacts(input: ConfiguredWidgetTargetInput):
   const declaredTarget = readWidgetInputTargetV1(input.descriptor);
   if (declaredTarget.kind === 'invalid') return { status: 'invalid', reasonCode: declaredTarget.reasonCode,
     fields: declaredTarget.paths.map(path => ({ path, status: 'invalid', reasonCode: declaredTarget.reasonCode })) };
+  if (input.targetKind === 'project') {
+    const project = input.projectContext;
+    const lifetime = input.appRuntime.accountLifetime;
+    if (!lifetime?.isCurrent() || input.scope.owner.kind !== 'project'
+      || !areServerProfileIdentifiersEquivalent(lifetime.scope.serverId, input.scope.serverId))
+      return { status: 'denied', reasonCode: 'widget_target_scope_mismatch' };
+    if (!project?.target) return { status: 'unavailable', reasonCode: 'widget_project_source_unavailable' };
+    if (project.scope.authority?.isCurrent() === false
+      || !areServerProfileIdentifiersEquivalent(project.scope.serverId, input.scope.serverId)
+      || project.target.projectKey !== input.scope.owner.projectId)
+      return { status: 'denied', reasonCode: 'widget_target_scope_mismatch' };
+    return { status: 'ready', target: project.target, projectContext: project, runtime: input.appRuntime, input: input.resolvedInput.input };
+  }
   if (declaredTarget.kind === 'workspace') {
     const path = declaredTarget.path;
     const selected = readInputPath(input.resolvedInput.input, path);

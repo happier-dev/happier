@@ -13,7 +13,6 @@ import {
     isLocalServiceRowAttributedToSession,
     resolveLocalServiceOpenableTarget,
     resolveLocalServicePortLabel,
-    selectLocalServiceServiceCounts,
 } from './presentation';
 
 
@@ -40,25 +39,6 @@ describe('resolveLocalServicePortLabel', () => {
         expect(resolveLocalServicePortLabel({})).toBeNull();
     });
 });
-
-describe('selectLocalServiceServiceCounts', () => {
-    it('counts every detected row and the listening subset', () => {
-        expect(selectLocalServiceServiceCounts({
-            inventoryRows: [
-                buildLocalServiceInventoryRow({ id: 'live-1', state: 'listening' }),
-                buildLocalServiceInventoryRow({ id: 'live-2', state: 'listening' }),
-                buildLocalServiceInventoryRow({ id: 'stale-1', state: 'stale' }),
-                buildLocalServiceInventoryRow({ id: 'gone-1', state: 'gone' }),
-            ],
-        })).toEqual({ total: 4, running: 2 });
-    });
-
-    it('returns zeroed counts for an empty surface', () => {
-        expect(selectLocalServiceServiceCounts({ inventoryRows: [] })).toEqual({ total: 0, running: 0 });
-    });
-});
-
-
 
 describe('resolveLocalServiceOpenableTarget', () => {
     it('offers Open for a detected service that can register its private preview', () => {

@@ -9,7 +9,7 @@ import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION } from '@happier-dev/pr
 import { computeAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import { createPasswordCredentialMutationDigestV1, createPasswordCredentialTargetDigestV1 } from '@happier-dev/protocol/auth/passwordMutationChallenge';
 import { encodePasswordCredentialFieldV1, type PlainAccountPasswordCredentialV1 } from '@happier-dev/protocol/auth/accountPasswordCredential';
-import type { FeaturesResponse } from '@happier-dev/protocol';
+import type { FeaturesResponse } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { deriveAccountSigningPublicKey } from '@/auth/flows/challenge';
 import { buildContentKeyBinding } from '@/auth/oauth/contentKeyBinding';
 import { encodeBase64 } from '@/encryption/base64';

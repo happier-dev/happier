@@ -3,13 +3,17 @@ import sodium from '@/encryption/libsodium.lib';
 import { Encryption } from '@/sync/encryption/encryption';
 import { encodeBase64 } from '@/encryption/base64';
 import {
-    computeContentPublicKeyFingerprint,
-    normalizeActionsSettingsV1,
+    computeContentPublicKeyFingerprint} from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
+import {
+    normalizeActionsSettingsV1} from '@happier-dev/protocol/actions/actionSettings';
+import {
     SessionAuthoringValueV1Schema,
-    signAccountContentKeyBindingV1,
-    type ComposerSnapshotV1,
     type SessionAuthoringValueV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/authoring/index';
+import {
+    signAccountContentKeyBindingV1} from '@happier-dev/protocol/crypto/accountContentKeyBindingV1';
+import {
+    type ComposerSnapshotV1} from '@happier-dev/protocol/plugins/ui/composer';
 import type { RunnerEndpointFactsRecipientV1 } from '@happier-dev/protocol/ephemeralRunner/activation';
 import type { RunnerPreparedAuthoringV1 } from '@happier-dev/protocol/ephemeralRunner/launchManifest';
 import { prepareTemporaryComputerActivation } from './prepareTemporaryComputerActivation';

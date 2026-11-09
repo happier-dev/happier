@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { IDBFactory } from 'fake-indexeddb';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1 } from '@happier-dev/protocol';
+import { HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { createNotAuthenticatedError } from '@/sync/runtime/connectivity/authErrors';
@@ -283,7 +283,7 @@ describe('followUpSpawnedSessionWithServerScope', () => {
         }
 
         expect(thrown).toBeInstanceOf(Error);
-        expect((thrown as Error).message).toBe('Attachment preparation failed');
+        expect(thrown).toMatchObject({ message: 'prepare_failed', code: 'prepare_failed' });
         expect(readRecoverableFollowUpPayload(thrown)).toEqual({
             draftText: '',
             metaOverrides,

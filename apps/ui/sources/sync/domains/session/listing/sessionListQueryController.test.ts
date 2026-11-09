@@ -8,6 +8,10 @@ import {
     type SessionListQueryPageRequest,
 } from './sessionListQueryController';
 import { buildSessionListQueryKey } from './sessionListQueryKey';
+import { HappyError } from '@/utils/errors/errors';
+import { planSyncActionsFromChanges, plannedChangesAffectSessionListQuery, plannedSessionListRowMembershipFacets } from '@/sync/runtime/orchestration/changesPlanner';
+import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { subscribeSessionListQueryHomeInvalidation } from './sessionListQueryInvalidation';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { captureSessionListRetirementFence, wasSessionRetiredSinceFence } from '@/sync/store/domains/sessions';
 import { storage } from '@/sync/domains/state/storageStore';
@@ -23,6 +27,8 @@ const QUERY_A: SessionListQueryV1 = {
     audiences: [{ kind: 'team', teamId: 'team-a' }],
     tagIds: [],
     includeAttention: true,
+    // These progressive-page fixtures return one visible row per response.
+    limit: 1,
 };
 
 const QUERY_B: SessionListQueryV1 = {
@@ -63,6 +69,35 @@ function result(
 }
 
 describe('SessionListQueryHomeController', () => {
+    it('fills a visible query page through empty and short candidate continuations', async () => {
+        const requests: SessionListQueryPageRequest[] = [];
+        const controller = createSessionListQueryHomeController({ serverId: 'home-a', fetchPage: async request => {
+            requests.push(request);
+            if (!request.cursor) return result([], { nextCursor: 'window-1', hasNext: true });
+            if (request.cursor === 'window-1') return result(['a'], { nextCursor: 'window-2', hasNext: true });
+            return result(['b', 'c'], { nextCursor: 'window-3', hasNext: true });
+        } });
+        try {
+            await controller.update({ query: { ...QUERY_ORDINARY, limit: 3 }, selected: true, online: true, supported: true });
+            expect(controller.getSnapshot().addresses.map(address => address.sessionId)).toEqual(['a', 'b', 'c']);
+            expect(controller.getSnapshot()).toMatchObject({ phase: 'ready', nextCursor: 'window-3', hasNext: true });
+            expect(requests.map(request => request.cursor)).toEqual([undefined, 'window-1', 'window-2']);
+        } finally { controller.dispose(); }
+    });
+
+    it('terminates an entirely quiet candidate walk only when its cursor is exhausted', async () => {
+        let remaining = 3;
+        const controller = createSessionListQueryHomeController({ serverId: 'home-a', fetchPage: async () => {
+            remaining -= 1;
+            return result([], { nextCursor: remaining ? `window-${remaining}` : null, hasNext: remaining > 0 });
+        } });
+        try {
+            await controller.update({ query: { ...QUERY_ORDINARY, limit: 3 }, selected: true, online: true, supported: true });
+            expect(remaining).toBe(0);
+            expect(controller.getSnapshot()).toMatchObject({ phase: 'ready', addresses: [], hasNext: false, nextCursor: null });
+        } finally { controller.dispose(); }
+    });
+
     it('retains manual pages while an unavailable smart branch keeps coverage partial', async () => {
         const query = { ...QUERY_ORDINARY, membership: { mode: 'filter_or_manual' as const, tagIds: ['member'] } };
         let smartAvailable = false;
@@ -313,6 +348,244 @@ describe('SessionListQueryHomeController', () => {
             expect(controller.getSnapshot().addresses).toEqual([]);
             expect(controller.getSnapshot().appliedQueryKey).toBeNull();
         } finally { controller.dispose(); held.resolve(result([])); await initial; }
+    });
+
+    it('keeps a settled 1,000-row receiver corpus through row-only arrivals and pages only the changed Home', async () => {
+        const requests: Array<{ serverId: string; cursor: string | null }> = [];
+        const rows = Array.from({ length: 1_000 }, (_, index) => `session-${index}`);
+        const query: SessionListQueryV1 = { ...QUERY_ORDINARY, scope: 'all_accessible', includeInactive: true, includeAttention: false, limit: 50 };
+        const makeController = (serverId: string) => createSessionListQueryHomeController({ serverId,
+            fetchPage: async request => {
+                requests.push({ serverId, cursor: request.cursor ?? null });
+                const offset = Number(request.cursor ?? 0);
+                const next = offset + (request.limit ?? 50);
+                return result(rows.slice(offset, next), { hasNext: next < rows.length, nextCursor: next < rows.length ? String(next) : null });
+            },
+        });
+        const changed = makeController('home-a');
+        const untouched = makeController('home-b');
+        const controllers = new Map([['home-a', changed], ['home-b', untouched]]);
+        const unsubscribe = subscribeSessionListQueryHomeInvalidation(() => controllers);
+        // The receiver's passive effect demands the next ready page until its corpus is settled.
+        const settle = async () => {
+            for (const controller of controllers.values()) {
+                await controller.loadNext();
+                while (controller.getSnapshot().phase === 'ready' && controller.getSnapshot().hasNext) await controller.loadNext();
+            }
+        };
+        const input = { query, selected: true, online: true, supported: true, queryMembership: 'rowOnly' } as const;
+        try {
+            await Promise.all([...controllers.values()].map(controller => controller.update(input)));
+            await settle();
+            expect(requests).toHaveLength(40);
+            const settledA = changed.getSnapshot();
+            const settledB = untouched.getSnapshot();
+            requests.length = 0;
+            for (let index = 0; index < 32; index++) {
+                // Real detailed catch-up classifies a known-row transcript/metadata write.
+                const plan = planSyncActionsFromChanges([{ cursor: index + 1, kind: 'session',
+                    entityId: rows[index]!, changedAt: index + 1, hint: { lastMessageSeq: index + 1, lastMessageId: `message-${index}` } }],
+                { isSessionListMember: id => rows.includes(id) });
+                expect(plannedChangesAffectSessionListQuery(plan)).toBe('structural');
+                publishHomeAccountChange('home-a', plan.sessionRowRefreshIds, {
+                    changeKinds: ['session'], sessionListQueryAffects: plannedChangesAffectSessionListQuery(plan),
+                });
+                await changed.update({ ...input, query: { ...query } });
+                await settle();
+            }
+            expect(requests).toHaveLength(0);
+            expect(changed.getSnapshot()).toBe(settledA);
+            expect(untouched.getSnapshot()).toBe(settledB);
+
+            // A real membership change still re-reads every demanded page of exactly that Home.
+            rows.push('new-session');
+            publishHomeAccountChange('home-a', ['new-session'], { changeKinds: ['session'], sessionListQueryAffects: true });
+            await settle();
+            expect(requests).toHaveLength(21);
+            expect(new Set(requests.map(request => request.serverId))).toEqual(new Set(['home-a']));
+            expect(changed.getSnapshot().addresses).toHaveLength(1_001);
+            expect(changed.getSnapshot().addresses.at(-1)?.sessionId).toBe('new-session');
+            expect(untouched.getSnapshot()).toBe(settledB);
+        } finally {
+            unsubscribe();
+            for (const controller of controllers.values()) controller.dispose();
+        }
+    });
+
+    it('pages nothing for a Project corpus through streamed row writes and Machine changes, but re-reads movable membership', async () => {
+        const requests: string[] = [];
+        const projectQuery: SessionListQueryV1 = { ...QUERY_ORDINARY, scope: 'all_accessible', includeInactive: true,
+            includeAttention: false, projectKeys: { include: ['project-a'], exclude: [] } };
+        const attentionQuery: SessionListQueryV1 = { ...QUERY_ORDINARY, scope: 'all_accessible', includeInactive: true,
+            includeAttention: false, attention: 'needs_my_attention' };
+        const project = createSessionListQueryHomeController({ serverId: 'home-a',
+            fetchPage: async () => { requests.push('project'); return result(['session-1']); } });
+        const attention = createSessionListQueryHomeController({ serverId: 'home-b',
+            fetchPage: async () => { requests.push('attention'); return result(['session-1']); } });
+        const controllers = new Map([['home-a', project], ['home-b', attention]]);
+        const unsubscribe = subscribeSessionListQueryHomeInvalidation(() => controllers);
+        // Mirrors the focused-Home catch-up publication of each consumed page.
+        const publishPage = (serverId: string, changes: Parameters<typeof planSyncActionsFromChanges>[0]) => {
+            const plan = planSyncActionsFromChanges(changes, { isSessionListMember: id => id === 'session-1' });
+            publishHomeAccountChange(serverId, changes.map(change => change.entityId), {
+                feedPageConsumed: true, changeKinds: changes.map(change => change.kind),
+                sessionListQueryAffects: plannedChangesAffectSessionListQuery(plan),
+                sessionListRowFacets: plannedSessionListRowMembershipFacets(plan),
+            });
+        };
+        try {
+            await project.update({ query: projectQuery, selected: true, online: true, supported: true });
+            await attention.update({ query: attentionQuery, selected: true, online: true, supported: true });
+            requests.length = 0;
+            for (let index = 1; index <= 20; index++) {
+                publishPage('home-a', [
+                    { cursor: index * 3, kind: 'session', entityId: 'session-1', changedAt: index, hint: { lastMessageSeq: index, lastMessageId: `m-${index}` } },
+                    { cursor: index * 3 + 1, kind: 'session', entityId: 'session-1', changedAt: index, hint: { agentStateVersion: index } },
+                    { cursor: index * 3 + 2, kind: 'machine', entityId: 'machine-1', changedAt: index },
+                ]);
+                await project.update({ query: { ...projectQuery }, selected: true, online: true, supported: true });
+            }
+            // 20 streamed turns of transcript, Agent-state and Machine rows: zero Project list re-reads.
+            expect(requests).toEqual([]);
+
+            // A metadata write can move the Project key, so that corpus still re-reads.
+            publishPage('home-a', [{ cursor: 100, kind: 'session', entityId: 'session-1', changedAt: 100, hint: { metadataVersion: 7 } }]);
+            await project.update({ query: { ...projectQuery }, selected: true, online: true, supported: true });
+            expect(requests).toEqual(['project']);
+
+            // An attention corpus is decided by the batch-read row's published attention
+            // fact, so it is placed in place (sessionListRowPlacement) rather than re-read.
+            publishPage('home-b', [{ cursor: 101, kind: 'session', entityId: 'session-1', changedAt: 101, hint: { lastMessageSeq: 50, lastMessageId: 'm-50' } }]);
+            await attention.update({ query: { ...attentionQuery }, selected: true, online: true, supported: true });
+            expect(requests).toEqual(['project']);
+        } finally {
+            unsubscribe();
+            project.dispose();
+            attention.dispose();
+        }
+    });
+
+    it.each([
+        { includeInactive: false }, { includeAttention: true }, { attention: 'needs_my_attention' as const },
+    ])('leaves a row-decided all-accessible corpus to in-place placement after a row write: %j', async selector => {
+        let pages = 0;
+        const controller = createSessionListQueryHomeController({ serverId: 'home-a', fetchPage: async () => {
+            pages++;
+            return result(['before']);
+        } });
+        try {
+            await controller.update({ query: { ...QUERY_ORDINARY, scope: 'all_accessible', includeInactive: true,
+                includeAttention: false, ...selector }, selected: true, online: true, supported: true });
+            await controller.invalidate('structural');
+            expect(pages).toBe(1);
+        } finally { controller.dispose(); }
+    });
+
+    it.each([
+        { scope: 'following' as const }, { tagIds: ['tag-a'] }, { folderIds: ['folder-a'] },
+        { projectKeys: { include: ['project-a'], exclude: [] } },
+        { audiences: QUERY_A.audiences }, { coordinator: 'coordinator' as const }, { underSessionId: 'parent' },
+    ])('refreshes a row-dependent all-accessible corpus after a row write: %j', async selector => {
+        let pages = 0;
+        const controller = createSessionListQueryHomeController({ serverId: 'home-a', fetchPage: async () => {
+            pages++;
+            return result(pages === 1 ? ['before'] : ['after']);
+        } });
+        try {
+            await controller.update({ query: { ...QUERY_ORDINARY, scope: 'all_accessible', includeInactive: true,
+                includeAttention: false, ...selector }, selected: true, online: true, supported: true });
+            await controller.invalidate('structural');
+            expect(pages).toBe(2);
+            expect(controller.getSnapshot().addresses.map(address => address.sessionId)).toEqual(['after']);
+        } finally { controller.dispose(); }
+    });
+
+    it.each([
+        { error: new HappyError('Invalid response', false, { code: 'invalid_response' }), reason: 'response', code: 'invalid_response' },
+        { error: { status: 503, code: 'list_failed' }, reason: 'response', code: 'list_failed' },
+        { error: { status: 404 }, reason: 'response', code: null },
+        { error: { status: 429 }, reason: 'response', code: null },
+        { error: new TypeError('Failed to fetch'), reason: 'network', code: null },
+        { error: { status: 0, code: 'ECONNRESET' }, reason: 'network', code: 'ECONNRESET' },
+    ])('classifies a failed page as $reason for $error', async ({ error, reason, code }) => {
+        const controller = createSessionListQueryHomeController({
+            serverId: 'home-a',
+            fetchPage: async () => { throw error; },
+        });
+        try {
+            await controller.update({ query: QUERY_A, selected: true, online: true, supported: true });
+            expect(controller.getSnapshot()).toMatchObject({
+                phase: 'error', failureReason: reason, failureCode: code, failedOperation: 'replace',
+            });
+        } finally { controller.dispose(); }
+    });
+
+    it('replaces membership when accepted Project selection changes and cannot broaden it to an ordinary GET', async () => {
+        const requests: SessionListQueryPageRequest[] = [];
+        const controller = createSessionListQueryHomeController({ serverId: 'home-a', fetchPage: async request => {
+            requests.push(request);
+            return result([request.source.kind === 'query' ? request.source.body.projectKeys?.include[0] ?? 'all' : 'ordinary']);
+        } });
+        const update = (include: string[]) => controller.update({ query: { ...QUERY_ORDINARY, projectKeys: { include, exclude: [] } },
+            selected: true, online: true, supported: true });
+        try {
+            expect(canSessionListOrdinaryPageAnswerQuery({ ...QUERY_ORDINARY, projectKeys: { include: ['one'], exclude: [] } })).toBe(false);
+            await update(['one', 'two']);
+            await update(['two', 'one']);
+            expect(requests).toHaveLength(1);
+            await update(['different']);
+            expect(controller.getSnapshot().addresses.map(address => address.sessionId)).toEqual(['different']);
+            expect(requests).toHaveLength(2);
+        } finally { controller.dispose(); }
+    });
+
+    it('changes structural Section corpus before paging and refetches on switch-back without per-space caching', async () => {
+        const requests: SessionListQueryPageRequest[] = [];
+        const controller = createSessionListQueryHomeController({ serverId: 'home-a', fetchPage: async request => {
+            requests.push(request);
+            return result([request.source.kind === 'query' ? request.source.body.folderIds?.[0] ?? 'all' : 'ordinary']);
+        } });
+        const update = (folderIds: string[]) => controller.update({ query: { ...QUERY_A, folderIds },
+            selected: true, online: true, supported: true });
+        try {
+            expect(canSessionListOrdinaryPageAnswerQuery({ ...QUERY_ORDINARY, folderIds: ['one'] })).toBe(false);
+            await update(['one', 'two']);
+            await update(['two', 'one', 'one']);
+            expect(requests).toHaveLength(1);
+            await update(['different']);
+            expect(controller.getSnapshot().addresses.map(address => address.sessionId)).toEqual(['different']);
+            await update(['one', 'two']);
+            expect(requests).toHaveLength(3);
+            expect(requests.every(request => request.cursor === undefined && request.attentionCursor === undefined)).toBe(true);
+        } finally { controller.dispose(); }
+    });
+    it('publishes currentness independently of corpus changes and retains the ordinary success fallback through first failure', async () => {
+        let failing = true;
+        const controller = createSessionListQueryHomeController({
+            serverId: 'home-a', now: () => 3_000,
+            fetchPage: async () => {
+                if (failing) throw new Error('Home unavailable');
+                return result(['one', 'two']);
+            },
+        });
+        try {
+            controller.observeOrdinaryLastSuccessAt(1_000);
+            await controller.update({ query: QUERY_A, selected: true, online: true, supported: true });
+            expect(controller.getSnapshot().homeObservation).toEqual({ phase: 'error', lastSuccessAt: 1_000 });
+            controller.observeOrdinaryLastSuccessAt(2_000);
+            expect(controller.getSnapshot().homeObservation).toEqual({ phase: 'error', lastSuccessAt: 2_000 });
+            failing = false;
+            await controller.retry();
+            const success = controller.getSnapshot().homeObservation;
+            expect(success).toEqual({ phase: 'ready', lastSuccessAt: 3_000 });
+            controller.retire('two');
+            controller.observeOrdinaryLastSuccessAt(4_000);
+            expect(controller.getSnapshot().addresses.map(address => address.sessionId)).toEqual(['one']);
+            expect(controller.getSnapshot().homeObservation).toBe(success);
+            failing = true;
+            await controller.refresh();
+            expect(controller.getSnapshot().homeObservation).toEqual({ phase: 'error', lastSuccessAt: 3_000 });
+        } finally { controller.dispose(); }
     });
 
     it.each(['replace', 'ordinary', 'attention'] as const)('retries the failed %s operation and clears its recovery state after success', async (operation) => {
@@ -790,6 +1063,96 @@ describe('SessionListQueryHomeController', () => {
         });
     });
 
+    it('keeps a row placement that lands while a replacement read is in flight', async () => {
+        // P03-RECONNECT-REST: after a return, rows that left the corpus while its re-read was in
+        // flight came back when that read (answered before the change) published, and stayed for minutes.
+        const facts = (active: boolean, sortKey: number) => ({ sortKey, pinned: false, needsAttention: false, archived: false,
+            active, relevant: true, ownerOrDirect: true });
+        const sortKeys: Record<string, number> = { a: 30, b: 20, c: 10, d: 25 };
+        let reads = 0;
+        const held = createDeferred<ReturnType<typeof result>>();
+        const controller = createSessionListQueryHomeController({
+            serverId: 'home-a',
+            fetchPage: async () => (++reads === 1 ? result(['a', 'b', 'c']) : held.promise),
+        });
+        const online = { query: QUERY_ORDINARY, selected: true, online: true, supported: true };
+        await controller.update(online);
+        const replacing = controller.refresh();
+        // Presence recovery reads b (now inactive) and d (newly active) while the re-read is in flight.
+        controller.place([{ sessionId: 'b', facts: facts(false, 20) }, { sessionId: 'd', facts: facts(true, 25) }],
+            sessionId => sortKeys[sessionId] ?? null);
+        // The server answered the re-read before those changes.
+        held.resolve(result(['a', 'b', 'c']));
+        await replacing;
+
+        expect(reads).toBe(2);
+        expect(controller.getSnapshot()).toMatchObject({
+            phase: 'ready',
+            addresses: [
+                { serverId: 'home-a', sessionId: 'a' },
+                { serverId: 'home-a', sessionId: 'd' },
+                { serverId: 'home-a', sessionId: 'c' },
+            ],
+        });
+    });
+
+    it('keeps a current corpus through an outage that missed no change, and still places fresh rows', async () => {
+        const requests: SessionListQueryPageRequest[] = [];
+        const controller = createSessionListQueryHomeController({
+            serverId: 'home-a',
+            fetchPage: async (request) => {
+                requests.push(request);
+                return result(['older', 'oldest']);
+            },
+        });
+        const online = { query: QUERY_ORDINARY, selected: true, online: true, supported: true };
+        await controller.update(online);
+        const held = controller.getSnapshot();
+
+        await controller.update({ ...online, online: false });
+        // The recovered presence of a row arrives over HTTP while the socket is still down.
+        controller.place([{
+            sessionId: 'newest',
+            facts: { sortKey: 30, pinned: false, needsAttention: false, archived: false, active: true, relevant: true, ownerOrDirect: true },
+        }], (sessionId) => (sessionId === 'older' ? 20 : 10));
+        // A row write this row-decided corpus places from the batch read, and a reconnect
+        // wake that asks only for a lost answer, are not missed changes.
+        await controller.invalidate('structural');
+        await controller.invalidate('recover');
+        await controller.update(online);
+
+        // Foreground recovery re-reads what can have changed (the changes catch-up and
+        // presence placement), not the whole corpus it already held.
+        expect(requests).toHaveLength(1);
+        expect(controller.getSnapshot()).toMatchObject({
+            phase: 'ready',
+            appliedQueryKey: held.appliedQueryKey,
+            addresses: [
+                { serverId: 'home-a', sessionId: 'newest' },
+                { serverId: 'home-a', sessionId: 'older' },
+                { serverId: 'home-a', sessionId: 'oldest' },
+            ],
+        });
+
+        // A corpus whose read was still in flight when the transport dropped is not current.
+        let finish!: (value: ReturnType<typeof result>) => void;
+        const pending = createSessionListQueryHomeController({
+            serverId: 'home-a',
+            fetchPage: (request) => {
+                requests.push(request);
+                if (requests.length === 2) return new Promise((resolve) => { finish = resolve; });
+                return Promise.resolve(result(['fresh']));
+            },
+        });
+        const first = pending.update(online);
+        await pending.update({ ...online, online: false });
+        finish(result(['stale']));
+        await first;
+        await pending.update(online);
+        expect(requests).toHaveLength(3);
+        expect(pending.getSnapshot()).toMatchObject({ phase: 'ready', addresses: [{ serverId: 'home-a', sessionId: 'fresh' }] });
+    });
+
     it('replaces a settled offline corpus immediately on reconnect without reusing either cursor', async () => {
         const requests: SessionListQueryPageRequest[] = [];
         let finishReconnect!: (value: ReturnType<typeof result>) => void;
@@ -818,6 +1181,9 @@ describe('SessionListQueryHomeController', () => {
             nextCursor: 'ordinary-next',
             attentionNextCursor: 'attention-next',
         });
+        // A change reached this Home while its corpus could not read it.
+        await controller.invalidate();
+        expect(requests).toHaveLength(1);
 
         const reconnect = controller.update(online);
         expect(requests).toHaveLength(2);
@@ -836,6 +1202,83 @@ describe('SessionListQueryHomeController', () => {
             nextCursor: null,
             attentionNextCursor: null,
         });
+    });
+
+    it('re-reads a ready corpus on a secondary Home reconnect, whose transport has no changes catch-up', async () => {
+        const requests: SessionListQueryPageRequest[] = [];
+        const pending: Array<() => void> = [];
+        const controller = createSessionListQueryHomeController({
+            serverId: 'home-secondary',
+            fetchPage: (request) => {
+                requests.push(request);
+                return new Promise((resolve) => { pending.push(() => resolve(result(['row']))); });
+            },
+        });
+        const dispose = subscribeSessionListQueryHomeInvalidation(() => new Map([['home-secondary', controller]]));
+        const settle = async () => { while (pending.length) pending.shift()!(); await Promise.resolve(); await new Promise((r) => setTimeout(r, 0)); };
+        try {
+            const first = controller.update({ query: QUERY_A, selected: true, online: true, supported: true });
+            await settle(); await first;
+            expect(controller.getSnapshot().phase).toBe('ready');
+            requests.length = 0;
+            // A Session created during a socket-only blip is visible only through a re-read.
+            publishHomeAccountChange('home-secondary', undefined, { source: 'connected' });
+            await settle();
+            expect(requests).toHaveLength(1);
+        } finally { dispose(); controller.dispose(); }
+    });
+
+    it('re-reads on a socket reconnect only the corpus the outage left without a current answer', async () => {
+        const requests: SessionListQueryPageRequest[] = [];
+        let failNext = false;
+        const pending: Array<() => void> = [];
+        const controller = createSessionListQueryHomeController({
+            serverId: 'home-reconnect',
+            fetchPage: (request) => {
+                requests.push(request);
+                if (failNext) { failNext = false; return Promise.reject(new Error('network down')); }
+                return new Promise((resolve) => { pending.push(() => resolve(result(['row']))); });
+            },
+        });
+        const dispose = subscribeSessionListQueryHomeInvalidation(() => new Map([['home-reconnect', controller]]));
+        const settle = async () => { while (pending.length) pending.shift()!(); await Promise.resolve(); await new Promise((r) => setTimeout(r, 0)); };
+        const online = { query: QUERY_A, selected: true, online: true, supported: true };
+        try {
+            const first = controller.update(online);
+            await settle(); await first;
+            expect(controller.getSnapshot().phase).toBe('ready');
+            // A socket drop on a reachable Home: the changes catch-up owns what changed while away.
+            requests.length = 0;
+            publishHomeAccountChange('home-reconnect', undefined, { source: 'connected', changesCatchUp: true });
+            await settle();
+            expect(requests).toHaveLength(0);
+
+            // A transport outage that missed no change: the held corpus is still current, so neither
+            // going online nor the reconnect wake re-reads it.
+            await controller.update({ ...online, online: false });
+            const back = controller.update(online);
+            publishHomeAccountChange('home-reconnect', undefined, { source: 'connected', changesCatchUp: true });
+            await settle(); await back; await settle();
+            expect(requests).toHaveLength(0);
+            expect(controller.getSnapshot().phase).toBe('ready');
+
+            // A change published while offline: going online replaces the corpus once; the wake joins it.
+            await controller.update({ ...online, online: false });
+            publishHomeAccountChange('home-reconnect');
+            const backAfterChange = controller.update(online);
+            publishHomeAccountChange('home-reconnect', undefined, { source: 'connected', changesCatchUp: true });
+            await settle(); await backAfterChange; await settle();
+            expect(requests).toHaveLength(1);
+
+            // A corpus whose last read failed has no current answer: the reconnect retries it.
+            requests.length = 0;
+            failNext = true;
+            await controller.invalidate().catch(() => undefined);
+            expect(controller.getSnapshot().phase).toBe('error');
+            publishHomeAccountChange('home-reconnect', undefined, { source: 'connected', changesCatchUp: true });
+            await settle();
+            expect(requests).toHaveLength(2);
+        } finally { dispose(); controller.dispose(); }
     });
 
     it('keeps retained membership refreshing while Home transport ownership is transferring', async () => {
@@ -1232,7 +1675,7 @@ describe('SessionListQueryHomeController', () => {
         expect(requests.every((request) => request.attentionCursor === undefined)).toBe(true);
     });
 
-    it('sends the requested page limit on the initial page and on both continuation families', async () => {
+    it('asks only for the remaining visible rows across both short-page continuation families', async () => {
         const requests: SessionListQueryPageRequest[] = [];
         const controller = createSessionListQueryHomeController({
             serverId: 'home-a',
@@ -1257,7 +1700,7 @@ describe('SessionListQueryHomeController', () => {
         await controller.loadNext();
 
         expect(requests).toHaveLength(3);
-        expect(requests.map((request) => request.limit)).toEqual([12, 12, 12]);
+        expect(requests.map((request) => request.limit)).toEqual([12, 11, 10]);
         expect(requests.map((request) => (
             request.source.kind === 'query' ? request.source.body.limit : null
         ))).toEqual([12, 12, 12]);

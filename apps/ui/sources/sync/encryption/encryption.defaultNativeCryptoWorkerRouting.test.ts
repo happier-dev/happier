@@ -5,6 +5,7 @@ import { encodeBase64 } from '@/encryption/base64';
 import { createDeferred } from '@/dev/testkit';
 
 import { Encryption } from './encryption';
+import { DataKeyOpeningCancelledError } from './dataKeyOpenings';
 import { createFakeCryptoWorker } from './nativeCryptoWorker/fakeCryptoWorker';
 import { resetNativeCryptoWorkerCapabilityCacheForTests } from './nativeCryptoWorker/nativeCryptoWorkerRouting';
 import { resetNativeCryptoWorkerQueueLifecycleForTests } from './nativeCryptoWorker/nativeCryptoWorkerQueue';
@@ -75,7 +76,7 @@ describe('Encryption native crypto worker routing default', () => {
         const survivor = encryption.decryptEncryptionKey(envelope!, { signal: second.signal, workClass: 'interactive' });
         try {
             first.abort();
-            expect(await abandoned).toBeNull();
+            await expect(abandoned).rejects.toBeInstanceOf(DataKeyOpeningCancelledError);
             release.resolve();
             expect((await survivor)?.every((byte, index) => byte === key[index])).toBe(true);
             expect(batches.flatMap(batch => batch.items)).toHaveLength(1);
@@ -119,7 +120,7 @@ describe('Encryption native crypto worker routing default', () => {
             await vi.waitFor(() => expect(syncPerformanceTelemetry.snapshot().events.find(event =>
                 event.name === 'sync.crypto.worker.queueDepth')?.fieldStats?.queueDepth?.max).toBe(2));
             first.abort();
-            expect(await abandoned).toBeNull();
+            await expect(abandoned).rejects.toBeInstanceOf(DataKeyOpeningCancelledError);
             release.resolve();
             expect(await Promise.all([second, third])).toEqual(keys.slice(1));
             expect(batches.flatMap(batch => batch.items)).toHaveLength(3);
@@ -132,7 +133,7 @@ describe('Encryption native crypto worker routing default', () => {
         }
     });
 
-    it('cancels physical key work only after its final joined reader leaves and permits a fresh attempt', async () => {
+    it('scope retirement aborts physical key work after callers detach and permits a fresh attempt', async () => {
         const encryption = await Encryption.create(new Uint8Array(32).fill(83));
         const { worker, batches } = createRecordingCryptoWorker();
         const entered = createDeferred<void>();
@@ -154,20 +155,57 @@ describe('Encryption native crypto worker routing default', () => {
         const peer = encryption.decryptEncryptionKey(envelope!, { signal: second.signal });
         try {
             first.abort();
-            expect(await abandoned).toBeNull();
+            await expect(abandoned).rejects.toBeInstanceOf(DataKeyOpeningCancelledError);
             expect(physicalSignal?.aborted).toBe(false);
             second.abort();
-            expect(await peer).toBeNull();
+            await expect(peer).rejects.toBeInstanceOf(DataKeyOpeningCancelledError);
+            expect(physicalSignal?.aborted).toBe(false);
+            const scope = encryption.getCurrentNativeCryptoWorkerScope();
+            encryption.configureNativeCryptoWorker({ scope: { ...scope, generation: scope.generation + 1 } });
             expect(physicalSignal?.aborted).toBe(true);
             hold = false;
             release.resolve();
             const fresh = await encryption.decryptEncryptionKey(envelope!);
             expect(fresh?.every((byte, index) => byte === key[index])).toBe(true);
-            // The cancelled bridge never opens an item; only the new attempt does.
+            // The retired bridge cannot supply the fresh scope's opening.
             expect(batches.flatMap(batch => batch.items)).toHaveLength(2);
         } finally {
             release.resolve(); first.abort(); second.abort();
             await Promise.allSettled([abandoned, peer]);
+            encryption.retireAccountMaterial();
+        }
+    });
+
+    it('reuses a physical opening after all callers detach within the current scope', async () => {
+        const encryption = await Encryption.create(new Uint8Array(32).fill(85));
+        const { worker, batches } = createRecordingCryptoWorker();
+        const entered = createDeferred<void>();
+        const release = createDeferred<void>();
+        encryption.configureNativeCryptoWorker({ worker: { ...worker,
+            decryptDataKeyEnvelopeV1: async request => {
+                const result = await worker.decryptDataKeyEnvelopeV1(request);
+                entered.resolve();
+                await release.promise;
+                return result;
+            },
+        }, routing: { mode: 'require', minPayloadBytes: 0 } });
+        const key = new Uint8Array(32).fill(86);
+        const [envelope] = await sealDataKeys(encryption, [key]);
+        const caller = new AbortController();
+        const abandoned = encryption.decryptEncryptionKey(envelope!, { signal: caller.signal });
+        try {
+            await entered.promise;
+            caller.abort();
+            await expect(abandoned).rejects.toBeInstanceOf(DataKeyOpeningCancelledError);
+            release.resolve();
+            const retained = await encryption.decryptEncryptionKey(envelope!);
+            expect(retained).toEqual(key);
+            retained!.fill(0);
+            expect(await encryption.decryptEncryptionKey(envelope!)).toEqual(key);
+            expect(batches.flatMap(batch => batch.items)).toHaveLength(1);
+        } finally {
+            release.resolve(); caller.abort();
+            await Promise.allSettled([abandoned]);
             encryption.retireAccountMaterial();
         }
     });
@@ -223,7 +261,8 @@ describe('Encryption native crypto worker routing default', () => {
         encryption.configureNativeCryptoWorker({ scope: { accountId: 'account', serverId: 'home-a', generation: 1 } });
         const next = encryption.decryptEncryptionKey(envelope!);
         release.resolve();
-        expect(await first).toBeNull();
+        // The retired generation's opening is cancelled; the current one is a real refusal.
+        await expect(first).rejects.toBeInstanceOf(DataKeyOpeningCancelledError);
         expect(await next).toBeNull();
         refuse = false;
         expect(await encryption.decryptEncryptionKey(envelope!)).toEqual(key);
@@ -254,7 +293,7 @@ describe('Encryption native crypto worker routing default', () => {
         release.resolve();
         expect(await first).toEqual(key);
         expect(await qualified).toEqual(key);
-        expect(await retired).toBeNull();
+        await expect(retired).rejects.toBeInstanceOf(DataKeyOpeningCancelledError);
         expect(batches.flatMap(batch => batch.items)).toHaveLength(1);
     });
 

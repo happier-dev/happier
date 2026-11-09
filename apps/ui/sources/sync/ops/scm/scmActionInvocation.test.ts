@@ -1,13 +1,25 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import { ScmDiffSummaryGenerateOutputSchema, type ScmDiffSummaryGenerateOutput } from '@happier-dev/protocol/scm';
 import { invokeUiScmAction, type UiScmActionExecutor, type UiScmActionFailure } from './scmActionInvocation';
+import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { RpcError } from '@happier-dev/protocol/rpcErrors';
 
-const settled = (result: unknown): UiScmActionExecutor => ({
+const settled = (result: unknown): UiScmActionExecutor => createFrontDoorActionExecute({
     execute: async () => ({ ok: true, result }),
 });
 
 // The Protocol owns Zod Mini response schemas; the UI Action invoker must accept them as-is.
 describe('invokeUiScmAction with a Protocol (Zod Mini) response schema', () => {
+    it('preserves a thrown transport refusal code through the SCM adapter', async () => {
+        // The executor crosses the machine transport; its typed rejection must survive this adapter.
+        const executor = createFrontDoorActionExecute({ execute: async () => {
+            throw new RpcError('The target disconnected.', 'RPC_OUTCOME_UNKNOWN');
+        } });
+        const result = await invokeUiScmAction({ actionId: 'scm.diff.file', input: {},
+            schema: ScmDiffSummaryGenerateOutputSchema, context: {}, executor });
+        expect(result).toMatchObject({ success: false, errorCode: 'RPC_OUTCOME_UNKNOWN' });
+    });
+
     it('settles an aborted read as cancelled without invoking the machine', async () => {
         const abort = new AbortController();
         abort.abort();

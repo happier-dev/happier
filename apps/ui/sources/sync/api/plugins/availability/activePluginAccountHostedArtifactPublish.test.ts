@@ -4,9 +4,10 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('@/sync/api/session/apiSocket', () => ({ apiSocket: { request: vi.fn() } }));
 
 import {
-    createAccountScopedCryptoMaterialSnapshotV1,
+    createAccountScopedCryptoMaterialSnapshotV1} from '@happier-dev/protocol/crypto/accountScopedCipher';
+import {
     convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import {
     PluginAvailabilityActionHttpPathsV1,
     PluginAvailabilityUiArtifactPublishActionOutputV1Schema,

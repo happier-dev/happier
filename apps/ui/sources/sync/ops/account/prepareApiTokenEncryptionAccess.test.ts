@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { computeAccountEncryptionMigrateKeyFingerprintV1, openApiTokenEncryptionAccessV1 } from '@happier-dev/protocol';
+import { computeAccountEncryptionMigrateKeyFingerprintV1} from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
+import { openApiTokenEncryptionAccessV1 } from '@happier-dev/protocol/crypto/apiTokenEncryptionAccess';
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
 import { encodeBase64 } from '@/encryption/base64';
 import { prepareApiTokenEncryptionAccess } from './prepareApiTokenEncryptionAccess';

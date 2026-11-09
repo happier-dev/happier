@@ -13,6 +13,12 @@ export type SessionAddressLookupState = Readonly<{
     ordinarySessionListMembershipByServerId?: Readonly<Record<string, readonly string[] | undefined>> | null;
 }>;
 
+/** The membership a query state lends to address lookup: only an applied, ready answer to its current request. */
+export function readSessionAddressLookupQueryMembership(queryState: SessionAddressLookupQueryState): readonly SessionAddress[] | null {
+    return queryState.phase === 'ready' && queryState.appliedQueryKey !== null
+        && queryState.appliedQueryKey === queryState.requestedQueryKey ? queryState.addresses : null;
+}
+
 /** Known local addresses only. This never probes Homes or treats cache presence as access. */
 export function listSessionAddressesForSessionIdFromLocalState(
     state: SessionAddressLookupState | null | undefined,
@@ -33,12 +39,7 @@ export function listSessionAddressesForSessionIdFromLocalState(
         if (membership?.some((member) => member.trim() === sid)) add(serverId);
     }
     for (const queryState of options?.queryStates ?? []) {
-        if (
-            queryState.phase !== 'ready'
-            || queryState.appliedQueryKey === null
-            || queryState.appliedQueryKey !== queryState.requestedQueryKey
-        ) continue;
-        for (const candidate of queryState.addresses) {
+        for (const candidate of readSessionAddressLookupQueryMembership(queryState) ?? []) {
             const address = normalizeSessionAddress(candidate.serverId, candidate.sessionId);
             if (address?.sessionId === sid) add(address.serverId);
         }

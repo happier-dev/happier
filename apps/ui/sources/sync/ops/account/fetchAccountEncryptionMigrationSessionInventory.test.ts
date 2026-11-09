@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createCompactSessionListFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
-import { projectSessionDisplayV1, sealSessionSharedDisplayEnvelopeV1Sync } from '@happier-dev/protocol';
+import { projectSessionDisplayV1, sealSessionSharedDisplayEnvelopeV1Sync } from '@happier-dev/protocol/sessions';
 
 import {
     fetchAccountEncryptionMigrationSessionInventory,

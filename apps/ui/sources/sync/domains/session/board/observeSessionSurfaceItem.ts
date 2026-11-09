@@ -1,8 +1,7 @@
 import type { SessionBoardItemProjection } from './sessionBoardProjection';
 import { deriveSessionBoardItemState } from './sessionBoardItemState';
 import type { SessionSystemRecordObservationBase, SessionSystemRecordUnavailableReason } from '@/sync/domains/sessionSystemRecords/observation';
-import type { SessionSystemRecordRepositoryEntry } from '@/sync/domains/sessionSystemRecords/repository';
-import type { SessionSystemRecordStored } from '@happier-dev/protocol';
+import { projectSessionSystemRecordFetchFailure } from '@/sync/domains/sessionSystemRecords/transport';
 
 export type SessionSurfaceItemBinding = Readonly<{
     status: 'ready';
@@ -42,18 +41,12 @@ export function observeSessionSurfaceItem(options: SessionSystemRecordObservatio
     const query = { type: 'read', address: { owner: 'host', namespace: 'surface', kind: 'item.v1', localId: options.itemId } } as const;
     let stopped = false;
     let currentJob: object | null = null;
-    let snapshot: SessionSystemRecordRepositoryEntry<SessionSystemRecordStored> = options.repository.getSnapshot(options.session, query);
-    let context = options.authority.contentContext;
-    let authorityReachability: 'reachable' | 'offline' = 'reachable';
     const retained = readRetainedSessionSurfaceItem(options);
     let previous = retained?.status === 'ready' ? retained : undefined;
-    let renewal: ReturnType<typeof options.renewAuthority> | null = null;
     const emit = (binding: SessionSurfaceItemBinding) => { if (!stopped) options.onChange(binding); };
     const authorized = () => options.isCurrent() && options.repository.isCurrent() && options.readCapabilities()?.readTranscript === true;
     function changed() {
         const next = options.repository.getSnapshot(options.session, query);
-        const before = snapshot;
-        snapshot = next;
         const job = {};
         currentJob = job;
         const isCurrent = () => !stopped && currentJob === job && authorized();
@@ -64,30 +57,12 @@ export function observeSessionSurfaceItem(options: SessionSystemRecordObservatio
             else emit({ status: 'unavailable', reason: error.status });
             return;
         }
-        const needsAuthority = (before.freshness === 'fresh' && next.freshness === 'stale')
-            || (before.data !== null && before.loading !== 'refreshing' && next.loading === 'refreshing');
-        const refreshingAuthority = needsAuthority || renewal !== null;
-        if (previous && (refreshingAuthority || previous.freshness !== next.freshness || previous.loading !== next.loading || previous.reachability !== next.reachability)) {
-            previous = { ...previous, freshness: refreshingAuthority ? 'stale' : next.freshness, loading: next.loading, reachability: authorityReachability === 'offline' ? 'offline' : next.reachability };
+        if (previous && (previous.freshness !== next.freshness || previous.loading !== next.loading || previous.reachability !== next.reachability)) {
+            previous = { ...previous, freshness: next.freshness, loading: next.loading, reachability: next.reachability };
             emit(previous);
         }
-        context = options.readContentContext();
+        const context = options.readContentContext();
         void (async () => {
-            if (needsAuthority) {
-                const pending = renewal ??= options.renewAuthority();
-                const renewed = await pending;
-                if (renewal === pending) renewal = null;
-                if (!isCurrent()) return;
-                if (renewed.status === 'ok') { context = renewed.value.contentContext; authorityReachability = 'reachable'; }
-                else if (renewed.status === 'offline' && previous) authorityReachability = 'offline';
-                else if (renewed.status !== 'offline' || !previous) { emit({ status: 'unavailable', reason: renewed.status }); return; }
-            } else if (renewal) {
-                const renewed = await renewal;
-                if (!isCurrent()) return;
-                if (renewed.status === 'ok') { context = renewed.value.contentContext; authorityReachability = 'reachable'; }
-                else if (renewed.status === 'offline' && previous) authorityReachability = 'offline';
-                else if (renewed.status !== 'offline' || !previous) { emit({ status: 'unavailable', reason: renewed.status }); return; }
-            }
             const outcome = next.data ? await options.repository.openSurfaceItem(next.data, context) : undefined;
             if (!isCurrent()) return;
             const item: SessionBoardItemProjection = {
@@ -99,10 +74,10 @@ export function observeSessionSurfaceItem(options: SessionSystemRecordObservatio
                 && (item.state.kind !== 'unopenable' || (previous.item.state.kind === 'unopenable' && previous.item.state.reason === item.state.reason))
                 && (item.state.kind !== 'unsupported' || (previous.item.state.kind === 'unsupported' && previous.item.state.version === item.state.version))
                 ? previous.item : item;
-            previous = { status: 'ready', item: retained, freshness: authorityReachability === 'offline' ? 'stale' : next.freshness,
-                reachability: authorityReachability === 'offline' ? 'offline' : next.reachability, loading: next.loading };
+            previous = { status: 'ready', item: retained, freshness: next.freshness,
+                reachability: next.reachability, loading: next.loading };
             emit(previous);
-        })().catch(() => { if (isCurrent()) emit({ status: 'unavailable', reason: 'invalid_response' }); });
+        })().catch(error => { if (isCurrent()) emit({ status: 'unavailable', reason: projectSessionSystemRecordFetchFailure(error).status }); });
     }
     if (!authorized()) { emit({ status: 'unavailable', reason: 'forbidden' }); return () => { stopped = true; }; }
     if (retained) emit(retained);

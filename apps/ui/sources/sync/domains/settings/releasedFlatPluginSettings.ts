@@ -1,3 +1,8 @@
+import {
+    isReleasedFlatPluginSettingKey as isReleasedFlatPluginSettingKeyFromHostDefaults,
+    readReleasedFlatPluginSettingValue as readReleasedFlatPluginSettingValueFromHostDefaults,
+} from '@happier-dev/protocol/account/settings/releasedFlatPluginSettings';
+
 import { settingsDefaults } from './settings';
 
 /**
@@ -19,18 +24,12 @@ import { settingsDefaults } from './settings';
  * after one of them.
  */
 export function isReleasedFlatPluginSettingKey(localId: string): boolean {
-    return localId.trim().length > 0 && !Object.prototype.hasOwnProperty.call(settingsDefaults, localId.trim());
+    return isReleasedFlatPluginSettingKeyFromHostDefaults({ localId, hostDefaults: settingsDefaults });
 }
 
 export function readReleasedFlatPluginSettingValue(params: Readonly<{
     settings: Readonly<Record<string, unknown>> | null | undefined;
     localId: string;
 }>): unknown {
-    const localId = params.localId.trim();
-    if (!isReleasedFlatPluginSettingKey(localId)) return undefined;
-
-    const settings = params.settings;
-    if (!settings || typeof settings !== 'object') return undefined;
-    if (!Object.prototype.hasOwnProperty.call(settings, localId)) return undefined;
-    return (settings as Readonly<Record<string, unknown>>)[localId];
+    return readReleasedFlatPluginSettingValueFromHostDefaults({ ...params, hostDefaults: settingsDefaults });
 }

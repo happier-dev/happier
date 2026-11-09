@@ -1,4 +1,4 @@
-import type { TransferEndpointCandidate } from '@happier-dev/protocol';
+import type { TransferEndpointCandidate } from '@happier-dev/protocol/machines/transfer/transferStream';
 import {
     createMachineTransferRouteCache,
     DEFAULT_MACHINE_TRANSFER_ROUTE_CACHE_NEGATIVE_TTL_MS,

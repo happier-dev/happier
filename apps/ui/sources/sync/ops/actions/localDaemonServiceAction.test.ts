@@ -10,8 +10,13 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { publishAppliedActiveServerSnapshot, publishAppliedActiveServerRuntimeAvailability } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { markUpdateCompletionsSeen, readUnseenUpdateCompletions } from '@/updates/updateCompletions';
 import { buildUpdateItemId } from '@/updates/items/updateItem';
-import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
+import { resolveServerProfileScopeIdForIdentifier, setActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { setDesktopLoginStartMode } from '@/components/settings/desktop/desktopLoginStart';
+import { createDeferred, renderHook } from '@/dev/testkit';
+import { act } from 'react-test-renderer';
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
+import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
 vi.mock('socket.io-client', async original =>
@@ -45,6 +50,248 @@ async function fixture(mode: 'tauri' | 'native' = 'tauri') {
 }
 
 describe('local daemon service Actions through the native task owner', () => {
+    it('does not display or cancel another Home service start in Settings', async () => {
+        const { serverId, manual, executor, context } = await fixture();
+        const pending = executor.execute('machines.local.service.start', { serverId }, context);
+        await vi.waitFor(() => expect(manual.bridge.start.mock.calls[0]?.[0].kind).toBe('daemon.service.start.v1'));
+        const otherId = await harness.addHome({ name: 'Other Home', serverUrl: 'https://other-local-service.test', accountId: 'bob' });
+        storage.setState({ settingsScope: { serverId: otherId, accountId: 'bob' }, profileScope: { serverId: otherId, accountId: 'bob' } });
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot(), true);
+        const { useLocalDaemonControl } = await import('@/components/settings/machines/localControl/useLocalDaemonControl');
+        const hook = await renderHook(() => useLocalDaemonControl({ runner: manual.runner }));
+        try {
+            expect(hook.getCurrent().activeTaskSnapshot).toBeNull();
+            await act(async () => { hook.getCurrent().cancel(); });
+            expect(manual.bridge.cancel).not.toHaveBeenCalled();
+        } finally {
+            manual.emitResult('personal-home-task-1', { protocolVersion: 1, taskId: 'personal-home-task-1', ok: false,
+                error: { code: 'canceled', message: 'Canceled original Home task' } });
+            await pending;
+            await hook.unmount();
+        }
+    });
+
+    it('keeps admitted Settings start progress and cancellation attached to the native task', async () => {
+        const { manual } = await fixture();
+        const { useLocalDaemonControl } = await import('@/components/settings/machines/localControl/useLocalDaemonControl');
+        const hook = await renderHook(() => useLocalDaemonControl({ runner: manual.runner }));
+        await act(async () => {
+            manual.emitResult('personal-home-task-1', { protocolVersion: 1, taskId: 'personal-home-task-1', ok: true, data: status });
+        });
+        let pending!: Promise<unknown>;
+        await act(async () => { pending = hook.getCurrent().startDaemonService(); });
+        await act(async () => {
+            await vi.waitFor(() => expect(manual.bridge.start.mock.calls[1]?.[0].kind).toBe('daemon.service.start.v1'));
+        });
+        await act(async () => {
+            manual.emitEvent('personal-home-task-2', { type: 'progress', message: 'Starting background service' });
+        });
+        expect(hook.getCurrent().activeTaskSnapshot?.taskId).toBe('personal-home-task-2');
+        expect(manual.bridge.start.mock.calls[1]?.[0].params).toMatchObject({ relayUrl: 'https://service-home.test' });
+        await act(async () => {
+            hook.getCurrent().cancel();
+            manual.emitResult('personal-home-task-2', { protocolVersion: 1, taskId: 'personal-home-task-2', ok: false,
+                error: { code: 'canceled', message: 'Canceled' } });
+            await pending;
+        });
+        expect(manual.bridge.cancel).toHaveBeenCalledWith('personal-home-task-2');
+        expect(hook.getCurrent().isBusy).toBe(false);
+        await hook.unmount();
+    });
+
+    it.each(['startDaemonService', 'updateCli'] as const)('refuses the Settings %s effect when its Action is disabled', async callback => {
+        const { serverId, manual } = await fixture();
+        const actionId = callback === 'startDaemonService' ? 'machines.local.service.start' : 'machines.local.service.update';
+        const settings = { ...storage.getState().settings, actionsSettingsV1: normalizeActionsSettingsV1({
+            v: 1, actions: { [actionId]: { enabled: false } },
+        }) };
+        storage.getState().applySettingsForScope({ serverId, accountId: 'alice' }, settings, 2);
+        harness.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: settings }, version: 2 } });
+        const { useLocalDaemonControl } = await import('@/components/settings/machines/localControl/useLocalDaemonControl');
+        const hook = await renderHook(() => useLocalDaemonControl({ runner: manual.runner }));
+        await act(async () => {
+            manual.emitResult('personal-home-task-1', { protocolVersion: 1, taskId: 'personal-home-task-1', ok: true, data: status });
+        });
+        let pending!: Promise<unknown>;
+        await act(async () => { pending = hook.getCurrent()[callback](); });
+        try {
+            expect(manual.bridge.start.mock.calls.map(([spec]) => spec.kind)).toEqual(['daemon.service.status.v1']);
+            await act(async () => { await pending; });
+            expect(manual.bridge.start.mock.calls.map(([spec]) => spec.kind)).toEqual(['daemon.service.status.v1']);
+            expect(hook.getCurrent().lastErrorMessage).toBeTruthy();
+        } finally { await hook.unmount(); }
+    });
+
+    // Plan 71 §4 keeps native consent while requiring repair/reconsideration to enter Action admission.
+    it.each(['changeCommandLine', 'repairBackgroundService'] as const)('refuses Settings %s before native setup when its local setup Action is disabled', async callback => {
+        const { serverId, manual } = await fixture();
+        const settings = { ...storage.getState().settings, actionsSettingsV1: normalizeActionsSettingsV1({
+            v: 1, actions: { 'machines.add.local.start': { enabled: false } },
+        }) };
+        storage.getState().applySettingsForScope({ serverId, accountId: 'alice' }, settings, 2);
+        harness.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: settings }, version: 2 } });
+        const { useLocalDaemonControl } = await import('@/components/settings/machines/localControl/useLocalDaemonControl');
+        const hook = await renderHook(() => useLocalDaemonControl({ runner: manual.runner }));
+        await act(async () => {
+            manual.emitResult('personal-home-task-1', { protocolVersion: 1, taskId: 'personal-home-task-1', ok: true, data: status });
+        });
+        try {
+            await act(async () => { await hook.getCurrent()[callback](); });
+            expect(manual.bridge.start.mock.calls.map(([spec]) => spec.kind)).toEqual(['daemon.service.status.v1']);
+            expect(hook.getCurrent().lastErrorMessage).toBeTruthy();
+        } finally { await hook.unmount(); }
+    });
+
+    // Plan 71 §4 retains specialized native consent while replacing raw calls with Actions.
+    // These signed-in journeys replace the unauthenticated shared-state setup variants.
+    it.each([
+        ['changeCommandLine', 'setup.thisComputer.v1'],
+        ['repairBackgroundService', 'setup.repairThisComputer.v1'],
+    ] as const)('retains admitted Settings %s prompts and progress after navigation and surfaces terminal failure on return', async (callback, kind) => {
+        const { serverId, manual } = await fixture();
+        const previousProfile = storage.getState().profile;
+        // Settings observes the hydrated profile id; Action admission reads the Account scope.
+        storage.setState({ profile: AccountProfileSchema.parse({ id: 'alice' }) });
+        const settings = { ...storage.getState().settings, actionsSettingsV1: normalizeActionsSettingsV1({
+            v: 1, approvalWaivedSurfaces: { 'machines.add.local.start': ['ui'] },
+        }) };
+        storage.getState().applySettingsForScope({ serverId, accountId: 'alice' }, settings, 2);
+        harness.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: settings }, version: 2 } });
+        const { useLocalDaemonControl } = await import('@/components/settings/machines/localControl/useLocalDaemonControl');
+        const { discardMachineAdd } = await import('@/components/machines/add/useMachineAddFlow');
+        const { Modal } = await import('@/modal');
+        const mounted = await renderHook(() => useLocalDaemonControl({ runner: manual.runner }));
+        await act(async () => manual.emitResult('personal-home-task-1', {
+            protocolVersion: 1, taskId: 'personal-home-task-1', ok: true, data: status,
+        }));
+        let finishStart!: (taskId: string) => void;
+        manual.bridge.start.mockImplementationOnce(() => new Promise<string>(resolve => { finishStart = resolve; }));
+        let starting!: Promise<string | null>;
+        try {
+            await act(async () => {
+                starting = mounted.getCurrent()[callback]();
+                await vi.waitFor(() => expect(manual.bridge.start.mock.calls[1]?.[0].kind).toBe(kind));
+            });
+            expect(manual.bridge.start.mock.calls[1]?.[0].params).toMatchObject({
+                activeRelayUrl: 'https://service-home.test', activeServerIdentityId: 'srv_local-service',
+                activeAccountId: 'alice', surface: 'desktop.ui',
+                ...(callback === 'changeCommandLine' ? { reconsiderCli: true } : {}),
+            });
+            await mounted.unmount();
+            const waiting = await renderHook(() => useLocalDaemonControl({ runner: manual.runner }));
+            expect(waiting.getCurrent().isBusy).toBe(true);
+            let taskId: string | null = null;
+            await act(async () => { finishStart('delayed-setup'); taskId = await starting; });
+            expect(waiting.getCurrent().activeTaskSnapshot?.taskId).toBe(taskId);
+            await waiting.unmount();
+            expect(manual.bridge.cancel).not.toHaveBeenCalledWith(taskId);
+            manual.emitEvent(taskId!, { type: 'progress', message: 'Preparing computer' });
+            vi.mocked(Modal.alertAsync).mockImplementationOnce(async (_title, _message, buttons) => {
+                buttons?.at(-1)?.onPress?.();
+            });
+            manual.emitEvent(taskId!, { type: 'prompt', message: 'Choose command line', data: {
+                kind: 'setup.cliChoice', command: '/usr/local/bin/happier', version: '0.3.1', origin: 'npm',
+                removalCommand: null, updateCommand: null, belowSetupFloor: false, missing: false, keepBlockedBy: null,
+            } });
+            await flushHookEffects();
+            expect(manual.bridge.respond).toHaveBeenCalledWith(taskId, { choice: 'managed' });
+            manual.emitEvent(taskId!, { type: 'prompt', message: 'Pair computer', data: {
+                kind: 'authRequest', responseKind: 'tokenOnly', publicKey: 'request-key', response: 'opaque-response',
+                relayUrl: 'https://different-home.example', cliProvenance: 'managed',
+            } });
+            await flushHookEffects();
+            expect(manual.bridge.respond).toHaveBeenCalledWith(taskId, { approved: false, reason: 'relay_mismatch' });
+            const returned = await renderHook(() => useLocalDaemonControl({ runner: manual.runner }));
+            expect(returned.getCurrent().activeTaskSnapshot?.taskId).toBe(taskId);
+            expect(returned.getCurrent().isBusy).toBe(true);
+            await act(async () => { await returned.getCurrent().repairBackgroundService(); });
+            expect(readLocalDaemonSharedState(manual.runner).setup.taskId).toBe(taskId);
+            expect(manual.bridge.start.mock.calls.filter(([spec]) => spec.kind.startsWith('setup.'))).toHaveLength(1);
+            await act(async () => {
+                const otherId = await harness.addHome({ name: 'Other Settings Home', serverUrl: 'https://other-settings-home.test', accountId: 'bob' });
+                storage.setState({ settingsScope: { serverId: otherId, accountId: 'bob' }, profileScope: { serverId: otherId, accountId: 'bob' },
+                    profile: AccountProfileSchema.parse({ id: 'bob' }) });
+                publishAppliedActiveServerSnapshot(getActiveServerSnapshot(), true);
+            });
+            expect(returned.getCurrent().activeTaskSnapshot).toBeNull();
+            expect(returned.getCurrent().isBusy).toBe(true);
+            let otherRun: string | null = null;
+            await act(async () => { otherRun = await returned.getCurrent().repairBackgroundService(); });
+            expect(otherRun).toBeNull();
+            await act(async () => {
+                await setActiveServerId(serverId);
+                storage.setState({ settingsScope: { serverId, accountId: 'alice' }, profileScope: { serverId, accountId: 'alice' },
+                    profile: AccountProfileSchema.parse({ id: 'alice' }) });
+                publishAppliedActiveServerSnapshot(getActiveServerSnapshot(), true);
+            });
+            expect(returned.getCurrent().activeTaskSnapshot?.taskId).toBe(taskId);
+            await returned.unmount();
+            manual.emitResult(taskId!, { protocolVersion: 1, taskId: taskId!, ok: false,
+                error: { code: 'test_setup_failure', message: 'Named setup failure' } });
+            await flushHookEffects();
+            const failed = await renderHook(() => useLocalDaemonControl({ runner: manual.runner }));
+            expect(failed.getCurrent().lastErrorMessage).toBe('Named setup failure');
+            expect(failed.getCurrent().isBusy).toBe(false);
+            // thisComputerSetupScope.ts:19–22 prefers the published Home identity over its local URL alias.
+            expect(readLocalDaemonSharedState(manual.runner).setup.scope?.serverId)
+                .toBe(resolveServerProfileScopeIdForIdentifier(serverId));
+            await failed.unmount();
+        } finally {
+            await act(async () => discardMachineAdd());
+            storage.setState({ profile: previousProfile });
+        }
+    });
+
+    it('refuses competing CLI reconsideration in an exact relay repair before starting any native task', async () => {
+        const { serverId, manual, executor, context } = await fixture();
+        expect(await executor.execute('machines.add.local.start', { serverId, purpose: 'relay_repair', reconsiderCli: true }, context))
+            .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+        expect(manual.bridge.start).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ['reconsideration', { reconsiderCli: true }, 'setup.thisComputer.v1'],
+        ['relay repair', { purpose: 'relay_repair' }, 'setup.repairThisComputer.v1'],
+    ] as const)('keeps %s independent of an unrelated pending Add task and its draft', async (_purpose, input, kind) => {
+        const { serverId, manual, executor, context } = await fixture();
+        const settings = { ...storage.getState().settings, actionsSettingsV1: normalizeActionsSettingsV1({
+            v: 1, approvalWaivedSurfaces: { 'machines.add.local.start': ['ui'] },
+        }) };
+        storage.getState().applySettingsForScope({ serverId, accountId: 'alice' }, settings, 2);
+        harness.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: settings }, version: 2 } });
+        const { readMachineAddFlowDraft, updateMachineAddFlowDraft, discardMachineAddFlowDraft } =
+            await import('@/components/machines/add/machineAddFlowStore');
+        const { startMachineAddTask } = await import('@/components/machines/add/machineAddTaskLifetime');
+        const held = createDeferred<string | null>();
+        updateMachineAddFlowDraft(draft => ({ ...draft, serverId, path: 'ssh',
+            sshDraft: { ...draft.sshDraft, host: 'unfinished-add.example' } }));
+        const unrelated = startMachineAddTask('ssh', manual.runner, () => held.promise);
+        const draft = readMachineAddFlowDraft();
+        try {
+            expect(await executor.execute('machines.add.local.start', { serverId, ...input }, context))
+                .toMatchObject({ ok: true, result: { taskId: 'personal-home-task-1' } });
+            expect(manual.bridge.start.mock.calls.map(([spec]) => spec.kind)).toEqual([kind]);
+            expect(readMachineAddFlowDraft()).toBe(draft);
+            expect(manual.bridge.cancel).not.toHaveBeenCalled();
+        } finally {
+            held.resolve(null);
+            await unrelated;
+            manual.emitResult('personal-home-task-1', { protocolVersion: 1, taskId: 'personal-home-task-1', ok: false,
+                error: { code: 'canceled', message: 'Fixture complete' } });
+            discardMachineAddFlowDraft();
+        }
+    });
+
+    it.each(['agent', 'mcp', 'cli'] as const)('lets %s read the same native service status owner', async surface => {
+        const { serverId, manual, executor, context } = await fixture();
+        const pending = executor.execute('machines.local.service.status', { serverId },
+            { ...context, surface, authority: 'account_automation' });
+        await vi.waitFor(() => expect(manual.bridge.start.mock.calls[0]?.[0].kind).toBe('daemon.service.status.v1'));
+        manual.emitResult('personal-home-task-1', { protocolVersion: 1, taskId: 'personal-home-task-1', ok: true, data: status });
+        expect(await pending).toMatchObject({ ok: true, result: { taskId: 'personal-home-task-1', result: { ok: true } } });
+        expect(readLocalDaemonSharedState<LocalDaemonStatusData>(manual.runner).status?.machineId).toBe('local-desktop');
+    });
+
     it.each([
         ['status', 'daemon.service.status.v1'], ['start', 'daemon.service.start.v1'],
         ['stop', 'daemon.service.stop.v1'], ['restart', 'daemon.service.restart.v1'],

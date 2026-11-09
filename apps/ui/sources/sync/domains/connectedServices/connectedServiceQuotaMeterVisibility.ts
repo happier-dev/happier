@@ -1,4 +1,4 @@
-import type { ConnectedServiceQuotaMeterV1 } from '@happier-dev/protocol';
+import type { ConnectedServiceQuotaMeterV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 
 import { deriveQuotaMeterValues } from './deriveQuotaUtilizationPct';
 

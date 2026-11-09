@@ -1,4 +1,4 @@
-import { projectLegacySessionAccessCapabilitiesV1 } from '@happier-dev/protocol';
+import { projectLegacySessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { describe, expect, it } from 'vitest';
 
 import { createSessionFixture, createSessionAccessFixture } from '@/dev/testkit/fixtures/sessionFixtures';
@@ -8,7 +8,7 @@ import { getSessionName, getSessionStatus } from '@/utils/sessions/sessionUtils'
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 
 import { applySessionListRenderablePatch, areSessionListRenderablesEqual, buildSessionListRenderableFromSession } from './sessionListRenderable';
-import { buildSessionFromListRenderable, createSessionListPresentationSource, readSessionListPresentationPendingFlags } from './sessionListRenderableSessionProjection';
+import { buildSessionFromListRenderable, createSessionListPresentationSource, readSessionListPresentationPendingFlags, isSessionListRenderableNewerThanSession } from './sessionListRenderableSessionProjection';
 import { sessionRuntimeObservations } from '../sessionRuntimeObservation';
 import type { Message } from '@happier-dev/session-core/messages';
 import { buildSessionActivityAttention } from '@/activity/attention/buildSessionActivityAttention';
@@ -17,6 +17,24 @@ import { matchSessionListFilterV1, normalizeSessionListFilterV1 } from '@happier
 import { areStoredSessionsEqual } from '@/sync/store/domains/areStoredSessionsEqual';
 import { SESSION_LIST_DOCUMENT_ADMISSION } from '../sessionDocumentAdmission';
 import { hasAuthoritativeSessionRouteData } from '../hasAuthoritativeSessionRouteData';
+
+it('selects metadata-only display advances by layout and observed revision without advancing full documents', () => {
+    const admission = { scope: 'home/account', encryptionMode: 'plain' as const, metadataLayoutVersion: 0,
+        metadataAudience: 'owner' as const, dataEncryptionKey: null };
+    const base = createSessionFixture({ seq: 4, agentStateVersion: 2, metadataVersion: 99, metadataLayoutVersion: 0,
+        [SESSION_LIST_DOCUMENT_ADMISSION]: { ...admission, openedMetadataVersion: 99, observedMetadataVersion: 1,
+            observedMetadataLayoutVersion: 1 } });
+    const row = buildSessionListRenderableFromSession({ ...base, metadataLayoutVersion: 1, metadataVersion: 1 });
+    expect(isSessionListRenderableNewerThanSession(row, base)).toBe(true);
+    expect(isSessionListRenderableNewerThanSession({ ...row, metadataLayoutVersion: 0, metadataVersion: 99,
+        [SESSION_LIST_DOCUMENT_ADMISSION]: undefined }, base)).toBe(false);
+    const sameLayout = { ...base, metadataLayoutVersion: 1, metadataVersion: 1 };
+    expect(isSessionListRenderableNewerThanSession({ ...row, metadataVersion: 2 }, sameLayout)).toBe(true);
+    const observed = { ...row, [SESSION_LIST_DOCUMENT_ADMISSION]: { ...admission, metadataLayoutVersion: 1,
+        observedMetadataVersion: 2, observedMetadataLayoutVersion: 1 } };
+    expect(isSessionListRenderableNewerThanSession(observed, sameLayout)).toBe(true);
+    expect(base.metadataVersion).toBe(99);
+});
 
 it('does not relabel held full metadata when a display-only row advances its revision', () => {
     const admission = { scope: 'home/account', encryptionMode: 'plain' as const, metadataLayoutVersion: 0,
@@ -212,6 +230,33 @@ describe('buildSessionFromListRenderable', () => {
         expect(actual.personalAttention).toEqual(expected.personalAttention);
         expect(actual.workStatus).toEqual(expected.workStatus);
         expect([actual.title, actual.subtitle]).toEqual([expected.title, expected.subtitle]);
+    });
+    it('carries the admitted Project relationship without reviving an omitted or cleared base relationship', () => {
+        const session = createSessionFixture({ projectKey: 'payments' });
+        const row = buildSessionListRenderableFromSession(session);
+        expect(buildSessionFromListRenderable(row).projectKey).toBe('payments');
+        expect(buildSessionFromListRenderable({ ...row, projectKey: null }, { baseSession: session }).projectKey).toBeNull();
+        expect(buildSessionFromListRenderable({ ...row, projectKey: undefined }, { baseSession: session }).projectKey).toBeUndefined();
+    });
+    it('carries rule membership through cold row projection, filter facts and reconstruction without guessing missing counts', () => {
+        const session = createSessionFixture({ ownerAccountId: 'owner', origin: { kind: 'none' },
+            managedSessions: { total: 0, working: 0, needsYou: 0, stalled: 0, finished: 0, attentionPrimary: null }, receivedRuleCount: 1 });
+        const row = buildSessionListRenderableFromSession(session);
+        expect(row.receivedRuleCount).toBe(1);
+        expect(buildSessionFromListRenderable(row).receivedRuleCount).toBe(1);
+        const facts = buildSessionListRowFilterFacts(row, 'home', { nowMs: 1, viewerAccountId: 'owner' });
+        expect(facts).toMatchObject({ receivedRuleCount: 1, managedSessions: { total: 0 } });
+        const filter = normalizeSessionListFilterV1({ homeServerIds: ['home'], scope: 'all_accessible', coordinator: 'coordinator' });
+        const match = (candidate: typeof row) => matchSessionListFilterV1(filter,
+            buildSessionListRowFilterFacts(candidate, 'home', { nowMs: 1, viewerAccountId: 'owner' }));
+        expect(match(row)).toBe('match');
+        const noRules = buildSessionListRenderableFromSession({ ...session, receivedRuleCount: 0 }, row);
+        expect(areSessionListRenderablesEqual(row, noRules)).toBe(false);
+        expect(areStoredSessionsEqual(session, { ...session, receivedRuleCount: 0 })).toBe(false);
+        expect(match(noRules)).toBe('miss');
+        const unknown = buildSessionListRenderableFromSession({ ...session, receivedRuleCount: undefined }, row);
+        expect(buildSessionFromListRenderable(unknown, { baseSession: session }).receivedRuleCount).toBeUndefined();
+        expect(match(unknown)).toBe('unavailable');
     });
     it('retains the protected owner Account and invalidates stale starter projections', () => {
         const session = createSessionFixture({ ownerAccountId: 'owner', origin: { kind: 'none' } });
@@ -414,12 +459,4 @@ describe('buildSessionFromListRenderable', () => {
         expect(recipientSession.ownerMetadataView).toBeNull();
         expect(readSessionOwnerMetadataView(recipientSession)).toBeNull();
     });
-    it('carries the admitted Project relationship without reviving an omitted or cleared base relationship', () => {
-        const session = createSessionFixture({ projectKey: 'payments' });
-        const row = buildSessionListRenderableFromSession(session);
-        expect(buildSessionFromListRenderable(row).projectKey).toBe('payments');
-        expect(buildSessionFromListRenderable({ ...row, projectKey: null }, { baseSession: session }).projectKey).toBeNull();
-        expect(buildSessionFromListRenderable({ ...row, projectKey: undefined }, { baseSession: session }).projectKey).toBeUndefined();
-    });
-
 });

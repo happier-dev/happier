@@ -8,6 +8,7 @@ import {
 import {
     resolveHomeAccountAdministrationActions,
     resolveHomeAccountStatusPresentation,
+    resolveHomePublicProfileModeration,
 } from './homeAccountAdministration';
 
 function mutationCapabilities(
@@ -253,5 +254,38 @@ describe('resolveHomeAccountAdministrationActions', () => {
             state: 'unavailable',
             reason: 'team_owner_transfer_required',
         });
+    });
+});
+
+describe('resolveHomePublicProfileModeration', () => {
+    it('uses the exact target capability instead of granting authority from the general viewer projection', () => {
+        const params = {
+            target: { ...target('member', 'active'), publicProfile: {
+                managementCapability: { status: 'unavailable' as const, reason: 'not_authorized' as const }, restricted: false,
+            } },
+            mutationsAvailable: true,
+        };
+        expect(resolveHomePublicProfileModeration(params)).toEqual({ state: 'hidden' });
+    });
+
+    it('presents an available server decision for either restriction state', () => {
+        for (const restricted of [false, true]) {
+            expect(resolveHomePublicProfileModeration({ target: { publicProfile: {
+                managementCapability: { status: 'available' }, restricted,
+            } }, mutationsAvailable: true }))
+            .toEqual({ state: 'available' });
+        }
+    });
+
+    it('does not infer authority when an older Home has no profile projection', () => {
+        expect(resolveHomePublicProfileModeration({ target: {}, mutationsAvailable: true }))
+            .toEqual({ state: 'hidden' });
+    });
+
+    it('narrows available management while the Home is unreachable', () => {
+        expect(resolveHomePublicProfileModeration({ target: { publicProfile: {
+            managementCapability: { status: 'available' }, restricted: true,
+        } }, mutationsAvailable: false }))
+            .toEqual({ state: 'unavailable', reason: 'home_unreachable' });
     });
 });

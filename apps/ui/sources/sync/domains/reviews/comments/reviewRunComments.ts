@@ -115,7 +115,7 @@ function upsert(entry: Entry, comment: ReviewCommentV1): void {
 }
 
 /** Reconciles confirmed server revisions across loaded runs holding the same canonical comment. */
-function updateHeldReviewComments(comments: readonly ReviewCommentV1[], scope: ServerAccountScope): void {
+export function recordReviewCommentReads(comments: readonly ReviewCommentV1[], scope: ServerAccountScope): void {
     for (const comment of comments) {
         if (!comment.sessionId || !comment.runId) continue;
         // A comment id is Home-local, even when both Homes sign in as the same Account.
@@ -137,7 +137,7 @@ function updateHeldReviewComments(comments: readonly ReviewCommentV1[], scope: S
 /** Announces a confirmed write to loaded runs and other scoped comment surfaces. */
 export function recordReviewCommentWrites(comments: readonly ReviewCommentV1[], scope: ServerAccountScope): void {
     if (comments.length === 0) return;
-    updateHeldReviewComments(comments, scope);
+    recordReviewCommentReads(comments, scope);
     for (const listener of writeListeners) listener(comments, scope);
 }
 
@@ -218,7 +218,7 @@ export function loadReviewRunComments(params: ReviewRunCommentsTarget & Readonly
             publish(entry, { ...entry.snapshot, status: 'loaded', comments: [...latest.values()] });
             // A canonical reference can be held by several reviewer runs. A confirmed read is
             // just as authoritative as a write response; no loaded copy may keep an older revision.
-            updateHeldReviewComments(entry.snapshot.comments, params.scope);
+            recordReviewCommentReads(entry.snapshot.comments, params.scope);
         } catch (cause) {
             publish(entry, { ...entry.snapshot, status: entry.snapshot.status === 'loaded' ? 'loaded' : 'failed' });
             throw new Error('review_run_comments_unavailable', { cause });

@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { assertScmResponse, scmFallbackError } from './scmRpcFailure';
 import { RetryableServerResponseError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
-
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
 
 describe('SCM RPC failure normalization', () => {
@@ -16,14 +15,20 @@ describe('SCM RPC failure normalization', () => {
         expect(cancelled).toMatchObject({ success: false, errorCode: 'COMMAND_CANCELLED' });
         expect(cancelled.diagnosticDetail).toBeUndefined();
     });
-    it('preserves known read transport failures without treating refusals as retryable native reads', () => {
+    it.each([RPC_ERROR_CODES.FORBIDDEN, RPC_ERROR_CODES.TEAM_AUTHENTICATION_REQUIRED, RPC_ERROR_CODES.TEAM_AUTHENTICATION_UNAVAILABLE])(
+        'keeps RPC authority refusals out of native read failures (%s)', rpcErrorCode => {
+            const failure = scmFallbackError(new RpcError('Authority refused', rpcErrorCode), {
+                method: RPC_METHODS.SCM_PULL_REQUEST_LIST, request: {},
+            });
+            expect(failure).toMatchObject({ success: false, errorCode: 'BACKEND_UNAVAILABLE', actionErrorCode: rpcErrorCode });
+            expect(failure.outcome).toBeUndefined();
+        });
+    it('preserves known transient read transport failures', () => {
         for (const [error, errorCode] of [
             [new RetryableServerResponseError(503, 'unavailable'), 'REMOTE_NETWORK_FAILED'],
             [new TypeError('Failed to fetch'), 'REMOTE_NETWORK_FAILED'],
             [Object.assign(new Error('timeout'), { code: 'MACHINE_RPC_TIMEOUT' }), 'COMMAND_TIMEOUT'],
         ] as const) expect(scmFallbackError(error, { method: RPC_METHODS.SCM_PULL_REQUEST_LIST, request: {} })).toMatchObject({ errorCode });
-        expect(scmFallbackError(Object.assign(new Error('Denied'), { code: 'denied' }),
-            { method: RPC_METHODS.SCM_PULL_REQUEST_LIST, request: {} }).errorCode).toBe('REPOSITORY_REFRESH_FAILED');
     });
     it('does not grant mutation retry authority after a lost result', () => {
         const error = new Error('transport timeout with private diagnostics');

@@ -1,7 +1,8 @@
 import type {
-    BrowserEventV1,
+    BrowserEventV1} from '@happier-dev/protocol/browser/events/v1';
+import type {
     BrowserViewTargetV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/browser/target/v1';
 
 import { withoutPreviewAdmission } from '@/sync/domains/local/services/preview/url';
 import { retainDeep, retainShallow } from '@/sync/domains/state/structuralSharing';
@@ -322,6 +323,7 @@ export function applyBrowserControlEvent(state: BrowserControlState, input: Brow
                         pendingUrl: null,
                         loadingState: 'ready',
                         loadingProgress: 1,
+                        lastError: null,
                     },
                 },
             };

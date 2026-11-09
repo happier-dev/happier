@@ -1,133 +1,73 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
+import { clearPersistence } from '@/sync/domains/state/persistence';
+import { loadLocalSettings } from '@/sync/domains/state/settingsPersistence';
+import { createSettingsDomain } from './settings';
 
-const mocks = vi.hoisted(() => ({
-    saveLocalSettings: vi.fn(),
-    savePurchases: vi.fn(),
-    saveSettings: vi.fn(),
-    tracking: {
-        capture: vi.fn(),
+const store = vi.hoisted(() => new Map<string, string>());
+const mocks = vi.hoisted(() => ({ tracking: { capture: vi.fn(), flush: vi.fn(async () => {}) } }));
+
+// MMKV and analytics are external boundaries; the settings domain and persistence owner are real.
+vi.mock('react-native-mmkv', () => ({
+    MMKV: class {
+        getString(key: string) { return store.get(key); }
+        set(key: string, value: string) { store.set(key, value); }
+        delete(key: string) { store.delete(key); }
+        getAllKeys() { return [...store.keys()]; }
+        clearAll() { store.clear(); }
     },
 }));
+vi.mock('@/track', () => ({ tracking: mocks.tracking, getTrackingAnonymousUserId: () => 'settings-analytics-test' }));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string) => key,
+        translateLoose: (key: string) => key,
+        getPreferredLanguage: () => 'en',
+    });
+});
 
-const storageStoreStub = {
-    storage: {
-        getState: () => ({}),
-        setState: () => {},
-        subscribe: () => () => {},
-    },
-    getStorage: () => ({}),
-};
+type SettingsDomainApi = ReturnType<typeof createSettingsDomain>;
+type TestState = SettingsDomainApi & Readonly<{
+    sessions: {};
+    machines: {};
+    machineDisplayById: {};
+    sessionListRowsByServerId: {};
+    sessionListIndexByServerId: {};
+    concurrentSessionListCacheByServerId: {};
+    machineListByServerId: {};
+}>;
 
-vi.mock('../../domains/state/storageStore', () => storageStoreStub);
-vi.mock('@/sync/domains/state/storageStore', () => storageStoreStub);
-
-vi.mock('../../domains/state/settingsPersistence', () => ({
-    loadSettings: () => ({
-        settings: {
-            analyticsOptOut: false,
-            crashReportsOptOut: false,
-            experiments: true,
-            sessionListDensity: 'comfortable',
-        },
-        version: 1,
-    }),
-    loadLocalSettings: () => ({ ...localSettingsDefaults }),
-    loadPurchases: () => ({}),
-    loadProfile: () => ({
-        id: '',
-        timestamp: 0,
-        firstName: null,
-        lastName: null,
-        username: null,
-        avatar: null,
-        linkedProviders: [],
-        connectedServices: [],
-        connectedServicesV2: [],
-        connectedServiceCredentialRevisionsV1: [],
-    }),
-    saveLocalSettings: mocks.saveLocalSettings,
-    savePurchases: mocks.savePurchases,
-    saveSettings: mocks.saveSettings,
-    saveProfile: vi.fn(),
-    loadSessionDrafts: () => ({}),
-    loadSessionLastViewed: () => ({}),
-    loadSessionModelModeUpdatedAts: () => ({}),
-    loadSessionModelModes: () => ({}),
-    loadSessionPermissionModeUpdatedAts: () => ({}),
-    loadSessionPermissionModes: () => ({}),
-    loadSessionActionDrafts: () => ({}),
-    loadSessionReviewCommentsDrafts: () => ({}),
-    loadWorkspaceReviewCommentsDrafts: () => ({}),
-    loadPendingSettings: () => ({}),
-    loadSessionMaterializedMaxSeqById: () => ({}),
-    loadChangesCursor: () => null,
-    saveSessionDrafts: vi.fn(),
-    saveSessionLastViewed: vi.fn(),
-    saveSessionModelModeUpdatedAts: vi.fn(),
-    saveSessionModelModes: vi.fn(),
-    saveSessionPermissionModeUpdatedAts: vi.fn(),
-    saveSessionPermissionModes: vi.fn(),
-    saveSessionActionDrafts: vi.fn(),
-    saveSessionReviewCommentsDrafts: vi.fn(),
-    saveWorkspaceReviewCommentsDrafts: vi.fn(),
-    savePendingSettings: vi.fn(),
-    saveSessionMaterializedMaxSeqById: vi.fn(),
-    saveChangesCursor: vi.fn(),
-}));
-
-vi.mock('@/track', () => ({
-    tracking: mocks.tracking,
-}));
+function createTestStore(): { getState: () => TestState } {
+    let state = {
+        sessions: {}, machines: {}, machineDisplayById: {}, sessionListRowsByServerId: {},
+        sessionListIndexByServerId: {}, concurrentSessionListCacheByServerId: {}, machineListByServerId: {},
+    } as TestState;
+    const set = (updater: ((current: TestState) => Partial<TestState> | TestState) | Partial<TestState>) => {
+        const next = typeof updater === 'function' ? updater(state) : updater;
+        state = { ...state, ...next };
+    };
+    state = { ...state, ...createSettingsDomain<TestState>({ set, get: () => state }) };
+    return { getState: () => state };
+}
 
 describe('createSettingsDomain local settings analytics', () => {
     beforeEach(() => {
-        mocks.saveLocalSettings.mockReset();
-        mocks.savePurchases.mockReset();
-        mocks.saveSettings.mockReset();
+        clearPersistence();
+        store.clear();
         mocks.tracking.capture.mockReset();
     });
 
     it('captures tracked local setting changes from the centralized local settings write path', async () => {
-        const { createSettingsDomain } = await import('./settings');
-        type TestState = ReturnType<typeof createState>;
+        const api = createTestStore();
 
-        function createState() {
-            return {
-                sessions: {},
-                machines: {},
-                machineDisplayById: {},
-                sessionListRowsByServerId: {},
-                sessionListIndexByServerId: {},
-                concurrentSessionListCacheByServerId: {},
-                machineListByServerId: {},
-                machineListStatusByServerId: {},
-            };
-        }
-
-        let state: TestState & ReturnType<typeof createSettingsDomain> = {
-            ...(createState() as TestState),
-        } as TestState & ReturnType<typeof createSettingsDomain>;
-        const set = (updater: any) => {
-            const next = typeof updater === 'function' ? updater(state) : updater;
-            state = { ...state, ...next };
-        };
-        const get = () => state as any;
-
-        const domain = createSettingsDomain<TestState & ReturnType<typeof createSettingsDomain>>({ set: set as any, get });
-        state = { ...state, ...domain };
-
-        state.applyLocalSettings({
+        api.getState().applyLocalSettings({
             themePreference: 'dark',
             uiFontScale: 1.35,
             sidebarWidthPx: 420,
-            acknowledgedCliVersions: {
-                'machine-a': '1.2.3',
-            },
         }, { source: 'ui' });
 
-        expect(mocks.saveLocalSettings).toHaveBeenCalledTimes(1);
+        expect(loadLocalSettings()).toMatchObject({ themePreference: 'dark', uiFontScale: 1.35, sidebarWidthPx: 420 });
         expect(mocks.tracking.capture).toHaveBeenCalledWith(
             'setting_changed',
             expect.objectContaining({
@@ -150,138 +90,50 @@ describe('createSettingsDomain local settings analytics', () => {
                 next_value: 'medium',
             }),
         );
-        expect(mocks.tracking.capture).toHaveBeenCalledWith(
-            'setting_changed',
-            expect.objectContaining({
-                setting_key: 'acknowledgedCliVersions',
-                scope: 'local_setting',
-                identity_scope: 'device_user',
-                source: 'ui',
-                prev_value: 0,
-                next_value: 1,
-            }),
-        );
-        expect(mocks.tracking.capture).toHaveBeenCalledTimes(3);
+        expect(mocks.tracking.capture).toHaveBeenCalledTimes(2);
     });
 
     it('skips local setting persistence and analytics when the normalized value is unchanged', async () => {
-        const { createSettingsDomain } = await import('./settings');
-        type TestState = ReturnType<typeof createState>;
+        const api = createTestStore();
+        const previousLocalSettings = api.getState().localSettings;
+        const persistedBefore = new Map(store);
 
-        function createState() {
-            return {
-                sessions: {},
-                machines: {},
-                machineDisplayById: {},
-                sessionListRowsByServerId: {},
-                sessionListIndexByServerId: {},
-                concurrentSessionListCacheByServerId: {},
-                machineListByServerId: {},
-                machineListStatusByServerId: {},
-            };
-        }
-
-        let state: TestState & ReturnType<typeof createSettingsDomain> = {
-            ...(createState() as TestState),
-        } as TestState & ReturnType<typeof createSettingsDomain>;
-        const set = (updater: any) => {
-            const next = typeof updater === 'function' ? updater(state) : updater;
-            state = { ...state, ...next };
-        };
-        const get = () => state as any;
-
-        const domain = createSettingsDomain<TestState & ReturnType<typeof createSettingsDomain>>({ set: set as any, get });
-        state = { ...state, ...domain };
-        const previousLocalSettings = state.localSettings;
-
-        state.applyLocalSettings({
-            appPaneScopesV1: {},
+        api.getState().applyLocalSettings({
         }, { source: 'ui' });
 
-        expect(state.localSettings).toBe(previousLocalSettings);
-        expect(mocks.saveLocalSettings).not.toHaveBeenCalled();
+        expect(api.getState().localSettings).toBe(previousLocalSettings);
+        expect(store).toEqual(persistedBefore);
         expect(mocks.tracking.capture).not.toHaveBeenCalled();
     });
 
     it('skips account setting persistence when a direct local delta is unchanged', async () => {
-        const { createSettingsDomain } = await import('./settings');
-        type TestState = ReturnType<typeof createState>;
+        const api = createTestStore();
+        const previousSettings = api.getState().settings;
+        const persistedBefore = new Map(store);
 
-        function createState() {
-            return {
-                sessions: {},
-                machines: {},
-                machineDisplayById: {},
-                sessionListRowsByServerId: {},
-                sessionListIndexByServerId: {},
-                concurrentSessionListCacheByServerId: {},
-                machineListByServerId: {},
-                machineListStatusByServerId: {},
-            };
-        }
-
-        let state: TestState & ReturnType<typeof createSettingsDomain> = {
-            ...(createState() as TestState),
-        } as TestState & ReturnType<typeof createSettingsDomain>;
-        const set = (updater: any) => {
-            const next = typeof updater === 'function' ? updater(state) : updater;
-            state = { ...state, ...next };
-        };
-        const get = () => state as any;
-
-        const domain = createSettingsDomain<TestState & ReturnType<typeof createSettingsDomain>>({ set: set as any, get });
-        state = { ...state, ...domain };
-        const previousSettings = state.settings;
-
-        state.applySettingsLocal({
-            experiments: state.settings.experiments,
+        api.getState().applySettingsLocal({
+            experiments: api.getState().settings.experiments,
         });
 
-        expect(state.settings).toBe(previousSettings);
-        expect(mocks.saveSettings).not.toHaveBeenCalled();
+        expect(api.getState().settings).toBe(previousSettings);
+        expect(store).toEqual(persistedBefore);
     });
 
     it('normalizes legacy iOS activity-surface keys onto canonical local settings before analytics emission', async () => {
-        const { createSettingsDomain } = await import('./settings');
-        type TestState = ReturnType<typeof createState>;
+        const api = createTestStore();
 
-        function createState() {
-            return {
-                sessions: {},
-                machines: {},
-                machineDisplayById: {},
-                sessionListRowsByServerId: {},
-                sessionListIndexByServerId: {},
-                concurrentSessionListCacheByServerId: {},
-                machineListByServerId: {},
-                machineListStatusByServerId: {},
-            };
-        }
-
-        let state: TestState & ReturnType<typeof createSettingsDomain> = {
-            ...(createState() as TestState),
-        } as TestState & ReturnType<typeof createSettingsDomain>;
-        const set = (updater: any) => {
-            const next = typeof updater === 'function' ? updater(state) : updater;
-            state = { ...state, ...next };
-        };
-        const get = () => state as any;
-
-        const domain = createSettingsDomain<TestState & ReturnType<typeof createSettingsDomain>>({ set: set as any, get });
-        state = { ...state, ...domain };
-
-        state.applyLocalSettings({
+        api.getState().applyLocalSettings({
             iosLiveActivitiesEnabled: false,
             iosWidgetsEnabled: false,
             homeScreenWidgetsMode: 'running',
         }, { source: 'ui' });
 
-        expect(state.localSettings.liveActivitiesEnabled).toBe(false);
-        expect(state.localSettings.iosLiveActivitiesEnabled).toBe(false);
-        expect(state.localSettings.widgetsEnabled).toBe(false);
-        expect(state.localSettings.iosWidgetsEnabled).toBe(false);
-        expect(state.localSettings.widgetsPresetMode).toBe('running');
-        expect(state.localSettings.homeScreenWidgetsMode).toBe('running');
+        expect(api.getState().localSettings.liveActivitiesEnabled).toBe(false);
+        expect(api.getState().localSettings.iosLiveActivitiesEnabled).toBe(false);
+        expect(api.getState().localSettings.widgetsEnabled).toBe(false);
+        expect(api.getState().localSettings.iosWidgetsEnabled).toBe(false);
+        expect(api.getState().localSettings.widgetsPresetMode).toBe('running');
+        expect(api.getState().localSettings.homeScreenWidgetsMode).toBe('running');
         expect(mocks.tracking.capture).toHaveBeenCalledWith(
             'setting_changed',
             expect.objectContaining({

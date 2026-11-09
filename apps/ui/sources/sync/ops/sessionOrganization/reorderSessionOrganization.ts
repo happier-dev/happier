@@ -1,7 +1,8 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { reorderSessionOrganization as reorderSessionOrganizationApi } from '@/sync/api/session/sessionOrganizationApi';
 import { getStorage } from '@/sync/domains/state/storageStore';
-import type { ReorderSessionOrganizationRequest } from '@happier-dev/protocol';
+import { sessionOrganizationStoreFor } from './sessionOrganizationAccountStore';
+import type { ReorderSessionOrganizationRequest } from '@happier-dev/protocol/sessions/organization/mutations';
 
 export async function reorderSessionOrganization(params: Readonly<{
     credentials: AuthCredentials;
@@ -19,7 +20,7 @@ export async function reorderSessionOrganization(params: Readonly<{
         itemKey: entry.itemKey,
         sortKey: entry.sortKey,
     }));
-    const recordId = getStorage().getState().applySessionOrganizationOrderEntriesOptimistic(params.serverId, optimisticEntries);
+    const recordId = sessionOrganizationStoreFor(params).applySessionOrganizationOrderEntriesOptimistic(params.serverId, optimisticEntries);
     try {
         const response = await reorderSessionOrganizationApi({
             credentials: params.credentials,
@@ -28,9 +29,9 @@ export async function reorderSessionOrganization(params: Readonly<{
             request: params.request,
         });
         params.assertCurrent?.();
-        getStorage().getState().commitSessionOrganizationOptimistic(recordId);
-        const reconcileRecordId = getStorage().getState().applySessionOrganizationOrderEntriesOptimistic(params.serverId, response.orderEntries);
-        getStorage().getState().commitSessionOrganizationOptimistic(reconcileRecordId);
+        sessionOrganizationStoreFor(params).commitSessionOrganizationOptimistic(recordId);
+        const reconcileRecordId = sessionOrganizationStoreFor(params).applySessionOrganizationOrderEntriesOptimistic(params.serverId, response.orderEntries);
+        sessionOrganizationStoreFor(params).commitSessionOrganizationOptimistic(reconcileRecordId);
     } catch (error) {
         try {
             params.assertCurrent?.();

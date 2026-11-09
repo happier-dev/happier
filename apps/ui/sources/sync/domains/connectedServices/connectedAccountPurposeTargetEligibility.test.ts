@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   QualifiedConnectedAccountGroupV4Schema,
-  QualifiedConnectedAccountProfileV4Schema,
+  QualifiedConnectedAccountProfileV4Schema} from '@happier-dev/protocol/connect/qualified-connected-account-projections';
+import {
   type PluginConnectedAccountAuthenticationModeV2,
-  type PluginConnectedAccountAuthenticationV2,
+  type PluginConnectedAccountAuthenticationV2} from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
+import {
   type QualifiedConnectedAccountProfileV4,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 
 import {
   describeConnectedAccountPurposeTargetEligibility,

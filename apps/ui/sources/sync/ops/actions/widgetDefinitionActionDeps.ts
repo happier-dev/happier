@@ -1,4 +1,4 @@
-import type { ActionExecutorDeps } from '@happier-dev/protocol';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { readWorkBoardArtifactV1, WORK_BOARD_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/boards/workBoardArtifactV1';
 import { createWidgetDefinitionArtifactPortV1, createWidgetLayoutFragmentArtifactPortV1, createSessionWidgetDefinitionSourceReaderV1,
     isSameWidgetDefinitionV1, widgetCandidateDefinitionV1, flattenWidgetLayoutWidgetsV1 } from '@happier-dev/protocol/widgets';

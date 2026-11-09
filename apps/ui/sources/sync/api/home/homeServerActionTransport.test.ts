@@ -5,9 +5,10 @@ import {
     type HomeGovernanceProjectionV1,
 } from '@happier-dev/protocol/home/governance';
 import {
-    ManagedGitHubAppErrorCodeV1Schema,
+    ManagedGitHubAppErrorCodeV1Schema} from '@happier-dev/protocol/identity/githubApps';
+import {
     SavedSecretResourceEnvelopeCensusResponseV1Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 
 const runtimeFetchMock = vi.hoisted(() => vi.fn());
 const getCredentialsForServerUrlMock = vi.hoisted(() => vi.fn());

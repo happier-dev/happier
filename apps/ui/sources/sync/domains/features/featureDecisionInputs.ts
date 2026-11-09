@@ -1,5 +1,5 @@
 import { createFeatureDecision, type FeatureDecision, type FeatureDecisionScope } from '@happier-dev/protocol/features/decision';
-import type { FeatureId } from '@happier-dev/protocol/features/catalog';
+import { getCanonicalFeatureId, type FeatureId } from '@happier-dev/protocol/features/catalog';
 
 import { storage } from '@/sync/domains/state/storage';
 import {
@@ -59,10 +59,11 @@ function resolveRuntimeFeatureDecisionRequestContext(
 export async function loadRuntimeFeatureDecisionInputs(
     params: ResolveRuntimeFeatureDecisionParams,
 ): Promise<RuntimeFeatureDecisionInputs> {
+    const featureId = getCanonicalFeatureId(params.featureId);
     const settings = params.settings ?? storage.getState().settings;
     const requestContext = resolveRuntimeFeatureDecisionRequestContext(params);
     const snapshotStrategy = resolveFeatureDecisionSnapshotStrategy({
-        featureId: params.featureId,
+        featureId,
         settings,
         scopeKind: requestContext.scope.scopeKind,
         hasMainSelectionServerIds: false,
@@ -78,7 +79,7 @@ export async function loadRuntimeFeatureDecisionInputs(
         : { status: 'loading' };
 
     return {
-        featureId: params.featureId,
+        featureId,
         settings,
         snapshot,
         scope: requestContext.scope,

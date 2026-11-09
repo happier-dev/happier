@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
     AutomationDefinitionListItemSchema,
-    AutomationTriggerDetailSchema,
     type AutomationDefinitionDetail,
     type AutomationDefinitionListItem,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/automations/automationApiV3';
+import {
+    AutomationTriggerDetailSchema} from '@happier-dev/protocol/automations/automationTriggerProjectionV1';
 
 import {
     applyAutomationDefinitionDetail,

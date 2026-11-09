@@ -1,4 +1,9 @@
-import { type ActionExecuteFailure, type AccountProfile, type ConnectedAccountUiProjectionEntryV1, type PluginContributionIdentityV1, type PluginProjectedResourceV2, type QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol';
+import { type ActionExecuteFailure} from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { WidgetViewerProfileV1 } from '@happier-dev/protocol/widgets';
+import { type ConnectedAccountUiProjectionEntryV1} from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';
+import { type PluginContributionIdentityV1} from '@happier-dev/protocol/plugins/contribution-identity';
+import { type PluginProjectedResourceV2} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { type QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
 import { QualifiedConnectedAccountRefSchema, type QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { isWidgetConnectedAccountSelectionEligibleV1, resolveWidgetViewerPurposeValuesV1, isSameWidgetDefinitionV1, type WidgetDefinitionRefV1, type WidgetInputDescriptorV1, type WidgetInstanceRefV1, type WidgetInstanceV1 } from '@happier-dev/protocol/widgets';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -14,7 +19,7 @@ export function admitWidgetViewerSelectionMetadataV1(input: Readonly<{
     instance: WidgetInstanceV1;
     descriptor: WidgetInputDescriptorV1 & Readonly<{ surface?: PluginContributionIdentityV1; definition?: WidgetDefinitionRefV1;
         resources?: readonly PluginContributionIdentityV1[]; connectedAccountDescriptors?: readonly ConnectedAccountUiProjectionEntryV1[] }>;
-    profile: AccountProfile | null;
+    profile: WidgetViewerProfileV1 | null;
     values: Readonly<Record<string, QualifiedConnectedAccountRef>>;
     now: number;
     purposeBindings?: QualifiedConnectedAccountPurposeBindingsV1;

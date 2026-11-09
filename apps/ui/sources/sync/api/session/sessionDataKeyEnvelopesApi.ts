@@ -192,6 +192,7 @@ export async function prepareSessionDataKeyEnvelopesForScope(
         // newer generation of the same Account owner.
         const encryptionCurrentness = captureEncryptionGenerationCurrentness(encryption, {
             serverId: bound.authority.scope.serverId,
+            sessionId: bound.sessionId,
         });
         const isCurrent = () => bound.guard.isCurrent() && encryptionCurrentness.isCurrent();
         const credentials = bound.authority.context.credentials;

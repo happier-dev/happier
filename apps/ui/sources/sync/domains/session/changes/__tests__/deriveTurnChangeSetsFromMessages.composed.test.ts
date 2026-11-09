@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Message } from "@happier-dev/session-core/messages";
-import { mergeTurnChangeSets } from '@happier-dev/protocol';
+import { mergeTurnChangeSets } from '@happier-dev/protocol/sessions/changes/mergeTurnChangeSets';
 
 import { buildTurnChangeSetDiffInput } from '../../../../../../../cli/src/agent/tools/diff/buildTurnChangeSetDiffInput';
 import { projectRepositoryCheckpointTurnChangeSet } from '../../../../../../../cli/src/scm/checkpoints/projection';

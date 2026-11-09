@@ -2,7 +2,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createScmCapabilities } from '@happier-dev/protocol/scm';
-import { ApprovalRequestSchema, buildApprovalRequestArtifactHeaderV1, encodePlainArtifactStoredContent, projectLegacySessionAccessCapabilitiesV1 } from '@happier-dev/protocol';
+import { ApprovalRequestSchema} from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { buildApprovalRequestArtifactHeaderV1} from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import { encodePlainArtifactStoredContent} from '@happier-dev/protocol/storage/artifactStoredContent';
+import { projectLegacySessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { buildUpdateArtifactUpdate } from '../../../../../server/sources/app/events/artifactEventPayloadBuilders';
@@ -200,7 +203,7 @@ describe('withDefaultActionExecuteContext', () => {
         }
     });
 
-    it('admits mounted Session panel navigation through its Action and refuses disabled or mismatched targets', async () => {
+    it.each(['board.item.reveal', 'chat.item.show'] as const)('admits mounted Session %s through its Action and refuses disabled or mismatched targets', async kind => {
         const serverId = await addHome();
         let disabled = true;
         harness.answer(serverId, '/v2/account/settings', { select: () => ({ body: { version: 1,
@@ -214,7 +217,8 @@ describe('withDefaultActionExecuteContext', () => {
             currentSessionPresentationApply: { serverId, accountId: ACCOUNT_ID, sessionId: 'session-a',
                 isCurrent: () => mounted,
                 apply: async ({ input }) => {
-                    if (input.intent.kind !== 'board.item.reveal') throw new Error('unexpected presentation intent');
+                    if (input.intent.kind !== kind) throw new Error('unexpected presentation intent');
+                    if (input.intent.kind === 'chat.item.show') expect(input.intent.occurrenceId).toBe('reply-second');
                     panel = input.intent.widgetId;
                     return { status: 'applied', revision: 'mounted-revision' };
                 },
@@ -222,7 +226,7 @@ describe('withDefaultActionExecuteContext', () => {
         });
         const context = { surface: 'ui', authority: 'present_user', serverId,
             expectedAccountId: ACCOUNT_ID, defaultSessionId: 'session-a' } as const;
-        const input = { intent: { kind: 'board.item.reveal', widgetId: 'visual-a' } } as const;
+        const input = { intent: { kind, widgetId: 'visual-a', ...(kind === 'chat.item.show' ? { occurrenceId: 'reply-second' } : {}) } } as const;
         expect(await executor.execute('session.presentation.apply', input, context)).toMatchObject({ ok: false });
         expect(panel).toBeNull();
         disabled = false;
@@ -411,7 +415,7 @@ describe('withDefaultActionExecuteContext', () => {
 
     it('returns typed unavailability for native navigation on a sidecar-only Home', async () => {
         const serverId = await addHome();
-        const { FeaturesResponseSchema } = await import('@happier-dev/protocol');
+        const { FeaturesResponseSchema} = await import('@happier-dev/protocol/features/payload/featuresResponseSchema');
         const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
         const prime = (enabled: boolean) => primeServerFeaturesSnapshot({ serverId, snapshot: {
             status: 'ready', features: FeaturesResponseSchema.parse({ features: { browser: {
@@ -608,7 +612,7 @@ describe('withDefaultActionExecuteContext', () => {
                 getSessionMaterializedMaxSeq: () => 0, markSessionMaterializedMaxSeq: () => {},
                 onMessageGapDetected: () => {}, assumeUsers: async () => {}, applyTodoSocketUpdates: async () => {},
                 invalidateMachines: () => {}, invalidateSessions: () => {}, invalidateArtifacts: () => {},
-                invalidateFriends: () => {}, invalidateFriendRequests: () => {}, invalidateFeed: () => {},
+                invalidateFriends: () => {}, invalidateFeed: () => {},
                 invalidateAutomations: () => {}, invalidateTodos: () => {}, log: { log: () => {} },
             });
             await vi.waitFor(() => expect(outcome.result).toMatchObject({ ok: false, errorCode: 'approval_rejected' }));

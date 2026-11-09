@@ -68,11 +68,11 @@ function createHarness(options?: Readonly<{ includeCarrierRow?: boolean }>) {
         workspaceRepositoryTreeExpandedPathsByWorkspaceCacheKey: {},
         reviewCommentsDraftsBySessionId: {},
         reviewCommentsDraftsByWorkspaceCacheKey: {},
-        sessionActionDraftsByAddressKey: {},
         isDataReady: true,
         machines: {},
         machineDisplayById: {},
         sessionMessages: { [SESSION_ID]: [{ id: 'm1' }] },
+        sessionMessageToolVersion: 0,
         sessionMessagesHistoryStartLoaded: {},
         settings: {},
     };

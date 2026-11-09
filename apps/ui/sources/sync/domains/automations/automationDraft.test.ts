@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AutomationStoredDefinitionExecutionRecipeV1Schema } from '@happier-dev/protocol';
+import { AutomationStoredDefinitionExecutionRecipeV1Schema } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
 
 import {
     DEFAULT_NEW_SESSION_AUTOMATION_DRAFT,

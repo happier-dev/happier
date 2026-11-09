@@ -1,10 +1,13 @@
 import * as React from 'react';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
 import type {
-    DeviceSimulatorPreviewCapabilities,
-    FeaturesResponse as ServerFeatures,
+    DeviceSimulatorPreviewCapabilities} from '@happier-dev/protocol/features/payload/capabilities/deviceCapabilities';
+import type {
+    FeaturesResponse as ServerFeatures} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import type {
     SimulatorDeviceResourceV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/devices/simulator/v1';
 import {
     DEFAULT_DEVICE_SIMULATOR_PREVIEW_CAPABILITIES,
 } from '@happier-dev/protocol/features/payload/capabilities/deviceCapabilities';
@@ -149,6 +152,8 @@ export function useSimulatorPreviewSessionSurfaceRuntime(
     input: UseSimulatorPreviewSessionSurfaceRuntimeInput,
 ): SimulatorPreviewSurfaceRuntime {
     const presented = useLayoutPresentationActive();
+    const hostViewed = useHostActivelyViewed();
+    const active = presented && hostViewed;
     const machineId = normalizeId(input.machineId);
     const serverId = normalizeId(input.serverId);
     const refreshIntervalMs = resolveRefreshIntervalMs(input.refreshIntervalMs);
@@ -173,7 +178,7 @@ export function useSimulatorPreviewSessionSurfaceRuntime(
     const nowMsRef = React.useRef(nowMs);
     const featureEnabled = featureDecision?.state === 'enabled';
     const daemonRuntimeAvailable = (input.enabled ?? true) && Boolean(machineId) && featureEnabled && capabilities.enabled;
-    const daemonRuntimeEnabled = daemonRuntimeAvailable && presented;
+    const daemonRuntimeEnabled = daemonRuntimeAvailable && active;
     const actionScope = React.useRef<AbortController | null>(null);
     React.useEffect(() => {
         if (!daemonRuntimeEnabled) return;
@@ -192,7 +197,7 @@ export function useSimulatorPreviewSessionSurfaceRuntime(
     }, [actionClient, nowMs, snapshotClient]);
 
     React.useEffect(() => {
-        if (!presented && daemonRuntimeAvailable) return;
+        if (!active && daemonRuntimeAvailable) return;
         if (!daemonRuntimeEnabled || !machineId) {
             setDaemonState(createSimulatorPreviewDaemonState());
             return;
@@ -243,7 +248,7 @@ export function useSimulatorPreviewSessionSurfaceRuntime(
                 clearInterval(intervalId);
             }
         };
-    }, [daemonRuntimeAvailable, daemonRuntimeEnabled, machineId, presented, refreshIntervalMs, serverId]);
+    }, [active, daemonRuntimeAvailable, daemonRuntimeEnabled, machineId, refreshIntervalMs, serverId]);
 
     const resources = React.useMemo(() => resolveRuntimeResources({
         explicitResources: input.resources ?? daemonState.resources,

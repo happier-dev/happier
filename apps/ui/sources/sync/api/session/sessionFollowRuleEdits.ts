@@ -1,7 +1,7 @@
-import { OpenedSessionFollowRuleV1Schema, type OpenedSessionFollowRuleV1 } from '@happier-dev/protocol/sessions/follow/actions';
+import { FollowRuleSetActionOutputV1Schema, OpenedSessionFollowRuleV1Schema, type OpenedSessionFollowRuleV1 } from '@happier-dev/protocol/sessions/follow/actions';
 import { excludeProjectFromSessionFollowRuleV1, includeExcludedProjectInSessionFollowRuleV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRulePreviewV1';
 import type { QualifiedProjectKeyV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
-import { executeSessionFollowAction } from './sessionFollowApi';
+import { executeUiSessionFollowAction } from './sessionFollowApi';
 
 export type FollowRuleProjectEditUndo = Readonly<{
     serverId: string;
@@ -17,14 +17,12 @@ export async function writeSessionFollowRuleDefinition(
     signal?: AbortSignal,
 ) {
     const { policy, ...ruleDefinition } = rule.definition;
-    const result = await executeSessionFollowAction('follow.set', {
+    const result = await executeUiSessionFollowAction('follow.set', {
         receiver: rule.receiver, source: { kind: 'rule', ruleId: rule.ruleId },
         ruleDefinition, policy, expectedVersion,
-    }, serverId, signal);
+    }, serverId, FollowRuleSetActionOutputV1Schema.parse, undefined, signal);
     if (result.kind === 'failed') return result;
-    return 'rule' in result.value
-        ? { kind: 'ok' as const, value: result.value.rule }
-        : { kind: 'failed' as const, error: 'unavailable' as const };
+    return { kind: 'ok' as const, value: result.value.rule };
 }
 
 /** One visible edit to the other rule; the original draft is kept for a version-bound Undo. */

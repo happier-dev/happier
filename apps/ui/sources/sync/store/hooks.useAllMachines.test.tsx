@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { MachinePublishedResourceSummaryV1Schema } from '@happier-dev/protocol/machines/resources/machineResourceSummaryV1';
 
@@ -20,14 +20,49 @@ import { storage } from '@/sync/domains/state/storageStore';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { selectActiveTestHomeForTests } from '@/dev/testkit/fixtures/persistedHomeProfiles';
 import { readMachineOnlineGraceMsFromEnv } from '@/utils/sessions/machineUtils';
 import { readMachineActivity } from '@/sync/domains/machines/machineActivity';
+import { useServerScopedLaunchMachine } from './hooks';
+
+beforeEach(async () => { await selectActiveTestHomeForTests(); });
 
 afterEach(() => {
     standardCleanup();
 });
 
 describe('useAllMachines', () => {
+    it('keeps a selected launch projection quiet on heartbeats and replaces equal rows across Home and Account scopes', async () => {
+        const previousState = storage.getState();
+        const firstHome = getActiveServerSnapshot().serverId;
+        const secondHome = 'srv_launch_other';
+        const now = Date.now();
+        const first = createMachineFixture({ id: 'same-machine', activeAt: now });
+        const second = { ...first };
+        const rebound = { ...first };
+        try {
+            storage.setState({ profileScope: { serverId: firstHome, accountId: 'first-owner' }, machines: {},
+                machineListByServerId: { [firstHome]: [first], [secondHome]: [second] },
+                machineListStatusByServerId: { [firstHome]: 'idle', [secondHome]: 'idle' } });
+            let renders = 0;
+            const hook = await renderHook(({ serverId }: { serverId: string }) => {
+                renders += 1;
+                return useServerScopedLaunchMachine(serverId, first.id);
+            }, { initialProps: { serverId: firstHome } });
+            const before = renders;
+            await act(async () => storage.setState({ machineListByServerId: {
+                [firstHome]: [{ ...first, activeAt: now + 1, updatedAt: now + 1 }], [secondHome]: [second],
+            } }));
+            expect(hook.getCurrent()).toBe(first);
+            expect(renders).toBe(before);
+            await hook.rerender({ serverId: secondHome });
+            expect(hook.getCurrent()).toBe(second);
+            await act(async () => storage.setState({ profileScope: { serverId: secondHome, accountId: 'next-owner' },
+                machineListByServerId: { [firstHome]: [first], [secondHome]: [rebound] } }));
+            expect(hook.getCurrent()).toBe(rebound);
+            await hook.unmount();
+        } finally { storage.setState(previousState); }
+    });
     it('refreshes launch admission when daemon content catches up to its published key basis', async () => {
         const previousState = storage.getState();
         const serverId = getActiveServerSnapshot().serverId;
@@ -74,6 +109,7 @@ describe('useAllMachines', () => {
             });
             const held = hook.getCurrent();
             const before = renders;
+            // The raw records are the control: they carry every daemon version.
             const full = await renderHook(() => useMachineRecordListsByServerId());
             let latest = machine;
             for (let tick = 1; tick <= 5; tick += 1) {
@@ -81,13 +117,11 @@ describe('useAllMachines', () => {
                 clock.mockReturnValue(at);
                 latest = { ...latest, seq: latest.seq + 1, daemonStateVersion: tick + 1, activeAt: at, updatedAt: at,
                     keyBasis: { ...latest.keyBasis!, daemonStateVersion: tick + 1 },
-                    daemonState: { ...latest.daemonState, resources: MachinePublishedResourceSummaryV1Schema.parse({
+                    daemonState: { ...latest.daemonState, managedActivity: { kind: 'idle', since: tick }, resources: MachinePublishedResourceSummaryV1Schema.parse({
                         v: 1, vitals: { state: 'unavailable', since: tick, reason: 'reader_failed' }, attention: { level: 'calm', reasons: [] },
                     }) } };
                 await act(async () => storage.getState().applyMachines([latest], false, { sourceServerId: serverId }));
                 expect(hook.getCurrent()).toBe(held);
-                // The real writer retains its current row on a heartbeat. A launch projection
-                // held across the preceding resource replacement must follow that row too.
                 latest = { ...latest, activeAt: at + 1, updatedAt: at + 1 };
                 await act(async () => storage.getState().applyMachines([latest], false, { sourceServerId: serverId }));
                 expect(readMachineActivity(held.machines[0]!).activeAt).toBe(at + 1);
@@ -170,7 +204,7 @@ describe('useAllMachines', () => {
             const firstSnapshot = first.getCurrent();
             const second = await renderHook(() => useLaunchSelectionMachines());
             const secondSnapshot = second.getCurrent();
-            clock.mockReturnValue(now + readMachineOnlineGraceMsFromEnv() + 1);
+            clock.mockReturnValue(now + 120_000);
             await second.rerender();
             await first.rerender();
             expect(first.getCurrent()).toBe(firstSnapshot);
@@ -249,12 +283,12 @@ describe('useAllMachines', () => {
             const directHomeSession = createSessionFixture({
                 id: 's-duplicate-fork',
                 serverId: 'home-a',
-                metadata: { path: '/repo-a', host: 'home-a', flavor: 'a' },
+                metadata: { path: '/repo-a', host: 'home-a', flavor: 'claude' },
             });
             const requestedHomeSession = createSessionFixture({
                 id: 's-duplicate-fork',
                 serverId: 'home-b',
-                metadata: { path: '/repo-b', host: 'home-b', flavor: 'b' },
+                metadata: { path: '/repo-b', host: 'home-b', flavor: 'codex' },
             });
             storage.setState((state) => ({
                 ...state,
@@ -276,7 +310,7 @@ describe('useAllMachines', () => {
 
             expect(hook.getCurrent()).toMatchObject({
                 serverId: 'home-b',
-                metadata: { path: '/repo-b', flavor: 'b' },
+                metadata: { path: '/repo-b', flavor: 'codex' },
             });
             await hook.unmount();
         } finally {
@@ -463,7 +497,7 @@ describe('useAllMachines', () => {
         }
     });
 
-    it('does not rerender semantic and launch-selection consumers for an online heartbeat', async () => {
+    it('publishes continuing heartbeats only to activity while retaining content and launch choices', async () => {
         const previousState = storage.getState();
         try {
             const activeAt = Date.now();
@@ -493,11 +527,9 @@ describe('useAllMachines', () => {
             storage.getState().applyMachines([onlineMachine], true, { sourceServerId: getActiveServerSnapshot().serverId });
 
             let semanticRenders = 0;
-            let launchRenders = 0;
             const hook = await renderHook(() => {
                 semanticRenders += 1;
                 const semanticMachines = useAllMachines();
-                launchRenders += 1;
                 const launchMachines = useLaunchSelectionMachines();
                 return { semanticMachines, launchMachines };
             }, {
@@ -505,7 +537,6 @@ describe('useAllMachines', () => {
             });
             const first = hook.getCurrent();
             const firstSemanticRenders = semanticRenders;
-            const firstLaunchRenders = launchRenders;
 
             await act(async () => {
                 storage.getState().applyMachines([
@@ -513,11 +544,12 @@ describe('useAllMachines', () => {
                 ], false, { sourceServerId: getActiveServerSnapshot().serverId });
             });
 
-            expect(semanticRenders).toBe(firstSemanticRenders);
-            expect(launchRenders).toBe(firstLaunchRenders);
+            expect(semanticRenders - firstSemanticRenders).toBe(0);
             expect(hook.getCurrent()).toBe(first);
-            expect(hook.getCurrent().semanticMachines[0]?.activeAt).toBe(activeAt + 1000);
-            expect(hook.getCurrent().launchMachines[0]?.activeAt).toBe(activeAt + 1000);
+            expect(first.semanticMachines[0]?.activeAt).toBe(activeAt);
+            expect(first.launchMachines[0]?.activeAt).toBe(activeAt);
+            expect(readMachineActivity(hook.getCurrent().semanticMachines[0]!).activeAt).toBe(activeAt + 1000);
+            expect(hook.getCurrent().launchMachines).toBe(first.launchMachines);
 
             await hook.unmount();
         } finally {

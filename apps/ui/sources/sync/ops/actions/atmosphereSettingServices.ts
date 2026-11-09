@@ -23,7 +23,7 @@ export function createAtmosphereSettingServices(account: Parameters<typeof creat
             const [{ readAtmospherePictureCatalog }, { pictureStore }] = await Promise.all([
                 import('@/components/atmosphere/pictureCatalog'), import('@/components/atmosphere/pictureStore'),
             ]);
-            const user = (await pictureStore.list()).filter(picture => picture.kind === 'user');
+            const user = await pictureStore.list('user');
             throwIfAborted(signal); account.assertCurrent();
             return SettingsDeclarationValueV1Schema.parse({ pictures: readAtmospherePictureCatalog().map(picture => ({ ...picture })), user });
         },

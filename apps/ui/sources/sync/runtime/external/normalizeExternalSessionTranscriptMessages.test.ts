@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { createReducer, reducer } from "@happier-dev/session-core/reducer";
-import { AgentExternalSessionTranscriptRawRecordSchema } from '@happier-dev/protocol';
+import { AgentExternalSessionTranscriptRawRecordSchema } from '@happier-dev/protocol/sessions/messages/agentExternalSessionTranscriptRawRecord';
 import { buildHappierBaseSystemPromptV1 } from '@happier-dev/protocol/prompts/systemPromptBaseV1';
 
 import { projectClaudeJsonlLineToDirectMessages } from '../../../../../../packages/plugins/claude/src/agent/transcripts/projection';
@@ -9,6 +9,28 @@ import { projectClaudeJsonlLineToDirectMessages } from '../../../../../../packag
 import { normalizeExternalSessionTranscriptMessages } from './normalizeExternalSessionTranscriptMessages';
 
 describe('normalizeExternalSessionTranscriptMessages', () => {
+    it.each(['user', 'agent'] as const)('retains transient native images on normalized and reduced %s rows', role => {
+        const media = [{ type: 'image' as const, mimeType: 'image/png' as const, data: 'aW1hZ2U=' }];
+        const raw = role === 'user'
+            ? { role, content: { type: 'text' as const, text: '' }, media }
+            : { role, content: { type: 'acp', agentId: 'fx', data: { type: 'message', message: 'image result' } }, media };
+        const normalized = normalizeExternalSessionTranscriptMessages([{ id: 'image-1', createdAtMs: 1, raw }]);
+        expect(normalized[0]?.meta?.externalSessionMedia).toEqual(media);
+        const reduced = reducer(createReducer(), normalized).messages;
+        expect(reduced).toHaveLength(1);
+        expect(reduced[0]?.meta?.externalSessionMedia).toEqual(media);
+        expect(raw).not.toHaveProperty('meta');
+    });
+
+    it.each([{ length: 1 }, 'legacy-media-value'])('ignores non-array media in the compatibility wire carrier: %j', media => {
+        const [message] = normalizeExternalSessionTranscriptMessages([{
+            id: 'legacy-media', createdAtMs: 1,
+            raw: { role: 'user', content: { type: 'text', text: 'hello' }, media },
+        }]);
+        expect(message?.meta?.externalSessionMedia).toBeUndefined();
+        expect(message).toMatchObject({ role: 'user', content: { type: 'text', text: 'hello' } });
+    });
+
     it.each([undefined, { agentId: 'claude', remoteSessionId: 'native-1' }])('uses the host display projection under native/imported identity %j', sourceIdentity => {
         const raw = { role: 'user', content: { type: 'text', text: 'Catalog guidance\n\nReal request' } };
         const [message] = normalizeExternalSessionTranscriptMessages([{
@@ -160,6 +182,7 @@ describe('normalizeExternalSessionTranscriptMessages', () => {
                 createdAtMs: 1785950075486,
                 raw: {
                     role: 'agent',
+                    media: [{ type: 'image', mimeType: 'image/png', data: 'aW1hZ2U=' }],
                     content: {
                         type: 'codex',
                         data: {
@@ -184,6 +207,7 @@ describe('normalizeExternalSessionTranscriptMessages', () => {
             tool: { id: callId, name: 'exec', state: 'completed' },
         });
         expect(String((reduced.messages[0] as { tool: { result?: unknown } }).tool.result)).toContain('Script completed');
+        expect(reduced.messages[0]?.meta?.externalSessionMedia).toEqual([{ type: 'image', mimeType: 'image/png', data: 'aW1hZ2U=' }]);
     });
 
     it('filters non-renderable rows using the producer role metadata', () => {

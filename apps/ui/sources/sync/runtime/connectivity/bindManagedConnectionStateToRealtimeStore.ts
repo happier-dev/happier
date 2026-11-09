@@ -1,4 +1,4 @@
-import type { ManagedConnectionState } from '@happier-dev/connection-supervisor';
+import { isRetryOfKnownFailure, type ManagedConnectionState } from '@happier-dev/connection-supervisor';
 
 import { storage } from '@/sync/domains/state/storage';
 import type { EndpointConnectivitySnapshot, EndpointConnectivityStatus } from '@/sync/store/domains/realtime';
@@ -47,6 +47,7 @@ export function bindEndpointConnectivityStateToRealtimeStore(params: Readonly<{
     const onEndpointOnline = params.onEndpointOnline;
     let sawOfflineLike = false;
     let publishedStatus: EndpointConnectivityStatus | null = null;
+    let onlineRetained = false;
 
     return params.subscribe((state) => {
         if (pause) {
@@ -67,8 +68,15 @@ export function bindEndpointConnectivityStateToRealtimeStore(params: Readonly<{
             }
         }
 
+        // A timer-driven retry of an outage already shown is not news; its outcome is the next publication.
+        if (isRetryOfKnownFailure(state, publishedStatus === 'offline')) return;
+
+        // Our own teardown and its restart carry no evidence, so the last verdict (online) stands until the next one.
+        onlineRetained = state.phase === 'shutting_down' ? publishedStatus === 'online' || onlineRetained
+            : state.phase === 'connecting' && onlineRetained;
         const snapshot: EndpointConnectivitySnapshot = {
             status: resolveEndpointConnectivityStatus(state.phase, publishedStatus),
+            onlineRetained,
             reason: state.reason,
             attempt: state.attempt,
             nextRetryAt: state.nextRetryAt,

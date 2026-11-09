@@ -18,7 +18,7 @@ import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePl
 import { normalizeSessionAccessProjection } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
-import { SessionOwnerDisplayV1Schema } from '@happier-dev/protocol';
+import { SessionOwnerDisplayV1Schema } from '@happier-dev/protocol/sessions';
 import { projectSessionUsageLimitRecoveryDisplayV1 } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
 import { isSessionContentReadable, readBlockedSessionContentAvailability, readSessionContentAvailability } from '@/sync/domains/session/encryptedContentAvailability';
 import { SESSION_LIST_DOCUMENT_ADMISSION, fingerprintSessionListDisplayAdmission,
@@ -125,6 +125,7 @@ function areSessionListCacheEntriesEqual(
         && nextEntry.updatedAt === previousEntry.updatedAt
         && nextEntry.meaningfulActivityAt === previousEntry.meaningfulActivityAt
         && nextEntry.createdAt === previousEntry.createdAt
+        && (nextEntry.projectKey ?? null) === (previousEntry.projectKey ?? null)
         && nextEntry.ownerAccountId === previousEntry.ownerAccountId
         && nextEntry.active === previousEntry.active
         && nextEntry.activeAt === previousEntry.activeAt
@@ -135,6 +136,7 @@ function areSessionListCacheEntriesEqual(
         && nextEntry.pendingBlockedCount === previousEntry.pendingBlockedCount
         && nextEntry.pendingVersion === previousEntry.pendingVersion
         && areCacheJsonValuesEqual(nextEntry.pendingActivationAuthorization ?? null, previousEntry.pendingActivationAuthorization ?? null)
+        && areCacheJsonValuesEqual(nextEntry.pendingActivationFailureDetails ?? null, previousEntry.pendingActivationFailureDetails ?? null)
         && (nextEntry.latestTurnStatus ?? null) === (previousEntry.latestTurnStatus ?? null)
         && (nextEntry.latestTurnStatusObservedAt ?? null) === (previousEntry.latestTurnStatusObservedAt ?? null)
         && areCacheJsonValuesEqual(nextEntry.lastRuntimeIssue ?? null, previousEntry.lastRuntimeIssue ?? null)
@@ -221,6 +223,7 @@ export function buildSessionListRenderableFromCacheEntry(entry: SessionListCache
         workflowHeadline: entry.workflowHeadline,
         guardState: entry.guardState ? readSessionListGuardState({ v: 1, ...entry.guardState }) : null,
         forkV1: entry.forkV1,
+        projectKey: entry.projectKey,
         ownerAccountId: entry.ownerAccountId,
         seq: normalizeNonNegativeInteger(entry.seq) ?? 0,
         createdAt: entry.createdAt,
@@ -233,6 +236,7 @@ export function buildSessionListRenderableFromCacheEntry(entry: SessionListCache
         pendingBlockedCount: entry.pendingBlockedCount,
         pendingVersion: entry.pendingVersion,
         pendingActivationAuthorization: entry.pendingActivationAuthorization ?? null,
+        pendingActivationFailureDetails: entry.pendingActivationFailureDetails ?? null,
         lastViewedSessionSeq: normalizeNonNegativeInteger(entry.lastViewedSessionSeq),
         viewer: entry.viewer,
         ...(entry.encryptionMode !== undefined ? { encryptionMode: entry.encryptionMode } : {}),
@@ -374,6 +378,7 @@ export function buildSessionListCacheEntryFromRenderable(
     const nextEntry: SessionListCacheEntryV1 = {
         sessionId: session.id,
         ...(displayProof ? { displayProof } : {}),
+        projectKey: session.projectKey,
         ownerAccountId: session.ownerAccountId,
         viewer: session.viewer,
         seq: preserveReadState ? previousEntry.seq : normalizeNonNegativeInteger(session.seq) ?? 0,
@@ -395,6 +400,7 @@ export function buildSessionListCacheEntryFromRenderable(
         pendingBlockedCount: session.pendingBlockedCount,
         pendingVersion: session.pendingVersion,
         pendingActivationAuthorization: session.pendingActivationAuthorization ?? null,
+        pendingActivationFailureDetails: session.pendingActivationFailureDetails ?? null,
         latestTurnStatus: session.latestTurnStatus ?? null,
         latestTurnStatusObservedAt: normalizeNonNegativeNumber(session.latestTurnStatusObservedAt),
         lastRuntimeIssue: session.lastRuntimeIssue ?? null,

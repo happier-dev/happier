@@ -227,14 +227,6 @@ function readTargetIdFromInput(input: unknown): string | null {
     return isRecord(input) ? normalizeNonEmptyString(input.targetId) : null;
 }
 
-function readPreviewIdFromInput(input: unknown): string | null {
-    return isRecord(input) ? normalizeNonEmptyString(input.previewId) : null;
-}
-
-function readExposureIdFromInput(input: unknown): string | null {
-    return isRecord(input) ? normalizeNonEmptyString(input.exposureId) : null;
-}
-
 function previewLifecycleFailureResult(reason: LocalServicePreviewLifecycleFailureReason) {
     // Transport failures reuse the preview route-failure code; a daemon domain refusal carries a
     // `refused:<code>` → preserve the producer code inside the typed preview-refusal namespace.
@@ -576,12 +568,7 @@ export function createLocalServicesRuntimeActionExecutor(
 
         if (args.actionId === 'localServices.publicPreview.status') {
             if (!machineId) return disabledResult('local_services_machine_unavailable');
-            const request = DaemonLocalServicePublicPreviewStatusRequestV1Schema.safeParse({
-                machineId,
-                ...(sessionId ? { sessionId } : {}),
-                ...(readPreviewIdFromInput(parsed.input) ? { previewId: readPreviewIdFromInput(parsed.input) } : {}),
-                ...(readExposureIdFromInput(parsed.input) ? { exposureId: readExposureIdFromInput(parsed.input) } : {}),
-            });
+            const request = DaemonLocalServicePublicPreviewStatusRequestV1Schema.safeParse(parsed.input);
             if (!request.success) return invalidParametersResult;
             if (!fetchPublicPreviewStatus) return routeFailureResult('public_preview', 'unavailable');
             const result = await fetchPublicPreviewStatus({
@@ -605,11 +592,7 @@ export function createLocalServicesRuntimeActionExecutor(
 
         if (args.actionId === 'localServices.publicPreview.create') {
             if (!machineId) return disabledResult('local_services_machine_unavailable');
-            const request = DaemonLocalServicePublicPreviewCreateRequestV1Schema.safeParse({
-                ...(isRecord(parsed.input) ? parsed.input : {}),
-                machineId,
-                sessionId,
-            });
+            const request = DaemonLocalServicePublicPreviewCreateRequestV1Schema.safeParse(parsed.input);
             if (!request.success) return invalidParametersResult;
             if (!createPublicPreviewExposure) return routeFailureResult('public_preview', 'unavailable');
             const result = await createPublicPreviewExposure({
@@ -632,11 +615,7 @@ export function createLocalServicesRuntimeActionExecutor(
 
         if (args.actionId === 'localServices.publicPreview.revoke') {
             if (!machineId) return disabledResult('local_services_machine_unavailable');
-            const request = DaemonLocalServicePublicPreviewRevokeRequestV1Schema.safeParse({
-                ...(isRecord(parsed.input) ? parsed.input : {}),
-                machineId,
-                sessionId,
-            });
+            const request = DaemonLocalServicePublicPreviewRevokeRequestV1Schema.safeParse(parsed.input);
             if (!request.success) return invalidParametersResult;
             if (!revokePublicPreviewExposure) return routeFailureResult('public_preview', 'unavailable');
             const result = await revokePublicPreviewExposure({
@@ -660,11 +639,7 @@ export function createLocalServicesRuntimeActionExecutor(
 
         if (args.actionId === 'localServices.publicPreview.copyUrl') {
             if (!machineId) return disabledResult('local_services_machine_unavailable');
-            const request = DaemonLocalServicePublicPreviewCopyUrlRequestV1Schema.safeParse({
-                ...(isRecord(parsed.input) ? parsed.input : {}),
-                machineId,
-                sessionId,
-            });
+            const request = DaemonLocalServicePublicPreviewCopyUrlRequestV1Schema.safeParse(parsed.input);
             if (!request.success) return invalidParametersResult;
             if (!copyPublicPreviewUrl) return routeFailureResult('public_preview', 'unavailable');
             const result = await copyPublicPreviewUrl({

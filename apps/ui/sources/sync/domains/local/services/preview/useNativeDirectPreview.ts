@@ -7,7 +7,7 @@ import { isRuntimeActive, subscribeToRuntimeActiveChange } from '@/utils/runtime
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { BrowserPreviewRefusalReasonCode } from '@/sync/domains/browser/adapters/targets/localPreview';
 import { acquireNativeDirectPreviewAccess, acquireServerPreviewAccess, hasNativePreviewRenderer, type NativeDirectPreviewLease, type ServerPreviewAccessResult } from './nativeDirectAccess';
-import { PREVIEW_ADMISSION_QUERY, withoutPreviewAdmission } from './url';
+import { isLocalServicePreviewAddress, resolveLocalServicePreviewExternalUrl, resolveLocalServicePreviewServerUrl, withoutPreviewAdmission } from './url';
 
 export type NativeDirectPreviewInput = Readonly<{
     previewId: string | null;
@@ -18,6 +18,8 @@ export type NativeDirectPreviewInput = Readonly<{
     nativeDirectEnabled?: boolean;
     fallbackUrl: string | null;
     requestedUrl?: string | null;
+    /** The Service host displayed in the Browser address field, rather than its transport host. */
+    serviceAddressLabel?: string | null;
     initialPath?: string;
     /** A real reload retries server admission without replacing a retained native lease. */
     reloadCommandId?: string;
@@ -25,7 +27,8 @@ export type NativeDirectPreviewInput = Readonly<{
     viewFailed?: boolean;
 }>;
 
-const subscribeCarrierEligibility = (notify: () => void) => subscribeRegisteredStorageState(notify) ?? (() => undefined);
+const subscribeCarrierEligibility = (notify: () => void) => subscribeRegisteredStorageState(notify,
+    { localSettings: ['homeApplicationCarrierEligibility'] }) ?? (() => undefined);
 
 type LeaseState = Readonly<{ key: string; lease: NativeDirectPreviewLease | null; settled: boolean }>;
 type PreviousOrigin = Readonly<{ key: string; origin: string; initialPath: string }>;
@@ -45,14 +48,6 @@ function rebaseUrl(url: URL, origin: string): string {
     return withoutPreviewAdmission(rebased.toString());
 }
 
-function withServerAdmission(url: string, fallback: URL): string {
-    const token = fallback.searchParams.get(PREVIEW_ADMISSION_QUERY);
-    if (!token) return url;
-    const admitted = new URL(url);
-    admitted.searchParams.set(PREVIEW_ADMISSION_QUERY, token);
-    return admitted.toString();
-}
-
 function resolveViewerUrl(input: NativeDirectPreviewInput, lease: NativeDirectPreviewLease | null, previous: PreviousOrigin | null): string | null {
     const fallback = readUrl(input.fallbackUrl);
     const requested = readUrl(input.requestedUrl, lease?.localOrigin ?? fallback?.origin);
@@ -60,19 +55,23 @@ function resolveViewerUrl(input: NativeDirectPreviewInput, lease: NativeDirectPr
         const initial = rebaseUrl(new URL(lease.localOrigin + lease.initialPath), lease.localOrigin);
         if (!input.requestedUrl || input.requestedUrl === input.fallbackUrl) return initial;
         if (!requested) return initial;
-        if (requested.origin === fallback?.origin || requested.origin === lease.localOrigin || requested.origin === previous?.origin) {
+        if (requested.origin === fallback?.origin || requested.origin === lease.localOrigin || requested.origin === previous?.origin
+            || isLocalServicePreviewAddress(requested.toString(), input.serviceAddressLabel)) {
             return rebaseUrl(requested, lease.localOrigin);
         }
         // A listener from another view lifetime is not an external navigation.
-        return isLoopbackHostname(requested.hostname) ? initial : input.requestedUrl;
+        return resolveLocalServicePreviewExternalUrl(input.requestedUrl, input.fallbackUrl, input.serviceAddressLabel) ?? initial;
     }
-    if (fallback && requested?.origin === fallback.origin) return withServerAdmission(requested.toString(), fallback);
+    if (fallback && requested?.origin === fallback.origin) return resolveLocalServicePreviewServerUrl(requested.toString(), fallback.toString());
+    if (fallback && requested && isLocalServicePreviewAddress(requested.toString(), input.serviceAddressLabel)) {
+        return resolveLocalServicePreviewServerUrl(requested.toString(), fallback.toString());
+    }
     if (requested && isLoopbackHostname(requested.hostname)) {
         if (!fallback) return null;
         const url = requested.origin === previous?.origin
             ? rebaseUrl(requested, fallback.origin)
             : new URL(fallback.origin + (previous?.initialPath ?? input.initialPath ?? '/')).toString();
-        return withServerAdmission(url, fallback);
+        return resolveLocalServicePreviewServerUrl(url, fallback.toString());
     }
     return requested?.toString() ?? input.fallbackUrl;
 }
@@ -82,6 +81,7 @@ export function useNativeDirectPreview(input: NativeDirectPreviewInput): Readonl
     localOrigin: string | null;
     acquiring: boolean;
     reasonCode: BrowserPreviewRefusalReasonCode | null;
+    port?: number;
 }> {
     const eligibility = useSyncExternalStore(subscribeCarrierEligibility, readHomeApplicationCarrierEligibility, readHomeApplicationCarrierEligibility);
     const runtimeActive = useSyncExternalStore(subscribeToRuntimeActiveChange, isRuntimeActive, isRuntimeActive);
@@ -152,6 +152,7 @@ export function useNativeDirectPreview(input: NativeDirectPreviewInput): Readonl
     const prior = previous.current?.key === key ? previous.current : null;
     const requested = readUrl(input.requestedUrl, lease?.localOrigin ?? readUrl(input.fallbackUrl)?.origin);
     const externalNavigation = Boolean(requested && !isLoopbackHostname(requested.hostname)
+        && !isLocalServicePreviewAddress(requested.toString(), input.serviceAddressLabel)
         && requested.origin !== readUrl(input.fallbackUrl)?.origin
         && requested.origin !== lease?.localOrigin && requested.origin !== prior?.origin);
     const nativePending = allowed && !current?.settled;
@@ -185,5 +186,6 @@ export function useNativeDirectPreview(input: NativeDirectPreviewInput): Readonl
         localOrigin: lease?.localOrigin ?? null,
         acquiring: nativePending || fallbackPending,
         reasonCode: serverAccess && !serverAccess.ok ? serverAccess.reasonCode : null,
+        ...(serverAccess && !serverAccess.ok && serverAccess.port !== undefined ? { port: serverAccess.port } : {}),
     };
 }

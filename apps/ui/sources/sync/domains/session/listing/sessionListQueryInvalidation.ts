@@ -1,11 +1,14 @@
 import type { HomeAccountChangeEvent } from '@/sync/runtime/orchestration/homeAccountChange';
 import { isArtifactOnlyHomeAccountChange, subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import type { SessionListRowMembershipFacets } from './sessionListQuerySelection';
+import type { SessionListRowPlacement } from './sessionListQueryController';
 
 type SessionListQueryInvalidationTarget = Readonly<{
     /** `'structural'` re-reads only a corpus whose server-side selection a row write can move. */
-    invalidate(scope?: 'structural'): Promise<void>;
+    invalidate(scope?: 'structural' | 'recover', rowFacets?: SessionListRowMembershipFacets): Promise<void>;
     retire(sessionId: string): void;
+    place?(rows: readonly SessionListRowPlacement[], readSortKey: (sessionId: string) => number | null): boolean;
 }>;
 
 type SessionListQueryInvalidationReader = () => ReadonlyMap<string, SessionListQueryInvalidationTarget>;
@@ -58,6 +61,26 @@ export function retireSessionListQueryAddress(serverId: string | null, sessionId
 }
 
 /**
+ * Places freshly batch-read rows into every mounted list of exactly that Home.
+ * Rows whose viewer facts are unavailable cannot be placed, so their Home's
+ * lists keep the conservative re-read.
+ */
+export function placeSessionListQueryRows(
+    serverId: string,
+    rows: readonly SessionListRowPlacement[],
+    unplaceableSessionIds: readonly string[],
+    readSortKey: (sessionId: string) => number | null,
+): void {
+    if (rows.length === 0 && unplaceableSessionIds.length === 0) return;
+    for (const readControllers of mountedSessionListQueryReaders) {
+        const target = readControllers().get(serverId);
+        if (!target) continue;
+        if (rows.length > 0) target.place?.(rows, readSortKey);
+        if (unplaceableSessionIds.length > 0) void target.invalidate();
+    }
+}
+
+/**
  * Exact focused-Home catch-up identifies `self` for Account settings, profile,
  * security and encryption changes. The incumbent planner supplies whether the
  * concrete change can alter qualified list membership; this consumer must not
@@ -68,7 +91,12 @@ export function retireSessionListQueryAddress(serverId: string | null, sessionId
  */
 export function resolveSessionListQueryInvalidationForAccountChange(
     event: HomeAccountChangeEvent,
-): 'none' | 'structural' | 'all' {
+): 'none' | 'structural' | 'recover' | 'all' {
+    // A reconnect whose publisher starts this Home's changes catch-up carries no Session change: that
+    // catch-up delivers what changed while away (rows, structure, or a gap's full refresh), so lists only
+    // recover a lost answer. A Home without that catch-up (a secondary transport) re-reads below.
+    if (event.source === 'connected' && event.changesCatchUp === true
+        && event.sessionListQueryAffects === undefined && event.entityIds === undefined) return 'recover';
     if (event.sessionListQueryAffects !== undefined) {
         if (event.sessionListQueryAffects === 'structural') return 'structural';
         return event.sessionListQueryAffects ? 'all' : 'none';
@@ -94,15 +122,23 @@ export function subscribeSessionListQueryHomeInvalidation(
     const unsubscribeAccountChanges = subscribeHomeAccountChange((event) => {
         const invalidation = resolveSessionListQueryInvalidationForAccountChange(event);
         if (invalidation === 'none') return;
+        const target = readControllers().get(event.serverId);
+        if (invalidation === 'recover') {
+            if (target) void target.invalidate('recover');
+            return;
+        }
         // Each mounted corpus hears the same event; the Home's reads start a new generation once.
         if (!invalidationsCounted.has(event)) {
             invalidationsCounted.add(event);
             advanceReadEpoch(event.serverId);
         }
-        const target = readControllers().get(event.serverId);
         if (!target) return;
-        void (invalidation === 'structural' ? target.invalidate('structural') : target.invalidate());
-    });
+        const rowFacets = event.sessionListRowFacets;
+        void (invalidation !== 'structural' ? target.invalidate()
+            : rowFacets ? target.invalidate('structural', rowFacets) : target.invalidate('structural'));
+        // A primary reconnect reaches the controllers, whose `'recover'` re-reads only a corpus the outage left
+        // without a current answer (the classifier above); ready corpora wait for the catch-up's exact wakes.
+    }, { reconnect: 'refresh' });
     return () => {
         unsubscribeAccountChanges();
         mountedSessionListQueryReaders.delete(readControllers);

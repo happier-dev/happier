@@ -40,9 +40,11 @@ export function createUiConnectedAccountAttemptTransactions(account: LazyActionA
         generatePkceCodes: () => generatePkceCodes({ randomBytes: getRandomBytes, sha256: bytes => digest('SHA-256', bytes) }),
         seal: async payload => content.seal('attempt', await content.resolveAccountMode('fresh-authority'), payload),
         open: async record => {
-            const opened = content.open('attempt', await content.resolveAccountMode(), record.content);
-            if (opened === null) throw new Error('connected_account_attempt_transaction_unreadable');
-            return opened;
+            const opened = content.openResult('attempt', await content.resolveAccountMode(), record.content);
+            if (opened.status !== 'opened') {
+                throw new Error('connected_account_attempt_transaction_unreadable');
+            }
+            return opened.value;
         },
     }) };
 }

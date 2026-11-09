@@ -1,4 +1,4 @@
-import type { SessionAuthoringCheckoutCreationDraftV1 } from '@happier-dev/protocol';
+import type { SessionAuthoringCheckoutCreationDraftV1 } from '@happier-dev/protocol/sessions/authoring/index';
 
 export type NewSessionCheckoutCreationDraft = SessionAuthoringCheckoutCreationDraftV1;
 

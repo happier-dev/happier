@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { getLegacyConnectedServiceRegistryEntry, type ConnectedServiceRegistryEntry } from './connectedServiceRegistry';
-import { describeConnectedAccountsNeedingSignIn, listConnectedAccountsNeedingSignIn } from './connectedAccountsNeedingSignIn';
+import { describeConnectedAccountsNeedingSignIn, listConnectedAccountsNeedingSignIn, projectSignInFacts } from './connectedAccountsNeedingSignIn';
 
 const service = { pluginId: 'happier.example', localId: 'subscription' } as const;
 const entry: ConnectedServiceRegistryEntry = {
@@ -80,6 +80,13 @@ describe('listConnectedAccountsNeedingSignIn', () => {
         ]);
     });
 
+    it('keeps the facts that name an account in the sign-in projection', () => {
+        const projected = projectSignInFacts({ connectedServicesV2: [], connectedAccountsV4: [
+            { ref: { service, accountId: 'a' }, status: 'needs_reauth', displayName: 'Work', providerIdentity: { email: 'me@example.test', accountId: 'p' } },
+        ] });
+        expect(projected.connectedAccountsV4?.[0]).toMatchObject({ displayName: 'Work', providerIdentity: { email: 'me@example.test', accountId: 'p' } });
+    });
+
     it('reads the released per-service profiles on a legacy server', () => {
         const result = listConnectedAccountsNeedingSignIn({
             profile: {
@@ -102,5 +109,22 @@ describe('listConnectedAccountsNeedingSignIn', () => {
             accountTransport: 'indeterminate',
             entries: [entry],
         })).toEqual([]);
+    });
+});
+
+describe('projectSignInFacts', () => {
+    const project = (status: 'connected' | 'needs_reauth' | 'refresh_failed_retryable') => projectSignInFacts({
+        connectedServicesV2: [], connectedAccountsV4: [v4Account('acct', status)],
+    });
+
+    it('does not move for a status that is not a sign-in need, and keeps the list identical in outcome', () => {
+        expect(project('refresh_failed_retryable')).toEqual(project('connected'));
+        const profile = { connectedServicesV2: [], connectedAccountsV4: [v4Account('acct-expired', 'needs_reauth'), v4Account('acct-ok', 'connected')] };
+        expect(listConnectedAccountsNeedingSignIn({ profile: projectSignInFacts(profile), accountTransport: 'advertised-v4', entries: [entry] }))
+            .toEqual(listConnectedAccountsNeedingSignIn({ profile, accountTransport: 'advertised-v4', entries: [entry] }));
+    });
+
+    it('moves when an account starts needing sign-in', () => {
+        expect(project('needs_reauth')).not.toEqual(project('connected'));
     });
 });

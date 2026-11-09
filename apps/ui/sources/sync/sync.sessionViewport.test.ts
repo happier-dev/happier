@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
-import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createPlainSessionByIdResponseFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { hasDeferredSessionStateHydration, type DeferredSessionStateHydrationState } from './domains/session/realtime/deferredSessionStateHydration';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { SessionListViewItem } from '@/sync/domains/session/listing/sessionListViewData';
 
@@ -66,6 +70,9 @@ vi.mock('@/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts',
     const { emptyBundledPluginUiAssetsModule } = await importOriginal<typeof import('@/dev/testkit/mocks/bundledPluginUiAssets')>();
     return emptyBundledPluginUiAssetsModule;
 });
+
+// Warm the real Sync graph during collection; each case still resets its runtime below.
+await loadSyncSingletonForTests();
 
 describe('sync session viewport', () => {
     type RuntimeViewportChangeSync = Readonly<{
@@ -438,33 +445,126 @@ describe('sync session viewport', () => {
         expect(readPersistedSessionViewport('session-shared')).toBeNull();
     });
 
-    it('hydrates deferred hidden session state on reveal and clears the marker', async () => {
+    it.each([
+        ['retries failed deferred state hydration on reveal and stops refreshing after materialization', 'failure'],
+        ['preserves a hidden invalidation during hydration for the next reveal', 'hidden_update'],
+        ['recovers a deferred invalidation after a fresh replacement fails without reviving its retired read', 'fresh_recovery'],
+        ['preserves deferred state after a same-scope abort for the next reveal', 'abort'],
+        ['does not restore deferred state into a retired Account scope', 'retired_scope'],
+    ] as const)('%s', async (_name, scenario) => {
         const { sync } = await import('./sync');
-        const invalidateCoalesced = vi.fn();
-        const ensureSessionVisibleForMessageRoute = vi.fn(async () => {});
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { apiSocket } = await import('@/sync/api/session/apiSocket');
+        const { Encryption } = await import('@/sync/encryption/encryption');
+        const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverProfiles');
+        const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+        const snapshot = getActiveServerSnapshot();
+        const accountId = 'deferred-state-account';
+        storage.getState().activateProfileScope({ serverId: snapshot.serverId, accountId });
+        publishAppliedActiveServerSnapshot(snapshot);
         const sessionId = 'session-deferred-state-reveal';
         type DeferredStateHarness = {
+            credentials: AuthCredentials;
+            deferredSessionStateHydrationState: DeferredSessionStateHydrationState;
             markSessionStateHydrationDeferred: (sessionId: string) => void;
-            messagesSync: Map<string, { invalidateCoalesced: () => void }>;
-            ensureSessionVisibleForMessageRoute: (sessionId: string, options?: { forceRefresh?: boolean }) => Promise<void>;
+            sessionByIdHydrationInFlight: Map<string, unknown>;
         };
         const harness = sync as unknown as DeferredStateHarness;
+        const requestMock = vi.mocked(apiSocket.request);
+        const firstResponse = createDeferred<Response>();
+        const response = createDeferred<Response>();
+        const sessionPath = `/v2/sessions/${sessionId}`;
+        const sessionReads = () => requestMock.mock.calls.filter(([path]) => String(path).split('?')[0] === sessionPath);
+        const staleSession = createSessionFixture({ id: sessionId, serverId: snapshot.serverId, encryptionMode: 'plain', agentState: {} });
+        const currentAgentState = {
+            requests: {
+                'question-request': {
+                    tool: 'AskUserQuestion',
+                    arguments: { questions: [{ question: 'Which option?' }] },
+                },
+            },
+        };
 
-        harness.messagesSync = new Map([[sessionId, { invalidateCoalesced }]]);
-        harness.ensureSessionVisibleForMessageRoute = ensureSessionVisibleForMessageRoute;
+        storage.getState().applySessions([staleSession]);
+        sync.encryption = await Encryption.create(new Uint8Array(32).fill(7));
+        harness.credentials = { token: `e30.${btoa(JSON.stringify({ sub: accountId }))}.signature` };
+        requestMock.mockReset();
+        requestMock.mockImplementation(async (path) => {
+            if (String(path).split('?')[0] === sessionPath) {
+                if (sessionReads().length === 1) {
+                    if (scenario === 'failure') throw new Error('Network unavailable');
+                    return await firstResponse.promise;
+                }
+                if (scenario === 'fresh_recovery' && sessionReads().length === 2) throw new Error('Replacement unavailable');
+                return await response.promise;
+            }
+            if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+            return Response.json({ messages: [], hasMore: false, nextAfterSeq: null });
+        });
         harness.markSessionStateHydrationDeferred(sessionId);
+        const controller = new AbortController();
+        const initialRead = scenario === 'fresh_recovery' || scenario === 'abort' || scenario === 'retired_scope'
+            ? sync.ensureSessionVisibleForMessageRoute(sessionId, { forceRefresh: true, hydrateMessages: false, signal: controller.signal })
+            : undefined;
+        try {
+            sync.onSessionVisible(sessionId);
+            sync.onSessionVisible(sessionId);
+            await expect.poll(() => sessionReads().length).toBe(1);
+            const firstAgentState = scenario === 'hidden_update' ? { controlledByUser: true } : {};
+            if (scenario === 'hidden_update') {
+                // The hidden update invalidates the snapshot already in flight.
+                harness.markSessionStateHydrationDeferred(sessionId);
+                firstResponse.resolve(Response.json(createPlainSessionByIdResponseFixture({
+                    ...staleSession, agentState: firstAgentState,
+                })));
+            } else if (scenario === 'fresh_recovery') {
+                expect(await sync.ensureSessionVisibleForMessageRoute(sessionId, { fresh: true, hydrateMessages: false }))
+                    .toMatchObject({ kind: 'retryable_failure' });
+            } else if (scenario === 'abort' || scenario === 'retired_scope') {
+                if (scenario === 'retired_scope') {
+                    storage.getState().activateProfileScope({ serverId: snapshot.serverId, accountId: 'replacement-account' });
+                }
+                controller.abort();
+                firstResponse.resolve(Response.json(createPlainSessionByIdResponseFixture({
+                    ...staleSession, agentState: { controlledByUser: true },
+                })));
+                expect(await initialRead).toMatchObject({ kind: 'awaiting_push' });
+            }
+            await expect.poll(() => harness.sessionByIdHydrationInFlight.size).toBe(0);
+            expect(storage.getState().sessions[sessionId]?.agentState).toEqual(firstAgentState);
 
-        sync.onSessionVisible(sessionId);
-        await Promise.resolve();
+            if (scenario === 'retired_scope') {
+                expect(hasDeferredSessionStateHydration(harness.deferredSessionStateHydrationState, sessionId)).toBe(false);
+                return;
+            }
+            // A later reveal retries; concurrent reveals share the existing exact read.
+            sync.onSessionVisible(sessionId);
+            sync.onSessionVisible(sessionId);
+            const expectedReads = scenario === 'fresh_recovery' ? 3 : 2;
+            await expect.poll(() => sessionReads().length).toBe(expectedReads);
+            response.resolve(Response.json(createPlainSessionByIdResponseFixture({
+                ...staleSession, updatedAt: staleSession.updatedAt + 1,
+                agentState: currentAgentState, agentStateVersion: staleSession.agentStateVersion + 1,
+            })));
+            await expect.poll(() => storage.getState().sessions[sessionId]?.agentState).toEqual(currentAgentState);
+            await expect.poll(() => harness.sessionByIdHydrationInFlight.size).toBe(0);
+            if (scenario === 'fresh_recovery') {
+                firstResponse.resolve(Response.json(createPlainSessionByIdResponseFixture({
+                    ...staleSession, agentState: { controlledByUser: true },
+                })));
+                expect(await initialRead).toMatchObject({ kind: 'awaiting_push' });
+            }
 
-        expect(ensureSessionVisibleForMessageRoute).toHaveBeenCalledWith(sessionId, { forceRefresh: true });
-        expect(invalidateCoalesced).toHaveBeenCalledTimes(1);
-
-        sync.onSessionVisible(sessionId);
-        await Promise.resolve();
-
-        expect(ensureSessionVisibleForMessageRoute).toHaveBeenCalledTimes(1);
-        expect(invalidateCoalesced).toHaveBeenCalledTimes(2);
+            sync.onSessionVisible(sessionId);
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            expect(sessionReads()).toHaveLength(expectedReads);
+            expect(storage.getState().sessions[sessionId]?.agentState).toEqual(currentAgentState);
+            expect(requestMock.mock.calls.filter(([path]) => /^\/v\d+\/sessions(?:\?|$)/.test(String(path)))).toHaveLength(0);
+        } finally {
+            firstResponse.resolve(Response.json(createPlainSessionByIdResponseFixture(staleSession)));
+            response.resolve(Response.json(createPlainSessionByIdResponseFixture(staleSession)));
+            await initialRead;
+        }
     });
 
     it('keeps historical viewport restoration state out of session-list hydration priority', async () => {

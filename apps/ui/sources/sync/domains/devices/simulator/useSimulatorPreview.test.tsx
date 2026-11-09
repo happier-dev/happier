@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderHook } from '@/dev/testkit';
-import type { SimulatorDeviceResourceV1 } from '@happier-dev/protocol';
+import type { SimulatorDeviceResourceV1 } from '@happier-dev/protocol/devices/simulator/v1';
 
 const availableResource: SimulatorDeviceResourceV1 = {
     v: 1,

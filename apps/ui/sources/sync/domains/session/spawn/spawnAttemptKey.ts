@@ -1,40 +1,10 @@
 import { normalizeFileSystemPath } from '@/sync/domains/fileSystem/normalizeFileSystemPath';
 import { resolveAbsolutePath } from '@/utils/path/pathUtils';
-import { SessionCreationImmutableRecipeV1Schema, type SessionCreationImmutableRecipeV1, normalizeSessionCreationOrganizationPlacementV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { normalizeSessionCreationOrganizationPlacementV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import { SessionSpawnNewInputV2Schema, type SessionSpawnNewInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import type { SessionDirectoryIntentV1 } from '@happier-dev/protocol/sessions/creation/sessionDirectoryIntentV1';
 import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
-
-type SpawnAttemptKeyOptions = Readonly<{
-    machineId: string;
-    serverId?: string | null;
-    directory: string;
-    agentTarget?: unknown;
-    backendTarget?: unknown;
-    modelSelection?: unknown;
-    profileId?: string | null;
-    permissionMode?: unknown;
-    agentModeId?: string | null;
-    configuration?: unknown;
-    sessionConfigOptionOverrides?: unknown;
-    runtimeDescriptorV1?: unknown;
-    resume?: string | null;
-    connectedServices?: unknown;
-    capabilitySelection?: unknown;
-    transcriptStorage?: 'persisted' | 'direct' | null;
-    terminal?: unknown;
-    windowsRemoteSessionLaunchMode?: unknown;
-    windowsRemoteSessionConsole?: unknown;
-    windowsTerminalWindowName?: string | null;
-    organizationPlacement?: unknown;
-    checkout?: unknown;
-}>;
-
-function normalizedOptionalString(value: string | null | undefined): string | null {
-    const normalized = value?.trim() ?? '';
-    return normalized || null;
-}
 
 export function resolveSpawnAttemptDirectoryIdentity(
     directory: string,
@@ -65,22 +35,12 @@ function resolveSpawnAttemptDirectoryIntentIdentity(
         : resolveSpawnAttemptDirectoryIdentity(directory.path, machineHomeDir);
 }
 
-export function createSpawnAttemptKeyForImmutableCreationRecipe(
-    input: SessionCreationImmutableRecipeV1,
-): string {
-    const recipe = SessionCreationImmutableRecipeV1Schema.parse(input);
-    return `machine.spawn_new:v4:${computeCanonicalDomainSeparatedDigest(
-        'happier.session.spawn-attempt-immutable-recipe.v1',
-        [createCanonicalJsonSigningInput(recipe)],
-    )}`;
-}
-
 export function createSpawnAttemptKeyForSessionSpawnNewInput(
     input: SessionSpawnNewInputV2,
     machineHomeDir: string,
 ): string {
-    // `SessionSpawnNewInputV2Schema` is `.strict()`, so any raw environment
-    // variables in the authored input are rejected by this parse itself.
+    // Only immutable authored fields enter custody identity; raw launch
+    // environment values remain outside the digest.
     const parsed = SessionSpawnNewInputV2Schema.parse(input);
     const authoredImmutableIntent = {
         executionTarget: parsed.executionTarget,
@@ -111,53 +71,4 @@ export function createSpawnAttemptKeyForSessionSpawnNewInput(
         'happier.session.spawn-attempt-authored-intent.v1',
         [createCanonicalJsonSigningInput(authoredImmutableIntent)],
     )}`;
-}
-
-export function createSpawnAttemptKeyForFreshSpawnOptions<T extends SpawnAttemptKeyOptions>(
-    options: T,
-    machineHomeDir: string,
-): string {
-    const directory = resolveSpawnAttemptDirectoryIdentity(options.directory, machineHomeDir);
-    const usesPredecessorLaunchFields = options.backendTarget !== undefined
-        || options.sessionConfigOptionOverrides !== undefined
-        || options.runtimeDescriptorV1 !== undefined
-        || normalizedOptionalString(options.resume) !== null
-        || options.windowsRemoteSessionLaunchMode !== undefined
-        || options.windowsRemoteSessionConsole !== undefined
-        || normalizedOptionalString(options.windowsTerminalWindowName) !== null;
-    if (options.agentTarget === undefined || options.agentTarget === null || usesPredecessorLaunchFields) {
-        // Persisted v2/v3 custody may still be resumed by the predecessor raw
-        // spawn ingress. Keep its exact target-only identity as a reader/writer
-        // obligation until those already-submitted attempts settle; strict V2
-        // New Session writers always provide `agentTarget` and use v4 below.
-        return `machine.spawn_new:${JSON.stringify({
-            machineId: options.machineId.trim(),
-            serverId: options.serverId?.trim() ?? null,
-            directory,
-        })}`;
-    }
-    const organization = normalizeSessionCreationOrganizationPlacementV1(
-        options.organizationPlacement as Parameters<typeof normalizeSessionCreationOrganizationPlacementV1>[0],
-    );
-    const recipe = SessionCreationImmutableRecipeV1Schema.parse({
-        execution: {
-            machineId: options.machineId.trim(),
-            directory: { kind: 'path', path: directory },
-        },
-        organization,
-        agentTarget: options.agentTarget,
-        modelSelection: options.modelSelection ?? null,
-        profileId: normalizedOptionalString(options.profileId),
-        requestedPermissionMode: options.permissionMode ?? null,
-        agentModeId: normalizedOptionalString(options.agentModeId),
-        configuration: options.configuration ?? null,
-        connectedServices: options.connectedServices ?? null,
-        capabilitySelection: options.capabilitySelection ?? null,
-        transcriptStorage: options.transcriptStorage ?? null,
-        terminal: options.terminal ?? null,
-        agentSessionStartupInstructionsMarkerV1: null,
-        checkout: options.checkout ?? null,
-    });
-
-    return createSpawnAttemptKeyForImmutableCreationRecipe(recipe);
 }

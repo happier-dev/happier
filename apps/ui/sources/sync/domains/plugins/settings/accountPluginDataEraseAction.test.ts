@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type {
     PluginAccountDataEraseDataArmResultV1,
     PluginAccountDataEraseSettingsArmResultV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/data/accountEraseV1';
 
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 

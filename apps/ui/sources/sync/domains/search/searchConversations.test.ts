@@ -10,6 +10,8 @@ import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionAc
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import type { ConversationSearchHit, ConversationSearchResult, ConversationSearchSource } from './searchConversations';
+import { createDeferred } from '@/dev/testkit';
+import { createPlainSessionWithDisplayRecordFixture } from '@/dev/testkit/fixtures/sessionDisplayFixtures';
 
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
@@ -33,7 +35,7 @@ const hit = (sessionId: string, time: number, score = 0.5): MemorySearchHitV1 =>
     sessionId, seqFrom: 1, seqTo: 2, createdAtFromMs: time, createdAtToMs: time, summary: 'quartz match', score,
 });
 const input = {
-    serverId: 'home', accountId: 'account', concurrencyLimit: 2,
+    serverId: 'home', accountId: 'account',
     machines: [{ id: 'one', online: true }, { id: 'two', online: true }, { id: 'offline', online: false }],
     query: { v: 1 as const, query: 'quartz', scope: { type: 'global' as const }, mode: 'auto' as const },
 };
@@ -60,6 +62,156 @@ beforeEach(async () => {
 });
 afterEach(async () => { await connection?.dispose(); connection = undefined; });
 describe('conversation search fan-out', () => {
+    it('keeps a transient status failure partial without a fallback search while healthy peers return hits', async () => {
+        const healthy = rpc.getMockImplementation()!;
+        rpc.mockImplementation(async call => {
+            if (call.machineId === 'one' && call.method === RPC_METHODS.DAEMON_MEMORY_STATUS) {
+                throw Object.assign(new Error('Status transport unavailable'), { rpcErrorCode: 'RPC_REQUEST_TIMEOUT' });
+            }
+            return healthy(call);
+        });
+        const result = await searchConversations({ ...input, machines: input.machines.slice(0, 2) });
+        expect(result.machines).toMatchObject([
+            { machineId: 'one', status: 'partial', standardSearchEnabled: true },
+            { machineId: 'two', status: 'ok', standardSearchEnabled: true },
+        ]);
+        expect(rpc.mock.calls.filter(([call]) => call.method === RPC_METHODS.DAEMON_MEMORY_SEARCH)
+            .map(([call]) => call.machineId)).toEqual(['two']);
+        expect(result.hits).toEqual([{ machineId: 'two', mode: 'indexed', hit: hit('two', 30, 0.1) }]);
+    });
+    it.each(['ceiling', 'denied', 'unchanged', 'advance'] as const)('admits only arriving Session hits across unrelated peer progress and freshly qualifies changed ranges (%s)', async change => {
+        const { searchConversationsForAccount } = await import('@/sync/ops/searchConversations');
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const accountLifetime = captureActiveServerAccountScopeLifetime();
+        expect(accountLifetime?.isCurrent()).toBe(true);
+        const peer = createDeferred<void>();
+        const pages: ConversationSearchResult[] = [];
+        let ceiling = 2;
+        let denied = false;
+        homes.answer(input.serverId, '/v2/sessions/shared', { select: () => denied ? { status: 404, body: { error: 'Session not found' } } : ({ body: {
+            session: createPlainSessionWithDisplayRecordFixture({ id: 'shared', seq: ceiling }),
+        } }) });
+        homes.answer(input.serverId, '/v2/sessions/fresh-session', { body: {
+            session: createPlainSessionWithDisplayRecordFixture({ id: 'fresh-session', seq: 2 }),
+        } });
+        // The batch HTTP fixture composes these same per-target responses.
+        // Access projection negotiation may add a query string to later reads.
+        const reads = (id: string) => homes.requests.filter(request => new URL(request.path, request.serverUrl).pathname === `/v2/sessions/${id}`).length;
+        rpc.mockImplementation(async call => {
+            if (call.method === RPC_METHODS.DAEMON_MEMORY_SETTINGS_GET) {
+                if (call.machineId === 'two') await peer.promise;
+                return { ...DEFAULT_MEMORY_SETTINGS, enabled: true };
+            }
+            if (call.method === RPC_METHODS.DAEMON_MEMORY_STATUS) return status;
+            return { v: 1, ok: true, hits: call.machineId === 'one' ? [hit('shared', 10)]
+                : [change === 'unchanged' ? hit('shared', 10) : { ...hit('shared', 20), seqTo: 3 }, hit('fresh-session', 30)] };
+        });
+        const pending = searchConversationsForAccount({ query: input.query, machineIds: ['one', 'two'],
+            mode: 'indexed', providers: { homeSessions: false, daemonEnabled: true }, accountLifetime: accountLifetime!,
+            retryUnreachableMachines: true, source: { agentId: 'acme.archive', sourceKey: 'archive',
+                source: { kind: 'archive' }, contentSearch: true }, onProgress: page => pages.push(page) });
+        try {
+            await vi.waitFor(() => expect(pages.at(-1)?.machines).toContainEqual(expect.objectContaining({ machineId: 'one', status: 'ok' })));
+            expect(pages.at(-1)?.hits).toEqual([{ machineId: 'one', mode: 'indexed', hit: hit('shared', 10) }]);
+            // This Machine's partial/final status publications carry no new hit.
+            expect(reads('shared')).toBe(1);
+            if (change === 'ceiling') ceiling = 1;
+            else if (change === 'denied') denied = true;
+            else if (change === 'advance') ceiling = 3;
+            peer.resolve();
+            const result = await pending;
+            expect(result.hits).toEqual([{ machineId: 'two', mode: 'indexed', hit: hit('fresh-session', 30) },
+                ...(change === 'unchanged' ? [{ machineId: 'one', mode: 'indexed', hit: hit('shared', 10) }]
+                    : change === 'advance' ? [{ machineId: 'two', mode: 'indexed', hit: { ...hit('shared', 20), seqTo: 3 } }] : [])]);
+            expect(reads('shared')).toBe(change === 'unchanged' ? 1 : 2);
+            expect(reads('fresh-session')).toBe(1);
+        } finally { peer.resolve(); await pending; }
+    });
+    it('publishes native-only hits without a Session visibility request', async () => {
+        const { searchConversationsForAccount } = await import('@/sync/ops/searchConversations');
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const accountLifetime = captureActiveServerAccountScopeLifetime();
+        expect(accountLifetime?.isCurrent()).toBe(true);
+        const native = { type: 'external_transcript' as const,
+            source: { type: 'external_transcript' as const, agentId: 'acme.archive', sourceKey: 'archive', nativeSessionId: 'native-session' },
+            sourceItemId: 'native-message', createdAtFromMs: 10, createdAtToMs: 10, summary: 'quartz native match', score: 0.5 };
+        rpc.mockImplementation(async call => {
+            if (call.method === RPC_METHODS.DAEMON_MEMORY_SETTINGS_GET) return { ...DEFAULT_MEMORY_SETTINGS, enabled: true,
+                conversationSearch: { ...DEFAULT_MEMORY_SETTINGS.conversationSearch,
+                    indexExternal: { ...DEFAULT_MEMORY_SETTINGS.conversationSearch.indexExternal, enabled: true } } };
+            if (call.method === RPC_METHODS.DAEMON_MEMORY_STATUS) return status;
+            return { v: 1, ok: true, hits: [native] };
+        });
+        const pages: ConversationSearchResult[] = [];
+        const result = await searchConversationsForAccount({ query: { ...input.query, corpora: ['external_transcripts'] }, machineIds: ['one'],
+            mode: 'indexed', providers: { homeSessions: false, daemonEnabled: true }, accountLifetime: accountLifetime!,
+            retryUnreachableMachines: true, source: { agentId: 'acme.archive', sourceKey: 'archive',
+                source: { kind: 'archive' }, contentSearch: true }, onProgress: page => pages.push(page) });
+        expect(result.hits).toEqual([{ machineId: 'one', mode: 'indexed', hit: native }]);
+        expect(pages.at(-1)?.hits).toEqual(result.hits);
+        expect(homes.requests.filter(request => /\/v2\/sessions\/(?:read-batch|native-session)(?:\?|$)/.test(request.path))).toEqual([]);
+    });
+    it.each(['cancel', 'retire'] as const)('fences a pending Session admission when the captured operation is %s', async reason => {
+        const { searchConversationsForAccount } = await import('@/sync/ops/searchConversations');
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const accountLifetime = captureActiveServerAccountScopeLifetime();
+        expect(accountLifetime?.isCurrent()).toBe(true);
+        const response = createDeferred<void>();
+        homes.answer(input.serverId, '/v2/sessions/one', { respondAfter: response.promise, body: {
+            session: createPlainSessionWithDisplayRecordFixture({ id: 'one', seq: 2 }),
+        } });
+        const controller = new AbortController();
+        const pages: ConversationSearchResult[] = [];
+        const pending = searchConversationsForAccount({ query: input.query, machineIds: ['one'],
+            mode: 'indexed', providers: { homeSessions: false, daemonEnabled: true }, accountLifetime: accountLifetime!,
+            retryUnreachableMachines: true, source: { agentId: 'acme.archive', sourceKey: 'archive',
+                source: { kind: 'archive' }, contentSearch: true }, signal: controller.signal, onProgress: page => pages.push(page) });
+        const cancelled = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+        try {
+            await vi.waitFor(() => expect(homes.requests.some(request => new URL(request.path, request.serverUrl).pathname === '/v2/sessions/one')).toBe(true));
+            if (reason === 'cancel') controller.abort();
+            else { await connection!.dispose(); connection = undefined; }
+            const published = pages.length;
+            response.resolve();
+            await cancelled;
+            expect(pages).toHaveLength(published);
+            expect(pages.flatMap(page => page.hits)).toEqual([]);
+        } finally { controller.abort(); response.resolve(); await cancelled; }
+    });
+    it('starts every reachable daemon independently and publishes healthy and offline Machines behind stalled peers', async () => {
+        const machines = Array.from({ length: 120 }, (_, index) => ({ id: `fanout-${index}`, online: true }));
+        const rows = machines.map(machine => createPlainMachineRowFixture({ id: machine.id, accountId: 'account' }));
+        homes.answer(input.serverId, '/v1/machines', { body: rows });
+        for (const machine of rows) homes.answer(input.serverId, `/v1/machines/${machine.id}`, { body: { machine } });
+        let release!: () => void;
+        const stalled = new Promise<void>(resolve => { release = resolve; });
+        const blockedIds = new Set(machines.slice(0, 4).map(machine => machine.id));
+        const healthy = rpc.getMockImplementation()!;
+        rpc.mockImplementation(async call => {
+            if (blockedIds.has(call.machineId) && call.method === RPC_METHODS.DAEMON_MEMORY_SETTINGS_GET) await stalled;
+            return healthy(call);
+        });
+        const pages: ConversationSearchResult[] = [];
+        const controller = new AbortController();
+        const pending = searchConversations({ ...input,
+            machines: [...machines, { id: 'offline', online: false }], signal: controller.signal,
+            authorize: async hits => hits.filter(row => row.mode !== 'indexed' || !('sessionId' in row.hit) || row.hit.sessionId !== 'fanout-4'),
+            onProgress: page => pages.push(page) });
+        const cancelled = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+        try {
+            await vi.waitFor(() => expect(rpc.mock.calls.filter(([call]) => call.method === RPC_METHODS.DAEMON_MEMORY_SETTINGS_GET)).toHaveLength(120));
+            await vi.waitFor(() => expect(pages.at(-1)?.machines.filter(machine => machine.status === 'ok')).toHaveLength(116));
+            expect(pages.at(-1)?.machines).toContainEqual({ machineId: 'offline', status: 'offline' });
+            expect(pages.at(-1)?.hits).toHaveLength(115);
+            expect(pages.at(-1)?.machines.map(machine => machine.machineId)).toEqual([...machines.slice(4).map(machine => machine.id), 'offline']);
+            expect(rpc.mock.calls.some(([call]) => call.machineId === 'offline')).toBe(false);
+            controller.abort();
+            const published = pages.length;
+            release();
+            await cancelled;
+            expect(pages).toHaveLength(published);
+        } finally { controller.abort(); release(); await cancelled; }
+    });
     it('reports an unread standard-search setting as unknown through the strict Action result', async () => {
         const healthy = rpc.getMockImplementation()!;
         rpc.mockImplementation(async call => {
@@ -483,7 +635,7 @@ describe('conversation search fan-out', () => {
                 match: { sourceItemId: 'message', snippet: 'design lab', messageIndex: 0 } }],
                 contentCoverage: 'partial', nextCursor: `${String(payload.agentId)}-next` };
         });
-        const pending = searchConversations({ serverId: input.serverId, accountId: 'account', concurrencyLimit: 1,
+        const pending = searchConversations({ serverId: input.serverId, accountId: 'account',
             machines: [{ id: 'one', online: true }], mode: 'standard', signal: controller.signal,
             query: { v: 1, query: 'design lab', scope: { type: 'global' }, mode: 'auto', corpora: ['external_transcripts'] },
             readSources: async (): Promise<readonly ConversationSearchSource[]> => [

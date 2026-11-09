@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { MMKV } from 'react-native-mmkv';
 import { scopedStorageId } from '@/utils/system/storageScope';
-import { readProjectSelectionPreference, resolveProjectSelectionPreferenceKeys, writeProjectSelectionPreference } from './projectSelectionPersistence';
+import { readProjectSelectionPreference, resolveProjectSelectionPreferenceKeys } from './projectSelectionPersistence';
 
 const first = { id: 'checkout', serverId: 'home-a', machineId: 'machine', rootPath: '/repo', createdAtMs: 1 };
 
@@ -14,19 +14,6 @@ describe('Project selection preference persistence', () => {
         expect(selected?.storageKey).toBe('project-selection:v1:["home-b","checkout"]');
         expect(readProjectSelectionPreference({ checkout: '/repo/feature' }, selected)).toBeNull();
         expect(resolveProjectSelectionPreferenceKeys([first, first], first)).toBeNull();
-    });
-
-    it('writes one qualified Home without overwriting another or the retained predecessor bytes', () => {
-        const other = { ...first, serverId: 'home-b', rootPath: '/other' };
-        const refs = [first, other];
-        const a = resolveProjectSelectionPreferenceKeys(refs, first);
-        const b = resolveProjectSelectionPreferenceKeys(refs, other);
-        const previous = { checkout: '/legacy' };
-        const next = writeProjectSelectionPreference(writeProjectSelectionPreference(previous, a, '/a'), b, '/b');
-        expect(previous).toEqual({ checkout: '/legacy' });
-        expect(readProjectSelectionPreference(next, a)).toBe('/a');
-        expect(readProjectSelectionPreference(next, b)).toBe('/b');
-        expect(next.checkout).toBe('/legacy');
     });
 
     it('uses the canonical Home key when the selected checkout retains a profile alias', async () => {

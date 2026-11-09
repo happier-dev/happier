@@ -1,11 +1,9 @@
 import type { Machine } from '@/sync/domains/state/storageTypes';
-import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import type { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
+import { resolveExactServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachines';
 import { getAppliedActiveServerId } from '@/sync/runtime/orchestration/connectionManager';
 
-type PeerEndpointState = Readonly<{
-    machines: Readonly<Record<string, Machine | undefined>>;
-    machineListByServerId?: Readonly<Record<string, readonly Machine[] | null | undefined>>;
-}>;
+type PeerEndpointState = Parameters<typeof resolveServerScopedMachine>[0];
 
 export function readPeerEndpointForServerScope<TEndpoint>(params: Readonly<{
     state: PeerEndpointState;
@@ -18,10 +16,16 @@ export function readPeerEndpointForServerScope<TEndpoint>(params: Readonly<{
     const activeServerId = String(getAppliedActiveServerId() ?? '').trim();
     if (!machineId || !serverId) return null;
 
-    const targetsActiveHome = activeServerId.length > 0
-        && areServerProfileIdentifiersEquivalent(serverId, activeServerId);
-    const machine = targetsActiveHome
-        ? params.state.machines[machineId] ?? null
-        : params.state.machineListByServerId?.[serverId]?.find((candidate) => candidate.id === machineId) ?? null;
+    let activeMachines: Machine[] | undefined;
+    const machine = resolveExactServerScopedMachine({
+        serverId, machineId, activeServerId,
+        get activeMachines() {
+            return activeMachines ??= Object.values(params.state.machines).filter((machine): machine is Machine => Boolean(machine));
+        },
+        activeMachineRecords: params.state.machines,
+        machineListByServerId: params.state.machineListByServerId ?? {},
+        machineRecordsByServerId: params.state.machineRecordsByServerId,
+        machineListStatusByServerId: params.state.machineListStatusByServerId,
+    });
     return machine ? params.select(machine) ?? null : null;
 }

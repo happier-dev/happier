@@ -1,5 +1,5 @@
 import { captureConnectedAccountInvocationPurposeBinding, createConnectedAccountPurposePort, projectConnectedAccountHostAccessScopes,
-    readConnectedAccountListLimit,
+    readConnectedAccountListLimit, readDeclaredConnectedAccountActionSelection,
     type ConnectedAccountInvocationPurposeBinding } from '@happier-dev/cli-common/connectedAccounts';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { ConnectedAccountsService, ConnectedAccountBindingSummary, ConnectedAccountRef,
@@ -25,6 +25,7 @@ type PurposePort = ReturnType<typeof createConnectedAccountPurposePort<Connected
 export function createUiConnectedAccountActionServices(input: Readonly<{
     pluginId: string;
     actionId?: string;
+    actionInput?: unknown;
     connectedAccountPurposeBinding?: ConnectedAccountInvocationPurposeBinding;
     occurrenceId: string;
     accountLifetime: ActiveServerAccountScopeLifetime;
@@ -61,18 +62,30 @@ export function createUiConnectedAccountActionServices(input: Readonly<{
             if (account.accountId !== input.accountLifetime.scope.accountId) return unavailable();
             let purposeBindings = captured?.purposeBindings;
             if (!captured) {
-                const catalog = await readConnectedAccountCatalogForMutationInContext(account, 'purposes', cancellation.signal);
-                if (catalog.status !== 'ready' || catalog.record.key !== 'purposes') return unavailable();
-                purposeBindings = catalog.record.value;
+                const mapping = action.connectedAccountPurposeBindings?.find(mapping => mapping.purpose === purpose);
+                const selection = mapping
+                    ? readDeclaredConnectedAccountActionSelection(input.actionInput, mapping, scope.serviceRefs)
+                    : { kind: 'inherit' as const };
+                if (selection.kind === 'invalid') throw new PluginError({ code: 'plugin_connected_account_binding_out_of_scope' });
+                if (selection.kind === 'inherit') {
+                    const catalog = await readConnectedAccountCatalogForMutationInContext(account, 'purposes', cancellation.signal);
+                    if (catalog.status !== 'ready' || catalog.record.key !== 'purposes') return unavailable();
+                    purposeBindings = catalog.record.value;
+                } else {
+                    purposeBindings = { v: 1, bindings: selection.kind === 'account' ? [{
+                        purpose: { consumer: { pluginId: input.pluginId, localId: action.id }, purpose },
+                        target: { kind: 'account', account: selection.account },
+                    }] : [] };
+                }
             }
             if (!purposeBindings) return unavailable();
-            const declarations = readUiAccountConnectedServiceDeclarations(input.accountLifetime);
             const accountContext = account;
             const acquireRuntime = async (account: ConnectedAccountRef, signal: AbortSignal) => {
                 const projection = availability.readAccountUiProjection();
                 const descriptor = Object.values(projection?.connectedAccountDescriptorsById ?? {}).find(candidate =>
                     candidate.pluginId === account.service.pluginId && candidate.id === account.service.localId);
-                const declaration = declarations.find(candidate => candidate.service.pluginId === account.service.pluginId
+                const declaration = readUiAccountConnectedServiceDeclarations(input.accountLifetime)
+                    .find(candidate => candidate.service.pluginId === account.service.pluginId
                     && candidate.service.localId === account.service.localId);
                 if (!descriptor || !declaration) return unavailable();
                 const selected = await resolvePluginUiAccountConnectedAccountRegistration({ descriptor,
@@ -81,7 +94,7 @@ export function createUiConnectedAccountActionServices(input: Readonly<{
                 if (!selected || !holder) return unavailable();
                 return holder.acquire(() => createUiConnectedAccountAuthenticationRuntime({ selected, declaration }));
             };
-            const port = createConnectedAccountPurposePort({ ...createUiConnectedAccountMetadataSource(accountContext, declarations),
+            const port = createConnectedAccountPurposePort({ ...createUiConnectedAccountMetadataSource(accountContext),
                 readGroup: async (ref, signal) => (await getQualifiedConnectedAccountGroupV4(accountContext.credentials,
                     { group: ref, request: accountContext.request, signal, retry: 'none' })).group,
                 async resolveConnectedAccountEndpoints(request) {

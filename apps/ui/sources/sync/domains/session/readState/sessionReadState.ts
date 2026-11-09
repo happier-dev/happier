@@ -9,7 +9,7 @@ import {
 import { resolveSessionListReadableSeq } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { Metadata } from '@happier-dev/session-core/state';
 import { readRegisteredStorageState } from '@/sync/domains/state/storageStateReaderBridge';
-import type { PrimaryTurnStatusV1 } from '@happier-dev/protocol';
+import type { PrimaryTurnStatusV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { resolveSessionAddressFromLocalState } from '@/sync/domains/session/resolveSessionAddressFromLocalState';
 import { readSessionListRowForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';

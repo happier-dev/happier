@@ -12,7 +12,8 @@ afterEach(() => { standardCleanup(); vi.restoreAllMocks(); clearPersistenceStora
 
 describe('keyed disclosure state', () => {
     it('preserves retained collapsed keys verbatim without rewriting development Session List keys', () => {
-        const context = buildSessionListCollapseContextKey({ retentionScopeKey: 'home/alice/global', corpusStorage: 'active' }, 'projects');
+        // An opaque retained key must be valid for MMKV; nested JSON introduces rejected backslashes.
+        const context = 'retained-context';
         const developmentKey = `sessionList:${JSON.stringify(context)}:pinned`;
         const currentKey = buildSessionListCollapseKey(context, 'pinned');
         getPersistenceStorage().set('local-settings', JSON.stringify({ collapsedGroupKeysV1: { 'retained-project': true, [developmentKey]: true } }));

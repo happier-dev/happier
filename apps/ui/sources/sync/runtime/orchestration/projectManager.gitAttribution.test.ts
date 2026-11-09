@@ -26,20 +26,6 @@ function createSession(id: string, machineId: string, path: string) {
 }
 
 describe('projectManager git attribution', () => {
-    it('tracks and prunes touched paths at the project (workspace) scope', () => {
-        projectManager.clear();
-        projectManager.addSession(createSession('s1', 'm1', '/repo') as any);
-        projectManager.addSession(createSession('s2', 'm1', '/repo') as any);
-
-        projectManager.markWorkspaceScmTouchedPathsForSession('s1', ['a.ts', 'b.ts'], 100);
-        expect(projectManager.getWorkspaceScmTouchedPathsForSession('s1').sort()).toEqual(['a.ts', 'b.ts']);
-        expect(projectManager.getWorkspaceScmTouchedPathsForSession('s2').sort()).toEqual(['a.ts', 'b.ts']);
-
-        projectManager.pruneWorkspaceScmTouchedPathsForSession('s2', new Set(['a.ts']));
-        expect(projectManager.getWorkspaceScmTouchedPathsForSession('s1')).toEqual(['a.ts']);
-        expect(projectManager.getWorkspaceScmTouchedPathsForSession('s2')).toEqual(['a.ts']);
-    });
-
     it('stores bounded git operation log per project', () => {
         projectManager.clear();
         projectManager.addSession(createSession('s1', 'm1', '/repo') as any);

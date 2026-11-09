@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
-    LaunchProfileV2Schema,
-    ProviderBoundModelRefSchema,
+    LaunchProfileV2Schema} from '@happier-dev/protocol/profiles/v2/schema';
+import {
+    ProviderBoundModelRefSchema} from '@happier-dev/protocol/providers/selection/v1';
+import {
     ProviderSettingsMigrationStateV1Schema,
     type ProviderSettingsMigrationStateV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/providers/settings/v1';
 
 import { resolveLaunchProfileAuthoringIntent } from './resolveLaunchProfileAuthoringIntent';
 
@@ -22,14 +24,14 @@ function migration(completedSources: ProviderSettingsMigrationStateV1['completed
 
 describe('resolveLaunchProfileAuthoringIntent', () => {
     it('uses a retained predecessor default through the same authoring preference owner', async () => {
-        const { AIBackendProfileSchema } = await import('@happier-dev/protocol');
+        const { AIBackendProfileSchema} = await import('@happier-dev/protocol/profiles/backendProfileSchema');
         const profile = AIBackendProfileSchema.parse({ id: 'work', name: 'Work', defaultBackendTargetKey: 'acpBackend:review' });
         expect(resolveLaunchProfileAuthoringIntent({ profileId: 'work', profiles: [profile], migration: undefined }))
             .toEqual({ profileId: 'work', preferredAgentTargetKey: 'agent:happier.agent.custom-acp/custom-acp:definition:review', modelSelection: null });
     });
 
     it('keeps a retained default edited after migration and recovers the model when its Agent is selected again', async () => {
-        const { AIBackendProfileSchema } = await import('@happier-dev/protocol');
+        const { AIBackendProfileSchema} = await import('@happier-dev/protocol/profiles/backendProfileSchema');
         const legacy = AIBackendProfileSchema.parse({ id: 'work', name: 'Work', defaultBackendTargetKey: 'agent:codex' });
         const completed = migration([{ sourceProfileId: 'work', kind: 'connection', connectionId: providerRef.providerConnectionId!,
             sourceRevision: 2, modelSelectionOrigin: 'implicit_default', modelSelection: providerRef }]);

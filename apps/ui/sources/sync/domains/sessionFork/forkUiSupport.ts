@@ -1,6 +1,6 @@
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
-import type { SessionForkPoint } from '@happier-dev/protocol';
+import type { SessionForkPoint } from '@happier-dev/protocol/sessions/fork';
 import {
   isProviderBoundSessionMetadata,
   resolveAgentIdFromSessionMetadata,

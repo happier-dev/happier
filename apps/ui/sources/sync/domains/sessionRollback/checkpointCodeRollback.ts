@@ -1,4 +1,4 @@
-import type { CheckpointCodeRollbackBackupMode, SessionRollbackCodeMode } from '@happier-dev/protocol';
+import type { CheckpointCodeRollbackBackupMode, SessionRollbackCodeMode } from '@happier-dev/protocol/sessions/control/rollback/checkpointCodeRollback';
 
 export type CheckpointCodeRollbackChoice = Readonly<{
     mode: SessionRollbackCodeMode;

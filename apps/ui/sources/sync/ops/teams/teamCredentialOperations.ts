@@ -173,6 +173,7 @@ export function listEntitledTeamCredentialResources(params: Readonly<{
     scope: ServerAccountScope;
     address: TeamAddress;
     application?: ProviderBrokerApplicationBindingV1;
+    executionMachineId?: string;
     signal?: AbortSignal;
     cursor?: string | null;
 }>): Promise<TeamCredentialOutcome<TeamCredentialResourceEntitledPageV1>> {
@@ -180,6 +181,7 @@ export function listEntitledTeamCredentialResources(params: Readonly<{
         scope: params.scope,
         actionId: 'teams.credentials.entitled.list',
         input: { teamId: params.address.teamId, ...(params.application ? { application: params.application } : {}),
+            ...(params.executionMachineId ? { executionMachineId: params.executionMachineId } : {}),
             ...(params.cursor ? { cursor: params.cursor } : {}) },
         parse: value => TeamCredentialResourceEntitledPageV1Schema.parse(value),
         ...(params.signal ? { signal: params.signal } : {}),
@@ -191,6 +193,7 @@ export function discoverEntitledTeamCredentialResources(params: Readonly<{
     scope: ServerAccountScope;
     teamIds: readonly string[];
     application?: ProviderBrokerApplicationBindingV1;
+    executionMachineId?: string;
     cursor?: string;
     shouldContinue: () => boolean;
     signal?: AbortSignal;
@@ -199,6 +202,7 @@ export function discoverEntitledTeamCredentialResources(params: Readonly<{
         scope: params.scope,
         actionId: 'teams.credentials.entitled.list',
         input: { teamIds: params.teamIds, ...(params.application ? { application: params.application } : {}),
+            ...(params.executionMachineId ? { executionMachineId: params.executionMachineId } : {}),
             ...(params.cursor ? { cursor: params.cursor } : {}) },
         parse: value => TeamCredentialResourceDiscoveryPageV1Schema.parse(value),
         executorOptions: { homeDomainReadCurrentness: params.shouldContinue },

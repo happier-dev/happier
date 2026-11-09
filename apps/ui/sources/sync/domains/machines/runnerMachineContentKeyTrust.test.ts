@@ -3,10 +3,11 @@ import tweetnacl from 'tweetnacl';
 
 import {
     computeRunnerMachineContentKeyFingerprintV1,
-    resolvePublishedMachineDataEncryptionKeyV1,
     sealRunnerMachineContentKeyVerifierFactV1,
     signRunnerMachineContentKeyBindingV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/ephemeralRunner/machineContentKeyBinding';
+import {
+    resolvePublishedMachineDataEncryptionKeyV1} from '@happier-dev/protocol/machines/machineStoredContent';
 import { encodeBase64 } from '@/encryption/base64';
 import * as deviceLocalStorage from '@/auth/storage/deviceLocalStorage';
 import {

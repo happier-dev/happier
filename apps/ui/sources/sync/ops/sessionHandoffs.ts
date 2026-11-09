@@ -45,6 +45,7 @@ export type PreflightWorkspaceDestinationReplacementOptions = Readonly<{
     activatesExactMirror?: boolean;
     /** Present for direct Project linking, which has no Session and no handoff workspace action. */
     destinationIntent?: 'use_existing' | 'materialize_from_source_workspace';
+    replaceRelationshipId?: string;
     signal?: AbortSignal;
 }>;
 
@@ -87,6 +88,7 @@ function unwrap(raw: unknown): unknown {
 async function requestCoordinator(options: StartSessionHandoffOptions): Promise<unknown> {
     const machineId = resolveSourceMachineId(options);
     if (!machineId) return { ok: false, errorCode: 'machine_not_found', error: 'No reachable source machine target found for session handoff' };
+    const requestId = normalizeId(options.actionRequestId) || uuidv4();
     try {
         const payload = {
             sessionId: options.sessionId,
@@ -108,7 +110,7 @@ async function requestCoordinator(options: StartSessionHandoffOptions): Promise<
         const account = await captureLazyActionAccountContext(normalizeId(options.serverId) || getActiveServerSnapshot().serverId, options.signal);
         try {
             const requesterResult = await executeOriginalAccountMachineAction({ account,
-                actionId: 'session.handoff', machineId, requestId: normalizeId(options.actionRequestId) || uuidv4(),
+                actionId: 'session.handoff', machineId, requestId,
                 input: payload, handoffAdmission: { sessionId: options.sessionId,
                     sourceMachineId: machineId, targetMachineId: normalizeId(options.targetMachineId) },
                 foreignTargetOnly: true, ...(options.signal ? { signal: options.signal } : {}),
@@ -116,7 +118,7 @@ async function requestCoordinator(options: StartSessionHandoffOptions): Promise<
             if (requesterResult) return requesterResult;
         } finally { account.dispose(); }
         return await machineRpcWithServerScope<unknown, unknown>({
-            machineId, method: RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3, payload,
+            machineId, method: RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3, payload, requestId,
             serverId: normalizeId(options.serverId) || null,
             ...(options.signal ? { signal: options.signal } : {}),
         });
@@ -182,6 +184,7 @@ export async function preflightWorkspaceDestinationReplacement(
                     ? { activatesExactMirror: true }
                     : {}),
                 ...(options.destinationIntent ? { destinationIntent: options.destinationIntent } : {}),
+                ...(options.replaceRelationshipId ? { replaceRelationshipId: options.replaceRelationshipId } : {}),
             },
             ...(options.signal ? { signal: options.signal } : {}),
         });

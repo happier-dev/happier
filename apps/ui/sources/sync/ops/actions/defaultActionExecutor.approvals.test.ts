@@ -208,6 +208,12 @@ async function seedApproval(id: string, request: ApprovalRequest): Promise<void>
     });
     expect(response?.ok).toBe(true);
 }
+function answerApprovalResultDelivery(artifactId: string): void {
+    homes.answer(homeId, '/v2/sessions/s1/pending', { select: input => {
+        expect(input).toMatchObject({ localId: `approval-result:${artifactId}`, requestedAction: { v: 1, kind: 'enqueue' } });
+        return { body: { requestedAction: { v: 1, kind: 'enqueue' }, pending: { localId: `approval-result:${artifactId}` } } };
+    } });
+}
 function liveCliConfidentialApproval() {
     return ApprovalRequestV2Schema.parse({
         v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
@@ -971,6 +977,7 @@ describe('createDefaultActionExecutor approvals', () => {
                 expectedRevision: before.revision, text: reviewedText,
                 duplicateChoice: { kind: 'keep_both', expectedRevision: before.revision } });
             const { artifactId } = await invitationApproval('memory.remember', signed, false, undefined, input);
+            if (signed) answerApprovalResultDelivery(artifactId);
             const origin = persistedApproval(artifactId);
             const decide = () => executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, context());
 
@@ -1070,8 +1077,63 @@ describe('createDefaultActionExecutor approvals', () => {
         expect(persistedApproval(artifactId)).not.toHaveProperty('execution');
     });
 
+    it('delivers a deferred Session approval result and rejoins receipt replay when Action discovery is unavailable', async () => {
+        const { createSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+        const { createPlainSessionWithDisplayRecordFixture } = await import('@/dev/testkit/fixtures/sessionDisplayFixtures');
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { createExternalActionAccountHttpBoundary } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
+        const session = createSessionFixture({ id: 's1', serverId: connection.serverId, active: true,
+            metadata: { machineId: 'machine-exact', path: '/repo', host: 'tester.local' } });
+        storage.setState({ sessions: { s1: session } });
+        const sessionAnswer = { body: { session: createPlainSessionWithDisplayRecordFixture({ id: 's1', active: true, metadata: session.metadata }) } };
+        homes.answer(homeId, '/v2/sessions/s1', sessionAnswer);
+        homes.answer(homeId, '/v2/sessions/s1?accessProjectionVersion=1', sessionAnswer);
+        const artifactId = 'deferred-session-result';
+        await seedApproval(artifactId, ApprovalRequestV2Schema.parse({
+            v: 2, status: 'executed', createdAtMs: 1, updatedAtMs: 2,
+            createdBy: { surface: 'mcp', sessionId: 's1' }, requestedSurface: 'mcp',
+            approval: { flow: 'deferred', result: 'optional' },
+            executionOriginV1: { v: 1, authority: 'account_automation', surface: 'mcp',
+                caller: { kind: 'session', sessionId: 's1', starterDepth: 0, turnDepth: 0 },
+                serverId: homeId, serverIdentityId: 'srv_approval_home', accountId: 'account-a',
+                actionId: 'session.status.set_reason', requestId: 'original-status-request' },
+            actionId: 'session.status.set_reason', actionArgs: { reason: 'Investigating' }, summary: 'Set status',
+            decision: { kind: 'approve', decidedAtMs: 1, authority: 'present_user' },
+            execution: { executedAtMs: 2, ok: true, result: { ok: true, sessionId: 's1', reason: 'Investigating', version: 2 } },
+        }));
+        const delivered: unknown[] = [];
+        homes.answer(homeId, '/v2/sessions/s1/pending', { select: input => {
+            delivered.push(input);
+            return { body: { requestedAction: { v: 1, kind: 'enqueue' }, pending: { localId: `approval-result:${artifactId}` } } };
+        } });
+        const discovery = await createExternalActionAccountHttpBoundary({
+            serverUrl: 'https://approval-actions.test', serverIdentityId: 'srv_approval_home', accountId: 'account-a',
+            tokenEpoch: 0, machineId: 'machine-exact', actionId: 'action.spec.get',
+            failure: () => ({ errorCode: 'unsupported_action', error: 'unsupported_action' }), execute: () => ({}),
+        });
+        homes.answer(homeId, '/v1/machines', { body: [discovery.machine] });
+        homes.answer(homeId, '/v1/machines/machine-exact', { body: { machine: discovery.machine } });
+        for (const path of ['/v1/actions/action.spec.get/execution-authorization', '/v1/actions/action.spec.get']) {
+            homes.answer(homeId, path, { select: async (_input, request) => {
+                const response = await discovery.handle(new URL(request.url), request.init);
+                if (!response) throw new Error('Unexpected receipt delivery HTTP request');
+                return { status: response.status, body: await response.json() };
+            } });
+        }
+        for (let attempt = 0; attempt < 2; attempt++) {
+            const result = await executor.replayApprovedApprovalRequest({ artifactId, callerAuthority: 'present_user',
+                currentAccount: { accountId: 'account-a', serverId: homeId, serverIdentityId: 'srv_approval_home' } });
+            expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
+        }
+        expect(delivered).toHaveLength(2);
+        for (const input of delivered) expect(input).toMatchObject({ localId: `approval-result:${artifactId}`,
+            targetMachineId: 'machine-exact', requestedAction: { v: 1, kind: 'enqueue' } });
+        expect(persistedApproval(artifactId)).toMatchObject({ status: 'executed', execution: { ok: true } });
+    });
+
     it('replays a signed Session client proposal with the approving app authority and no daemon carrier', async () => {
         const { artifactId } = await invitationApproval('ui.voice_global.get', true, true);
+        answerApprovalResultDelivery(artifactId);
         const { captureActionAccountContext } = await import('./actionAccountContext');
         const { normalizeActionsSettingsV1 } = await import('@happier-dev/protocol/actions/actionSettings');
         const { storage } = await import('@/sync/domains/state/storage');
@@ -1445,6 +1507,7 @@ describe('createDefaultActionExecutor approvals', () => {
     });
     it.each([false, true])('executes a signed self-name request once in the approving app (public proposal: %s)', async publicProposal => {
         const { artifactId, input } = await invitationApproval('account.name.set', true, publicProposal);
+        answerApprovalResultDelivery(artifactId);
         expect(persistedApproval(artifactId)).toMatchObject({ createdBy: { sessionId: 's1' },
             approval: { flow: 'deferred', result: 'required' } });
         const path = '/v1/account/profile';

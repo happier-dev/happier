@@ -1,14 +1,48 @@
 import { describe, expect, it, vi } from 'vitest';
+import { ComposerOptionsInputV1Schema } from '@happier-dev/protocol/embed';
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({ translate: (key: string) => key });
 });
 
-import { getModelOptionsForAgentTypeOrPreflight } from './modelOptions';
+import { getModelOptionsForAgentTypeOrPreflight, getModelOptionsForSession, resolveCanonicalModelOptionId } from './modelOptions';
 import { parsePreflightModelListFromProbeModelsResult } from './parsePreflightModelListFromProbeModelsResult';
 
 describe('modelOptions preflight', () => {
+    it('reconciles unsupported draft models only against a successful non-freeform catalog', () => {
+        const catalog = { availableModels: [{ id: 'gateway-model', name: 'Gateway model' }], supportsFreeform: false };
+        const options = getModelOptionsForAgentTypeOrPreflight({ agentType: 'external', preflight: catalog });
+        expect(resolveCanonicalModelOptionId(options, 'old-provider-model', catalog)).toBe('default');
+        expect(resolveCanonicalModelOptionId(options, 'gateway-model', catalog)).toBe('gateway-model');
+        expect(resolveCanonicalModelOptionId(options, 'old-provider-model', { ...catalog, supportsFreeform: true })).toBe('old-provider-model');
+        expect(resolveCanonicalModelOptionId(options, 'old-provider-model', { ...catalog, unavailable: true })).toBe('old-provider-model');
+        expect(resolveCanonicalModelOptionId(options, 'old-provider-model')).toBe('old-provider-model');
+    });
+    it('keeps ACP model identities opaque through the preflight picker projection', () => {
+        const preflight = parsePreflightModelListFromProbeModelsResult({
+            availableModels: [{ id: ' native-model ', name: ' Native model ' }], supportsFreeform: false,
+        });
+        expect(getModelOptionsForAgentTypeOrPreflight({ agentType: 'external', preflight })[1]).toEqual({
+            value: ' native-model ', label: ' Native model ', description: '',
+        });
+    });
+
+    it('preserves canonical option categories and groups in preflight and session picker data', () => {
+        const modelOptions = [{
+            id: 'effort', name: 'Reasoning Effort', category: 'thought_level', type: 'select', currentValue: 'auto',
+            options: [{ value: 'auto', name: 'default' }, { value: 'ultra', name: 'ultra' }],
+            groups: [{ id: 'native', name: 'Native', options: [{ value: 'auto', name: 'default' }, { value: 'ultra', name: 'ultra' }] }],
+        }];
+        const availableModels = [{ id: 'gpt-6.1-sol', name: 'gpt-6.1-sol', modelOptions }];
+        const preflight = parsePreflightModelListFromProbeModelsResult({ availableModels, supportsFreeform: false });
+        expect(getModelOptionsForAgentTypeOrPreflight({ agentType: 'external', preflight })[1]?.modelOptions).toEqual(modelOptions);
+        const metadata = ComposerOptionsInputV1Schema.parse({ sessionModelsV1: {
+            v: 1, agentId: 'external', updatedAt: 1, currentModelId: 'gpt-6.1-sol', availableModels,
+        } });
+        expect(getModelOptionsForSession('external', metadata)[1]?.modelOptions).toEqual(modelOptions);
+    });
+
     it('does not turn unavailable dynamic Codex discovery into a fake Default catalog', () => {
         expect(getModelOptionsForAgentTypeOrPreflight({
             agentType: 'codex',

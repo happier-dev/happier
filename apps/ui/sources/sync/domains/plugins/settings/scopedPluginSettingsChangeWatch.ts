@@ -93,6 +93,20 @@ export function publishActiveScopedPluginSettingsChanges(changes: readonly unkno
     notifyWatches(affected);
 }
 
+/** A local CAS acknowledgement wakes the same record consumers as AccountChange. */
+export function publishAcknowledgedScopedPluginSettingsChange(input: Readonly<{
+    pluginId: string;
+    target: ScopedPluginSettingsAccountTarget;
+    lifetime: ActiveServerAccountScopeLifetime;
+}>): void {
+    if (!input.lifetime.isCurrent()) return;
+    notifyWatches([...activeScopedPluginSettingsChangeWatches].filter(watch => (
+        watch.pluginId === input.pluginId
+        && watch.target.serverIdentityId === input.target.serverIdentityId
+        && watch.lifetime === input.lifetime
+    )));
+}
+
 /**
  * A successful Account snapshot repair is another level-triggered source of
  * truth. Reuse the existing reset boundary instead of introducing a poller or

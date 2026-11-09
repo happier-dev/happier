@@ -95,7 +95,7 @@ describe('sessionStopWithServerScope', () => {
     };
     mockMachineRpcWithServerScope.mockResolvedValue({ message: 'Session stopped' });
 
-    const res = await sessionStopWithServerScope('sid-daemon', { serverId: 'server-a' });
+    const res = await sessionStopWithServerScope('sid-daemon', { stopIntent: 'explicit_stop', serverId: 'server-a' });
 
     expect(res).toMatchObject({
       success: false,
@@ -139,7 +139,7 @@ describe('sessionStopWithServerScope', () => {
       return { status: 'requested' };
     });
 
-    await expect(sessionStopWithServerScope('sid-one-shot', { serverId: 'server-a' })).resolves.toMatchObject({
+    await expect(sessionStopWithServerScope('sid-one-shot', { stopIntent: 'explicit_stop', serverId: 'server-a' })).resolves.toMatchObject({
       success: false,
       message: 'Stop requested; waiting for the session to become inactive',
       code: 'session_stop_requested',
@@ -175,7 +175,7 @@ describe('sessionStopWithServerScope', () => {
       message: 'Killing happier process',
     });
 
-    const res = await sessionStopWithServerScope('sid-old-daemon', { serverId: 'server-a' });
+    const res = await sessionStopWithServerScope('sid-old-daemon', { stopIntent: 'explicit_stop', serverId: 'server-a' });
 
     expect(res).toMatchObject({
       success: false,
@@ -214,7 +214,7 @@ describe('sessionStopWithServerScope', () => {
     ));
     mockSessionRpcWithServerScope.mockResolvedValue({ success: true, message: 'Killing happier process' });
 
-    await expect(sessionStopWithServerScope('sid-missing-machine-control', { serverId: 'server-a' })).resolves.toMatchObject({
+    await expect(sessionStopWithServerScope('sid-missing-machine-control', { stopIntent: 'explicit_stop', serverId: 'server-a' })).resolves.toMatchObject({
       success: false,
       message: 'Stop requested; waiting for the session to become inactive',
       code: 'session_stop_requested',
@@ -243,7 +243,7 @@ describe('sessionStopWithServerScope', () => {
       rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN,
     }));
 
-    await expect(sessionStopWithServerScope('sid-forbidden-machine-control', { serverId: 'server-a' })).resolves.toMatchObject({
+    await expect(sessionStopWithServerScope('sid-forbidden-machine-control', { stopIntent: 'explicit_stop', serverId: 'server-a' })).resolves.toMatchObject({
       success: false,
       message: 'Forbidden',
       code: 'session_stop_failed',
@@ -272,7 +272,7 @@ describe('sessionStopWithServerScope', () => {
     });
     mockSessionRpcWithServerScope.mockResolvedValue({ success: true, message: 'Killing happier process' });
 
-    const res = await sessionStopWithServerScope('sid-old-daemon-envelope', { serverId: 'server-a' });
+    const res = await sessionStopWithServerScope('sid-old-daemon-envelope', { stopIntent: 'explicit_stop', serverId: 'server-a' });
 
     expect(res).toMatchObject({
       success: false,
@@ -308,7 +308,7 @@ describe('sessionStopWithServerScope', () => {
     });
     mockSessionRpcWithServerScope.mockResolvedValue({ success: true, message: 'Killing happier process' });
 
-    const res = await sessionStopWithServerScope('sid-stale-machine-target', { serverId: 'server-a' });
+    const res = await sessionStopWithServerScope('sid-stale-machine-target', { stopIntent: 'explicit_stop', serverId: 'server-a' });
 
     expect(res).toMatchObject({
       success: false,
@@ -330,7 +330,7 @@ describe('sessionStopWithServerScope', () => {
       message: 'Killing happier process',
     });
 
-    const res = await sessionStopWithServerScope('sid-killed', { serverId: 'server-a' });
+    const res = await sessionStopWithServerScope('sid-killed', { stopIntent: 'explicit_stop', serverId: 'server-a' });
 
     expect(res).toMatchObject({
       success: false,
@@ -345,7 +345,7 @@ describe('sessionStopWithServerScope', () => {
   it('does not let the live runner prove its own physical exit', async () => {
     mockSessionRpcWithServerScope.mockResolvedValue({ status: 'stopped' });
 
-    const res = await sessionStopWithServerScope('sid-runner-self-report', { serverId: 'server-a' });
+    const res = await sessionStopWithServerScope('sid-runner-self-report', { stopIntent: 'explicit_stop', serverId: 'server-a' });
 
     expect(res).toMatchObject({
       success: false,
@@ -371,7 +371,7 @@ describe('sessionStopWithServerScope', () => {
     };
     mockMachineRpcWithServerScope.mockResolvedValue({ status: 'stopped' });
 
-    await expect(sessionStopWithServerScope('sid-strict', { serverId: 'server-a' })).resolves.toEqual({
+    await expect(sessionStopWithServerScope('sid-strict', { stopIntent: 'explicit_stop', serverId: 'server-a' })).resolves.toEqual({
       sessionId: 'sid-strict', stopped: true, success: true,
     });
     expect(mockStorageState.applySessionListRenderablePatches).not.toHaveBeenCalled();
@@ -395,7 +395,7 @@ describe('sessionStopWithServerScope', () => {
     };
 
     mockMachineRpcWithServerScope.mockResolvedValueOnce({ status: 'requested' });
-    await expect(sessionStopWithServerScope('sid-strict-outcomes', { serverId: 'server-a' })).resolves.toMatchObject({
+    await expect(sessionStopWithServerScope('sid-strict-outcomes', { stopIntent: 'explicit_stop', serverId: 'server-a' })).resolves.toMatchObject({
       success: false,
       message: 'Stop requested; waiting for the session to become inactive',
       code: 'session_stop_requested',
@@ -404,7 +404,7 @@ describe('sessionStopWithServerScope', () => {
 
     mockMachineRpcWithServerScope.mockResolvedValueOnce({ status: 'not_found' });
     mockSessionRpcWithServerScope.mockResolvedValueOnce({ status: 'not_found' });
-    await expect(sessionStopWithServerScope('sid-strict-outcomes', { serverId: 'server-a' })).resolves.toMatchObject({
+    await expect(sessionStopWithServerScope('sid-strict-outcomes', { stopIntent: 'explicit_stop', serverId: 'server-a' })).resolves.toMatchObject({
       success: false,
       message: 'Session not found',
       code: 'session_stop_not_found',
@@ -414,7 +414,7 @@ describe('sessionStopWithServerScope', () => {
       status: 'incomplete',
       reason: 'runner_exit_timeout',
     });
-    await expect(sessionStopWithServerScope('sid-strict-outcomes', { serverId: 'server-a' })).resolves.toMatchObject({
+    await expect(sessionStopWithServerScope('sid-strict-outcomes', { stopIntent: 'explicit_stop', serverId: 'server-a' })).resolves.toMatchObject({
       success: false,
       message: 'Session stop incomplete: runner_exit_timeout',
       code: 'session_stop_failed',
@@ -440,7 +440,7 @@ describe('sessionStopWithServerScope', () => {
     });
     mockSessionRpcWithServerScope.mockResolvedValue({ success: true, message: 'Killing happier process' });
 
-    await expect(sessionStopWithServerScope('sid-untracked-runner', { serverId: 'server-a' })).resolves.toMatchObject({
+    await expect(sessionStopWithServerScope('sid-untracked-runner', { stopIntent: 'explicit_stop', serverId: 'server-a' })).resolves.toMatchObject({
       success: false,
       message: 'Stop requested; waiting for the session to become inactive',
       code: 'session_stop_requested',
@@ -473,7 +473,7 @@ describe('sessionStopWithServerScope', () => {
       rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
     }));
 
-    await expect(sessionStopWithServerScope('sid-untracked-runner-offline', { serverId: 'server-a' })).resolves.toMatchObject({
+    await expect(sessionStopWithServerScope('sid-untracked-runner-offline', { stopIntent: 'explicit_stop', serverId: 'server-a' })).resolves.toMatchObject({
       success: false,
       message: 'Session stop incomplete: tracked_runner_absent',
       code: 'session_stop_failed',
@@ -485,7 +485,7 @@ describe('sessionStopWithServerScope', () => {
       rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
     });
     mockSessionRpcWithServerScope.mockRejectedValue(err);
-    const res = await sessionStopWithServerScope('sid-1', { serverId: 'server-a' });
+    const res = await sessionStopWithServerScope('sid-1', { stopIntent: 'explicit_stop', serverId: 'server-a' });
     expect(res).toMatchObject({
       success: false,
       message: 'RPC method not available',
@@ -513,7 +513,7 @@ describe('sessionStopWithServerScope', () => {
       { rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE },
     ));
 
-    await expect(sessionStopWithServerScope('sid-stale-active', { serverId: 'server-a' })).resolves.toMatchObject({
+    await expect(sessionStopWithServerScope('sid-stale-active', { stopIntent: 'explicit_stop', serverId: 'server-a' })).resolves.toMatchObject({
       success: false,
       message: 'Session not found',
       code: 'session_stop_not_found',
@@ -528,7 +528,7 @@ describe('sessionStopWithServerScope', () => {
       message: 'runner refused stop',
     });
 
-    await expect(sessionStopWithServerScope('sid-rejected', { serverId: 'server-b' })).resolves.toMatchObject({
+    await expect(sessionStopWithServerScope('sid-rejected', { stopIntent: 'explicit_stop', serverId: 'server-b' })).resolves.toMatchObject({
       success: false,
       message: 'runner refused stop',
       code: 'session_stop_failed',
@@ -540,7 +540,7 @@ describe('sessionStopWithServerScope', () => {
   it('uses Stop-specific fallback copy when a rejected runner response has no message', async () => {
     mockSessionRpcWithServerScope.mockResolvedValue({ success: false });
 
-    await expect(sessionStopWithServerScope('sid-rejected-without-message', { serverId: 'server-b' })).resolves.toMatchObject({
+    await expect(sessionStopWithServerScope('sid-rejected-without-message', { stopIntent: 'explicit_stop', serverId: 'server-b' })).resolves.toMatchObject({
       success: false,
       message: 'Failed to stop session',
       code: 'session_stop_failed',
@@ -552,7 +552,7 @@ describe('sessionStopWithServerScope', () => {
   it('returns a typed failure for a malformed runner response', async () => {
     mockSessionRpcWithServerScope.mockResolvedValue(null);
 
-    await expect(sessionStopWithServerScope('sid-malformed-runner', { serverId: 'server-b' })).resolves.toMatchObject({
+    await expect(sessionStopWithServerScope('sid-malformed-runner', { stopIntent: 'explicit_stop', serverId: 'server-b' })).resolves.toMatchObject({
       success: false,
       message: 'Failed to stop session',
       code: 'session_stop_failed',
@@ -568,7 +568,7 @@ describe('sessionStopWithServerScope', () => {
   ])('fails closed for runner %s errors', async (_kind, error) => {
     mockSessionRpcWithServerScope.mockRejectedValue(error);
 
-    await expect(sessionStopWithServerScope('sid-runner-error', { serverId: 'server-b' })).resolves.toMatchObject({
+    await expect(sessionStopWithServerScope('sid-runner-error', { stopIntent: 'explicit_stop', serverId: 'server-b' })).resolves.toMatchObject({
       success: false,
       message: error.message,
       code: 'session_stop_failed',
@@ -596,7 +596,7 @@ describe('sessionStopWithServerScope', () => {
       detail: 'private response detail must not be logged',
     });
 
-    await expect(sessionStopWithServerScope('sid-protocol-mismatch', { serverId: 'server-b' })).resolves.toMatchObject({
+    await expect(sessionStopWithServerScope('sid-protocol-mismatch', { stopIntent: 'explicit_stop', serverId: 'server-b' })).resolves.toMatchObject({
       success: false,
       message: 'Unsupported response from machine RPC',
       code: 'session_stop_failed',
@@ -627,7 +627,7 @@ describe('sessionStopWithServerScope', () => {
       errorCode: RPC_ERROR_CODES.FORBIDDEN,
     });
 
-    await expect(sessionStopWithServerScope('sid-released-relay-forbidden', { serverId: 'server-b' })).resolves.toMatchObject({
+    await expect(sessionStopWithServerScope('sid-released-relay-forbidden', { stopIntent: 'explicit_stop', serverId: 'server-b' })).resolves.toMatchObject({
       success: false,
       message: 'Forbidden',
       code: 'session_stop_failed',

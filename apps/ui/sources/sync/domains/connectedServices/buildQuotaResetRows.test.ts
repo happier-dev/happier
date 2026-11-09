@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
     ConnectedServiceQuotaRecoveryCreditsV1Schema,
     type ConnectedServiceQuotaRecoveryCreditsV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/connected-service-schemas';
 
 import { buildQuotaResetRows } from './buildQuotaResetRows';
 import type { ResetCountdownDaysFormatter } from './formatResetCountdown';

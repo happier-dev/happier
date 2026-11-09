@@ -1,5 +1,5 @@
 import type { Message } from "@happier-dev/session-core/messages";
-import { compareTranscriptMessagesOldestFirst } from "@happier-dev/session-core/messages";
+import { sortTranscriptMessagesOldestFirst } from "@happier-dev/session-core/messages";
 import { normalizeSessionId } from "../domains/session/normalizeSessionId";
 
 export const emptySessionMessagesSnapshot: unknown[] = [];
@@ -39,7 +39,7 @@ export function readSessionMessagesSnapshot(
           return cached.messages as Message[];
         }
 
-        const out = Object.values(messagesById).slice().sort(compareTranscriptMessagesOldestFirst);
+        const out = sortTranscriptMessagesOldestFirst(Object.values(messagesById));
         sessionMessagesArrayCache.delete(normalizedSessionId);
         sessionMessagesArrayCache.set(normalizedSessionId, {
           idsRef: ids,

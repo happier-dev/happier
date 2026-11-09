@@ -7,7 +7,7 @@ import {
     type IrohHomeTunnelLease as IrohNativeHomeTunnelLease,
     type IrohNativeAdapter,
 } from '@happier-dev/iroh-native';
-import type { DoctorSnapshotHomeTransportDiagnostics } from '@happier-dev/protocol';
+import type { DoctorSnapshotHomeTransportDiagnostics } from '@happier-dev/protocol/diagnostics/doctorSnapshot';
 
 import { createLoopbackTunnelSupervisor } from '@/sync/runtime/nativeLoopbackTunnels/supervisor';
 import type {

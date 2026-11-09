@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol';
+import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 
 import {
     projectWorkspaceSyncRelationships,

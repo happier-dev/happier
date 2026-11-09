@@ -2,7 +2,7 @@ import {
     ACCOUNT_SETTING_ARTIFACTS as PROTOCOL_ACCOUNT_SETTING_ARTIFACTS,
     ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION,
     accountSettingsParse,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/account/settings/accountSettings';
 import { AccountSettingsSchema } from '@happier-dev/protocol/account/settings/accountSettings';
 import { describe, expect, it, vi } from 'vitest';
 

@@ -383,6 +383,7 @@ export async function machineExternalSessionAttach(
             ok: false,
             errorCode: 'agent_unavailable',
             error: 'background_follow_not_supported',
+            retryable: false,
         };
     }
 }

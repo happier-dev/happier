@@ -7,7 +7,7 @@ import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/appro
 import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { isActionApprovalDeclinedErrorCode, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
-import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol';
+import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 
 import { isActionOperationTerminal, type ActionOperationStoreSnapshot } from '@/sync/domains/actionOperations/actionOperationStore';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';

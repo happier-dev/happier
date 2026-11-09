@@ -1,8 +1,8 @@
 import { z } from 'zod/mini';
+import type { SessionOrganizationOpenedDisplayStateV1 } from '@happier-dev/protocol/sessions/organization/folders';
 import {
     SessionFolderV1Schema,
     SessionFolderWorkspaceRefV1Schema,
-    SessionFolderWorkspaceRefV1StoredSchema,
     SessionFoldersV1Schema,
     type SessionFolderV1,
     type SessionFolderWorkspaceRefV1,
@@ -20,14 +20,7 @@ export {
 
 export type SessionFolderListDisplayState =
     | Readonly<{ status: 'available'; value: string }>
-    | Readonly<{
-        status: 'locked';
-        reason:
-            | 'account_key_unavailable'
-            | 'content_unreadable'
-            | 'invalid_stored_display'
-            | 'storage_mode_mismatch';
-    }>;
+    | Extract<SessionOrganizationOpenedDisplayStateV1, { status: 'locked' }>;
 
 export type SessionFolderListItem = Omit<
     SessionFolderV1,
@@ -69,15 +62,6 @@ export function selectAvailableSessionFolders(
 
 export const SessionFolderViewModeV1Schema = z.enum(['off', 'tree']);
 export type SessionFolderViewModeV1 = z.infer<typeof SessionFolderViewModeV1Schema>;
-
-export const SessionListFocusedFolderV1Schema = z.catch(z.nullable(z.object({
-    serverId: z.string().check(z.minLength(1)),
-    workspace: SessionFolderWorkspaceRefV1StoredSchema,
-    renderWorkspaceKey: z.optional(z.string().check(z.minLength(1))),
-    folderId: z.string().check(z.minLength(1)),
-})), null);
-
-export type SessionListFocusedFolderV1 = z.infer<typeof SessionListFocusedFolderV1Schema>;
 
 export const DEFAULT_SESSION_FOLDERS_V1: SessionFoldersV1 = Object.freeze({
     v: 1,

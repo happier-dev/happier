@@ -20,6 +20,7 @@ import {
     getLocalServiceInventoryState,
     invalidateLocalServiceInventoryStore,
     publishLocalServiceInventorySnapshot,
+    revalidateLocalServiceInventoryStore,
     subscribeLocalServiceInventoryStore,
     type LocalServiceInventoryStoreKeyInput,
 } from './sharedStore';
@@ -114,17 +115,17 @@ export function useLocalServiceInventoryStateController(
 
     // The parked daemon watch is the primary freshness path, but it cannot survive a suspended app
     // or a dropped socket. Coming back into view is the one moment where the user can see stale
-    // rows, so returning to the foreground re-reads and restarts the watch through the same
-    // invalidation the refresh control uses — one owner, no second cadence and no timer.
+    // rows, so returning to the foreground re-reads the daemon's current inventory and restarts
+    // the watch through the same store owner — no second cadence, no timer and no forced scan.
     const activelyViewed = useHostActivelyViewed();
     const wasActivelyViewedRef = React.useRef(activelyViewed);
     React.useEffect(() => {
         const returnedToView = activelyViewed && !wasActivelyViewedRef.current;
         wasActivelyViewedRef.current = activelyViewed;
-        if (returnedToView) {
-            refresh?.();
+        if (returnedToView && enabled && storeKey && binding?.isCurrent()) {
+            revalidateLocalServiceInventoryStore(storeKey);
         }
-    }, [activelyViewed, refresh]);
+    }, [activelyViewed, binding, enabled, storeKey]);
 
     return React.useMemo(
         () => ({ state, applySnapshot, refresh }),

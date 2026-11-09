@@ -17,6 +17,11 @@ const DESKTOP_AUTOMATION_SUPPORT = {
 } satisfies DesktopWebViewSupport;
 
 describe('buildBrowserAdapterCapabilities', () => {
+    it.each(['webIframe', 'nativeWebView', 'desktopWebView'] as const)('admits completed injected element context on %s independently of automation', engine => {
+        const caps = buildBrowserAdapterCapabilities({ adapterKind: 'externalUrl', supportedTargetKinds: ['externalUrl'],
+            supportedRenderEngines: [engine], desktopWebViewSupport: { ...DESKTOP_AUTOMATION_SUPPORT, automation: false } });
+        expect(caps.contextKinds).toContain('browserSelectedElement');
+    });
     it.each([
         { adapterKind: 'chromiumSidecar', engine: 'streamedSurface', capture: true, media: true },
         { adapterKind: 'externalUrl', engine: 'desktopWebView', capture: true, media: true },

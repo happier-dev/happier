@@ -1,7 +1,7 @@
 import { z } from 'zod/mini';
 
 import { AutomationStoredDefinitionExecutionRecipeV1Schema, type AutomationStoredDefinitionExecutionRecipeV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
-import { AutomationStoredWorkflowDefinitionRecipeV2Schema, type AutomationStoredWorkflowDefinitionRecipeV2 } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
+import { AutomationStoredWorkflowDefinitionRecipeV2Schema, type AutomationStoredWorkflowDefinitionRecipeV2, type AutomationObservationOnlyDefinitionV1 } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
 import { AutomationSourceSelectorIdV1Schema, type AutomationSourceSelectorIdV1 } from '@happier-dev/protocol/automations/automationEventJsonBoundsV1';
 import type { AutomationAssignmentInput } from '@happier-dev/protocol/automations/automationApiV3';
 import type { AutomationEventTriggerDefinitionStoredPayloadV1 } from '@happier-dev/protocol/automations/event';
@@ -128,9 +128,12 @@ export type AutomationEditorDraft = AutomationTriggerEditorValue & Readonly<{
     scopeSessionId?: string | null;
     /** True only after the canonical recipe composer reseals a next-version recipe. */
     recipeDirty?: boolean;
-    executionRecipe: AutomationEditorExecutionRecipe;
-    assignments: ReadonlyArray<AutomationAssignmentInput>;
-}>;
+}> & (
+    | Readonly<{ executionRecipe: AutomationEditorExecutionRecipe; observationOnly?: never;
+        assignments: ReadonlyArray<AutomationAssignmentInput> }>
+    | Readonly<{ observationOnly: AutomationObservationOnlyDefinitionV1; executionRecipe?: never;
+        assignments: readonly [] }>
+);
 
 /** One durable-or-pending identity for editor-owned plugin setup and writes. */
 export function requireAutomationEditorDraftIdentity(draft: AutomationEditorDraft): string {
@@ -177,9 +180,9 @@ export function createAutomationEditorTriggerClientId(): string {
 
 /** The sole editor transition for a semantic recipe mutation. */
 export function replaceAutomationEditorExecutionRecipe(
-    draft: AutomationEditorDraft,
+    draft: Extract<AutomationEditorDraft, { executionRecipe: AutomationEditorExecutionRecipe }>,
     executionRecipe: AutomationEditorExecutionRecipe,
-): AutomationEditorDraft {
+): Extract<AutomationEditorDraft, { executionRecipe: AutomationEditorExecutionRecipe }> {
     const recipe = AutomationEditorExecutionRecipeSchema.parse(executionRecipe);
     const expectedVersion = draft.expectedTemplateVersion === null
         ? draft.executionRecipe.templateVersion

@@ -5,7 +5,7 @@ import type { Metadata } from '@happier-dev/session-core/state';
 
 import { readExternalSessionLink } from './readExternalSessionLink';
 
-export type { ExternalSessionFollowPolicy } from '@happier-dev/protocol';
+export type { ExternalSessionFollowPolicy } from '@happier-dev/protocol/sessions/external/linked-metadata';
 
 export function readExternalSessionFollowPolicy(metadata: unknown): ExternalSessionFollowPolicy {
     const externalSession = readExternalSessionLink(metadata);

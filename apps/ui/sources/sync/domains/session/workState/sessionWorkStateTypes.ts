@@ -1,7 +1,14 @@
-export type SessionWorkStateStatus = 'pending' | 'active' | 'paused' | 'blocked' | 'complete' | 'cancelled' | 'unknown';
-export type SessionWorkStateStatusReason = 'blocked' | 'usageLimited' | 'budgetLimited' | 'interrupted';
-export type SessionWorkStateKind = 'goal' | 'task' | 'todo';
-export type SessionWorkStateOrigin = 'vendor' | 'happier' | 'derived';
+import type {
+    SessionWorkStateItemKindV1,
+    SessionWorkStateItemOriginV1,
+    SessionWorkStateStatusReasonV1,
+    SessionWorkStateStatusV1,
+} from '@happier-dev/protocol/sessions/work/state/sessionWorkStateV1';
+
+export type SessionWorkStateStatus = SessionWorkStateStatusV1;
+export type SessionWorkStateStatusReason = SessionWorkStateStatusReasonV1;
+export type SessionWorkStateKind = SessionWorkStateItemKindV1;
+export type SessionWorkStateOrigin = SessionWorkStateItemOriginV1;
 
 // Provider-derived goal capabilities (mirrors protocol `SessionWorkStateGoalCapabilitiesV1`). The
 // owning provider publishes these; the UI gates goal actions on them instead of branching on

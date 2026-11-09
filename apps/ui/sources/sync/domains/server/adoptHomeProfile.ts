@@ -248,6 +248,7 @@ async function adoptHomeProfileWithCredentialsUnderAuthority(
 ): Promise<ServerProfile> {
     const adoption = {
         descriptor: input.descriptor,
+        ...(input.addressSelection ? { addressSelection: input.addressSelection } : {}),
         source: input.source,
         ...(input.preserveUserLabel !== undefined
             ? { preserveUserLabel: input.preserveUserLabel }

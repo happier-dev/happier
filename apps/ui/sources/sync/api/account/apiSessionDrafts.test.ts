@@ -111,7 +111,7 @@ describe('apiSessionDrafts', () => {
         const cipher = createSessionDraftCipher({ accountMode: 'plain', accountCryptoMaterial: null,
             getSessionContext: () => ({ mode: 'plain' }), randomBytes: size => new Uint8Array(size) });
         const repository = createSessionDraftRepository({
-            storage: { getString: key => values.get(key), set: (key, value) => { values.set(key, value); },
+            storage: { getString: key => values.get(key), getAllKeys: () => [...values.keys()], set: (key, value) => { values.set(key, value); },
                 delete: key => { values.delete(key); } },
             scope, syncEnabled: false, cipher,
         });

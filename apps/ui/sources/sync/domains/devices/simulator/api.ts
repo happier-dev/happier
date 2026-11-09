@@ -1,8 +1,10 @@
 import type {
-    MachineLiveStreamControlSidebandV1,
-    SimulatorPreviewActionV1,
+    MachineLiveStreamControlSidebandV1} from '@happier-dev/protocol/machines/peer/mediation/stream/controlV1';
+import type {
+    SimulatorPreviewActionV1} from '@happier-dev/protocol/devices/simulator/runtimeV1';
+import type {
     SimulatorSidebandKindV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/devices/simulator/sidebandV1';
 import {
     createSimulatorPreviewAcquireLeaseEventV1,
     createSimulatorPreviewCloseStreamEventV1,

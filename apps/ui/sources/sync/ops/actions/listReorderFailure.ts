@@ -1,4 +1,4 @@
-import type { ListReorderOutputV1 } from '@happier-dev/protocol';
+import type { ListReorderOutputV1 } from '@happier-dev/protocol/actions/listReorderAction';
 import { TodoReorderError } from '@/sync/domains/todos/todoOps';
 
 /** Only canonical owner refusals are definitive after a request may have been issued. */

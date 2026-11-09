@@ -211,11 +211,12 @@ export function createSessionConsumptionProjection(serverId: string): Readonly<{
                     && next?.externalSessionV1?.machineId === before?.externalSessionV1?.machineId
                     && next?.sessionWorkspaceLocationV1 === before?.sessionWorkspaceLocationV1
                     && next?.projectId === before?.projectId && next?.workspaceId === before?.workspaceId
+                    && currentRows?.[id]?.projectKey === previousRows?.[id]?.projectKey
                     && Boolean(currentRows?.[id]) === Boolean(previousRows?.[id])) continue;
                 updateScmSession(id); changed = true;
             }
             if (changed) refresh();
-        }),
+        }, { sessionListRenderableDelta: true }),
     ];
     refreshScm();
     return {

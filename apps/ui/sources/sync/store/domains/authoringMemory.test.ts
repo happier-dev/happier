@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createStore } from 'zustand/vanilla';
-import type { AuthoringMemoryValueV1 } from '@happier-dev/protocol';
+import type { AuthoringMemoryValueV1 } from '@happier-dev/protocol/account/authoringMemory';
 
 import { createAuthoringMemoryDomain, type AuthoringMemoryDomain } from './authoringMemory';
 

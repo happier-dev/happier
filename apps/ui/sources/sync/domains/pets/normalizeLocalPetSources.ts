@@ -1,7 +1,7 @@
 import type {
     DiscoveredPetPackageV1,
     ImportedLocalPetPackageV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/pets/daemonRpc';
 
 import type { LocalPetDaemonTarget, LocalPetSourceMetadata } from './localPetSourceTypes';
 

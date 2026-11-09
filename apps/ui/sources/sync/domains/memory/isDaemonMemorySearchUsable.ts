@@ -1,4 +1,4 @@
-import type { MemoryStatusV1 } from '@happier-dev/protocol';
+import type { MemoryStatusV1 } from '@happier-dev/protocol/memory/memoryStatus';
 import { readMemoryStatusTelemetry } from './memoryStatusTelemetry';
 
 export function isDaemonMemorySearchUsable(status: MemoryStatusV1 | null | undefined): boolean {

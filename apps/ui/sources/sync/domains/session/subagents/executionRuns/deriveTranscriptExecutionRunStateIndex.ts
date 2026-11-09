@@ -1,9 +1,9 @@
-import { createStoredReadSchema } from '@happier-dev/protocol';
+import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { ExecutionRunLaunchOriginSchema, type ExecutionRunLaunchOrigin } from '@happier-dev/protocol/execution/runs/index';
 import type { BackendTargetRefV1 } from '@happier-dev/protocol/backends/targets/backendTargetRef';
 
 import { resolveToolTranscriptSidechainId } from '@/components/tools/shell/views/resolveToolTranscriptSidechainId';
-import type { Message, ToolCallMessage } from "@happier-dev/session-core/messages";
+import { sortTranscriptMessagesOldestFirst, type Message, type ToolCallMessage } from "@happier-dev/session-core/messages";
 import { readExecutionRunIdFromToolPayload } from '@/sync/domains/session/participants/deriveExecutionRunPollingRefreshKey';
 
 import type { SessionSubagentStatus } from '../types';
@@ -36,23 +36,6 @@ export type TranscriptExecutionRunState = {
     updatedAtMs?: number;
     finishedAtMs?: number;
 };
-
-function sortMessagesChronologically(messages: readonly Message[]): readonly Message[] {
-    return [...messages]
-        .map((message, index) => ({ message, index }))
-        .sort((left, right) => {
-            const leftSeq = typeof (left.message as any)?.seq === 'number' ? Number((left.message as any).seq) : null;
-            const rightSeq = typeof (right.message as any)?.seq === 'number' ? Number((right.message as any).seq) : null;
-            if (leftSeq != null && rightSeq != null && leftSeq !== rightSeq) return leftSeq - rightSeq;
-
-            const leftCreatedAt = typeof (left.message as any)?.createdAt === 'number' ? Number((left.message as any).createdAt) : null;
-            const rightCreatedAt = typeof (right.message as any)?.createdAt === 'number' ? Number((right.message as any).createdAt) : null;
-            if (leftCreatedAt != null && rightCreatedAt != null && leftCreatedAt !== rightCreatedAt) return leftCreatedAt - rightCreatedAt;
-
-            return left.index - right.index;
-        })
-        .map((entry) => entry.message);
-}
 
 export function readOptionalString(record: Record<string, unknown>, key: string): string | null {
     const value = record[key];
@@ -108,7 +91,7 @@ export function deriveTranscriptExecutionRunStateIndex(messages: readonly Messag
     orderedMessages: readonly Message[];
 }> {
     const byRunId = new Map<string, TranscriptExecutionRunState>();
-    const orderedMessages = sortMessagesChronologically(messages);
+    const orderedMessages = sortTranscriptMessagesOldestFirst(messages);
     const explicitlyStoppedRunIds = deriveExplicitlyStoppedExecutionRunIds(messages);
 
     for (const message of orderedMessages) {

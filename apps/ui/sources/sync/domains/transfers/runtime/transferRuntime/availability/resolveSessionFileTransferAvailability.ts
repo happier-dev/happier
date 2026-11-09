@@ -1,4 +1,4 @@
-import type { FeaturesResponse as ServerFeatures } from '@happier-dev/protocol';
+import type { FeaturesResponse as ServerFeatures } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import type { HomeApplicationCarrierEligibility } from '@happier-dev/cli-common/homeEnrollment';
 
 import type { TransferRouteDecision } from '../routing/resolveTransferRouteDecision';

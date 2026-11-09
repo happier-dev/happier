@@ -12,6 +12,7 @@ import {
     SESSION_LIST_DOCUMENT_ADMISSION,
     areSessionListDocumentAdmissionsEqual,
     hasCurrentSessionListDisplayMetadata,
+    hasNewerObservedSessionMetadata,
     type SessionListDocumentAdmission,
 } from './sessionDocumentAdmission';
 import {
@@ -45,7 +46,8 @@ export function isHydratedSessionCurrentForListState(
     if (!currentRenderable) return false;
     const observedAdmission = currentRenderable[SESSION_LIST_DOCUMENT_ADMISSION];
     if (observedAdmission && !areSessionListDocumentAdmissionsEqual(session[SESSION_LIST_DOCUMENT_ADMISSION], observedAdmission)) return false;
-    if ((observedAdmission?.observedMetadataVersion ?? currentRenderable.metadataVersion) > session.metadataVersion) return false;
+    if (hasNewerObservedSessionMetadata({ ...session, [SESSION_LIST_DOCUMENT_ADMISSION]: observedAdmission })) return false;
+    if (!observedAdmission && currentRenderable.metadataVersion > session.metadataVersion) return false;
     if ((observedAdmission?.observedAgentStateVersion ?? currentRenderable.agentStateVersion) > session.agentStateVersion) return false;
     if (currentRenderable.seq > session.seq) return false;
     if (readSessionFullPublicationUpdatedAt({ id: currentRenderable.id, serverId: currentRenderable.serverId })
@@ -95,7 +97,7 @@ export function hasAuthoritativeSessionRouteData(
         if (typeof session.metadataVersion !== 'number' || typeof session.agentStateVersion !== 'number'
             || !hasCurrentSessionListDisplayMetadata({ ...session, metadata: session.metadata,
                 metadataVersion: session.metadataVersion, encryptionMode: session.encryptionMode ?? undefined })
-            || session.metadataVersion < (admission.observedMetadataVersion ?? session.metadataVersion)
+            || hasNewerObservedSessionMetadata(session)
             || admission.openedAgentStateVersion !== session.agentStateVersion
             || session.agentStateVersion < (admission.observedAgentStateVersion ?? session.agentStateVersion)) return false;
     }

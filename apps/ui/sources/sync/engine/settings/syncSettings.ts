@@ -1,6 +1,9 @@
-import { deriveAccountRemoteAlertPolicyV1 } from '@happier-dev/protocol/account/settings/accountRemoteAlertPolicy';
-import { fetchPushTokensRemoteAlertProjection } from '@/sync/api/session/apiPush';
+import { isHomeCredentialCurrent } from '@/sync/runtime/orchestration/homeAccountChange';
+import type { AccountRemoteAlertPolicyV1 } from '@happier-dev/protocol/account/settings/accountRemoteAlertPolicy';
 import { tracking } from '@/track';
+import { ThemeProfileLibraryStoredSchema } from '@/theme/profiles/themeProfilePersistence';
+import { captureLegacyThemeProfileMigration } from './themeProfileMigration';
+import { runAccountSettingsMutation } from './accountSettingsMutationOrder';
 import { applySettings, settingsParse, type Settings } from '@/sync/domains/settings/settings';
 import {
     normalizeVoiceSettingsLocalDelta,
@@ -30,7 +33,7 @@ import {
     getServerProfileLegacyServerIds,
     resolveServerProfileScopeId,
 } from '@/sync/domains/server/serverProfiles';
-import { storage } from '@/sync/domains/state/storage';
+import { storage } from '@/sync/domains/state/storageStore';
 import { loadPendingSettings } from '@/sync/domains/state/persistence';
 import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
 import { getStorage as getSessionOrganizationStorage } from '@/sync/domains/state/storageStore';
@@ -48,9 +51,10 @@ import {
     normalizeAccountSettingsForLocalStorage,
     normalizeAccountSettingsForServerStorage,
     openAccountSettingsStoredContent,
+    AccountSettingsStoredContentUnavailableError,
 } from '@/sync/domains/settings/accountSettingsNormalization';
 import { createServerFetchAtEndpoint, type ServerFetch } from '@/sync/http/client';
-import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
+import { readAccountSettingsWriteMaterial } from './accountSettingsWriteMaterial';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { applyAccountSettingMutationV1, type AccountSettingMutationV1 } from '@happier-dev/protocol/account/settings/accountSettingMutationV1';
 import { AccountSettingsV2UpdateResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
@@ -59,6 +63,7 @@ import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/ac
 import type { AccountSettingsStoredContentEnvelope } from '@happier-dev/protocol/account/settings/accountSettingsStoredContentEnvelope';
 import {
     readAccountSettingsBaseline,
+    readRemoteAlertPolicyStatusHeader,
     type AccountSettingsBaselineContent,
 } from './accountSettingsBaseline';
 import { applyCrashReportsOptOut } from '@/utils/system/sentry';
@@ -79,7 +84,9 @@ import {
     removeCommittedPendingSettings,
 } from './writeback/accountSettingsRawDeltaMerge';
 import { areAccountSettingsRawObjectsEqual } from './writeback/accountSettingsRawEquality';
-import { retainAccountSettingsRawSnapshot } from './accountSettingsRawSnapshot';
+import { fetchAccountEncryptionCurrentness } from '@/sync/api/account/apiAccountEncryptionMode';
+import { confirmAccountSettingsHead, readRetainedAccountSettingsRawSnapshot, retainAccountSettingsRawSnapshot } from './accountSettingsRawSnapshot';
+import { createRemoteAlertPolicyWriteback } from './writeback/remoteAlertPolicyWriteback';
 import { assertUiAccountEncryptionModeAllowed } from '@/sync/domains/settings/clientEncryptionRequirement';
 import { getProviderCatalogSnapshot } from '@/sync/store/settings/providerCatalogSnapshot';
 import { composeProviderSettingsV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
@@ -185,8 +192,6 @@ export type SyncSettingsParams<TOneShotMutationValue = never> = {
     pendingSettings: Partial<Settings>;
     /** Latest intents for this captured scope, including those awaiting the quiet disk flush. */
     getPendingSettings?: () => Partial<Settings>;
-    /** Republish only from the fetched exact-Home settings CAS baseline. */
-    republishRemoteAlertPolicy?: boolean;
     clearPendingSettings: (nextPendingSettings: Partial<Settings>) => void;
     settingsSecretsKey?: Uint8Array | null;
     settingsSecretsReadKeys?: ReadonlyArray<Uint8Array | null | undefined>;
@@ -199,6 +204,11 @@ export type SyncSettingsParams<TOneShotMutationValue = never> = {
         scope: AccountSettingsScope;
         endpointUrl: string;
         request: ServerFetch;
+        /** Already opened on this captured transport; fresh identity is verified before sealing. */
+        admittedBaseline?: Readonly<{
+            accountMode: 'plain' | 'e2ee';
+            value: AccountSettingsBaselineContent;
+        }>;
     }>;
     /** Immutable set/reset operations reapplied to each fetched CAS winner. */
     accountSettingsMutation?: AccountSettingMutationV1;
@@ -233,7 +243,7 @@ export type SyncSettingsParams<TOneShotMutationValue = never> = {
             content: AccountSettingsStoredContentEnvelope;
             expectedSettingsVersion: number;
             accountMode: 'plain' | 'e2ee';
-            remoteAlertPolicy?: ReturnType<typeof deriveAccountRemoteAlertPolicyV1>;
+            remoteAlertPolicy?: AccountRemoteAlertPolicyV1 | null;
         }>) => Promise<OneShotAccountSettingsPreparedCommitResult>;
     }>;
 };
@@ -279,14 +289,18 @@ export async function retireLegacyAuthoringMemoryKey(params: Readonly<{
     const raw = { ...baseline.raw };
     delete raw[params.key];
     if (baseline.api !== 'v2') throw new Error('Authoring-memory retirement requires Account Settings v2');
+    const writeMaterial = await readAccountSettingsWriteMaterial({ credentials: params.credentials,
+        encryption: params.encryption, request, expectedMode: params.accountMode });
+    writeMaterial.assertCurrent();
     let content: AccountSettingsStoredContentEnvelope;
     if (params.accountMode === 'plain') {
         content = { t: 'plain', v: raw };
     } else {
-        if (!params.encryption) throw new Error('Account settings encryption material is unavailable');
+        if (!writeMaterial.material) throw new AccountSettingsStoredContentUnavailableError(
+            'account_settings_encryption_material_unavailable', 'Account settings encryption material is unavailable');
         content = { t: 'encrypted', c: sealAccountScopedBlobCiphertext({
             kind: 'account_settings',
-            material: { type: 'dataKey', machineKey: params.encryption.getContentPrivateKey() },
+            material: writeMaterial.material,
             payload: raw,
             randomBytes: getRandomBytes,
         }) };
@@ -336,6 +350,17 @@ export function syncSettings<TOneShotMutationValue = never>(
 export async function syncSettings<TOneShotMutationValue = never>(
     params: SyncSettingsParams<TOneShotMutationValue>,
 ): Promise<OneShotAccountSettingsMutationResult<TOneShotMutationValue> | void> {
+    // Admitted Actions already hold this order. Ordinary writeback joins it so
+    // migration cleanup cannot overtake a newer edit's durable pending handoff.
+    if (params.settingsScope && !params.accountSettingsMutation && !params.oneShotServerSettingsMutation) {
+        return runAccountSettingsMutation(params.settingsScope,
+            () => syncSettingsUnlocked(params),
+            params.signal ?? new AbortController().signal);
+    }
+    return syncSettingsUnlocked(params);
+}
+
+async function syncSettingsUnlocked<TOneShotMutationValue>(params: SyncSettingsParams<TOneShotMutationValue>): Promise<OneShotAccountSettingsMutationResult<TOneShotMutationValue> | void> {
     const { credentials, encryption, pendingSettings, clearPendingSettings } = params;
     const settingsScope = params.settingsScope ?? null;
     const settingsSecretsKey = params.settingsSecretsKey ?? null;
@@ -392,13 +417,7 @@ export async function syncSettings<TOneShotMutationValue = never>(
         }
         return capturedRequest(path, init, { includeAuth: false });
     };
-    let remoteProjectionPromise: ReturnType<typeof fetchPushTokensRemoteAlertProjection> | null = null;
-    const fetchRemoteProjection = () => remoteProjectionPromise ??= fetchPushTokensRemoteAlertProjection(credentials, request)
-        .catch(() => null);
-    const supportsRemoteProjection = () => fetchRemoteProjection().then((projection) => projection !== null);
-    // This read does not supply Account mode or the Settings CAS baseline.
-    // Its result is required only before choosing/issuing policy writeback.
-    const remoteProjectionRead = params.republishRemoteAlertPolicy === true ? fetchRemoteProjection() : null;
+    const remoteAlertPolicyWriteback = createRemoteAlertPolicyWriteback({ credentials, request });
     const maxRetries = 3;
     let retryCount = 0;
     let lastVersionMismatch: { expectedVersion: number; currentVersion: number; pendingKeys: string[] } | null = null;
@@ -426,13 +445,19 @@ export async function syncSettings<TOneShotMutationValue = never>(
         }
     }
 
-    const encryptionMode = await fetchAccountEncryptionMode(credentials, { request });
-    const accountMode = encryptionMode.mode === 'plain' ? 'plain' : 'e2ee';
-    const requireEncryption = (): Encryption => {
-        if (!encryption) {
-            throw new Error('Account settings encryption material is unavailable');
-        }
-        return encryption;
+    // Explicit semantic mutations retain their exact requested transition.
+    const themeProfileMigration = settingsScope && !params.accountSettingsMutation && !params.oneShotServerSettingsMutation
+        ? captureLegacyThemeProfileMigration(settingsScope) : null;
+
+    const admittedBaseline = requestContext?.admittedBaseline;
+    // The admitted path initializes material at the fresh pre-seal boundary below.
+    let writeMaterial!: Awaited<ReturnType<typeof readAccountSettingsWriteMaterial>>;
+    const accountMode = admittedBaseline ? admittedBaseline.accountMode
+        : (writeMaterial = await readAccountSettingsWriteMaterial({ credentials, encryption, request })).identity.mode;
+    const accountIdentity = admittedBaseline ? undefined : writeMaterial.identity;
+    const refreshWriteMaterial = async () => {
+        writeMaterial = await readAccountSettingsWriteMaterial({ credentials, encryption, request,
+            ...(admittedBaseline ? { expectedMode: accountMode } : { expectedIdentity: accountIdentity }) });
     };
 
     function isSettingsScopeActive(): boolean {
@@ -462,12 +487,13 @@ export async function syncSettings<TOneShotMutationValue = never>(
         return settingsScope ? loadPendingAccountSettings(settingsScope) : loadPendingSettings();
     }
 
-    function applySettingsForCapturedScope(nextSettings: Settings, nextVersion: number): void {
+    function applySettingsForCapturedScope(nextSettings: Settings, nextVersion: number,
+        remoteAlertPolicyStatus?: AccountSettingsBaselineContent['remoteAlertPolicyStatus']): void {
         if (settingsScope) {
-            storage.getState().applySettingsForScope(settingsScope, nextSettings, nextVersion);
+            storage.getState().applySettingsForScope(settingsScope, nextSettings, nextVersion, remoteAlertPolicyStatus);
             return;
         }
-        storage.getState().applySettings(nextSettings, nextVersion);
+        storage.getState().applySettings(nextSettings, nextVersion, remoteAlertPolicyStatus);
     }
 
     function applyActiveSettingsSideEffects(): void {
@@ -487,10 +513,8 @@ export async function syncSettings<TOneShotMutationValue = never>(
     };
 
     const expectedProfileTransferRevision = params.oneShotServerSettingsMutation?.expectedProfileTransferRevision;
-    async function updateSettingsV2(params: { content: unknown; expectedVersion: number; raw: Readonly<Record<string, unknown>> }): Promise<unknown> {
-        const remotePolicy = await supportsRemoteProjection()
-            ? { remoteAlertPolicy: deriveAccountRemoteAlertPolicyV1(params.raw) }
-            : {};
+    async function updateSettingsV2(params: { content: unknown; expectedVersion: number; before: Readonly<Record<string, unknown>> | null; raw: Readonly<Record<string, unknown>> }): Promise<unknown> {
+        const remotePolicy = await remoteAlertPolicyWriteback.prepare(params.before, params.raw, initialBaseline.remoteAlertPolicyWriteSupported);
         const response = await request('/v2/account/settings', {
             method: 'POST',
             body: JSON.stringify({
@@ -507,7 +531,7 @@ export async function syncSettings<TOneShotMutationValue = never>(
 
         const data: unknown = await response.json().catch(() => null);
         const parsed = AccountSettingsV2UpdateResponseSchema.safeParse(data);
-        if (response.ok && parsed.success) return parsed.data;
+        if (response.ok && parsed.success) return { ...parsed.data, remoteAlertPolicyStatus: readRemoteAlertPolicyStatusHeader(response.headers) };
         if (response.status === 404) {
             throw Object.assign(new Error('settings_v2_not_supported'), { code: 'settings_v2_not_supported' });
         }
@@ -534,7 +558,7 @@ export async function syncSettings<TOneShotMutationValue = never>(
         }
 
         if (response.ok && data.success === true && typeof data.version === 'number') {
-            return data;
+            return { ...data, remoteAlertPolicyStatus: readRemoteAlertPolicyStatusHeader(response.headers) };
         }
         if (response.ok && data.success === false && data.error === 'version-mismatch' && typeof data.currentVersion === 'number') {
             return data;
@@ -567,11 +591,11 @@ export async function syncSettings<TOneShotMutationValue = never>(
         return migrateRawServerIdentityKeys(merged).raw;
     }
 
-    async function fetchAccountSettingsBaseline(): Promise<AccountSettingsServerBaseline> {
+    async function fetchAccountSettingsBaseline(admitted?: NonNullable<SyncSettingsParams['requestContext']>['admittedBaseline']): Promise<AccountSettingsServerBaseline> {
         // The wire read and envelope opening live in the shared baseline seam;
         // this wrapper adds only the captured-scope identity-key migration and
         // its local normalization side effect.
-        const fetched = await readAccountSettingsBaseline({
+        const fetched = admitted?.value ?? await readAccountSettingsBaseline({
             request,
             credentials,
             encryption,
@@ -585,10 +609,6 @@ export async function syncSettings<TOneShotMutationValue = never>(
                 localSettings: loadSettingsForCapturedScope().settings,
             });
         }
-        normalizeSettingsForLocalStorage({
-            raw: migrated.raw,
-            mode: accountMode,
-        });
         return { ...fetched, raw: migrated.raw, serverIdentityKeysChanged: migrated.changed };
     }
 
@@ -610,10 +630,6 @@ export async function syncSettings<TOneShotMutationValue = never>(
                 localSettings: loadSettingsForCapturedScope().settings,
             });
         }
-        normalizeSettingsForLocalStorage({
-            raw: migrated.raw,
-            mode: opened.mode,
-        });
         return {
             api: data.currentContent !== undefined ? 'v2' : 'v1',
             content: currentContent,
@@ -624,26 +640,12 @@ export async function syncSettings<TOneShotMutationValue = never>(
         };
     }
 
-    let localNormalization: Readonly<{
-        raw: Record<string, unknown> | null;
-        mode: 'plain' | 'e2ee';
-        localSettings: Settings;
-        organizationImported: boolean;
-        settings: Settings;
-    }> | null = null;
-
     function normalizeSettingsForLocalStorage(params: {
         raw: Record<string, unknown> | null;
         mode: 'plain' | 'e2ee';
     }): Settings {
         const localSettings = loadSettingsForCapturedScope().settings;
-        const organizationImported = shouldStripMigratedSessionOrganizationSettings();
-        const previous = localNormalization;
-        if (previous?.raw === params.raw && previous.mode === params.mode
-            && previous.localSettings === localSettings && previous.organizationImported === organizationImported) {
-            return previous.settings;
-        }
-        const settings = normalizeAccountSettingsForLocalStorage({
+        return normalizeAccountSettingsForLocalStorage({
             raw: params.raw,
             mode: params.mode,
             settingsSecretsKey,
@@ -651,10 +653,6 @@ export async function syncSettings<TOneShotMutationValue = never>(
             localSettings,
             normalizeServerRaw: stripMigratedSessionOrganizationSettingsForImportedScope,
         });
-        // Baseline validation and publication use the same immutable raw winner.
-        // A local edit or completed legacy import invalidates this attempt-local reuse.
-        localNormalization = { raw: params.raw, mode: params.mode, localSettings, organizationImported, settings };
-        return settings;
     }
 
     function normalizeSettingsForServerStorageResult(params: {
@@ -662,6 +660,7 @@ export async function syncSettings<TOneShotMutationValue = never>(
         mode: 'plain' | 'e2ee';
         current?: Readonly<Record<string, unknown>>;
     }): { value: Record<string, unknown>; changed: boolean } {
+        writeMaterial.assertCurrent();
         const strippedLocalOnly = stripLocalOnlyAccountSettings(params.raw) as Record<string, unknown>;
         const stripped = stripMigratedSessionOrganizationSettingsForImportedScope(strippedLocalOnly);
         const migratedOrganizationStripped = !areAccountSettingsRawObjectsEqual(
@@ -699,6 +698,7 @@ export async function syncSettings<TOneShotMutationValue = never>(
         content: AccountSettingsStoredContentEnvelope;
         v1Settings: string | null;
     } {
+        writeMaterial.assertCurrent();
         if (accountMode === 'plain') {
             assertUiAccountEncryptionModeAllowed({
                 mode: 'plain',
@@ -707,9 +707,11 @@ export async function syncSettings<TOneShotMutationValue = never>(
             });
             return { content: { t: 'plain', v: raw }, v1Settings: null };
         }
+        if (!writeMaterial.material) throw new AccountSettingsStoredContentUnavailableError(
+            'account_settings_encryption_material_unavailable', 'Account settings encryption material is unavailable');
         const ciphertext = sealAccountScopedBlobCiphertext({
             kind: 'account_settings',
-            material: { type: 'dataKey', machineKey: requireEncryption().getContentPrivateKey() },
+            material: writeMaterial.material,
             payload: raw,
             randomBytes: getRandomBytes,
         });
@@ -720,7 +722,9 @@ export async function syncSettings<TOneShotMutationValue = never>(
         raw: Record<string, unknown> | null;
         version: number;
         remainingPendingSettings?: Partial<Settings>;
+        remoteAlertPolicyStatus?: AccountSettingsBaselineContent['remoteAlertPolicyStatus'];
     }): Settings {
+        if (settingsScope) retainAccountSettingsRawSnapshot(settingsScope, params.version, params.raw);
         const parsedSettings = params.raw
             ? normalizeSettingsForLocalStorage({ raw: params.raw, mode: accountMode })
             : normalizeAccountSettingsForLocalStorage({
@@ -737,7 +741,7 @@ export async function syncSettings<TOneShotMutationValue = never>(
             ? applySettings(parsedSettings, remainingServerPending)
             : parsedSettings;
         const nextSettings = mergedWithPending;
-        applySettingsForCapturedScope(nextSettings, params.version);
+        applySettingsForCapturedScope(nextSettings, params.version, params.remoteAlertPolicyStatus);
         applyActiveSettingsSideEffects();
         return nextSettings;
     }
@@ -753,6 +757,7 @@ export async function syncSettings<TOneShotMutationValue = never>(
             applyRawSettingsProjection({
                 raw: readback.raw,
                 version: readback.version,
+                remoteAlertPolicyStatus: readback.remoteAlertPolicyStatus,
                 remainingPendingSettings: {},
             });
             return Object.freeze({
@@ -843,7 +848,7 @@ export async function syncSettings<TOneShotMutationValue = never>(
                     accountMode,
                     request: plan.request,
                 });
-            } else {
+            } else if (isHomeCredentialCurrent(settingsScope.serverId, credentials)) {
                 getSessionOrganizationStorage().getState().applySessionOrganizationSnapshot(
                     settingsScope.serverId,
                     existing.snapshot,
@@ -862,17 +867,31 @@ export async function syncSettings<TOneShotMutationValue = never>(
         }
     }
 
-    const initialBaseline = await fetchAccountSettingsBaseline();
-    const remoteAlertPolicyReconciliationStatus = (await remoteProjectionRead)?.accountRemoteAlerts.status ?? null;
-    const shouldInspectRemoteAlertPolicy = remoteAlertPolicyReconciliationStatus === 'stale'
-        || remoteAlertPolicyReconciliationStatus === 'disabled';
+    // A refresh with nothing to write only exists to catch up. When the Home's head is the version
+    // Sync already admitted and applied, the document is known: no whole-blob read, no republication.
+    // The remote-alert status is a pure function of the policy binding and Settings version, every
+    // change of which moves the head, so a known status cannot be stale here. An unknown one (an older
+    // Home omits it) keeps the consumer's exact-version re-read below.
+    if (settingsScope && isSettingsScopeActive() && !admittedBaseline && Object.keys(pendingServerSettings).length === 0
+        && !themeProfileMigration && !params.accountSettingsMutation && !params.oneShotServerSettingsMutation
+        && storage.getState().settingsRemoteAlertPolicyStatus != null) {
+        const admitted = readRetainedAccountSettingsRawSnapshot(settingsScope);
+        if (admitted && admitted.version === loadSettingsForCapturedScope().version
+            && (await fetchAccountEncryptionCurrentness(credentials, { request })).settingsVersion === admitted.version) {
+            confirmAccountSettingsHead(settingsScope, admitted.version);
+            await maybeImportLegacySessionOrganization({ ...admitted.raw });
+            return;
+        }
+    }
+
+    const initialBaseline = await fetchAccountSettingsBaseline(requestContext?.admittedBaseline);
     let prefetchedFinalBaseline: AccountSettingsServerBaseline | null = initialBaseline;
 
     // Apply pending settings
     if (Object.keys(pendingServerSettings).length > 0
+        || themeProfileMigration
         || params.accountSettingsMutation
-        || params.oneShotServerSettingsMutation
-        || shouldInspectRemoteAlertPolicy) {
+        || params.oneShotServerSettingsMutation) {
         dbgSettings('syncSettings: pending detected; will POST', {
             endpoint: settingsEndpointUrl,
             pendingKeys: Object.keys(pendingServerSettings).sort(),
@@ -892,6 +911,7 @@ export async function syncSettings<TOneShotMutationValue = never>(
                 applyRawSettingsProjection({
                     raw: baseline.raw,
                     version,
+                    remoteAlertPolicyStatus: baseline.remoteAlertPolicyStatus,
                     remainingPendingSettings: {},
                 });
                 return Object.freeze({
@@ -908,6 +928,9 @@ export async function syncSettings<TOneShotMutationValue = never>(
                     || !isPlainSettingsRecord(oneShotMutation.settings))) {
                 return Object.freeze({ status: 'invalid', reason: 'invalidPreparedMutation' });
             }
+            // Preparation may await a key change. Re-admit before importing legacy
+            // organization data, normalizing secrets or sealing this attempt.
+            await refreshWriteMaterial();
             if (params.oneShotServerSettingsMutation) {
                 pendingLegacySessionOrganizationImported = await maybeImportLegacySessionOrganization(
                     mergePendingLegacySessionOrganizationSettings(baseline.raw),
@@ -931,9 +954,14 @@ export async function syncSettings<TOneShotMutationValue = never>(
             const mutationBaseline = oneShotMutation
                 ? oneShotMutation.settings
                 : immutableMutation?.raw ?? baseline.raw;
+            const migratedThemes = themeProfileMigration?.resolve(
+                ThemeProfileLibraryStoredSchema.parse(baseline.raw?.themeProfiles ?? []), pendingServerSettings.themeProfiles,
+            ) ?? null;
+            const pendingWithMigration: Partial<Settings> = migratedThemes
+                ? { ...pendingServerSettings, themeProfiles: [...migratedThemes.profiles] } : pendingServerSettings;
             const merged = mergePendingSettingsIntoRawBaseline({
                 rawBaseline: mutationBaseline,
-                pendingSettings: pendingServerSettings,
+                pendingSettings: pendingWithMigration,
                 normalizeForPersistedStorage: (raw) => normalizeSettingsForServerStorageResult({ raw, mode: accountMode, current: baseline.raw ?? {} }),
             });
             const normalizedUnmutatedBaseline = normalizeSettingsForServerStorageResult({
@@ -941,6 +969,7 @@ export async function syncSettings<TOneShotMutationValue = never>(
                 mode: accountMode,
                 current: baseline.raw ?? {},
             }).value;
+            if (migratedThemes) themeProfileMigration?.stage(migratedThemes);
             const captured = params.oneShotServerSettingsMutation?.capture?.({
                 before: baseline.raw ?? {}, applied: merged.outgoingRaw, beforeVersion: version,
             });
@@ -948,17 +977,12 @@ export async function syncSettings<TOneShotMutationValue = never>(
                 normalizedUnmutatedBaseline,
                 merged.comparisonRaw,
             );
-            const shouldRepublishRemoteAlertPolicy = remoteAlertPolicyReconciliationStatus === 'stale'
-                || (remoteAlertPolicyReconciliationStatus === 'disabled'
-                    && deriveAccountRemoteAlertPolicyV1(merged.outgoingRaw) !== null);
-
             if (!params.oneShotServerSettingsMutation?.commitPrepared
-                && !shouldRepublishRemoteAlertPolicy
                 && !baseline.serverIdentityKeysChanged
                 && !serverMutationChanged
                 && !merged.comparisonChanged
                 && areAccountSettingsRawObjectsEqual(merged.comparisonRaw, merged.outgoingRaw)) {
-                const remainingPendingSettings = clearCommittedPendingSettings(pendingServerSettings, {
+                const remainingPendingSettings = clearCommittedPendingSettings(pendingWithMigration, {
                     preserveMigratedSessionOrganizationSettings: Object.keys(pendingLegacySessionOrganizationSettings).length > 0
                         && !pendingLegacySessionOrganizationImported,
                 });
@@ -970,8 +994,13 @@ export async function syncSettings<TOneShotMutationValue = never>(
                 applyRawSettingsProjection({
                     raw: baseline.raw,
                     version,
+                    remoteAlertPolicyStatus: baseline.remoteAlertPolicyStatus,
                     remainingPendingSettings,
                 });
+                if (migratedThemes) {
+                    themeProfileMigration?.acknowledge(migratedThemes);
+                    themeProfileMigration?.finish(migratedThemes);
+                }
                 return oneShotMutation
                     ? Object.freeze({
                         status: 'applied',
@@ -982,10 +1011,6 @@ export async function syncSettings<TOneShotMutationValue = never>(
                     : undefined;
             }
 
-            normalizeSettingsForLocalStorage({
-                raw: merged.outgoingRaw,
-                mode: accountMode,
-            });
             const { content, v1Settings } = createSettingsContentForWrite(merged.outgoingRaw);
             dbgSettings('syncSettings: POST attempt', {
                 endpoint: settingsEndpointUrl,
@@ -1005,16 +1030,14 @@ export async function syncSettings<TOneShotMutationValue = never>(
                         content,
                         expectedSettingsVersion: version,
                         accountMode,
-                        ...(await supportsRemoteProjection()
-                            ? { remoteAlertPolicy: deriveAccountRemoteAlertPolicyV1(merged.outgoingRaw) }
-                            : {}),
+                        ...await remoteAlertPolicyWriteback.prepare(baseline.raw, merged.outgoingRaw, initialBaseline.remoteAlertPolicyWriteSupported),
                     });
                     data = preparedCommitResult.status === 'applied'
                         ? { success: true, version: preparedCommitResult.settingsVersion }
                         : null;
                 } else {
                     data = baseline.api === 'v2'
-                        ? await updateSettingsV2({ content, expectedVersion: version, raw: merged.outgoingRaw })
+                        ? await updateSettingsV2({ content, expectedVersion: version, before: baseline.raw, raw: merged.outgoingRaw })
                         : await updateSettingsV1({ settings: v1Settings, expectedVersion: version });
                 }
             } catch (error) {
@@ -1033,7 +1056,8 @@ export async function syncSettings<TOneShotMutationValue = never>(
             }
             if (preparedCommitResult?.status === 'conflict') {
                 const current = await fetchAccountSettingsBaseline();
-                applyRawSettingsProjection({ raw: current.raw, version: current.version, remainingPendingSettings: {} });
+                applyRawSettingsProjection({ raw: current.raw, version: current.version,
+                    remoteAlertPolicyStatus: current.remoteAlertPolicyStatus, remainingPendingSettings: {} });
                 return Object.freeze({
                     status: 'conflict' as const,
                     currentSettingsVersion: current.version,
@@ -1041,7 +1065,7 @@ export async function syncSettings<TOneShotMutationValue = never>(
             }
 
             if (data.success) {
-                const remainingPendingSettings = clearCommittedPendingSettings(pendingServerSettings, {
+                const remainingPendingSettings = clearCommittedPendingSettings(pendingWithMigration, {
                     preserveMigratedSessionOrganizationSettings: Object.keys(pendingLegacySessionOrganizationSettings).length > 0
                         && !pendingLegacySessionOrganizationImported,
                 });
@@ -1053,8 +1077,13 @@ export async function syncSettings<TOneShotMutationValue = never>(
                 applyRawSettingsProjection({
                     raw: merged.outgoingRaw,
                     version: data.version,
+                    remoteAlertPolicyStatus: data.remoteAlertPolicyStatus,
                     remainingPendingSettings,
                 });
+                if (migratedThemes) {
+                    themeProfileMigration?.acknowledge(migratedThemes);
+                    themeProfileMigration?.finish(migratedThemes);
+                }
                 return oneShotMutation
                     ? Object.freeze({
                         status: 'applied',
@@ -1069,7 +1098,8 @@ export async function syncSettings<TOneShotMutationValue = never>(
                 // A transfer changed authority without changing the source Settings
                 // version. Never replay the old opened control or its root claims.
                 const current = await fetchAccountSettingsBaseline();
-                applyRawSettingsProjection({ raw: current.raw, version: current.version, remainingPendingSettings: {} });
+                applyRawSettingsProjection({ raw: current.raw, version: current.version,
+                    remoteAlertPolicyStatus: current.remoteAlertPolicyStatus, remainingPendingSettings: {} });
                 return Object.freeze({ status: 'conflict', currentSettingsVersion: current.version });
             }
 
@@ -1099,6 +1129,7 @@ export async function syncSettings<TOneShotMutationValue = never>(
                     applyRawSettingsProjection({
                         raw: baseline.raw,
                         version: baseline.version,
+                        remoteAlertPolicyStatus: baseline.remoteAlertPolicyStatus,
                         remainingPendingSettings: {},
                     });
                     return Object.freeze({
@@ -1176,6 +1207,7 @@ export async function syncSettings<TOneShotMutationValue = never>(
     const nextSettings = applyRawSettingsProjection({
         raw: decryptedSettings,
         version: fetched.version,
+        remoteAlertPolicyStatus: fetched.remoteAlertPolicyStatus,
         remainingPendingSettings: pendingLatest,
     });
 

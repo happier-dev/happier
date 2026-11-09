@@ -1,5 +1,5 @@
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
-import type { ViewerReadStateV1 } from '@happier-dev/protocol';
+import type { ViewerReadStateV1 } from '@happier-dev/protocol/sessions/personal/readState';
 
 export type LastViewedSessionSeqInput = Readonly<{
     lastViewedSessionSeq?: number | null;

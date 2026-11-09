@@ -10,7 +10,7 @@ import { createAccountScopedPluginSettingsTransport, createScopedPluginSettingsA
 import { executeScopedPluginSettingsAdministrationAction } from './pluginSettingsAdministrationAction';
 import { createScopedPluginSettingsActionAdapter } from '@/sync/domains/plugins/settings/scopedPluginSettingsActionAdapter';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
-import { applyAccountSettingsSavedSecretMutation, resolveAccountSettingsPluginSecretBinding } from '@happier-dev/protocol';
+import { applyAccountSettingsSavedSecretMutation, resolveAccountSettingsPluginSecretBinding } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import { createAccountPluginSecretSettingsAdapter } from '@/sync/domains/plugins/settings/scopedPluginAccountSecretSettingsAdapter';
 import { renderHook, standardCleanup } from '@/dev/testkit';
 import { act } from 'react-test-renderer';

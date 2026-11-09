@@ -139,7 +139,7 @@ describe('Account storage currentness failure fidelity', () => {
             entered.resolve();
             return { body: { ...currentness(mode, mode === 'plain' ? null : fingerprint), version }, respondAfter: response.promise };
         } }, async request => {
-            const first = resolveAccountStorageContext({ token }, { encryption: null, request });
+            const first = resolveAccountStorageContext({ token }, { encryption: null, request, usage: 'identity' });
             await entered.promise;
             // The first HTTP witness is deliberately held across a committed
             // mode change. The later final authority point must not join it.
@@ -188,9 +188,11 @@ describe('Account storage currentness failure fidelity', () => {
                 accountEncryptionMode: 'plain', currentAccount: true });
             home.answer(otherHome, 'GET /v1/account/encryption/currentness', { body: { ...currentness('plain', null), version: 7 }, respondAfter: response.promise });
             const otherRequest: ServerFetch = (path, init) => home.request(new URL(path, otherServerUrl), init);
-            const first = fetchAccountEncryptionCurrentness(credentials, { request });
-            const changedMaterial = fetchAccountEncryptionCurrentness({ token, secret: encodeBase64(new Uint8Array(32).fill(12), 'base64url') }, { request });
-            const other = fetchAccountEncryptionCurrentness(credentials, { request: otherRequest });
+            // A plain Account whose device retains historical keys.
+            const retained: AuthCredentials = { ...credentials, custody: 'historical' };
+            const first = fetchAccountEncryptionCurrentness(retained, { request });
+            const changedMaterial = fetchAccountEncryptionCurrentness({ token, secret: encodeBase64(new Uint8Array(32).fill(12), 'base64url'), custody: 'historical' }, { request });
+            const other = fetchAccountEncryptionCurrentness(retained, { request: otherRequest });
             response.resolve();
             expect(await Promise.all([first, changedMaterial, other])).toMatchObject([{ version: 1 }, { version: 1 }, { version: 7 }]);
             expect(home.requestsFor('/v1/account/encryption/currentness')).toHaveLength(3);
@@ -230,7 +232,7 @@ describe('Account storage currentness failure fidelity', () => {
     it.each([{ status: 401, reason: 'unauthorized' }, { status: 403, reason: 'forbidden' }])(
         'preserves the actual HTTP $status refusal as $reason', async ({ status, reason }) => {
             await withCurrentnessHome({ status, body: { error: 'denied' } }, async request => {
-                const error = await captureCurrentnessFailure(resolveAccountStorageContext({ token }, { encryption: null, request }));
+                const error = await captureCurrentnessFailure(resolveAccountStorageContext({ token }, { encryption: null, request, usage: 'identity' }));
                 expect(error).toBeInstanceOf(AccountStorageCurrentnessUnavailableError);
                 expect(error).toMatchObject({ code: 'account_storage_currentness_unavailable', reason });
                 expect(error.cause).toBeInstanceOf(HappyError);
@@ -242,7 +244,7 @@ describe('Account storage currentness failure fidelity', () => {
     it('preserves scope retirement while wrapping a currentness read failure', async () => {
         const cause = new Error('action_account_scope_changed');
         await withCurrentnessHome({ select: () => { throw cause; } }, async request => {
-            const error = await captureCurrentnessFailure(resolveAccountStorageContext({ token }, { encryption: null, request }));
+            const error = await captureCurrentnessFailure(resolveAccountStorageContext({ token }, { encryption: null, request, usage: 'identity' }));
             expect(error).toMatchObject({ reason: 'scope-retired', cause });
             expect(classifyAccountStorageReadFailure(error)).toBe('scope-retired');
         });
@@ -250,7 +252,7 @@ describe('Account storage currentness failure fidelity', () => {
 
     it('refuses an unsupported currentness operation instead of treating HTTP 404 as offline', async () => {
         await withCurrentnessHome({ status: 404, body: { error: 'not_found' } }, async request => {
-            const error = await captureCurrentnessFailure(resolveAccountStorageContext({ token }, { encryption: null, request }));
+            const error = await captureCurrentnessFailure(resolveAccountStorageContext({ token }, { encryption: null, request, usage: 'identity' }));
             expect(error).toMatchObject({ code: 'account_storage_currentness_unavailable', reason: 'unsupported' });
             expect(error.cause).toBeInstanceOf(HappyError);
             expect(error.cause).toMatchObject({ status: 404, kind: 'config', code: 'account-encryption-currentness-unavailable' });
@@ -260,7 +262,7 @@ describe('Account storage currentness failure fidelity', () => {
     it('preserves a real transport failure as unreachable without changing its cause', async () => {
         const cause = new TypeError('Network request failed');
         await withCurrentnessHome({ select: () => { throw cause; } }, async request => {
-            const error = await captureCurrentnessFailure(resolveAccountStorageContext({ token }, { encryption: null, request }));
+            const error = await captureCurrentnessFailure(resolveAccountStorageContext({ token }, { encryption: null, request, usage: 'identity' }));
             expect(error).toMatchObject({ code: 'account_storage_currentness_unavailable', reason: 'unreachable' });
             expect(error.cause).toBe(cause);
         });
@@ -268,7 +270,7 @@ describe('Account storage currentness failure fidelity', () => {
 
     it('rejects a malformed successful currentness response as unavailable encryption material, not offline', async () => {
         await withCurrentnessHome({ body: { mode: 'e2ee', version: 1, updatedAt: 1 } }, async request => {
-            const error = await captureCurrentnessFailure(resolveAccountStorageContext({ token }, { encryption: null, request }));
+            const error = await captureCurrentnessFailure(resolveAccountStorageContext({ token }, { encryption: null, request, usage: 'identity' }));
             expect(error).toMatchObject({ code: 'account_storage_currentness_unavailable', reason: 'encryption-material-unavailable' });
             expect(error.cause).toBeInstanceOf(HappyError);
             expect(error.cause).toMatchObject({ status: 200, kind: 'server', code: 'account-encryption-currentness-unavailable' });
@@ -281,7 +283,7 @@ describe('Account storage currentness failure fidelity', () => {
             recipientEnvelopeReadiness: { status: 'unavailable', reason: 'encryption_inconsistent' },
         } satisfies AccountEncryptionCurrentnessErrorResponse;
         await withCurrentnessHome({ status: 400, body }, async request => {
-            const error = await captureCurrentnessFailure(resolveAccountStorageContext({ token }, { encryption: null, request }));
+            const error = await captureCurrentnessFailure(resolveAccountStorageContext({ token }, { encryption: null, request, usage: 'identity' }));
             expect(error).toMatchObject({ code: 'account_storage_currentness_unavailable', reason: 'encryption-material-unavailable' });
             expect(error.cause).toBeInstanceOf(AccountEncryptionCurrentnessReadinessError);
             expect(error.cause).toMatchObject({ status: 400, code: 'account-encryption-currentness-unavailable',
@@ -292,7 +294,7 @@ describe('Account storage currentness failure fidelity', () => {
     it.each(['cipher', 'fingerprint'] as const)('classifies explicit missing %s as unavailable encryption material', async missing => {
         const cipher = await Encryption.create(secret);
         await withCurrentnessHome({ body: currentness('e2ee', missing === 'fingerprint' ? null : fingerprint) }, async request => {
-            await expect(resolveAccountStorageContext(credentials, { encryption: missing === 'cipher' ? null : cipher, request }))
+            await expect(resolveAccountStorageContext(credentials, { encryption: missing === 'cipher' ? null : cipher, request, usage: 'identity' }))
                 .rejects.toMatchObject({ code: 'account_storage_currentness_unavailable', reason: 'encryption-material-unavailable', cause: expect.any(Error) });
         });
     });
@@ -303,7 +305,7 @@ describe('Account storage currentness failure fidelity', () => {
             ? { token, secret: encodeBase64(new Uint8Array(31), 'base64url') }
             : { token, encryption: { machineKey: encodeBase64(secret, 'base64'), publicKey: encodeBase64(new Uint8Array(32), 'base64') } };
         await withCurrentnessHome({ body: currentness() }, async request => {
-            await expect(resolveAccountStorageContext(invalidCredentials, { encryption: cipher, request }))
+            await expect(resolveAccountStorageContext(invalidCredentials, { encryption: cipher, request, usage: 'identity' }))
                 .rejects.toMatchObject({ code: 'account_storage_currentness_unavailable', reason: 'encryption-material-unavailable', cause: expect.any(Error) });
         });
     });
@@ -311,7 +313,7 @@ describe('Account storage currentness failure fidelity', () => {
     it('rejects a fingerprint mismatch instead of admitting the captured cipher', async () => {
         const cipher = await Encryption.create(secret);
         await withCurrentnessHome({ body: currentness('e2ee', 'another-account-content-fingerprint') }, async request => {
-            await expect(resolveAccountStorageContext(credentials, { encryption: cipher, request }))
+            await expect(resolveAccountStorageContext(credentials, { encryption: cipher, request, usage: 'identity' }))
                 .rejects.toMatchObject({ code: 'account_storage_currentness_unavailable', reason: 'encryption-material-unavailable', cause: expect.any(Error) });
         });
     });
@@ -332,7 +334,7 @@ describe('Account storage currentness failure fidelity', () => {
                 const mountedCredentials = mounted.getCredentials();
                 expect(mountedCredentials === null
                     || resolveAuthCredentialsScopeKey(mountedCredentials) !== resolveAuthCredentialsScopeKey(credentials)).toBe(true);
-                await expect(resolveAccountStorageContext(credentials, { request }))
+                await expect(resolveAccountStorageContext(credentials, { request, usage: 'identity' }))
                     .rejects.toMatchObject({ code: 'account_storage_currentness_unavailable', reason: 'scope-retired', cause: expect.any(Error) });
             } finally { mounted.encryption = previous; }
         });
@@ -341,10 +343,10 @@ describe('Account storage currentness failure fidelity', () => {
     it('admits matching real crypto and leaves genuinely keyless Plain storage keyless', async () => {
         const cipher = await Encryption.create(secret);
         await withCurrentnessHome({ body: currentness() }, async request => {
-            expect(await resolveAccountStorageContext(credentials, { encryption: cipher, request })).toEqual({ mode: 'e2ee', encryption: cipher });
+            expect(await resolveAccountStorageContext(credentials, { encryption: cipher, request, usage: 'identity' })).toEqual({ mode: 'e2ee', encryption: cipher });
         });
         await withCurrentnessHome({ body: currentness('plain', null) }, async request => {
-            expect(await resolveAccountStorageContext({ token }, { encryption: null, request })).toEqual({ mode: 'plain', encryption: null });
+            expect(await resolveAccountStorageContext({ token }, { encryption: null, request, usage: 'identity' })).toEqual({ mode: 'plain', encryption: null });
         }, 'plain');
     });
 

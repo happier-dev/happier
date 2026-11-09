@@ -128,7 +128,8 @@ describe('projection union retained memory', () => {
         const update = measureOriginWork(() => candidates.publish(projection, members, ids));
         expect(projection?.unknownEntriesById['acme.heap-0']).toMatchObject({ value: 2 });
         expect(update.value.get('acme.heap-0')?.sourceCandidates[0]?.source.version).toBe('2.0.0');
-        expect(update.counts.candidateConstructions).toBe(60);
+        // Only the reporting Machine's supply changed; the other 59 keep their candidates.
+        expect(update.counts.candidateConstructions).toBe(1);
         expect(update.value.get('acme.heap-1')).toBe(first.get('acme.heap-1'));
         for (const id of ids) expect(update.value.get(id)).toEqual(readPluginUiExecutionOriginCandidates({ projection, pluginId: id, members }));
         const identical = measureOriginWork(() => candidates.publish(projection, [...members], [...ids]));

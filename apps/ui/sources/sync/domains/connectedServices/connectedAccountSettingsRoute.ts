@@ -1,7 +1,7 @@
 import { BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID } from '@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility';
-import { buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey, PluginContributionIdentityV1Schema, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import { buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { ConnectedServiceAuthGroupIdSchema, ConnectedServiceIdSchema, type ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
-import { QualifiedConnectedAccountIdSchema } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import { ConnectedAccountServiceIdentityV1Schema, QualifiedConnectedAccountIdSchema } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import type { PluginUiOpenConnectedAccountsRequestV1 } from '@happier-dev/protocol/plugins/ui';
 import { buildConnectedAccountPurposeSetupRoute, type ConnectedAccountPurposeSetupRequest } from './connectedAccountPurposeSetup';
 
@@ -58,7 +58,7 @@ function findExactEntry(
     const qualifiedKey = buildQualifiedPluginContributionKey(service);
     return entries.find((entry) => {
         if (!entry.service) return false;
-        const parsed = PluginContributionIdentityV1Schema.safeParse(entry.service);
+        const parsed = ConnectedAccountServiceIdentityV1Schema.safeParse(entry.service);
         return parsed.success
             && buildQualifiedPluginContributionKey(parsed.data) === qualifiedKey;
     }) ?? null;
@@ -154,35 +154,31 @@ export function buildNewConnectedAccountPoolRoute(service: PluginContributionIde
     return buildConnectedAccountSettingsRoute(service, { kind: 'newPool' });
 }
 
+/** Invalid navigation input has no route; valid host and plugin identities share this owner. */
 export function buildConnectedAccountSettingsRoute(
     service: PluginContributionIdentityV1,
     focus: ConnectedAccountSettingsRouteFocus | null = null,
     options: Readonly<{ add?: boolean }> = {},
 ) {
-    const parsed = PluginContributionIdentityV1Schema.parse(service);
+    const parsed = ConnectedAccountServiceIdentityV1Schema.safeParse(service);
+    if (!parsed.success) return null;
     if (focus === null) {
-        if (options.add) return buildConnectedServiceSetupRoute({ kind: 'service', serviceKey: buildQualifiedPluginContributionKey(parsed) });
+        if (options.add) return buildConnectedServiceSetupRoute({ kind: 'service', serviceKey: buildQualifiedPluginContributionKey(parsed.data) });
         return {
             pathname: CONNECTED_ACCOUNTS_SETTINGS_ROUTE,
             params: {},
         } as const;
     }
-    const parsedFocus = focus.kind === 'account'
-            ? {
-                kind: 'account' as const,
-                accountId: QualifiedConnectedAccountIdSchema.parse(focus.accountId),
-            }
-            : focus.kind === 'group'
-                ? {
-                    kind: 'group' as const,
-                    groupId: ConnectedServiceAuthGroupIdSchema.parse(focus.groupId),
-                }
-                : { kind: 'newPool' as const };
+    const resolvedFocus = focus.kind === 'account' ? resolveRouteFocus({ accountId: focus.accountId })
+        : focus.kind === 'group' ? resolveRouteFocus({ groupId: focus.groupId })
+            : focus.kind === 'newPool' ? resolveRouteFocus({ newPool: '1' }) : null;
+    if (!resolvedFocus?.valid || !resolvedFocus.focus) return null;
+    const parsedFocus = resolvedFocus.focus;
     return {
         pathname: CONNECTED_ACCOUNT_SETTINGS_ROUTE,
         params: {
-            pluginId: parsed.pluginId,
-            localId: parsed.localId,
+            pluginId: parsed.data.pluginId,
+            localId: parsed.data.localId,
             ...(parsedFocus.kind === 'account'
                 ? { accountId: parsedFocus.accountId }
                 : {}),
@@ -253,7 +249,7 @@ export function resolveQualifiedConnectedAccountSettingsRoute(
     ) {
         return null;
     }
-    const parsed = PluginContributionIdentityV1Schema.safeParse({
+    const parsed = ConnectedAccountServiceIdentityV1Schema.safeParse({
         pluginId,
         localId,
     });
@@ -331,7 +327,7 @@ export function resolveConnectedAccountSettingsRoute(
         BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID[
             legacyServiceId.data
         ];
-    const service = PluginContributionIdentityV1Schema.safeParse(
+    const service = ConnectedAccountServiceIdentityV1Schema.safeParse(
         compatibility.service,
     );
     if (!service.success) return null;

@@ -6,8 +6,7 @@ import type { PendingRequestedActionV1 } from '@happier-dev/protocol/sessions/pe
 import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
 import {
     readSessionAutoResumeRefusalV1,
-    resolveSessionExplicitControlIntent,
-    resolveSessionSendCrossesStopHoldV1,
+    resolveSessionAutoResumeAdmissionV1,
 } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
 import { core } from 'zod/mini';
 
@@ -52,13 +51,10 @@ function isSubmitAccountLifetimeCurrent(opts: SubmitSessionUserMessageOptions): 
     return opts.accountLifetime?.isCurrent() !== false;
 }
 
-/** The person's own Send resumes a Session they stopped; the existing Resume admission decides and clears the hold. */
-function isPersonSendCrossingStopHold(opts: SubmitSessionUserMessageOptions): boolean {
-    return resolveSessionSendCrossesStopHoldV1({
-        metadata: readSessionOwnerMetadataView(opts.session),
-        archivedAt: opts.session.archivedAt,
-        author: resolveSessionExplicitControlIntent({ rawSession: { id: opts.sessionId }, actionContext: opts.actionContext }),
-    });
+/** Any message send resumes a stopped Session; the existing Resume admission decides and clears the hold. */
+function isSendCrossingStopHold(opts: SubmitSessionUserMessageOptions): boolean {
+    return resolveSessionAutoResumeAdmissionV1({ metadata: readSessionOwnerMetadataView(opts.session),
+        archivedAt: opts.session.archivedAt, machineAvailable: true, authorityAvailable: true }) === 'held_by_person';
 }
 
 async function blockPendingInputAfterWakeFailure(
@@ -71,7 +67,7 @@ async function blockPendingInputAfterWakeFailure(
     if (!localId || !isSubmitAccountLifetimeCurrent(opts) || opts.actionContext?.signal?.aborted) return;
     // Input behind a person's Stop hold stays queued until a resume succeeds and
     // clears the hold: the next Send or the composer's Resume delivers it in order.
-    if (isPersonSendCrossingStopHold(opts) || readSessionAutoResumeRefusalV1(errorDetail) === 'held_by_person') return;
+    if (isSendCrossingStopHold(opts) || readSessionAutoResumeRefusalV1(errorDetail) === 'held_by_person') return;
     try {
         // Home alone decides whether this exact input is still unclaimed. A
         // late wake failure cannot overwrite delivery already owned by a runner.
@@ -435,8 +431,8 @@ async function shouldWakePendingInputFromUi(
     machineId: string,
 ): Promise<boolean> {
     if (!isSubmitAccountLifetimeCurrent(opts)) return false;
-    // Delegated daemon activation is automatic and refuses the hold; the person's Send resumes directly.
-    if (isPersonSendCrossingStopHold(opts)) return true;
+    // Delegated daemon activation is automatic and refuses the hold; a send resumes directly.
+    if (isSendCrossingStopHold(opts)) return true;
     if (!port.shouldDelegatePendingActivationToDaemon) return true;
     const delegated = await port.shouldDelegatePendingActivationToDaemon(opts.session, opts.serverId, machineId);
     if (!isSubmitAccountLifetimeCurrent(opts)) return false;
@@ -668,7 +664,7 @@ async function enqueuePending(
 
     const resumeOptions = {
         ...wakeOpts,
-        ...(localId && isPersonSendCrossingStopHold(opts)
+        ...(localId && isSendCrossingStopHold(opts)
             ? { executionAuthorization: { provenance: 'user_request' as const, requestId: localId } }
             : {}),
         ...(opts.serverId ? { serverId: opts.serverId } : {}),
@@ -709,7 +705,7 @@ async function enqueuePending(
                 errorCode: wakeResult.errorCode,
                 errorMessage: wakeResult.errorMessage,
                 ...(wakeResult.errorDetail ? { errorDetail: wakeResult.errorDetail } : {}),
-                ...(isPersonSendCrossingStopHold(opts) ? { stopHoldResumeFailed: true as const } : {}),
+                ...(isSendCrossingStopHold(opts) ? { stopHoldResumeFailed: true as const } : {}),
                 localId,
             };
         }
@@ -728,7 +724,7 @@ async function enqueuePending(
                 errorMessage,
             },
             errorMessage,
-            ...(isPersonSendCrossingStopHold(opts) ? { stopHoldResumeFailed: true as const } : {}),
+            ...(isSendCrossingStopHold(opts) ? { stopHoldResumeFailed: true as const } : {}),
             localId,
         };
     }

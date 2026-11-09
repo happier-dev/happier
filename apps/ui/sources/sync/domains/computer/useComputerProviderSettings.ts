@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { COMPUTER_PROVIDER_INSTALLABLE_KEYS, readComputerUseSettingsForMachine,
+import { COMPUTER_PROVIDER_INSTALLABLE_KEYS,
     type ComputerProviderIdV1, type ComputerUseSettingsV1 } from '@happier-dev/protocol/computer/v1';
 import { BUILT_IN_INSTALLABLES_REGISTRY } from '@happier-dev/protocol/installables';
 
@@ -21,20 +21,18 @@ const request = { requests: Object.values(COMPUTER_PROVIDER_INSTALLABLE_KEYS).ma
     id: BUILT_IN_INSTALLABLES_REGISTRY.descriptorsByKey[key].descriptor.capabilityId,
 })) };
 
-/** The caller supplies only its exact Account's key-scoped computerUseByMachineId subscription. */
+/** The caller supplies only its exact Account's selected Machine preferences. */
 export function useComputerProviderSettings(args: Readonly<{
     machineId: string;
     serverId: string;
     accountLifetime: ServerAccountScopeLifetime | null;
-    computerUseByMachineId: Readonly<Record<string, ComputerUseSettingsV1>> | null;
+    preferences: ComputerUseSettingsV1 | null;
     enabled: boolean;
 }>) {
     const { execute } = useMountedActionExecution(args.accountLifetime?.scope ?? null);
     const { state, refresh } = useMachineCapabilitiesCache({ machineId: args.machineId, serverId: args.serverId,
         accountLifetime: args.accountLifetime ?? undefined, enabled: args.enabled && args.accountLifetime !== null, request });
-    const preferences = React.useMemo(() => args.computerUseByMachineId
-        ? readComputerUseSettingsForMachine({ computerUseByMachineId: args.computerUseByMachineId }, args.machineId) : null,
-    [args.computerUseByMachineId, args.machineId]);
+    const { preferences } = args;
     const providers = React.useMemo(() => projectComputerProviderRows(preferences, state), [preferences, state]);
     const target = React.useMemo(() => ({ machineId: args.machineId, serverId: args.serverId, lifetime: args.accountLifetime }),
         [args.machineId, args.serverId, args.accountLifetime]);

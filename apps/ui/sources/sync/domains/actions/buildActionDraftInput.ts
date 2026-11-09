@@ -1,7 +1,7 @@
 import {
   type BackendTargetRefV2Input,
-} from '@happier-dev/protocol';
-import type { ActionId } from '@happier-dev/protocol';
+} from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { buildActionDraftSeedInput } from '@happier-dev/protocol/actions/actionDraftSeed';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 

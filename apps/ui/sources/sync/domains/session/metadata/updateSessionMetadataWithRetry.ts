@@ -14,6 +14,7 @@ import {
     type SessionMetadataTuplePatchV1,
 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import type { SessionTeamCredentialBindingMetadataPatchV1 } from '@happier-dev/protocol/teams/credentials/sessionBindingV1';
+import type { UsageSessionTimingV1 } from '@happier-dev/protocol/usage/usageTimingV1';
 
 import { isDemoModeActive } from '@/demoMode/runtime/enterExitDemoMode';
 
@@ -36,17 +37,6 @@ function createForbiddenMetadataUpdateError(): Error & { code: 'forbidden' } {
     return Object.assign(new Error('Forbidden session metadata update'), {
         code: 'forbidden' as const,
     });
-}
-
-function createConflictMetadataUpdateError(maxAttempts: number): Error & {
-    code: 'conflict';
-} {
-    return Object.assign(
-        new Error(
-            `Failed to update session metadata after ${maxAttempts} attempts`,
-        ),
-        { code: 'conflict' as const },
-    );
 }
 
 function createMetadataPrivacyUpgradeRequiredError(message?: string): Error & {
@@ -89,6 +79,7 @@ export type SessionMetadataLegacyUpdatePayload = Readonly<{
     sid: string;
     expectedVersion: number;
     metadata: string;
+    usageTimingV1: UsageSessionTimingV1;
     sessionExpectation?: SessionMetadataInactiveModelIntentExpectationV1;
 }>;
 
@@ -161,7 +152,7 @@ export async function updateSessionMetadataWithRetry<M, A = unknown>(
         mutationIntent?: 'rename_session';
         expectedMetadataRevision?: number;
         onMetadataCommitted?: (revision: number) => void;
-        maxAttempts?: number;
+        assertCurrent?: () => void;
     },
 ): Promise<void> {
     const {
@@ -169,7 +160,6 @@ export async function updateSessionMetadataWithRetry<M, A = unknown>(
         getSession,
         emitUpdateMetadata,
         updater,
-        maxAttempts = 6,
     } = params;
 
     let initial = getSession();
@@ -206,10 +196,11 @@ export async function updateSessionMetadataWithRetry<M, A = unknown>(
         params.onMetadataCommitted?.(exactInitial.metadataVersion);
         return;
     }
-    let legacyAttempt = 0;
     const mutateLegacy = async (
         request: SessionMetadataLegacyOwnerMutationRequestV1<M, A>,
-    ): Promise<LegacyOwnerSnapshot<M, A>> => {
+    ): Promise<LegacyOwnerSnapshot<M, A> | Readonly<{
+        result: 'conflict'; currentSnapshot: LegacyOwnerSnapshot<M, A>;
+    }>> => {
         if (
             request.kind !== 'metadata'
             || !params.encryptMetadata
@@ -220,7 +211,6 @@ export async function updateSessionMetadataWithRetry<M, A = unknown>(
                 'Legacy Session metadata writer is unavailable',
             );
         }
-        legacyAttempt += 1;
         const encryptedMetadata = await params.encryptMetadata(
             projectSessionMetadataAgentVocabularyWriteCompatibilityV1(
                 request.updatedMetadata,
@@ -230,6 +220,7 @@ export async function updateSessionMetadataWithRetry<M, A = unknown>(
             sid: sessionId,
             expectedVersion: request.current.metadataVersion,
             metadata: encryptedMetadata,
+            usageTimingV1: request.usageTimingV1,
             ...(params.sessionExpectation
                 ? { sessionExpectation: params.sessionExpectation }
                 : {}),
@@ -269,9 +260,6 @@ export async function updateSessionMetadataWithRetry<M, A = unknown>(
             return refreshed;
         }
         if (result.result === 'version-mismatch') {
-            if (legacyAttempt >= maxAttempts) {
-                throw createConflictMetadataUpdateError(maxAttempts);
-            }
             let current: TupleSnapshot<M, A> | null = null;
             if (
                 typeof result.version === 'number'
@@ -306,30 +294,7 @@ export async function updateSessionMetadataWithRetry<M, A = unknown>(
                     'Legacy Session metadata changed layout during retry',
                 );
             }
-            await new Promise((resolve) =>
-                setTimeout(
-                    resolve,
-                    Math.min(50 * legacyAttempt, 250),
-                ));
-            const reapplied =
-                await updateSessionMetadataTupleWithRetry<M, A>({
-                    initialSnapshot: current,
-                    mutation: request.mutation,
-                    crypto: tupleCrypto,
-                    commit: async () => {
-                        throw new Error(
-                            'Legacy Session retry must not commit a tuple',
-                        );
-                    },
-                    mutateLegacy,
-                    maxAttempts,
-                });
-            if (reapplied.mode !== 'legacy_owner') {
-                throw createMetadataPrivacyUpgradeRequiredError(
-                    'Legacy Session metadata mutation changed layout',
-                );
-            }
-            return reapplied;
+            return { result: 'conflict', currentSnapshot: current };
         }
         if (result.result === 'session-active') {
             await params.refreshSessions();
@@ -349,107 +314,88 @@ export async function updateSessionMetadataWithRetry<M, A = unknown>(
             result.message || 'Failed to update session metadata',
         );
     };
-    try {
-        const updated = await updateSessionMetadataTupleWithRetry<M, A>({
-            initialSnapshot: exactInitial,
-            mutation: updater === 'ownerMigration'
-                ? { kind: 'ownerMigration' }
-                : updater === 'ensureDisplayProjection'
-                ? { kind: 'ensureDisplayProjection' }
-                : { kind: 'metadata', update: updater, ...(params.expectedMetadataRevision !== undefined
-                    ? { expectedMetadataRevision: params.expectedMetadataRevision } : {}) },
-            crypto: tupleCrypto,
-            commit: async (patch) => {
-                if ((params.sessionExpectation || params.teamCredentialBinding) && patch.mode !== 'owner') {
-                    throw createMetadataPrivacyUpgradeRequiredError(
-                        'Inactive model intent requires Session owner metadata',
-                    );
-                }
-                const result = await emitUpdateMetadata(
-                    params.teamCredentialBinding && patch.mode === 'owner'
-                        ? ({ ...patch, ...params.teamCredentialBinding, mode: 'owner_team_credential_binding',
-                            ...(params.sessionExpectation ? { sessionExpectation: params.sessionExpectation } : {}),
-                        } satisfies SessionTeamCredentialBindingMetadataPatchV1)
-                        : params.sessionExpectation && patch.mode === 'owner'
-                        ? ({
-                            ...patch,
-                            mode: 'owner_inactive_model_intent',
-                            sessionExpectation: params.sessionExpectation,
-                        } satisfies SessionMetadataInactiveModelIntentOwnerPatchV1)
-                        : patch.mode === 'shared_editor' && params.mutationIntent
-                            ? { ...patch, mutationIntent: params.mutationIntent }
-                            : patch,
+    const updated = await updateSessionMetadataTupleWithRetry<M, A>({
+        initialSnapshot: exactInitial,
+        mutation: updater === 'ownerMigration'
+            ? { kind: 'ownerMigration' }
+            : updater === 'ensureDisplayProjection'
+            ? { kind: 'ensureDisplayProjection' }
+            : { kind: 'metadata', update: updater, ...(params.expectedMetadataRevision !== undefined
+                ? { expectedMetadataRevision: params.expectedMetadataRevision } : {}) },
+        crypto: tupleCrypto,
+        commit: async (patch) => {
+            if ((params.sessionExpectation || params.teamCredentialBinding) && patch.mode !== 'owner') {
+                throw createMetadataPrivacyUpgradeRequiredError(
+                    'Inactive model intent requires Session owner metadata',
                 );
-                if (
-                    result.result === 'success'
-                    && result.metadataLayoutVersion
-                        === SESSION_METADATA_LAYOUT_VERSION_V1
-                    && typeof result.version === 'number'
-                ) {
-                    return {
-                        result: 'success' as const,
-                        metadataVersion: result.version,
-                        ...(typeof result.agentStateVersion === 'number'
-                            ? {
-                                agentStateVersion:
-                                    result.agentStateVersion,
-                            }
-                            : {}),
-                    };
-                }
-                if (result.result === 'version-mismatch') {
-                    return { result: 'conflict' as const };
-                }
-                if (result.result === 'session-active') {
-                    await params.refreshSessions();
-                    throw createSessionActiveError();
-                }
-                if (result.result === 'forbidden') {
-                    throw createForbiddenMetadataUpdateError();
-                }
-                if (
-                    result.result
-                        === 'metadata_privacy_upgrade_required'
-                ) {
-                    throw createMetadataPrivacyUpgradeRequiredError(
-                        result.message,
-                    );
-                }
-                throw new Error(
-                    result.message
-                    || 'Failed to update session metadata',
-                );
-            },
-            refreshAfterConflict: async () =>
-                await acquireTupleSnapshot(),
-            waitBeforeRetry: async ({ attempt }) => {
-                await new Promise((resolve) =>
-                    setTimeout(
-                        resolve,
-                        Math.min(50 * attempt, 250),
-                    ));
-            },
-            isAmbiguousCommitError: isAmbiguousTupleCommitError,
-            ownerMigrationCurrentness:
-                params.getOwnerMigrationCurrentness?.(),
-            mutateLegacy,
-            maxAttempts,
-        });
-        params.onMetadataCommitted?.(updated.metadataVersion);
-        if (updated.metadataLayoutVersion === 0) {
-            return;
-        }
-        applyTupleSnapshot(updated);
-        return;
-    } catch (error) {
-            if (
-                error
-                && typeof error === 'object'
-                && (error as { code?: unknown }).code
-                    === 'metadata_tuple_conflict'
-            ) {
-                throw createConflictMetadataUpdateError(maxAttempts);
             }
-        throw error;
+            const result = await emitUpdateMetadata(
+                params.teamCredentialBinding && patch.mode === 'owner'
+                    ? ({ ...patch, ...params.teamCredentialBinding, mode: 'owner_team_credential_binding',
+                        ...(params.sessionExpectation ? { sessionExpectation: params.sessionExpectation } : {}),
+                    } satisfies SessionTeamCredentialBindingMetadataPatchV1)
+                    : params.sessionExpectation && patch.mode === 'owner'
+                    ? ({
+                        ...patch,
+                        mode: 'owner_inactive_model_intent',
+                        sessionExpectation: params.sessionExpectation,
+                    } satisfies SessionMetadataInactiveModelIntentOwnerPatchV1)
+                    : patch.mode === 'shared_editor' && params.mutationIntent
+                        ? { ...patch, mutationIntent: params.mutationIntent }
+                        : patch,
+            );
+            if (
+                result.result === 'success'
+                && result.metadataLayoutVersion
+                    === SESSION_METADATA_LAYOUT_VERSION_V1
+                && typeof result.version === 'number'
+            ) {
+                return {
+                    result: 'success' as const,
+                    metadataVersion: result.version,
+                    ...(typeof result.agentStateVersion === 'number'
+                        ? {
+                            agentStateVersion:
+                                result.agentStateVersion,
+                        }
+                        : {}),
+                };
+            }
+            if (result.result === 'version-mismatch') {
+                return { result: 'conflict' as const };
+            }
+            if (result.result === 'session-active') {
+                await params.refreshSessions();
+                throw createSessionActiveError();
+            }
+            if (result.result === 'forbidden') {
+                throw createForbiddenMetadataUpdateError();
+            }
+            if (
+                result.result
+                    === 'metadata_privacy_upgrade_required'
+            ) {
+                throw createMetadataPrivacyUpgradeRequiredError(
+                    result.message,
+                );
+            }
+            throw new Error(
+                result.message
+                || 'Failed to update session metadata',
+            );
+        },
+        refreshAfterConflict: async () =>
+            await acquireTupleSnapshot(),
+        isAmbiguousCommitError: isAmbiguousTupleCommitError,
+        ownerMigrationCurrentness:
+            params.getOwnerMigrationCurrentness?.(),
+        mutateLegacy,
+        assertCurrent: params.assertCurrent,
+    });
+    params.onMetadataCommitted?.(updated.metadataVersion);
+    if (updated.metadataLayoutVersion === 0) {
+        return;
     }
+    applyTupleSnapshot(updated);
+    return;
 }

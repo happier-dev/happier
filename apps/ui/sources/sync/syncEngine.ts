@@ -7730,6 +7730,7 @@ class Sync {
             }),
             serverId,
             source: page.source,
+            contentDemand: 'list-projection',
             signal: page.signal,
             sessionListPageSize: page.limit ?? (page.source.kind === 'query' ? page.source.body.limit : undefined),
             sessionListCursor: page.cursor,

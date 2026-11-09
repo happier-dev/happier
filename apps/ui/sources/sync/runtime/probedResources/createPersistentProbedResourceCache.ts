@@ -2,6 +2,7 @@ import { ProbedResourceCache, type ProbedResourceSnapshot } from '@happier-dev/p
 import { MMKV } from 'react-native-mmkv';
 import type { RpcRequestDisposition } from '@happier-dev/sync-client';
 
+import { subscribeHomeCredentialChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storageScope';
 
 type PersistedEntry<T> = Readonly<{ updatedAt: number; value: T }>;
@@ -10,6 +11,7 @@ type PersistedState<T> = Readonly<{ version: number; entries: Record<string, Per
 export type ProbedResourceFailure = Readonly<{
     reason?: 'error' | 'not-supported' | 'outcomeUnknown';
     errorCode?: string;
+    retryable?: boolean;
     requestDisposition?: RpcRequestDisposition;
 }>;
 
@@ -33,6 +35,8 @@ export function createPersistentProbedResourceCache<T>(params: Readonly<{
     errorCooldownMs: number;
     normalizePersistedValue: (raw: unknown) => T | null;
     deleteOnPersistVersionMismatch?: boolean;
+    /** The owner's own entries beside this store; they leave with the same Account. */
+    onAccountRetired?: () => void;
 }>): Readonly<{
     getSnapshot: (key: string) => ProbedResourceSnapshot<T>;
     writeSuccess: (key: string, value: T, nowMs?: number) => void;
@@ -172,7 +176,21 @@ export function createPersistentProbedResourceCache<T>(params: Readonly<{
         writePersistedString(JSON.stringify(next));
     }
 
+    function clearEverything(): void {
+        for (const flight of inflight.values()) flight.controller.abort();
+        inflight.clear();
+        cache.clear();
+        persistedState = null;
+        deletePersistedString();
+    }
+
     ensureHydrated();
+    // A probe key names a Machine, never an Account, and answers survive on this device.
+    subscribeHomeCredentialChange((_event, { accountLeft }) => {
+        if (!accountLeft) return;
+        clearEverything();
+        params.onAccountRetired?.();
+    });
 
     return {
         getSnapshot: (key: string) => {
@@ -231,12 +249,6 @@ export function createPersistentProbedResourceCache<T>(params: Readonly<{
                 );
             });
         },
-        resetForTests: () => {
-            for (const flight of inflight.values()) flight.controller.abort();
-            inflight.clear();
-            cache.clear();
-            persistedState = null;
-            deletePersistedString();
-        },
+        resetForTests: clearEverything,
     };
 }

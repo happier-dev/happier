@@ -5,6 +5,7 @@ import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/s
 import { createPlainSessionByIdResponseFixture, createSessionAccessFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { SessionStatusActionResultV1Schema } from '@happier-dev/protocol/sessions/control/contract';
+import { SessionReadBatchRequestV1Schema, SessionReadBatchResponseV1Schema } from '@happier-dev/protocol/sessions/read/sessionReadBatchV1';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 
 const homes = createHomeGovernanceHarness();
@@ -17,6 +18,46 @@ const { getStorage } = await import('@/sync/domains/state/storage');
 const initial = getStorage().getState();
 beforeEach(async () => { await homes.reset(); installHomeGovernanceBoundaries(httpBoundary); });
 afterEach(() => { getStorage().setState(initial, true); standardCleanup(); });
+
+it('WF44 reaches exact managed-subtree proof through the default Action executor and denies a detached target', async () => {
+  // This scenario serves the exact batch route itself; the legacy scalar
+  // fixture adapter deliberately synthesizes batches without forwarding it.
+  installHomeGovernanceBoundaries(homes);
+  const serverId = await homes.addHome({ name: 'Managed', serverUrl: 'https://managed.test', accountId: 'alice', currentAccount: true });
+  const session = createSessionFixture({ id: 'managed-child', encryptionMode: 'plain', access: createSessionAccessFixture('owner') });
+  const context = { surface: 'agent' as const, serverId, expectedAccountId: 'alice', defaultSessionId: 'lead',
+    sessionListAccess: 'led_subtree' as const, authority: 'account_automation' as const,
+    actionCaller: { kind: 'session' as const, sessionId: 'lead', starterDepth: 0, turnDepth: 0 },
+    agentStartContext: { caller: { kind: 'session' as const, sessionId: 'lead', starterDepth: 0, turnDepth: 0 },
+      baseline: { machineId: 'machine', directory: '/repo' }, roles: {}, callerPermissionCeiling: 'default' as const,
+      ledSubtreeSessionIds: [], workDepthLimit: 4 } };
+  homes.answer(serverId, '/v2/sessions/read-batch', { select: input => {
+    const demand = SessionReadBatchRequestV1Schema.parse(input);
+    return { body: SessionReadBatchResponseV1Schema.parse({ results: [{ sessionId: session.id,
+      detail: { status: 200, body: createPlainSessionByIdResponseFixture(session) },
+      ...(demand.includeTurns !== false ? { turns: { status: 200, body: { v: 1, sessionId: session.id, updatedAt: 1, turns: [] } } } : {}),
+    }] }) };
+  } });
+  const executor = createDefaultActionExecutor();
+  const result = await executor.execute('session.status.get', { sessionId: session.id }, context);
+  expect(result, JSON.stringify(result))
+    .toMatchObject({ ok: true, result: { session: { id: session.id } } });
+  const proofs = homes.requests.filter(request => request.path === '/v2/sessions/read-batch')
+    .map(request => SessionReadBatchRequestV1Schema.parse(request.input)).filter(demand => demand.underSessionId !== undefined);
+  const expectedProof = { sessionIds: [session.id], underSessionId: 'lead', accessProjectionVersion: 1,
+    includeSnapshot: true, includeTurns: false, includeMessages: false };
+  // Core currently fences scope at preparation and dispatch. Each consumes one
+  // exact proof; collapsing those authority fences is separate owner work.
+  expect(proofs).toEqual([expectedProof, expectedProof]);
+  homes.answer(serverId, '/v2/sessions/read-batch', { body: { results: [{ sessionId: session.id,
+    detail: { status: 404, body: { error: 'not_found' } } }] } });
+  expect(await executor.execute('session.status.get', { sessionId: session.id }, context))
+    .toMatchObject({ ok: false, details: { cause: 'target_outside_led_subtree' } });
+  expect(homes.requests.filter(request => request.path === '/v2/sessions/read-batch')
+    .map(request => SessionReadBatchRequestV1Schema.parse(request.input)).filter(demand => demand.underSessionId !== undefined))
+    .toEqual([expectedProof, expectedProof, expectedProof]);
+  expect(homes.requests.some(request => request.path === '/v2/sessions/query')).toBe(false);
+});
 
 it.each(['ui', 'voice'] as const)('reads configured versus denied invocation through the registered exact-Home %s status Action without Machine work', async surface => {
   const serverId = await homes.addHome({ name: 'Readiness', serverUrl: 'https://readiness.test', accountId: 'alice', currentAccount: true });

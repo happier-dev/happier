@@ -1,8 +1,10 @@
 import type {
-    PetAssetMediaTypeV1,
-    PetPackageManifestV1,
+    PetAssetMediaTypeV1} from '@happier-dev/protocol/pets/accountLibrary';
+import type {
+    PetPackageManifestV1} from '@happier-dev/protocol/pets/manifest';
+import type {
     PetPackageSourceV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/pets/source';
 
 export type LocalPetPackageSource = Extract<
     PetPackageSourceV1,

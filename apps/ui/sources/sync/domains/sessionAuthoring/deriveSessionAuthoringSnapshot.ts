@@ -23,7 +23,7 @@ import { readSessionModelSelectionIntentFromMetadata } from '@/sync/domains/mode
 export function deriveSessionAuthoringSnapshot(params: Readonly<{
     session: Pick<
         Session,
-        'id' | 'encryptionMode' | 'metadata' | 'metadataLayoutVersion' | 'ownerMetadataView' | 'permissionMode' | 'permissionModeUpdatedAt' | 'modelMode' | 'modelModeUpdatedAt'
+        'id' | 'encryptionMode' | 'metadata' | 'metadataLayoutVersion' | 'ownerMetadataView' | 'composerOptionsInput' | 'permissionMode' | 'permissionModeUpdatedAt' | 'modelMode' | 'modelModeUpdatedAt'
     >;
     sessionDekBase64?: string | null;
 }>): SessionAuthoringSnapshot {
@@ -40,7 +40,9 @@ export function deriveSessionAuthoringSnapshot(params: Readonly<{
             ? buildBackendTargetKeyV2(backendTarget)
             : null;
     const permissionOverride = getPermissionModeOverrideForSpawn(params.session as Session);
-    const metadataPermission = resolvePermissionIntentFromSessionMetadata(metadata);
+    const metadataPermission = resolvePermissionIntentFromSessionMetadata(
+        params.session.composerOptionsInput === undefined ? metadata : params.session.composerOptionsInput,
+    );
     const metadataPermissionMode = metadataPermission?.intent ?? null;
     const metadataPermissionModeUpdatedAt = metadataPermission?.updatedAt ?? null;
     const metadataModelIntent = agentTargetKey

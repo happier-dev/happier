@@ -1,6 +1,8 @@
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createDeferred, standardCleanup } from '@/dev/testkit';
+import { createDeferred, createSessionFixture, standardCleanup } from '@/dev/testkit';
+import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { createPlainSessionByIdResponseFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { PENDING_INPUT_PROTOCOL_VERSION_V4 } from '@happier-dev/protocol/clientCompatibility/primitives';
@@ -22,7 +24,8 @@ const { Modal } = await import('@/modal');
 beforeEach(async () => {
     await homes.reset();
     await loadSyncSingletonForTests();
-    vi.mocked(Modal.confirm).mockClear();
+    // A prior directly admitted action may leave a one-shot native decision unused.
+    vi.mocked(Modal.confirm).mockReset();
     vi.mocked(Modal.confirm).mockResolvedValue(true);
 });
 afterEach(async () => { await standardCleanup(); await homes.reset(); });
@@ -62,6 +65,49 @@ async function targetFixture(actionId: RecoveryActionId, approval: boolean | 'as
 }
 
 describe('registered UI Pending recovery Action delivery', () => {
+    it.each([undefined, 'run/one'])('requeues the exact discarded identity for %s through the existing restore owner', async targetExecutionRunId => {
+        const { serverId, context } = await targetFixture('session.pending.action.set');
+        const base = targetExecutionRunId ? '/v2/sessions/session/execution-runs/run%2Fone/pending' : '/v2/sessions/session/pending';
+        const path = `${base}/input/restore`;
+        homes.answer(serverId, `POST ${path}`, { body: { ok: true } });
+        homes.answer(serverId, `GET ${base}?includeDiscarded=1`, { body: { pending: [] } });
+        expect(await createDefaultActionExecutor().execute(ActionIdSchema.parse('session.pending.requeue'),
+            { sessionId: 'session', localId: 'input', serverId, ...(targetExecutionRunId ? { targetExecutionRunId } : {}) }, context))
+            .toEqual({ ok: true, result: { ok: true } });
+        expect(homes.requestsFor(path)).toMatchObject([{ serverId }]);
+        expect(homes.requests.filter(request => request.method === 'DELETE')).toEqual([]);
+    });
+
+    it('preserves a custody refusal when Remove executes withdrawal instead of legacy deletion', async () => {
+        const { serverId, context } = await targetFixture('session.pending.action.set');
+        const path = '/v2/sessions/session/pending/input/withdraw';
+        homes.answer(serverId, `POST ${path}`, { body: { ok: true, outcome: 'already_delivered' } });
+        expect(await createDefaultActionExecutor().execute('session.pending.withdraw',
+            { sessionId: 'session', localId: 'input', serverId }, context))
+            .toEqual({ ok: true, result: { outcome: 'already_delivered' } });
+        expect(homes.requestsFor(path)).toMatchObject([{ serverId }]);
+        expect(homes.requests.filter(request => request.method === 'DELETE')).toEqual([]);
+    });
+
+    it.each(['steer_now', 'interrupt_and_send'] as const)('sends the retained identity with %s through the Pending owner', async deliveryIntent => {
+        const { serverId, context } = await targetFixture('session.pending.action.set');
+        const { storage } = await import('@/sync/domains/state/storage');
+        const session = createSessionFixture({ id: 'session', serverId, encryptionMode: 'plain', active: true,
+            metadata: { path: '/repo', host: 'machine', machineId: 'pending-machine', flavor: 'claude', version: '999.0.0' } });
+        storage.setState({ sessions: { session } });
+        homes.answer(serverId, 'GET /v2/sessions/session', { body: createPlainSessionByIdResponseFixture(session) });
+        storage.getState().upsertPendingMessage('session', { id: 'input', localId: 'input', text: 'Retain this input',
+            source: 'server_pending', deliveryStatus: 'accepted', pendingOutboxScope: { serverId, accountId: 'pending-owner' },
+            createdAt: 1, updatedAt: 1, rawRecord: { role: 'user', content: { type: 'text', text: 'Retain this input' }, meta: {} } });
+        const path = '/v2/sessions/session/pending/input/action';
+        const requestedAction = { v: 1, kind: deliveryIntent === 'steer_now' ? 'steer_now' : 'send_now' };
+        homes.answer(serverId, `PATCH ${path}`, { body: { ok: true, didUpdate: true, requestedAction } });
+        const result = await createDefaultActionExecutor().execute(ActionIdSchema.parse('session.pending.sendNow'),
+            { sessionId: 'session', localId: 'input', serverId, deliveryIntent }, context);
+        expect(result).toEqual({ ok: true, result: { type: 'retry_scheduled' } });
+        expect(homes.requestsFor(path)).toMatchObject([{ serverId }]);
+        expect(homes.requests.filter(request => request.method === 'DELETE')).toEqual([]);
+    });
     it.each(actionIds)('executes %s at the captured background Home with its declared UI confirmation policy', async actionId => {
         const { path, serverId, input, context } = await targetFixture(actionId);
         expect(await createDefaultActionExecutor().execute(actionId, input, context)).toEqual({ ok: true,

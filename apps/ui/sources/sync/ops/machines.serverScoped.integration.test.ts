@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { BugReportMachineDiagnosticsSnapshotSchema } from '@happier-dev/protocol/bugs/reports/machineDiagnostics';
 
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storage';
@@ -40,27 +41,6 @@ describe('machines ops server-scoped routing', () => {
             machines: { 'machine-1': machine },
         }, true);
         getPersistenceStorage().clearAll();
-    });
-
-    it('routes spawn requests through server-scoped rpc with the requested server id', async () => {
-        machineRpcWithServerScopeMock.mockResolvedValueOnce({ type: 'success', sessionId: 'sess-1' });
-        const { machineSpawnNewSession } = await import('./machines');
-
-        const result = await machineSpawnNewSession({
-            machineId: 'machine-1',
-            directory: '/tmp',
-            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
-            serverId: 'server-b',
-        });
-
-        expect(result).toEqual(expect.objectContaining({ type: 'success', sessionId: 'sess-1' }));
-        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
-            machineId: 'machine-1',
-            serverId: 'server-b',
-            payload: expect.objectContaining({
-                spawnNonce: expect.any(String),
-            }),
-        }));
     });
 
     it('routes preview env through server-scoped rpc with the requested server id', async () => {
@@ -119,9 +99,20 @@ describe('machines ops server-scoped routing', () => {
     });
 
     it('routes bug-report diagnostics through server-scoped rpc with the requested server id', async () => {
-        machineRpcWithServerScopeMock.mockResolvedValueOnce({
-            doctorSnapshot: { capturedAt: '2026-04-07T10:11:12.000Z' },
+        const snapshot = BugReportMachineDiagnosticsSnapshotSchema.parse({
+            daemonState: null,
+            daemonLogs: [],
+            doctorSnapshot: {
+                capturedAt: '2026-04-07T10:11:12.000Z',
+                server: { activeServerId: 'server-e', serverUrl: 'https://server-e',
+                    publicServerUrl: 'https://server-e', webappUrl: 'https://server-e' },
+                accountId: 'account-a',
+                settings: { activeServerId: 'server-e', servers: [], knownAccountIds: ['account-a'] },
+            },
+            runtime: { cwd: '/repo', platform: 'darwin', nodeVersion: 'test-runtime' },
+            stackContext: null,
         });
+        machineRpcWithServerScopeMock.mockResolvedValueOnce(snapshot);
         const { machineCollectBugReportDiagnostics } = await import('./machines');
 
         const result = await machineCollectBugReportDiagnostics('machine-4', {
@@ -129,9 +120,7 @@ describe('machines ops server-scoped routing', () => {
             timeoutMs: 2500,
         });
 
-        expect(result).toEqual({
-            doctorSnapshot: { capturedAt: '2026-04-07T10:11:12.000Z' },
-        });
+        expect(result).toEqual(snapshot);
         expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'machine-4',
             serverId: 'server-e',

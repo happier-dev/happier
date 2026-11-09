@@ -1,4 +1,5 @@
-import { AccountEncryptionModeResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
+import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
 import { eraseAccountSettingsPluginSecretBindings, listUnreferencedPluginCreatedSecretResources } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
@@ -58,7 +59,7 @@ import {
     type AccountPluginSecretSettingsSnapshot,
     type AccountPluginSecretSettingsWriteResult,
 } from './scopedPluginAccountSecretSettingsAdapter';
-import { watchActiveScopedPluginSettingsChanges } from './scopedPluginSettingsChangeWatch';
+import { publishAcknowledgedScopedPluginSettingsChange, watchActiveScopedPluginSettingsChanges } from './scopedPluginSettingsChangeWatch';
 import { createScopedPluginSettingsActionAdapter } from './scopedPluginSettingsActionAdapter';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 
@@ -67,6 +68,7 @@ type ActiveAccountRequestContext = Readonly<{
     lifetime: ActiveServerAccountScopeLifetime;
     expectedActiveServer: ExpectedActiveServerFetchBasis;
     token: string;
+    credentials: AuthCredentials;
     encryption: NonNullable<typeof sync.encryption> | null;
 }>;
 
@@ -110,6 +112,7 @@ function captureActiveAccountRequestContext(
         lifetime,
         expectedActiveServer: { serverId: snapshot.serverId, generation: snapshot.generation },
         token: credentials.token,
+        credentials,
         encryption: sync.encryption,
     };
 }
@@ -389,7 +392,7 @@ const rawScopedPluginAccountSecretSettingsAdapter: ScopedPluginSettingsAdapter =
                     // A record subscriber cannot corrupt the canonical Account
                     // Settings store or its captured active lifetime.
                 }
-            });
+            }, { settingsVersion: true });
         } catch {
             dispose();
             return unavailableScopedPluginSettingsWatch;
@@ -405,26 +408,18 @@ function requestHeaders(context: ActiveAccountRequestContext): Readonly<Record<s
     };
 }
 
+/** The canonical mode owner, including its downgrade pin; any refusal leaves the record unavailable. */
 async function readAccountEncryptionMode(
     context: ActiveAccountRequestContext,
 ): Promise<'plain' | 'e2ee' | null> {
     if (!isCurrent(context)) return null;
-    const response = await serverFetch(
-        '/v1/account/encryption',
-        { method: 'GET', headers: requestHeaders(context) },
-        {
-            includeAuth: false,
-            retry: 'none',
-            expectedActiveServer: context.expectedActiveServer,
-        },
-    );
-    if (!isCurrent(context) || !response.ok) return null;
-    const body = await response.json().catch(() => null);
-    if (!isCurrent(context)) return null;
-    const parsed = AccountEncryptionModeResponseSchema.safeParse(body);
-    return parsed.success && (parsed.data.mode === 'plain' || parsed.data.mode === 'e2ee')
-        ? parsed.data.mode
-        : null;
+    const mode = await fetchAccountEncryptionMode(context.credentials, {
+        usage: 'fresh-authority',
+        request: (path, init) => serverFetch(path, init, {
+            includeAuth: false, retry: 'none', expectedActiveServer: context.expectedActiveServer,
+        }),
+    }).then(result => result.mode, () => null);
+    return isCurrent(context) ? mode : null;
 }
 
 async function readAccountRecord(
@@ -527,7 +522,12 @@ async function writeAccountRecord(input: Readonly<{
         }
         const responseBody = await response.json().catch(() => null);
         const parsed = PluginAccountSettingsMutationResponseV1Schema.safeParse(responseBody);
-        if (parsed.success) return parsed.data;
+        if (parsed.success) {
+            if (isCurrent(context)) publishAcknowledgedScopedPluginSettingsChange({
+                pluginId: input.pluginId, target: input.target, lifetime: context.lifetime,
+            });
+            return parsed.data;
+        }
         return { status: 'outcomeUnknown' };
     } catch {
         return issued

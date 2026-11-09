@@ -1,4 +1,4 @@
-import type { MemoryStatusV1 } from '@happier-dev/protocol';
+import type { MemoryStatusV1 } from '@happier-dev/protocol/memory/memoryStatus';
 
 export function readMemoryStatusTelemetry(status: MemoryStatusV1): MemoryStatusV1 {
   return status;

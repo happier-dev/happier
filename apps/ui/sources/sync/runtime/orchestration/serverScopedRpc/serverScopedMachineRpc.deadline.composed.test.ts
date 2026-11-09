@@ -1,8 +1,11 @@
-import { createServer, type IncomingMessage, type Server as HttpServer } from 'node:http';
+import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from 'node:http';
 import { Server } from 'socket.io';
-import { afterEach, expect, it, vi } from 'vitest';
-import { FeaturesResponseSchema, MACHINE_PLAIN_DATA_KEY_MARKER, PEER_MEDIATION_RECEIPTS,
-    PeerLoopbackEndpointCandidateV1Schema } from '@happier-dev/protocol';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { FeaturesResponseSchema} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { MACHINE_PLAIN_DATA_KEY_MARKER} from '@happier-dev/protocol/machines/machineStoredContent';
+import { PEER_MEDIATION_RECEIPTS} from '@happier-dev/protocol/machines/peer/mediation/receipts';
+import {
+    PeerLoopbackEndpointCandidateV1Schema } from '@happier-dev/protocol/machines/peer/mediation/loopbackEndpointV1';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { DirectRouteGrantRequestV2Schema, SignedDirectRouteGrantV2Schema } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantV2';
 import { PEER_MACHINE_RPC_DIRECT_PATH_V2, PeerMachineRpcDirectRequestV2Schema,
@@ -14,12 +17,14 @@ import { machineRpcWithServerScope } from './serverScopedMachineRpc';
 import { createMachineRpcReadAdmission } from './machineRpcReadAdmission';
 import { resetScopedMachineTransportCacheForTests } from './serverScopedRpcPool';
 import { serverScopedRpcSocketPool } from './serverScopedRpcSocketPool';
-import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { clearMachineRequestReachabilityForTest, clearMachineRequestReachabilityForMachine,
     readMachineRequestReachabilityObservation } from '@/sync/domains/machines/reachability/machineReachability';
 import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
+import { createAccountEncryptionCurrentnessFixtureForCredentials } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { TestWebCryptoWorker } from '@/dev/testkit/harness/webCryptoWorkerBoundary';
 import { machineWorkspaceFileList } from '@/sync/ops/machineWorkspaceFileList';
 import { DaemonWorkspaceFileListRequestSchema, DaemonWorkspaceFileListResponseSchema } from '@happier-dev/protocol/machines/workspaceFiles';
 import { MachineReadBatchResponseV1Schema } from '@happier-dev/protocol/machines/machineReadBatchV1';
@@ -27,6 +32,10 @@ import type { MachinePublishedRowV1 } from '@happier-dev/protocol/machines/machi
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { getSystemTasksRunner } from '@/components/systemTasks/systemTasksRuntime';
 import { publishLocalDaemonStatus } from '@/components/settings/machines/localControl/localDaemonSharedState';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { apiSocket } from '@/sync/api/session/apiSocket';
+import { getActiveServerSnapshot, setActiveServer } from '@/sync/domains/server/serverRuntime';
+import { publishAppliedActiveServerRuntimeAvailability, publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 
 // Establish the local task runner through its OS boundary, then restore the
 // ordinary web crypto/runtime environment used by this HTTP/Socket.IO suite.
@@ -45,6 +54,18 @@ function serializeMachineReadFixture(request: Pick<IncomingMessage, 'url'>, mach
 
 const credentials = vi.hoisted(() => ({ token: '', secret: undefined as string | undefined }));
 
+/** Each in-process Home reports the persisted identity of exactly the fixture credentials' material. */
+let currentnessRequests = 0;
+function createHomeServer(handler: (request: IncomingMessage, response: ServerResponse) => void | Promise<void>): HttpServer {
+    return createServer((request, response) => {
+        if (request.url !== '/v1/account/encryption/currentness') return handler(request, response);
+        currentnessRequests += 1;
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify(createAccountEncryptionCurrentnessFixtureForCredentials({ token: credentials.token,
+            ...(credentials.secret ? { secret: credentials.secret } : {}) })));
+    });
+}
+
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock();
@@ -62,6 +83,18 @@ vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
     });
 });
 
+beforeEach(() => {
+    currentnessRequests = 0;
+    TestWebCryptoWorker.instances = [];
+    TestWebCryptoWorker.failure = null;
+    TestWebCryptoWorker.constructorFailure = null;
+    TestWebCryptoWorker.transportFault = null;
+    TestWebCryptoWorker.failNextDispatch = false;
+    TestWebCryptoWorker.holdStartup = false;
+    TestWebCryptoWorker.hold = false;
+    TestWebCryptoWorker.responseDelayMs = 0;
+});
+
 afterEach(async () => {
     publishLocalDaemonStatus(localRunner, null);
     credentials.secret = undefined;
@@ -75,33 +108,18 @@ afterEach(async () => {
     resetServerFeaturesClientForTests();
 });
 
-it('retires a stalled Machine key opening when the scoped caller deadline expires', async () => {
+it('preserves a stalled Machine key opening after caller deadlines and retires it on credential rotation', async () => {
     const { Encryption } = await import('@/sync/encryption/encryption');
-    const { installWebCryptoWorker } = await import('@/sync/encryption/nativeCryptoWorker/webCryptoWorkerRuntime');
     const entered = createDeferred<void>();
-    const workers: HeldWorker[] = [];
-    let holding = true;
+    const workers = TestWebCryptoWorker.instances;
+    TestWebCryptoWorker.hold = true;
     // Worker delivery is the OS boundary. The actual adapter, queue, envelope
     // crypto, HTTP, scope, Machine admission and RPC owner remain real.
-    class HeldWorker {
-        onmessage: ((event: MessageEvent) => void) | null = null;
-        onerror: ((event: ErrorEvent) => void) | null = null;
-        onmessageerror: (() => void) | null = null;
-        terminated = false;
-        constructor(_url: string | URL) { workers.push(this); }
-        postMessage(data: unknown, transfers: ArrayBuffer[]) {
-            const request: unknown = structuredClone(data, { transfer: transfers });
+    class HeldWorker extends TestWebCryptoWorker {
+        override postMessage(data: unknown, transfers: ArrayBuffer[]) {
             entered.resolve();
-            if (holding) return;
-            const port = { onmessage: null as ((event: MessageEvent) => void) | null,
-                postMessage: (value: unknown, buffers: ArrayBuffer[]) => {
-                    const result: unknown = structuredClone(value, { transfer: buffers });
-                    queueMicrotask(() => { if (!this.terminated) this.onmessage?.({ data: result } as MessageEvent); });
-                } };
-            installWebCryptoWorker(port);
-            port.onmessage?.({ data: request } as MessageEvent);
+            super.postMessage(data, transfers);
         }
-        terminate() { this.terminated = true; }
     }
     vi.stubGlobal('Worker', HeldWorker);
     const secret = new Uint8Array(32).fill(35), key = new Uint8Array(32).fill(36);
@@ -111,7 +129,7 @@ it('retires a stalled Machine key opening when the scoped caller deadline expire
     const cipher = encryption.getMachineEncryption('stalled-key-machine');
     if (!cipher) throw new Error('Expected real Machine cipher');
     let received = 0, issued = 0;
-    const http = createServer((request, response) => {
+    const http = createHomeServer((request, response) => {
         response.setHeader('content-type', 'application/json');
         if (request.url === '/health' || request.url === '/v1/auth/ping') response.end('{}');
         else if (request.url === '/v1/machines/read-batch') response.end(serializeMachineReadFixture(request, {
@@ -141,9 +159,26 @@ it('retires a stalled Machine key opening when the scoped caller deadline expire
         expect(await pending).toMatchObject({ code: 'MACHINE_RPC_TIMEOUT' });
         expect(issued).toBe(0);
         expect(received).toBe(0);
-        expect(workers.filter(worker => worker.terminated)).toHaveLength(1);
-        holding = false;
+        // SIMPLIFY-KEYS: the RPC budget detaches its borrower, not shared
+        // Account crypto work. An unchanged scope still joins that opening.
+        expect(workers).toHaveLength(1);
+        expect(workers[0]!.terminated).toBe(false);
+        await expect(machineRpcWithServerScope({ ...request, timeoutMs: 1_000 }))
+            .rejects.toMatchObject({ code: 'MACHINE_RPC_TIMEOUT' });
+        expect(workers).toHaveLength(1);
+        expect(workers[0]!.terminated).toBe(false);
+        expect(workers[0]!.pendingReplies).toHaveLength(1);
+        expect(issued).toBe(0);
+        expect(received).toBe(0);
+
+        // A changed credential retires the old Account material owner at the
+        // next admission. Never release its held reply: recovery must open fresh.
+        credentials.token = credentials.token.replace(/\.signature$/, '.rotated-signature');
+        TestWebCryptoWorker.hold = false;
         await expect(machineRpcWithServerScope(request)).resolves.toEqual({ success: true });
+        expect(workers).toHaveLength(2);
+        expect(workers[0]!.terminated).toBe(true);
+        expect(workers[1]!.terminated).toBe(false);
         expect(issued).toBe(1);
         expect(received).toBe(1);
     } finally {
@@ -155,36 +190,17 @@ it('retires a stalled Machine key opening when the scoped caller deadline expire
 
 it('issues a cold scoped cancel ahead of held bulk openings and never reopens its warm Machine key', async () => {
     const { Encryption } = await import('@/sync/encryption/encryption');
-    const { installWebCryptoWorker } = await import('@/sync/encryption/nativeCryptoWorker/webCryptoWorkerRuntime');
     const bulkEntered = createDeferred<void>();
-    const workers: OwnedWorker[] = [];
-    const held: Array<() => void> = [];
+    const workers = TestWebCryptoWorker.instances;
     const opened: string[] = [];
-    let holding = true;
-    class OwnedWorker {
-        onmessage: ((event: MessageEvent) => void) | null = null;
-        onerror: ((event: ErrorEvent) => void) | null = null;
-        onmessageerror: (() => void) | null = null;
-        terminated = false;
-        constructor(_url: string | URL) { workers.push(this); }
-        postMessage(data: unknown, transfers: ArrayBuffer[]) {
-            const request: unknown = structuredClone(data, { transfer: transfers });
-            if (!Array.isArray(request)) throw new Error('Expected envelope batch');
-            for (const item of request) if (item?.envelope instanceof Uint8Array) opened.push(Buffer.from(item.envelope).toString('base64'));
-            const deliver = () => {
-                if (this.terminated) return;
-                const port = { onmessage: null as ((event: MessageEvent) => void) | null,
-                    postMessage: (value: unknown, buffers: ArrayBuffer[]) => {
-                        const response: unknown = structuredClone(value, { transfer: buffers });
-                        queueMicrotask(() => { if (!this.terminated) this.onmessage?.({ data: response } as MessageEvent); });
-                    } };
-                installWebCryptoWorker(port);
-                port.onmessage?.({ data: request } as MessageEvent);
-            };
-            if (holding) { held.push(deliver); bulkEntered.resolve(); }
-            else deliver();
+    TestWebCryptoWorker.hold = true;
+    class OwnedWorker extends TestWebCryptoWorker {
+        override postMessage(data: unknown, transfers: ArrayBuffer[]) {
+            if (!Array.isArray(data)) throw new Error('Expected envelope batch');
+            for (const item of data) if (item?.envelope instanceof Uint8Array) opened.push(Buffer.from(item.envelope).toString('base64'));
+            super.postMessage(data, transfers);
+            if (TestWebCryptoWorker.hold) bulkEntered.resolve();
         }
-        terminate() { this.terminated = true; }
     }
     vi.stubGlobal('Worker', OwnedWorker);
     const secret = new Uint8Array(32).fill(56), key = new Uint8Array(32).fill(57);
@@ -196,7 +212,7 @@ it('issues a cold scoped cancel ahead of held bulk openings and never reopens it
     const bulkEnvelopes = await Promise.all(Array.from({ length: 500 }, async (_, index) =>
         Buffer.from(await bulkOwner.encryptEncryptionKey(new Uint8Array(32).fill(index % 255))).toString('base64')));
     let received = 0, rows = 0;
-    const http = createServer((request, response) => {
+    const http = createHomeServer((request, response) => {
         response.setHeader('content-type', 'application/json');
         if (request.url === '/health' || request.url === '/v1/auth/ping') response.end('{}');
         else if (request.url === '/v1/machines/read-batch') {
@@ -218,7 +234,7 @@ it('issues a cold scoped cancel ahead of held bulk openings and never reopens it
     void bulk.then(() => { bulkFinished = true; }, () => { bulkFinished = true; });
     try {
         await bulkEntered.promise;
-        holding = false;
+        TestWebCryptoWorker.hold = false;
         const port = await listen(http);
         credentials.token = `header.${Buffer.from(JSON.stringify({ sub: 'cancel-bulk-account' })).toString('base64url')}.signature`;
         credentials.secret = Buffer.from(secret).toString('base64url');
@@ -234,8 +250,8 @@ it('issues a cold scoped cancel ahead of held bulk openings and never reopens it
         expect(rows).toBe(2); // Fresh authority is still required for a warm opening.
         expect(opened.filter(value => value === envelope)).toHaveLength(1);
     } finally {
-        holding = false;
-        for (const deliver of held) deliver();
+        TestWebCryptoWorker.hold = false;
+        for (const worker of workers) for (const deliver of worker.pendingReplies.splice(0)) await deliver();
         await bulk;
         for (const worker of workers) worker.onerror?.({ error: new Error('Owned test Worker retired'), preventDefault() {} } as ErrorEvent);
         await serverScopedRpcSocketPool.stopAll();
@@ -262,13 +278,12 @@ it.each([false, true])('distinguishes held SCM setup boundaries from elapsed con
     const bodyConsumed = createDeferred<void>();
     let received = 0;
     let issued = 0;
-    let modeRequests = 0;
     const responses = {
         list: ScmDiffSummaryResultListResponseSchema.parse({ success: true, results: [], count: 0, bytes: 0,
             sevenDayCost: { status: 'unavailable', pricedRunCount: 0, unpricedRunCount: 0, sinceMs: 0, untilMs: 1 } }),
         capture: ScmComparisonCaptureOutputSchema.parse({ success: false, errorCode: 'DIFF_UNAVAILABLE', error: 'No saved comparison at this test boundary' }),
     };
-    const http = createServer(async (request, response) => {
+    const http = createHomeServer(async (request, response) => {
         response.setHeader('content-type', 'application/json');
         if (request.url === '/health' || request.url === '/v1/auth/ping') response.end('{}');
         else if (request.url === '/v1/machines/read-batch') {
@@ -281,9 +296,6 @@ it.each([false, true])('distinguishes held SCM setup boundaries from elapsed con
                 access: { custodian: { accountId: 'scm-setup-account', displayName: '' }, role: 'manage',
                     resourceMode: 'e2ee', accessState: 'ready' },
             }));
-        } else if (request.url === '/v1/account/encryption') {
-            modeRequests += 1;
-            response.end(JSON.stringify({ mode: 'e2ee', updatedAt: 1 }));
         } else { response.statusCode = 404; response.end('{}'); }
     });
     const relay = new Server(http, { path: '/v1/updates/' });
@@ -305,7 +317,7 @@ it.each([false, true])('distinguishes held SCM setup boundaries from elapsed con
     const baselineTime = Date.now();
     if (stallContinuation) vi.useFakeTimers({ toFake: ['Date'] });
     // This is the genuine HTTP boundary, not an internal setup mock. Move only
-    // the wall clock after a fully parsed Machine body: a timeout can then occur
+    // the wall clock after the complete Machine HTTP body: a timeout can then occur
     // with no unresolved HTTP/body boundary. It is not a reproduced product bug.
     setRuntimeFetch(async (input, init) => {
         const response = await fetch(input, init);
@@ -342,10 +354,22 @@ it.each([false, true])('distinguishes held SCM setup boundaries from elapsed con
             // selects the server route rather than peer mediation.
             onIssued: () => { issued += 1; } })
             .then(value => ({ value }), (error: unknown) => ({ error }))));
-        const reach = (stage: Promise<void>) => Promise.race([stage, pending.then(() => { throw new Error('SCM calls settled before the held setup stage'); })]);
+        const reach = (stage: Promise<void>) => Promise.race([stage, pending.then(results => {
+            const failures = results.map(result => {
+                const error = 'error' in result ? result.error : undefined;
+                return error && typeof error === 'object' ? {
+                    name: 'name' in error ? error.name : undefined,
+                    code: 'code' in error ? error.code : undefined,
+                    rpcErrorCode: 'rpcErrorCode' in error ? error.rpcErrorCode : undefined,
+                } : { settled: true };
+            });
+            throw new Error(`SCM calls settled before the held setup stage: ${JSON.stringify(failures)}`);
+        })]);
         await reach(bodyStarted.promise);
         await reach(handshakeStarted.promise);
-        expect(modeRequests).toBe(0);
+        // Both calls share one persisted-mode identity read at the Account owner;
+        // explicit resource mode still needs no additional RPC-preparation probe.
+        expect(currentnessRequests).toBe(1);
         expect(issued).toBe(0);
         expect(received).toBe(0);
         releaseBody.resolve();
@@ -354,7 +378,7 @@ it.each([false, true])('distinguishes held SCM setup boundaries from elapsed con
         expect(received).toBe(0);
         releaseSocket.resolve();
         const results = await pending;
-        expect(modeRequests).toBe(0);
+        expect(currentnessRequests).toBe(1);
         if (stallContinuation) {
             expect(results).toEqual([expect.objectContaining({ error: expect.objectContaining({ code: 'MACHINE_RPC_TIMEOUT' }) }),
                 expect.objectContaining({ error: expect.objectContaining({ code: 'MACHINE_RPC_TIMEOUT' }) })]);
@@ -385,7 +409,7 @@ it.each([
     let received = 0;
     let issued = 0;
     let recovering = false;
-    const http = createServer(async (request, response) => {
+    const http = createHomeServer(async (request, response) => {
         response.setHeader('content-type', 'application/json');
         if (request.url === '/health' || request.url === '/v1/auth/ping') response.end('{}');
         else if (request.url === '/v1/machines/read-batch') {
@@ -475,7 +499,7 @@ it('detects Agent readiness through real scoped E2EE HTTP, crypto and Socket.IO 
         install: { available: false, mode: 'manual', sizeBytes: null, guideUrl: null }, dependencies: [],
     });
     const detected = { protocolVersion: 1, results: { 'cli.claude': { ok: true, checkedAt: 1, data: facts } } };
-    const http = createServer((request, response) => {
+    const http = createHomeServer((request, response) => {
         response.setHeader('content-type', 'application/json');
         if (request.url === '/health' || request.url === '/v1/auth/ping') response.end('{}');
         else if (request.url === '/v1/machines/machine-1' || request.url === '/v1/machines/read-batch') response.end(serializeMachineReadFixture(request, { id: 'machine-1', dataEncryptionKey: envelope }));
@@ -527,6 +551,136 @@ async function closeHttp(http: HttpServer) {
     await new Promise<void>((resolve, reject) => http.close(error => error ? reject(error) : resolve()));
 }
 
+it.each(['scoped', 'active'] as const)('settles 27 concurrent %s Machine chains on one Account socket without retiring a held reply', async scope => {
+    const machineIds = Array.from({ length: 27 }, (_, index) => `fanout-machine-${index}`);
+    const releaseLastReply = createDeferred<void>();
+    const allDescriptionsReceived = createDeferred<void>();
+    const first26Settled = createDeferred<void>();
+    const heldReplyReceived = createDeferred<void>();
+    const received = new Set<string>();
+    const replied = new Set<string>();
+    const accountSockets = new Set<string>();
+    const refused = new Set<string>();
+    const initialAckIds = new Set<string>();
+    const initialMachines = getStorage().getState().machines;
+    const initialMachineLists = getStorage().getState().machineListByServerId;
+    let restoreAuthentication: (() => void) | undefined;
+    let settledChains = 0;
+    let disconnected = 0;
+    const http = createHomeServer(async (request, response) => {
+        response.setHeader('content-type', 'application/json');
+        if (request.url === '/health' || request.url === '/v1/auth/ping') response.end('{}');
+        else if (request.url === '/v1/account/encryption') response.end(JSON.stringify({ mode: 'plain', updatedAt: 1 }));
+        else if (request.url === '/v1/machines/read-batch') {
+            const chunks: Buffer[] = [];
+            for await (const chunk of request) chunks.push(Buffer.from(chunk));
+            const rows = createMachineReadBatchResponseFixture(Buffer.concat(chunks).toString(), id =>
+                machineIds.includes(id) ? createPlainMachineRowFixture({ id, accountId: 'account-a' }) : null);
+            response.end(await rows.text());
+        } else { response.statusCode = 404; response.end('{}'); }
+    });
+    const relay = new Server(http, { path: '/v1/updates/' });
+    relay.on('connection', socket => {
+        accountSockets.add(socket.id);
+        socket.on('disconnect', () => { disconnected += 1; });
+        socket.on(SOCKET_RPC_EVENTS.CALL, async (packet: SocketRpcRequestPayload, ack: (value: unknown) => void) => {
+            const decoded = await socketRpcCodec.decodeRequestParams({ mode: 'plain' }, packet.params, packet.method);
+            if (scope === 'active' && packet.method.endsWith(':fanout.describe') && !refused.has(packet.method)) {
+                refused.add(packet.method);
+                ack({ ok: false, error: 'Machine RPC is not yet registered', errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE });
+                return;
+            }
+            received.add(packet.method);
+            if (packet.method.endsWith(':fanout.describe')) {
+                if (received.size === machineIds.length) allDescriptionsReceived.resolve();
+                await allDescriptionsReceived.promise;
+            }
+            if (packet.method === `${machineIds.at(-1)}:fanout.status`) {
+                heldReplyReceived.resolve();
+                await releaseLastReply.promise;
+            }
+            const result = { method: packet.method, params: decoded.params };
+            ack({ ok: true, result: await socketRpcCodec.encodeResponse({ mode: 'plain' }, result, decoded.callId) });
+            replied.add(packet.method);
+        });
+    });
+    vi.stubEnv('EXPO_PUBLIC_HAPPIER_SCOPED_RPC_SOCKET_IDLE_DISCONNECT_MS', '0');
+    try {
+        const port = await listen(http);
+        const home = await upsertServerProfile({ serverUrl: `http://127.0.0.1:${port}`, name: 'Fanout Home' });
+        const credentials = await TokenStorage.getCredentialsForServerUrl(home.serverUrl);
+        if (!credentials) throw new Error('Expected composed Home authentication fixture');
+        const fixtureAuthentication = [
+            Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url'),
+            Buffer.from(JSON.stringify({ sub: 'account-a' })).toString('base64url'),
+            Buffer.alloc(32).toString('base64url'),
+        ].join('.');
+        const authentication = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl')
+            .mockResolvedValue({ ...credentials, token: fixtureAuthentication });
+        restoreAuthentication = () => authentication.mockRestore();
+        if (scope === 'active') {
+            await setActiveServer({ serverId: home.id });
+            const snapshot = getActiveServerSnapshot();
+            publishAppliedActiveServerSnapshot(snapshot);
+            const machines = machineIds.map(id => createMachineFixture({ id, storageMode: 'plain' }));
+            getStorage().setState({ machines: Object.fromEntries(machines.map(machine => [machine.id, machine])),
+                machineListByServerId: { [home.id]: machines } });
+            apiSocket.initialize({ endpoint: home.serverUrl, serverId: home.id, generation: snapshot.generation,
+                token: fixtureAuthentication }, null);
+            await vi.waitFor(() => expect(apiSocket.getSocketId()).not.toBe(''));
+            const socket: unknown = Reflect.get(apiSocket, 'socket');
+            if (!socket || typeof socket !== 'object') throw new Error('Expected active Socket.IO client');
+            for (const id of Object.keys(Reflect.get(socket, 'acks'))) initialAckIds.add(id);
+        }
+        const pending = machineIds.map(async machineId => {
+            for (const method of ['fanout.describe', 'fanout.status']) {
+                const payload = { machineId, phase: method };
+                expect(await machineRpcWithServerScope({ serverId: home.id,
+                    ...(scope === 'scoped' ? { accountId: 'account-a', preferScoped: true } : {}),
+                    machineId, method, payload, timeoutMs: 10_000 }))
+                    .toEqual({ method: `${machineId}:${method}`, params: payload });
+            }
+            settledChains += 1;
+            if (settledChains === 26) first26Settled.resolve();
+        });
+        const all = Promise.all(pending);
+        // Attach rejection handling before waiting at the producer boundary.
+        void all.catch(() => undefined);
+        await Promise.race([Promise.all([first26Settled.promise, heldReplyReceived.promise]), all.then(() => {
+            throw new Error('The held Machine chain settled before its producer released the reply');
+        })]);
+        expect(accountSockets.size).toBe(1);
+        expect(disconnected).toBe(0);
+        expect(received.size).toBe(54);
+        expect(replied.size).toBe(53);
+        expect(refused.size).toBe(scope === 'active' ? 27 : 0);
+        releaseLastReply.resolve();
+        await all;
+        expect(settledChains).toBe(27);
+        expect(replied).toEqual(received);
+        if (scope === 'active') {
+            // Read the real external Socket.IO boundary's acknowledgement table;
+            // startup callbacks predate this test's RPCs and are excluded.
+            const socket: unknown = Reflect.get(apiSocket, 'socket');
+            if (!socket || typeof socket !== 'object') throw new Error('Expected active Socket.IO client');
+            expect(Object.keys(Reflect.get(socket, 'acks')).filter(id => !initialAckIds.has(id))).toHaveLength(0);
+            expect(disconnected).toBe(0);
+        } else await vi.waitFor(() => expect(disconnected).toBe(1));
+    } finally {
+        releaseLastReply.resolve();
+        allDescriptionsReceived.resolve();
+        if (scope === 'active') {
+            apiSocket.disconnect();
+            publishAppliedActiveServerRuntimeAvailability(false);
+            getStorage().setState({ machines: initialMachines, machineListByServerId: initialMachineLists });
+        }
+        await serverScopedRpcSocketPool.stopAll();
+        await new Promise<void>(resolve => relay.close(() => resolve()));
+        restoreAuthentication?.();
+        vi.unstubAllEnvs();
+    }
+}, 60_000);
+
 it.each(['cli.external-agent/mode-reader', 'cli.external-agent/lost-mode-reader', 'tool.external-mode-reader'] as const)(
     'keeps the native mode probe reply under its owner lifetime only for Agent preflight (%s)', async capabilityId => {
         const { machineCapabilitiesInvoke } = await import('@/sync/ops/capabilities');
@@ -536,7 +690,7 @@ it.each(['cli.external-agent/mode-reader', 'cli.external-agent/lost-mode-reader'
         const observation = AgentSessionModesProbeObservationSchema.parse({
             availableModes: [{ id: 'project-review', name: 'Project review' }], source: 'dynamic',
         });
-        const http = createServer((request, response) => {
+        const http = createHomeServer((request, response) => {
             response.setHeader('content-type', 'application/json');
             if (request.url === '/health' || request.url === '/v1/auth/ping') response.end('{}');
             else if (request.url === '/v1/machines/mode-machine' || request.url === '/v1/machines/read-batch') response.end(serializeMachineReadFixture(request, {
@@ -598,7 +752,7 @@ it.each(['cli.external-agent/mode-reader', 'cli.external-agent/lost-mode-reader'
 
 it('connects the scoped socket while the fresh Machine row is still being read', async () => {
     const connected = createDeferred<void>();
-    const http = createServer(async (request, response) => {
+    const http = createHomeServer(async (request, response) => {
         response.setHeader('content-type', 'application/json');
         if (request.url === '/health' || request.url === '/v1/auth/ping') response.end('{}');
         else if (request.url === '/v1/machines/parallel-machine' || request.url === '/v1/machines/read-batch') {
@@ -639,7 +793,7 @@ it('retires a physical socket after Machine admission fails without sending an R
     const handshakeStarted = createDeferred<void>();
     let disconnected = false;
     let rpcReceived = false;
-    const http = createServer(async (request, response) => {
+    const http = createHomeServer(async (request, response) => {
         response.setHeader('content-type', 'application/json');
         if (request.url === '/health' || request.url === '/v1/auth/ping') response.end('{}');
         else {
@@ -684,7 +838,7 @@ async function createDirectRelayHome(endpointPort: number, relayReply?: Promise<
     const features = FeaturesResponseSchema.parse({ features: { machines: {
         enabled: true, rpc: { enabled: true, directPeer: { enabled: true } },
     } }, capabilities: {} });
-    const http = createServer(async (request, response) => {
+    const http = createHomeServer(async (request, response) => {
         response.setHeader('content-type', 'application/json');
         if (request.url === '/health' || request.url === '/v1/auth/ping') response.end('{}');
         else if (request.url === '/v1/features') response.end(JSON.stringify(features));
@@ -753,14 +907,14 @@ async function createDirectRelayHome(endpointPort: number, relayReply?: Promise<
 }
 
 it('preserves a real Home RPC refusal through the composed Computer Action and strict client', async () => {
-    const { createActionExecutor, createUnavailableRuntimeActionExecutor } = await import('@happier-dev/protocol');
+    const [{ createActionExecutor}, { createUnavailableRuntimeActionExecutor}] = await Promise.all([import('@happier-dev/protocol/actions/actionExecutor'), import('@happier-dev/protocol/actions/executor/dispatch')]);
     const { ActionExecuteFailureSchema } = await import('@happier-dev/protocol/actions/actionExecutionResult');
     const { DaemonComputerActionExecuteRequestV1Schema } = await import('@happier-dev/protocol/computer/v1');
     const { createComputerRuntimeActionExecutor } = await import('@/sync/domains/computer/actions/runtimeActionExecutor');
     const { createComputerControlClient } = await import('@/sync/domains/computer/computerControlClient');
     const home = await createDirectRelayHome(1);
     try {
-        const executor = createActionExecutor({ runtimeActionExecute: createComputerRuntimeActionExecutor({ fallback: createUnavailableRuntimeActionExecutor() }) } as import('@happier-dev/protocol').ActionExecutorDeps);
+        const executor = createActionExecutor({ runtimeActionExecute: createComputerRuntimeActionExecutor({ fallback: createUnavailableRuntimeActionExecutor() }) } as import('@happier-dev/protocol/actions/executor/types').ActionExecutorDeps);
         let failure: unknown;
         const client = createComputerControlClient({ serverId: home.scope.serverId, machineId: 'machine-1', sessionId: 'computer-session' }, async (...args) => {
             const result = await executor.execute(...args);
@@ -944,7 +1098,7 @@ it('cancels direct readiness before RPC delivery without relaying or poisoning t
 
 it('spends the caller deadline through the real Home HTTP and Socket.IO transport', async () => {
     const deadlineMs = 4_000;
-    const http = createServer((request, response) => {
+    const http = createHomeServer((request, response) => {
         response.setHeader('content-type', 'application/json');
         if (request.url === '/health' || request.url === '/v1/auth/ping') {
             response.end('{}');

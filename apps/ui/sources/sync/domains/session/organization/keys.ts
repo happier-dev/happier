@@ -1,7 +1,7 @@
 import type {
     SessionOrganizationLabelKind,
     SessionOrganizationOrderScopeKind,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/organization/ordering';
 import { sessionAddressKey } from '../sessionAddress';
 
 /** Canonical key for every normalized organization record whose identity is a Session. */

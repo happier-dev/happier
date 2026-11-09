@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import { LegacyHostSessionSystemRecordSchema, SessionSystemRecordListQuerySchema, SessionSystemRecordStoredSchema } from '@happier-dev/protocol';
+import { LegacyHostSessionSystemRecordSchema, SessionSystemRecordListQuerySchema, SessionSystemRecordStoredSchema } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordRoutes';
 import { createSessionSystemRecordRepository } from './repository';
 import { selectWorkflowSystemRecordQuery } from './compatibility/legacyHostTransport';
 import { invalidateSessionSystemRecordsFromChanges } from './changeWatch';
 import { openSessionStoredContent, type OpenSessionStoredContentResult, type SessionStoredContentContext } from '@happier-dev/sync-client';
 import { makeSessionWorkflowRunSnapshot } from '@/dev/testkit/fixtures/sessionWorkflowActivityFixtures';
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 
 const scope = { serverId: 'home-a', accountId: 'alice' };
 const session = { serverId: 'home-a', sessionId: 'session-one' };
@@ -20,6 +21,137 @@ const record = {
 const page = () => new Response(JSON.stringify({ records: [record], nextCursor: null, hasNext: false }));
 
 describe('Account-scoped Session System Record repository', () => {
+    it.each([
+        { type: 'read', retry: 'observed' }, { type: 'list', retry: 'observed' },
+        { type: 'read', retry: 'invalidate' }, { type: 'list', retry: 'invalidate' },
+    ] as const)('lets explicit $retry Retry supersede a stalled $type body without publishing the retired answer', async ({ type, retry }) => {
+        const signals: (AbortSignal | null | undefined)[] = [];
+        let finishOldBody: (() => void) | undefined;
+        const newer = { ...record, revision: 'ssr1.AAAACHN5c3JlY18xAAAAAg' };
+        const responseBody = (value: typeof record) => JSON.stringify(type === 'read'
+            ? { record: value } : { records: [value], nextCursor: null, hasNext: false });
+        const repository = createSessionSystemRecordRepository({ scope, request: async (_path, init) => {
+            signals.push(init?.signal);
+            if (signals.length === 1) return new Response(new ReadableStream({
+                start(controller) {
+                    finishOldBody = () => {
+                        controller.enqueue(new TextEncoder().encode(responseBody(record)));
+                        controller.close();
+                    };
+                },
+            }));
+            return new Response(responseBody(newer));
+        } });
+        const requested = type === 'read' ? { type, address: { ...record.address, owner: 'host', namespace: 'activity' } } as const : query;
+        const stop = repository.subscribe(session, requested, () => {});
+        try {
+            // The HTTP response has arrived; its body is still pending.
+            await flushHookEffects();
+            if (retry === 'observed') repository.refreshObserved({ force: true });
+            else repository.invalidate(session, undefined, { force: true });
+            expect(signals).toHaveLength(2);
+            expect(signals[0]?.aborted).toBe(true);
+            await repository.refresh(session, requested);
+            const settled = repository.getSnapshot(session, requested);
+            expect(settled).toMatchObject({ freshness: 'fresh', loading: 'idle' });
+            expect(type === 'read' ? settled.data : settled.data && 'records' in settled.data
+                ? settled.data.records[0] : null).toMatchObject({ revision: newer.revision });
+            finishOldBody!();
+            finishOldBody = undefined;
+            await flushHookEffects();
+            expect(repository.getSnapshot(session, requested)).toBe(settled);
+        } finally { finishOldBody?.(); stop(); repository.retire(); }
+    });
+
+    it('refreshes one address without visiting the other thousand retained records', async () => {
+        const repository = createSessionSystemRecordRepository({ scope, request: async path => {
+            const localId = new URL(path, 'https://home-a').searchParams.get('localId')!;
+            return Response.json({ record: { ...record, id: localId, address: { ...record.address, localId } } });
+        } });
+        let unrelatedVisits = 0;
+        for (let index = 0; index < 1000; index++) {
+            const localId = `retained-${index}`;
+            const read = { type: 'read', address: { owner: 'host', namespace: 'activity', kind: 'workflow_run.v1', localId } } as const;
+            await repository.refresh(session, read);
+            const retained = repository.getSnapshot(session, read).data!;
+            Object.defineProperty(retained, 'id', { get: () => { unrelatedVisits++; return localId; } });
+        }
+        unrelatedVisits = 0;
+        const read = { type: 'read', address: { owner: 'host', namespace: 'activity', kind: 'workflow_run.v1', localId: 'changed' } } as const;
+        await repository.refresh(session, read);
+        expect(repository.getSnapshot(session, read).data?.id).toBe('changed');
+        expect(unrelatedVisits).toBe(0);
+        repository.retire();
+    });
+    it.each(['list', 'read'] as const)('shares list/addressed record identity and opening when %s arrives first', async first => {
+        const value = { v: 1, destination: 'transcript', title: 'Visual', frame: 'card', height: { mode: 'auto', fallback: 'regular' },
+            source: { kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'Visible' } } } };
+        const surfaceRecord = { ...record, address: { owner: 'host', namespace: 'surface', kind: 'item.v1', localId: 'visual' },
+            content: { t: 'encrypted', c: 'cipher' } };
+        const repository = createSessionSystemRecordRepository({ scope, request: async path => Response.json(path.includes('/record?')
+            ? { record: surfaceRecord } : { records: [surfaceRecord], nextCursor: null, hasNext: false }) });
+        const list = { type: 'list', namespace: 'surface', kind: 'item.v1' } as const;
+        const read = { type: 'read', address: { owner: 'host', namespace: 'surface', kind: 'item.v1', localId: 'visual' } } as const;
+        await repository.refresh(session, first === 'list' ? list : read);
+        await repository.refresh(session, first === 'list' ? read : list);
+        const listed = repository.getSnapshot(session, list).data!.records[0];
+        const addressed = repository.getSnapshot(session, read).data!;
+        expect(addressed).toBe(listed);
+        let decryptions = 0;
+        const context: SessionStoredContentContext = { mode: 'e2ee', encryption: {
+            encryptRaw: async () => 'cipher', decryptRaw: async () => { decryptions++; return value; },
+        } };
+        await Promise.all([repository.openSurfaceItem(listed, context), repository.openSurfaceItem(addressed, context)]);
+        expect(decryptions).toBe(1);
+        repository.retire();
+    });
+    it('does no retained-query traversal for transcript-only arrivals and visits only the changed address', async () => {
+        const address = (localId: string) => ({ owner: 'host' as const, namespace: 'surface' as const, kind: 'item.v1' as const, localId });
+        const requests: string[] = [];
+        let currentRevision = record.revision;
+        const repository = createSessionSystemRecordRepository({ scope, request: async path => {
+            const localId = new URL(path, 'https://home-a').searchParams.get('localId')!;
+            requests.push(localId);
+            return Response.json({ record: { ...record, revision: currentRevision, id: localId, address: address(localId) } });
+        } });
+        let unrelatedQueryVisits = 0;
+        for (let index = 0; index < 1000; index++) {
+            const retainedQuery = { get type() { if (index !== 1) unrelatedQueryVisits++; return 'read' as const; }, address: address(`visual-${index}`) };
+            await repository.refresh(session, retainedQuery);
+            await repository.refresh({ ...session, sessionId: `other-session-${index}` }, retainedQuery);
+        }
+        const releases = ['visual-0', 'visual-1', 'visual-2'].map(localId => repository.subscribe(session, { type: 'read', address: address(localId) }, () => {}));
+        requests.length = 0;
+        unrelatedQueryVisits = 0;
+        for (let cursor = 1; cursor <= 20; cursor++) invalidateSessionSystemRecordsFromChanges({ scope, repository,
+            changes: [{ kind: 'session', entityId: session.sessionId, cursor, changedAt: cursor, hint: { lastMessageSeq: cursor, lastMessageId: `message-${cursor}` } }] });
+        expect(requests).toEqual([]);
+        const currentVisual = repository.getSnapshot(session, { type: 'read', address: address('visual-1') });
+        // The actual changes route enriches known row-only hints with queued Run targets.
+        for (const hint of [{ sharedMetadataVersion: 3, pendingExecutionRunIds: ['run-one'] },
+            { lastMessageSeq: 21, pendingExecutionRunIds: [] }, { metadataVersion: 2 },
+            { agentStateVersion: 3 }, { runtimeActivityRevision: 4 }, { latestTurnStatusObservedAt: 100 },
+            { latestReadyEventSeq: 7, latestReadyEventAt: 123, pendingExecutionRunIds: [] }]) {
+            invalidateSessionSystemRecordsFromChanges({ scope, repository, changes: [
+                { kind: 'session', entityId: session.sessionId, cursor: 21, changedAt: 21, hint },
+            ] });
+        }
+        expect(requests).toEqual([]);
+        expect(unrelatedQueryVisits).toBe(0);
+        expect(repository.getSnapshot(session, { type: 'read', address: address('visual-1') })).toBe(currentVisual);
+        currentRevision = 'ssr1.AAAACHN5c3JlY18xAAAAAg';
+        invalidateSessionSystemRecordsFromChanges({ scope, repository, changes: [{ kind: 'account', entityId: 'session-record:visual-1', cursor: 21, changedAt: 21,
+            hint: { v: 1, sessionRecords: { sessionId: session.sessionId, address: address('visual-1') } } }] });
+        expect(requests).toEqual(['visual-1']);
+        await repository.refresh(session, { type: 'read', address: address('visual-1') });
+        expect(repository.getSnapshot(session, { type: 'read', address: address('visual-1') }).freshness).toBe('fresh');
+        expect(repository.getSnapshot(session, { type: 'read', address: address('visual-1') }).data?.revision).toBe(currentRevision);
+        expect(unrelatedQueryVisits).toBe(0);
+        requests.length = 0;
+        invalidateSessionSystemRecordsFromChanges({ scope, repository, changes: [{ kind: 'share', entityId: session.sessionId, cursor: 22, changedAt: 22 }] });
+        expect(requests).toEqual(['visual-0', 'visual-1', 'visual-2']);
+        releases.forEach(release => release()); repository.retire();
+    });
     it('addresses matching list pages without scanning retained unrelated selectors', async () => {
         const repository = createSessionSystemRecordRepository({ scope, request: async path => {
             const params = new URL(path, 'https://home-a').searchParams;
@@ -86,12 +218,28 @@ describe('Account-scoped Session System Record repository', () => {
         repository.retire();
         expect(repository.getSnapshot(session, legacy).lastError).toEqual({ status: 'forbidden' });
     });
+    it('does not let a delayed list answer replace a different addressed revision or its freshness', async () => {
+        let answerList!: (response: Response) => void;
+        const read = { type: 'read', address: { owner: 'host', namespace: 'activity', kind: 'workflow_run.v1', localId: 'run-one' } } as const;
+        const updated = { ...record, revision: 'ssr1.AAAACHN5c3JlY18xAAAAAg' };
+        const repository = createSessionSystemRecordRepository({ scope, request: async path => path.includes('/record?')
+            ? Response.json({ record: updated }) : await new Promise<Response>(resolve => { answerList = resolve; }) });
+        const pendingList = repository.refresh(session, query);
+        await repository.refresh(session, read);
+        const direct = repository.getSnapshot(session, read);
+        answerList(page()); await pendingList;
+        expect(repository.getSnapshot(session, read)).toBe(direct);
+        expect(repository.getSnapshot(session, query).data?.records[0].revision).toBe(record.revision);
+        repository.retire();
+    });
     it('keeps a shared explicit count read alive when the mounted rail releases its demand', async () => {
         let resolveReply: ((response: Response) => void) | undefined;
         let requests = 0;
         const repository = createSessionSystemRecordRepository({ scope, request: async () => {
             requests++; return await new Promise<Response>(resolve => { resolveReply = resolve; });
         } });
+        const published: (number | null)[] = [];
+        const stop = repository.subscribeBoardItemCount(session, () => published.push(repository.readBoardItemCount(session)));
         const release = repository.acquireBoardItemCount(session, { isCurrent: () => true, readCapabilities: () => ({ readTranscript: true, editSessionRecords: false }) });
         const explicit = repository.fetchBoardItemCount(session);
         release();
@@ -99,6 +247,11 @@ describe('Account-scoped Session System Record repository', () => {
         await expect(explicit).resolves.toEqual({ status: 'ok', value: { count: 7 } });
         expect(repository.readBoardItemCount(session)).toBe(7);
         expect(requests).toBe(1);
+        const unchanged = repository.fetchBoardItemCount(session);
+        resolveReply!(new Response(JSON.stringify({ count: 7 })));
+        await expect(unchanged).resolves.toEqual({ status: 'ok', value: { count: 7 } });
+        expect(published).toEqual([7]); // The producer emits no notification for an equal scalar reply.
+        stop();
         repository.retire();
     });
     it('retires obsolete count replies and settles an unsupported count without retries or body fallback', async () => {
@@ -157,19 +310,24 @@ describe('Account-scoped Session System Record repository', () => {
                 ? { record: layoutRecord }
                 : { records: [itemRecord, layoutRecord], nextCursor: null, hasNext: false }));
         } });
+        const published: (number | null)[] = [];
+        const stop = repository.subscribeBoardItemCount(session, () => published.push(repository.readBoardItemCount(session)));
         await repository.refresh(session, { type: 'read', address: { owner: 'host', namespace: 'surface', kind: 'layout.v1', localId: 'layout' } });
         expect(repository.readBoardItemCount(session)).toBeNull();
         // The mounted Board owner observes the complete namespace, including layout.
         await repository.refresh(session, { type: 'list', namespace: 'surface' });
         expect(repository.readBoardItemCount(session)).toBe(1);
+        await repository.refresh(session, { type: 'list', namespace: 'surface' });
+        expect(published).toEqual([1]); // Fresh inventory objects do not republish an unchanged count.
         const release = repository.acquireBoardItemCount(session, { isCurrent: () => true, readCapabilities: () => ({ readTranscript: true, editSessionRecords: false }) });
         await Promise.resolve();
-        expect(requests).toBe(2);
+        expect(requests).toBe(3);
         repository.invalidate(session);
         const releaseLater = repository.acquireBoardItemCount(session, { isCurrent: () => true, readCapabilities: () => ({ readTranscript: true, editSessionRecords: false }) });
         await Promise.resolve();
-        expect(requests).toBe(2);
-        releaseLater(); release(); repository.retire();
+        expect(requests).toBe(3);
+        expect(published).toEqual([1, null]);
+        stop(); releaseLater(); release(); repository.retire();
     });
     it('reuses a complete paged item inventory and counts overlapping record identities once', async () => {
         let requests = 0;
@@ -360,7 +518,7 @@ describe('Account-scoped Session System Record repository', () => {
 
         for (const change of [
             { kind: 'session', entityId: session.sessionId, cursor: 1, changedAt: 1 },
-            { kind: 'share', entityId: session.sessionId, cursor: 2, changedAt: 2, hint: { v: 1, sessionSurfaces: 'invalid' } },
+            { kind: 'share', entityId: session.sessionId, cursor: 2, changedAt: 2, hint: { futureAccessFact: 'invalid' } },
         ] as const) {
             invalidateSessionSystemRecordsFromChanges({ scope, changes: [change], repository });
             expect(repository.getSnapshot(session, query).freshness).toBe('stale');
@@ -389,7 +547,7 @@ describe('Account-scoped Session System Record repository', () => {
         let offline = false;
         const repository = createSessionSystemRecordRepository({ scope, request: async () => {
             requests += 1;
-            if (offline) throw new TypeError('network unavailable');
+            if (offline) throw new TypeError('Failed to fetch');
             return await new Promise<Response>((resolve) => { resolveRequest = resolve; });
         } });
         expect(repository.getSnapshot(session, query)).toMatchObject({ data: null, loading: 'idle', freshness: 'stale' });
@@ -423,7 +581,7 @@ describe('Account-scoped Session System Record repository', () => {
                 retryBackoff: { minDelayMs: 500, maxDelayMs: 30_000 },
                 request: async () => {
                     requests += 1;
-                    if (failing) throw new TypeError('network unavailable');
+                    if (failing) throw new TypeError('Failed to fetch');
                     return page();
                 },
             });
@@ -478,6 +636,61 @@ describe('Account-scoped Session System Record repository', () => {
             expect(requests).toBe(settled);
             stop();
         } finally { vi.useRealTimers(); }
+    });
+
+    it('joins non-forced observed refreshes to a pending read without scheduling another GET', async () => {
+        let requests = 0;
+        let settle!: (response: Response) => void;
+        const repository = createSessionSystemRecordRepository({ scope, request: async () => {
+            requests += 1;
+            return await new Promise<Response>(resolve => { settle = resolve; });
+        } });
+        const stop = repository.subscribe(session, query, () => {});
+        try {
+            const pending = repository.refresh(session, query);
+            repository.refreshObserved();
+            repository.refreshObserved();
+            expect(requests).toBe(1);
+            settle(page());
+            await pending;
+
+            expect(requests).toBe(1);
+            expect(repository.getSnapshot(session, query)).toMatchObject({
+                data: { records: [record] }, freshness: 'fresh', loading: 'idle',
+            });
+        } finally { stop(); repository.retire(); }
+    });
+
+    it('preserves a trailing fresh read when invalidation arrives during a pending read', async () => {
+        const replies: ((response: Response) => void)[] = [];
+        const repository = createSessionSystemRecordRepository({ scope, request: async () =>
+            await new Promise<Response>(resolve => { replies.push(resolve); }),
+        });
+        const stop = repository.subscribe(session, query, () => {});
+        try {
+            const pending = repository.refresh(session, query);
+            repository.invalidate(session);
+            // Joining demand must not erase a genuine invalidation already
+            // received while the first response was outstanding.
+            repository.refreshObserved();
+            expect(replies).toHaveLength(1);
+            replies[0](page());
+            await pending;
+
+            expect(replies).toHaveLength(2);
+            expect(repository.getSnapshot(session, query)).toMatchObject({
+                data: { records: [record] }, freshness: 'stale', loading: 'refreshing',
+            });
+            const trailing = repository.refresh(session, query);
+            const updated = { ...record, revision: 'ssr1.AAAACHN5c3JlY18xAAAAAg' };
+            replies[1](Response.json({ records: [updated], nextCursor: null, hasNext: false }));
+            await trailing;
+
+            expect(replies).toHaveLength(2);
+            expect(repository.getSnapshot(session, query)).toMatchObject({
+                data: { records: [updated] }, freshness: 'fresh', loading: 'idle',
+            });
+        } finally { stop(); repository.retire(); }
     });
 
     it('refreshes an observed fresh projection when reconnect asks it to converge', async () => {
@@ -579,6 +792,16 @@ describe('Account-scoped Session System Record repository', () => {
             expect(repository.getSnapshot(localAddress, sessionQuery).freshness).toBe('stale');
             await repository.refresh(localAddress, sessionQuery);
             expect(requests).toBe(2);
+            const rowHints = [{ lastMessageSeq: 3, lastMessageId: 'message-3' }, { metadataVersion: 4 },
+                { agentStateVersion: 5, pendingExecutionRunIds: [] }, { latestReadyEventSeq: 7, latestReadyEventAt: 123 }];
+            for (const hint of rowHints) {
+                invalidateSessionSystemRecordsFromChanges({ scope: repository.scope, repository, changes: [{
+                    kind: 'session', entityId: localAddress.sessionId, cursor: 3, changedAt: 3, hint,
+                }] });
+                if (protocol === 'legacy') await repository.refresh(localAddress, sessionQuery);
+            }
+            const expectedRequests = protocol === 'legacy' ? 2 + rowHints.length : 2;
+            expect(requests).toBe(expectedRequests);
 
             // A different Home is still refused without a request.
             expect(repository.getSnapshot({ serverId: 'home-b', sessionId: 'session-one' }, sessionQuery).lastError).toEqual({ status: 'forbidden' });
@@ -586,7 +809,7 @@ describe('Account-scoped Session System Record repository', () => {
             const loaded = repository.getSnapshot(localAddress, sessionQuery);
             const remounted = repository.subscribe(localAddress, sessionQuery, () => {});
             expect(repository.getSnapshot(localAddress, sessionQuery)).toBe(loaded);
-            expect(requests).toBe(2);
+            expect(requests).toBe(expectedRequests);
             remounted();
         } finally {
             await removeServerProfile(home.id);

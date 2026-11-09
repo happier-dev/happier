@@ -5,7 +5,7 @@ import {
     replaceExternalSessionStatusDemandViewport,
     resetExternalSessionStatusDemandCoordinatorForTests,
 } from './externalSessionStatusDemandCoordinator';
-import { EXTERNAL_SESSION_STATUS_DEMAND_MAX_ENTRIES_V1 } from '@happier-dev/protocol';
+import { EXTERNAL_SESSION_STATUS_DEMAND_MAX_ENTRIES_V1 } from '@happier-dev/protocol/sessions/external/statusDemandV1';
 
 describe('externalSessionStatusDemandCoordinator', () => {
     afterEach(() => {

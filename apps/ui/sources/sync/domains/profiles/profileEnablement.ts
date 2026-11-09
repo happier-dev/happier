@@ -1,4 +1,4 @@
-import type { AccountSettingsDefaults } from '@happier-dev/protocol';
+import type { AccountSettingsDefaults } from '@happier-dev/protocol/account/settings/accountSettings';
 import { readAiLaunchProfileEnabledV1 } from '@happier-dev/protocol/profiles/read';
 import { setProfileEnabledOverrideV1 } from '@happier-dev/protocol/profiles/profileOperations';
 

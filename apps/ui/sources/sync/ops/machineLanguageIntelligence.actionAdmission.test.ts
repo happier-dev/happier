@@ -42,6 +42,7 @@ const { machineLanguageIntelligenceApplyAction } =
   await import('./machineLanguageIntelligence');
 const { FileRenameEditSet, CodeEditSetPopover } = await import('@/components/workspaces/files/intelligence/CodeEditSetPopover');
 const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
+const { t } = await import('@/text');
 const { useBoundPluginSurfaceController } = await import('@/components/plugins/surfaces/boundPluginSurfaceController');
 const { createPluginActionInputSelectionFactsPublication } = await import('@/components/plugins/surfaces/pluginActionInputSelectionFacts');
 const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
@@ -120,9 +121,9 @@ beforeEach(async () => {
       return receipt;
     },
   });
-  // The Action Machine is read by id through the Machine rows reader (a532f4a1e0).
-  homes.answer(serverId, `/v1/machines/${boundary.machine.id}`, { body: { machine: boundary.machine } });
+  homes.answer(serverId, '/v1/machines', { body: [boundary.machine] });
   for (const path of [
+    'GET /v1/machines/machine',
     '/v1/actions/code.rename.apply/execution-authorization',
     '/v1/actions/code.rename.apply',
   ]) {
@@ -145,7 +146,164 @@ afterEach(async () => {
 });
 
 describe('semantic rename apply from the File page', () => {
-  it('continues the shared file/import rename review through Inbox approval, per-file receipts and approved operation-based Undo', async () => {
+  it('preserves a closed filesystem cause through semantic preview and restart Actions', async () => {
+    const { machineLanguageIntelligencePreviewAction, machineLanguageIntelligenceRestartAction } =
+      await import('./machineLanguageIntelligence');
+    const { DaemonLspQueryResponseSchema, DaemonLspRestartResponseSchema } =
+      await import('@happier-dev/protocol/machines/languageIntelligence');
+    const failure = DaemonLspQueryResponseSchema.parse({ status: 'error',
+      errorCode: 'filesystem_identity_custody_unavailable', details: { reason: 'requester_identity_unavailable' } });
+    const dispatched: string[] = [];
+    // Preview and restart execute through the real UI Action owner and its
+    // Machine RPC dependency. The daemon returns this typed LSP response.
+    rpc.call.mockImplementation(async ({ method }: Readonly<{ method: string }>) => {
+      dispatched.push(method);
+      if (method === RPC_METHODS.DAEMON_LSP_QUERY) return failure;
+      if (method === RPC_METHODS.DAEMON_LSP_RESTART) return DaemonLspRestartResponseSchema.parse(failure);
+      throw new Error('Unexpected semantic refusal method');
+    });
+    for (const actionId of ['code.rename.preview', 'code.restart'] as const) {
+      const response = actionId === 'code.restart'
+        ? await machineLanguageIntelligenceRestartAction('machine', { rootPath: '/repo' }, { serverId })
+        : await machineLanguageIntelligencePreviewAction('machine', actionId, { rootPath: '/repo', path: 'src/retry.ts',
+            line: 1, character: 0, newName: 'renamed' }, { serverId });
+      expect(response, JSON.stringify({ actionId, status: response.status,
+        reason: 'reason' in response ? response.reason : undefined,
+        errorCode: 'errorCode' in response ? response.errorCode : undefined }))
+        .toEqual(failure);
+    }
+    expect(dispatched).toEqual([RPC_METHODS.DAEMON_LSP_QUERY, RPC_METHODS.DAEMON_LSP_RESTART]);
+  });
+  it.each(['format', 'formatSelection'] as const)('reviews File-menu %s from View before writing the reviewed bytes', async command => {
+    const { mkdtemp, readFile, writeFile, rm } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { createHash } = await import('node:crypto');
+    const { applyWorkspaceFileTextEdits } = await import('@happier-dev/protocol/machines/workspaceFilesReplace');
+    const { DaemonLspQueryRequestSchema } = await import('@happier-dev/protocol/machines/languageIntelligence');
+    const previews: unknown[] = [];
+    const directory = await mkdtemp(join(tmpdir(), 'happier-format-preview-'));
+    const path = join(directory, 'retry.ts');
+    const original = 'const value=1;\n';
+    await writeFile(path, original);
+    const expectedHash = createHash('sha256').update(original).digest('hex');
+    const reviewedFiles = [{ path: 'src/retry.ts', expectedHash, edits: [{
+      range: { start: { line: 0, character: 11 }, end: { line: 0, character: 12 } }, text: ' = ',
+    }] }];
+    const restoreLoader = await installRealActionExecutorModuleLoader();
+    try {
+      const boundary = await createExternalActionAccountHttpBoundary({
+        serverUrl: 'https://rename-action.test', serverIdentityId: 'srv_rename_action', accountId: 'alice',
+        machineId: 'machine', actionId: 'code.format.apply', tokenEpoch: 0,
+        // The remote Machine is the system boundary. Keep the UI, Action executor,
+        // schemas and request translation real; observe actual temporary file bytes.
+        execute: async input => {
+          expect(input).toMatchObject({ operation: { kind: 'apply', files: reviewedFiles } });
+          const current = await readFile(path, 'utf8');
+          expect(createHash('sha256').update(current).digest('hex')).toBe(expectedHash);
+          const applied = applyWorkspaceFileTextEdits(current, reviewedFiles[0].edits);
+          await writeFile(path, applied.text);
+          admitted.push(input);
+          return { ok: true, results: [{ path: 'src/retry.ts', status: 'replaced',
+            hash: createHash('sha256').update(applied.text).digest('hex'), edits: [] }] };
+        },
+      });
+      homes.answer(serverId, '/v1/machines', { body: [boundary.machine] });
+      for (const endpoint of ['GET /v1/machines/machine', '/v1/actions/code.format.apply/execution-authorization', '/v1/actions/code.format.apply']) {
+        homes.answer(serverId, endpoint, { select: async (_body, http) => {
+          const response = await boundary.handle(new URL(http.url), http.init);
+          if (!response) throw new Error('Unexpected format request');
+          return { status: response.status, body: await response.json() };
+        } });
+      }
+      rpc.call.mockImplementation(async ({ method, payload }) => {
+        if (method === RPC_METHODS.DAEMON_LSP_SYNC) return { status: 'ok', generation: 'g1', version: 1, servers: [] };
+        if (method === RPC_METHODS.DAEMON_LSP_QUERY) {
+          const query = DaemonLspQueryRequestSchema.parse(payload);
+          previews.push(query);
+          expect(query.text).toBe('disk');
+          expect(query.formattingOptions).toEqual({ tabSize: 2, insertSpaces: true });
+          expect(query.kind).toBe(command === 'formatSelection' ? 'rangeFormatting' : 'formatting');
+          return { status: 'ok', kind: query.kind, fileHash: expectedHash, files: reviewedFiles };
+        }
+        throw new Error(`Unexpected Machine method ${method}`);
+      });
+      await (await import('@/dev/testkit/harness/syncSingletonLoader')).loadSyncSingletonForTests();
+      const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
+      await restoreConnectionToActiveServer({ token: homes.findByServerUrl('https://rename-action.test')!.token! });
+      const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
+      const { useFilePageCodeIntelligence } = await import('@/components/workspaces/files/intelligence/useFilePageCodeIntelligence');
+      const { resolveFileMenuItems } = await import('@/components/workspaces/files/file/fileMenus');
+      const pageInput: Parameters<typeof useFilePageCodeIntelligence>[0] = { scopeId: 'format-file',
+        scope: { serverId, machineId: 'machine', rootPath: '/repo' }, filePath: 'src/retry.ts', language: 'typescript',
+        enabled: true, active: true, liveValue: { get: () => original }, displayedText: original,
+        getUnsaved: () => false, editorHandleRef: { current: null }, sessionId: null, accountId: 'alice',
+        machineName: 'Machine', machineUnreachable: false, agentName: null,
+        getReadSelectionRange: () => ({ start: { line: 0, character: 0 }, end: { line: 0, character: 14 } }),
+      };
+      const hook = await renderHook(() => useFilePageCodeIntelligence(pageInput),
+        { wrapper: ({ children }) => React.createElement(AppPaneProvider, null, children) });
+      const layer = hook.getCurrent().editSetLayer;
+      if (!layer) throw new Error('Expected File edit-set layer');
+      const screen = await renderScreen(layer);
+      const menu = resolveFileMenuItems({ platform: 'web', machineReachable: true, hasCachedContent: true,
+        unavailableReason: '', commands: hook.getCurrent().menuCommands }, 'page');
+      const item = menu.find(item => item.id === `code.${command}`);
+      if (!item) throw new Error('Expected File Format menu item');
+      await act(async () => { item.run(); });
+      await vi.waitFor(() => expect(previews, JSON.stringify({
+        rpc: rpc.call.mock.calls.map(([request]) => request.method),
+        actionRequests: homes.requestsFor('/v1/actions/code.format.apply').length,
+        notes: screen.tree.findAll(node => typeof node.type === 'string' && node.props.testID?.startsWith('code-'))
+          .map(node => ({ id: node.props.testID, text: node.children.filter(child => typeof child === 'string') })),
+      })).toEqual([expect.objectContaining({ formattingOptions: { tabSize: 2, insertSpaces: true } })]));
+      await vi.waitFor(() => expect(screen.findHostByTestId('code-edit-set-apply')).not.toBeNull());
+      await screen.pressByTestIdAsync('code-edit-set-cancel');
+      expect(await readFile(path, 'utf8')).toBe(original);
+      expect(admitted).toEqual([]);
+      await act(async () => { item.run(); });
+      await vi.waitFor(() => expect(screen.findHostByTestId('code-edit-set-apply')).not.toBeNull());
+      await screen.pressByTestIdAsync('code-edit-set-apply');
+      await vi.waitFor(() => expect(admitted).toHaveLength(1));
+      expect(await readFile(path, 'utf8')).toBe('const value = 1;\n');
+    } finally {
+      await standardCleanup();
+      restoreLoader();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('retains every reviewed target and reports a truncated semantic Apply through its existing failure state', async () => {
+    const restoreModuleLoader = await installRealActionExecutorModuleLoader();
+    await homes.requireUiApproval(serverId, ['code.file.rename.apply']);
+    await installOwnMachineApprovalReplayBoundary({ harness: homes, serverId, accountId: 'alice', machineId: 'machine',
+      machineFilesystemEffects: {
+        languageIntelligenceApply: async () => ({ ok: true, truncated: true,
+          results: [{ path: 'src/retry.ts', status: 'failed', reason: 'transport_ceiling' }] }),
+      },
+    });
+    const screen = await renderScreen(React.createElement(FileRenameEditSet, {
+      request: { op: 'fileRename', newPath: 'src/renamed.ts', files: [
+        { path: 'src/retry.ts', expectedHash: hash, edits: [], renameTo: 'src/renamed.ts' },
+        { ...files[0], path: 'src/importer.ts' },
+      ] },
+      scope: { serverId, machineId: 'machine', rootPath: '/repo' }, accountId: 'alice', filePath: 'src/retry.ts',
+      onRenameOnly() {}, onRequestClose() {},
+    }));
+    try {
+      await act(async () => { screen.pressByTestId('code-edit-set-apply'); });
+      await waitForHomeGovernance(() => expect(homes.artifacts(serverId).list()).toHaveLength(1));
+      const artifactId = homes.artifacts(serverId).list()[0]!.id;
+      expect(await decideApprovalAsInbox(serverId, artifactId, 'approve')).toMatchObject({ ok: true, result: { status: 'executed' } });
+      await act(async () => { publishHomeAccountChange(serverId, [artifactId]); });
+      await waitForHomeGovernance(() => expect(Boolean(screen.findByTestId('code-edit-set-result'))).toBe(true));
+      expect(screen.tree.findAll(node => typeof node.type === 'string' && node.props.testID === 'code-edit-set-result-file')).toHaveLength(2);
+      expect(screen.tree.findAll(node => typeof node.type === 'string' && node.children.includes(t('files.pane.intelligence.editFailed')))).not.toHaveLength(0);
+      expect(Boolean(screen.findByTestId('code-edit-set-undo'))).toBe(false);
+    } finally { restoreModuleLoader(); }
+  });
+
+  it.each([false, true])('continues the shared file/import rename review through Inbox approval, per-file receipts and approved operation-based Undo (truncated=%s)', async truncated => {
     const restoreModuleLoader = await installRealActionExecutorModuleLoader();
     await homes.requireUiApproval(serverId, ['code.file.rename.apply', 'workspace.files.replace']);
     const movedReceipt = { ok: true as const, results: [
@@ -181,8 +339,9 @@ describe('semantic rename apply from the File page', () => {
       return { kind: 'found', operation: ActionOperationSnapshotV1Schema.parse({ version: 1, operationId: 'approved-restore', revision: 2,
         actionId: 'workspace.files.replace', requestId: restoreRequestId, state: 'succeeded', scope: { accountId: 'alice', machineId: 'machine' },
         title: 'Undo', createdAt: 1, startedAt: 2, settledAt: 3, cancellation: 'supported',
-        result: { ok: true, results: [{ path: 'src/importer.ts', status: 'restored', hash },
-          { path: 'src/renamed.ts', renameTo: 'src/retry.ts', status: 'restored', hash }] },
+        result: truncated ? { ok: true, truncated: true, results: [] }
+          : { ok: true, results: [{ path: 'src/importer.ts', status: 'restored', hash },
+            { path: 'src/renamed.ts', renameTo: 'src/retry.ts', status: 'restored', hash }] },
       }) };
     });
     const writes: unknown[] = [];
@@ -231,8 +390,13 @@ describe('semantic rename apply from the File page', () => {
       await act(async () => { releaseTerminal(); });
       await waitForHomeGovernance(() => expect(Boolean(screen.findByTestId('code-edit-set-undo'))).toBe(false));
       expect(Boolean(screen.findByTestId('code-edit-set-approval'))).toBe(false);
-      expect(writes).toEqual([{ path: 'src/retry.ts', hash: null }, { path: 'src/renamed.ts', hash: nextHash }, { path: 'src/importer.ts', hash: nextHash },
-        { path: 'src/importer.ts', hash }, { path: 'src/renamed.ts', hash: null }, { path: 'src/retry.ts', hash }]);
+      if (truncated) {
+        expect(writes).toHaveLength(3);
+        expect(screen.tree.findAll(node => typeof node.type === 'string' && node.children.includes(t('files.pane.intelligence.undoFailed')))).not.toHaveLength(0);
+      } else {
+        expect(writes).toEqual([{ path: 'src/retry.ts', hash: null }, { path: 'src/renamed.ts', hash: nextHash }, { path: 'src/importer.ts', hash: nextHash },
+          { path: 'src/importer.ts', hash }, { path: 'src/renamed.ts', hash: null }, { path: 'src/retry.ts', hash }]);
+      }
       expect(effectCount).toBe(1);
       expect(terminalReads).toBe(1);
     } finally { releaseTerminal(); for (const unsubscribe of unsubscribes) unsubscribe(); restoreModuleLoader(); }
@@ -355,6 +519,38 @@ describe('semantic rename apply from the File page', () => {
     expect(admitted).toEqual([]);
     expect(homes.requestsFor('/v1/actions/code.rename.apply')).toHaveLength(0);
   });
+
+  it.each([
+    { kind: 'format', actionId: 'code.format.apply' },
+    { kind: 'organizeImports', actionId: 'code.imports.organize' },
+  ] as const)('formats and organizes imports through the admitted $actionId and publishes its terminal writes', async ({ kind, actionId }) => {
+    const boundary = await createExternalActionAccountHttpBoundary({
+      serverUrl: 'https://rename-action.test', serverIdentityId: 'srv_rename_action', accountId: 'alice',
+      machineId: 'machine', actionId, tokenEpoch: 0,
+      execute: async (input, context) => {
+        expect(context.invocation).toMatchObject({ surface: 'ui', authority: 'present_user', caller: { kind: 'host' } });
+        admitted.push(input);
+        return receipt;
+      },
+    });
+    homes.answer(serverId, '/v1/machines', { body: [boundary.machine] });
+    for (const path of ['GET /v1/machines/machine', `/v1/actions/${actionId}/execution-authorization`, `/v1/actions/${actionId}`]) {
+      homes.answer(serverId, path, { select: async (_body, http) => {
+        const response = await boundary.handle(new URL(http.url), http.init);
+        if (!response) throw new Error('Unexpected format/import Action request');
+        return { status: response.status, body: await response.json() };
+      } });
+    }
+    const writes: unknown[] = [];
+    const unsubscribe = subscribeAcknowledgedWorkspaceFileWrites(
+      { serverId, accountId: 'alice', machineId: 'machine', rootPath: '/repo' }, 'src/retry.ts', write => writes.push(write));
+    try {
+      expect(await machineLanguageIntelligenceApplyAction('machine', { rootPath: '/repo', path: 'src/retry.ts',
+        operation: { kind, files } }, { serverId, accountId: 'alice' })).toEqual(receipt);
+      expect(admitted).toEqual([{ machineId: 'machine', rootPath: '/repo', path: 'src/retry.ts', operation: { kind: 'apply', files } }]);
+      expect(writes).toEqual([{ path: 'src/retry.ts', hash: nextHash }]);
+    } finally { unsubscribe(); }
+  });
 });
 
 describe('ordinary mounted plugin Machine Actions', () => {
@@ -428,9 +624,8 @@ describe('ordinary mounted plugin Machine Actions', () => {
             return receipt;
           },
         });
-        // The Action Machine is read by id through the Machine rows reader (a532f4a1e0).
-        homes.answer(serverId, `/v1/machines/${boundary.machine.id}`, { body: { machine: boundary.machine } });
-        for (const path of [`/v1/actions/${actionId}/execution-authorization`, `/v1/actions/${actionId}`]) {
+        homes.answer(serverId, '/v1/machines', { body: [boundary.machine] });
+        for (const path of ['GET /v1/machines/machine', `/v1/actions/${actionId}/execution-authorization`, `/v1/actions/${actionId}`]) {
           homes.answer(serverId, path, { select: async (_body, http) => {
             const response = await boundary.handle(new URL(http.url), http.init);
             if (!response) throw new Error('Unexpected mounted plugin request');

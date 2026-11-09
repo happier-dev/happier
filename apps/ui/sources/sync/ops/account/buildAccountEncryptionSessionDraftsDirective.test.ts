@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
-  AccountEncryptionMigrateSessionDraftsDirectiveSchema,
-  NewSessionDraftDocumentV2Schema,
+  AccountEncryptionMigrateSessionDraftsDirectiveSchema} from '@happier-dev/protocol/account/encryptionMigrate';
+import {
+  NewSessionDraftDocumentV2Schema} from '@happier-dev/protocol/drafts/sessionDraftsV2';
+import {
   type AccountScopedCryptoMaterial,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/crypto/accountScopedCipher';
 
 import { createSessionDraftCipher } from '@/sync/encryption/sessionDraftEncryption';
 import { buildAccountEncryptionSessionDraftsDirective } from './buildAccountEncryptionSessionDraftsDirective';

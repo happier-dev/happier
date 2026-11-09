@@ -25,7 +25,6 @@ function buildBaseParams(overrides: Partial<Omit<Parameters<typeof handleUpdateC
         invalidateSessions: vi.fn(),
         invalidateArtifacts: vi.fn(),
         invalidateFriends: vi.fn(),
-        invalidateFriendRequests: vi.fn(),
         invalidateFeed: vi.fn(),
         invalidateAutomations: vi.fn(),
         invalidateAutomationsCoalesced: vi.fn(),

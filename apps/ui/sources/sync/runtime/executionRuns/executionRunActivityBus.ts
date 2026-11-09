@@ -124,6 +124,13 @@ export function subscribeRunningExecutionRunRoster(
     address: SessionAddress,
     listener: () => void,
     read: RosterRead,
+    /**
+     * True only when this reader is proven to receive the Session's live Run
+     * hints (`execution-run-updated`). The server withholds them from finite
+     * publication recipients, whose only wake is a published content page.
+     * Absent or false keeps those pages as a re-read.
+     */
+    receivesLiveRunActivity?: () => boolean,
 ): () => void {
     const key = sessionAddressKey(address);
     let roster = rostersBySessionAddress.get(key);
@@ -142,6 +149,13 @@ export function subscribeRunningExecutionRunRoster(
             // Own-Session and coarse wakes may change access/publication, even
             // when live Run ephemerals are correctly suppressed for the reader.
             if (event.entityIds !== undefined && !event.entityIds.includes(address.sessionId)) return;
+            // Own-Session content pages (messages, metadata, agent state) arrive
+            // throughout a turn. A reader that receives live Run hints is already
+            // told about Run changes (and catches up on reconnect), so its content
+            // pages read nothing. Collaborators keep them: a published page is
+            // their only signal that a Run became visible or changed.
+            if (event.changeKinds?.length && event.changeKinds.every(kind => kind === 'session')
+                && receivesLiveRunActivity?.() === true) return;
             if (areServerProfileIdentifiersEquivalent(event.serverId, address.serverId)) refreshRoster(key, created);
         }, { reconnect: 'refresh' });
         const unsubscribeCredentials = subscribeHomeCredentialChange((event) => {

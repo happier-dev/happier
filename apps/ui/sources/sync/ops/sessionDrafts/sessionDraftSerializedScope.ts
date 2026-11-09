@@ -60,68 +60,98 @@ export function serializeSessionDraftReplica(replica: unknown): string {
     return JSON.stringify(compactReplica(replica));
 }
 
-function readScope(raw: string | undefined): SerializedSessionDraftScope {
-    if (raw === undefined) return { v: 2, replicas: {} };
-    const parsed = parseSerializedSessionDraftScope(raw);
-    if (!parsed) throw new Error('Unrecognized draft storage format. Stored drafts were preserved.');
-    return parsed;
+/**
+ * Drafts persist one record per replica: `<scope record key>/<canonical replica key>`. A keystroke
+ * rewrites only its own draft. The scope record itself keeps only envelope fields (`v: 3`), and is
+ * absent when there are none.
+ */
+export function sessionDraftRowKey(scopeRecordKey: string, replicaKey: string): string {
+    return `${scopeRecordKey}/${replicaKey}`;
+}
+
+/** Envelope fields of a row-layout scope record; null when the bytes are not one. */
+export function parseSessionDraftScopeEnvelope(raw: string): Readonly<Record<string, unknown>> | null {
+    const parsed: unknown = JSON.parse(raw);
+    if (!isRecord(parsed) || parsed.v !== 3 || 'replicas' in parsed) return null;
+    const { v: _version, ...fields } = parsed;
+    return fields;
+}
+
+/** A whole-scope record written by 0.2 or an earlier 0.3 build (`v: 1 | 2` with every replica inline). */
+export function isLegacySessionDraftScopeRecord(raw: string | undefined): raw is string {
+    if (raw === undefined) return false;
+    try {
+        return parseSerializedSessionDraftScope(raw) !== null;
+    } catch {
+        return false;
+    }
+}
+
+/** Row keys a legacy whole-scope record moves into. */
+export function legacySessionDraftRowKeys(scopeRecordKey: string, legacyRaw: string): string[] {
+    const legacy = parseSerializedSessionDraftScope(legacyRaw);
+    if (!legacy) throw new Error('Unrecognized draft storage format. Stored drafts were preserved.');
+    return Object.keys(legacy.replicas).map((replicaKey) => sessionDraftRowKey(scopeRecordKey, replicaKey));
+}
+
+function legacyReplicaRow(replica: unknown, version: 1 | 2): string {
+    // Rows use v2 semantics, where an omitted base means "equal to the local document".
+    // A v1 replica without a base had none, so keep that explicit.
+    if (version === 1 && isRecord(replica) && 'localRawDocument' in replica
+        && !Object.prototype.hasOwnProperty.call(replica, 'baseRawDocument')) {
+        return JSON.stringify({ ...replica, baseRawDocument: null });
+    }
+    return JSON.stringify(replica);
+}
+
+/** Stored draft bytes are equal when they decode to the same replica (v2 duplicate omission aside). */
+export function sessionDraftStoredRecordsEqual(left: string | undefined, right: string | undefined): boolean {
+    if (left === right) return true;
+    if (left === undefined || right === undefined) return false;
+    try {
+        return sessionDraftJsonValuesEqual(expandReplica(JSON.parse(left), 2), expandReplica(JSON.parse(right), 2));
+    } catch {
+        return false;
+    }
 }
 
 /**
- * Applies only the caller's changed replicas to transaction-current storage. A concurrent change
- * to the same replica is a visible persistence failure; unrelated tab drafts remain untouched.
+ * The one migration from the whole-scope layout into per-draft rows. Returns the record changes
+ * (undefined = delete), or null when it refuses: an existing row holds a different draft, a row
+ * could not be read in the same snapshot (`read` returns `unread`), or the scope record is in an
+ * unknown format. A refusal changes nothing; every caller keeps the whole-scope record, so only
+ * that scope reads as unreadable retained custody and both copies stay stored.
  */
-export function mergeSerializedSessionDraftScope(
-    current: string | undefined,
-    previousRequested: string | undefined,
-    nextRequested: string | undefined,
-): string | undefined {
-    const currentScope = readScope(current);
-    const previousScope = readScope(previousRequested);
-    const nextScope = readScope(nextRequested);
-    const currentReplicas = new Map(Object.entries(currentScope.replicas));
-    const previousReplicas = new Map(Object.entries(previousScope.replicas));
-    const nextReplicas = new Map(Object.entries(nextScope.replicas));
-    const merged = new Map([...currentReplicas].map(([key, value]) => [key, expandReplica(value, currentScope.v)]));
-    let changed = false;
-    for (const key of new Set([...previousReplicas.keys(), ...nextReplicas.keys()])) {
-        const previous = expandReplica(previousReplicas.get(key), previousScope.v);
-        const next = expandReplica(nextReplicas.get(key), nextScope.v);
-        if (sessionDraftJsonValuesEqual(previous, next)) continue;
-        const stored = expandReplica(currentReplicas.get(key), currentScope.v);
-        if (!sessionDraftJsonValuesEqual(stored, previous) && !sessionDraftJsonValuesEqual(stored, next)) {
-            throw new Error('This draft changed in another tab. Stored drafts and your unsaved edits were preserved.');
-        }
-        changed = true;
-        if (nextReplicas.has(key)) merged.set(key, next);
-        else merged.delete(key);
+export const SESSION_DRAFT_RECORD_UNREAD = Symbol('session draft record not read');
+export function migrateLegacySessionDraftScope(
+    scopeRecordKey: string,
+    legacyRaw: string,
+    read: (key: string) => string | undefined | typeof SESSION_DRAFT_RECORD_UNREAD,
+): Map<string, string | undefined> | null {
+    const legacy = parseSerializedSessionDraftScope(legacyRaw);
+    if (!legacy) throw new Error('Unrecognized draft storage format. Stored drafts were preserved.');
+    const changes = new Map<string, string | undefined>();
+    for (const [replicaKey, replica] of Object.entries(legacy.replicas)) {
+        const rowKey = sessionDraftRowKey(scopeRecordKey, replicaKey);
+        const row = legacyReplicaRow(replica, legacy.v);
+        const existing = read(rowKey);
+        if (existing === SESSION_DRAFT_RECORD_UNREAD) return null;
+        if (existing === undefined) changes.set(rowKey, row);
+        else if (!sessionDraftStoredRecordsEqual(existing, row)) return null;
     }
-    const metadataEntries = (scope: SerializedSessionDraftScope) => Object.entries(scope).filter(([key]) => key !== 'v' && key !== 'replicas');
-    const metadata = new Map(metadataEntries(currentScope));
-    const previousMetadata = new Map(metadataEntries(previousScope));
-    const nextMetadata = new Map(metadataEntries(nextScope));
-    // A reader that does not own an envelope field can omit it without erasing another writer's
-    // value. An explicit scope deletion removes only metadata the caller actually observed.
-    const metadataKeys = nextRequested === undefined
-        ? new Set([...previousMetadata.keys(), ...nextMetadata.keys()])
-        : nextMetadata.keys();
-    for (const key of metadataKeys) {
-        const previous = previousMetadata.get(key);
-        const next = nextMetadata.get(key);
-        if (sessionDraftJsonValuesEqual(previous, next)) continue;
-        const stored = metadata.get(key);
-        if (!sessionDraftJsonValuesEqual(stored, previous) && !sessionDraftJsonValuesEqual(stored, next)) {
-            throw new Error('Draft selection changed in another tab. Stored drafts were preserved.');
+    const { v: _version, replicas: _replicas, ...legacyFields } = legacy;
+    const current = read(scopeRecordKey);
+    if (current === SESSION_DRAFT_RECORD_UNREAD) return null;
+    let currentFields: Readonly<Record<string, unknown>> | null = {};
+    if (current !== undefined && !isLegacySessionDraftScopeRecord(current)) {
+        try {
+            currentFields = parseSessionDraftScopeEnvelope(current);
+        } catch {
+            currentFields = null;
         }
-        changed = true;
-        if (nextMetadata.has(key)) metadata.set(key, next);
-        else metadata.delete(key);
     }
-    if (!changed) return current;
-    if (merged.size === 0 && metadata.size === 0 && nextRequested === undefined) return undefined;
-    return JSON.stringify({
-        ...Object.fromEntries(metadata),
-        v: 2,
-        replicas: Object.fromEntries([...merged].map(([key, value]) => [key, compactReplica(value)])),
-    });
+    if (currentFields === null) return null;
+    const fields = { ...legacyFields, ...currentFields };
+    changes.set(scopeRecordKey, Object.keys(fields).length === 0 ? undefined : JSON.stringify({ ...fields, v: 3 }));
+    return changes;
 }

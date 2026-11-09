@@ -140,6 +140,7 @@ describe('machines domain: contribution projection currentness', () => {
 
         domain.applyMachines([makeMachine({ daemonStateVersion: 4, daemonState })], true, { sourceServerId: 'server_a' });
         const baseline = revision.getMachineContributionRegistryProjectionRevision(scope);
+        const authorityBaseline = revision.getMachineContributionRegistryProjectionAuthorityRevision(scope);
         applyWorkspaceSyncRuntimeEvent.mockClear();
         domain.applyMachines([makeMachine({ daemonStateVersion: 5, daemonState: { ...daemonState, workspaceSync } })], false, {
             sourceServerId: 'server_a',
@@ -158,12 +159,15 @@ describe('machines domain: contribution projection currentness', () => {
             ...daemonState, contributionRegistryProjectionRevision: 1, workspaceSync,
         } })], false, { sourceServerId: 'server_a' });
         expect(revision.getMachineContributionRegistryProjectionRevision(scope)).toBe(baseline + 1);
+        // Same daemon, new registry content: a re-read, not a new authority.
+        expect(revision.getMachineContributionRegistryProjectionAuthorityRevision(scope)).toBe(authorityBaseline);
 
         // A replacement can report the same revision as its predecessor.
         domain.applyMachines([makeMachine({ daemonStateVersion: 7, daemonState: {
             ...daemonState, pid: 18, contributionRegistryProjectionRevision: 1, workspaceSync,
         } })], false, { sourceServerId: 'server_a' });
         expect(revision.getMachineContributionRegistryProjectionRevision(scope)).toBe(baseline + 2);
+        expect(revision.getMachineContributionRegistryProjectionAuthorityRevision(scope)).toBe(authorityBaseline + 1);
         // A later replacement may reset that revision to zero.
         domain.applyMachines([makeMachine({ daemonStateVersion: 8, daemonState: {
             ...daemonState, pid: 19, workspaceSync,

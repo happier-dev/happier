@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// Import-time defaults (Account service, Cloud identity) also model an unconfigured source build.
+vi.hoisted(() => vi.stubEnv('EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON', ''));
 import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { t } from '@/text';
 
@@ -19,8 +22,11 @@ const healthyDaemon = {
 
 describe('resolveThisComputerConnection', () => {
     beforeEach(async () => {
+        // Studio is the only saved Home, as in an unconfigured source build.
+        vi.stubEnv('EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON', '');
         await upsertServerProfile({ serverUrl: healthyDaemon.daemonServerUrl, name: 'Studio' });
     });
+    afterEach(() => { vi.unstubAllEnvs(); });
     it('names both accounts when this computer serves the same Home as somebody else', () => {
         expect(resolveThisComputerConnection({
             daemon: { ...healthyDaemon, daemonAccountId: 'acct_other_1234567890', daemonAccountLabel: 'robin' },

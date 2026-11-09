@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { AccountProfileSchema } from '@happier-dev/protocol';
+import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { profileDefaults, type Profile } from '@/sync/domains/profiles/profile';
 
 vi.mock('expo-constants', () => ({
@@ -67,8 +67,6 @@ function createConnectedAccountGroupV4(): Profile['connectedAccountGroupsV4'][nu
       cooldownMs: 30_000,
       honorProviderResetsAt: true,
       autoRestorePrimaryWhenReset: false,
-      maxSwitchesPerTurn: 1,
-      maxSwitchesPerSessionHour: 3,
       softSwitchRemainingPercent: 15,
       probeIfSnapshotOlderThanMs: 300_000,
       preTurnProbeMode: 'when_stale',

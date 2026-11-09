@@ -10,7 +10,7 @@ import {
     ARTIFACT_PLAIN_DATA_KEY_MARKER,
     decodePlainArtifactStoredContent,
     encodePlainArtifactStoredContent,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/storage/artifactStoredContent';
 
 const mocks = vi.hoisted(() => ({
     createArtifact: vi.fn(),

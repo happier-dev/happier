@@ -1,4 +1,5 @@
-import type { SessionEncryptionMode, SessionMessageV1 } from '@happier-dev/protocol';
+import type { SessionEncryptionMode} from '@happier-dev/protocol/encryption/storagePolicyDecisions';
+import type { SessionMessageV1 } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 
 import type { DecryptedMessage } from '@/sync/domains/state/storageTypes';
 import type { NormalizedMessage } from "@happier-dev/session-core/raw";

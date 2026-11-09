@@ -1,9 +1,11 @@
 import * as React from 'react';
 import type {
-    MachineLiveStreamControlSidebandV1,
-    SimulatorOrientationV1,
+    MachineLiveStreamControlSidebandV1} from '@happier-dev/protocol/machines/peer/mediation/stream/controlV1';
+import type {
+    SimulatorOrientationV1} from '@happier-dev/protocol/devices/simulator/inputV1';
+import type {
     SimulatorSidebandKindV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/devices/simulator/sidebandV1';
 import { isBackedSimulatorSidebandKindV1 } from '@happier-dev/protocol/devices/simulator/actionBuilders';
 
 import {

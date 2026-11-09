@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { sealReviewCommentSensitiveEnvelopeV1, splitReviewCommentV1, type ReviewCommentV1 } from '@happier-dev/protocol';
+import { sealReviewCommentSensitiveEnvelopeV1, splitReviewCommentV1} from '@happier-dev/protocol/reviews/comments/content';
+import { type ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 

@@ -1,8 +1,13 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as React from 'react';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
 import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
-import type { SimulatorDeviceResourceV1 } from '@happier-dev/protocol';
+import { installBrowserRuntimeForTests } from '@/dev/testkit/harness/browserRuntimeHarness';
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import type { SimulatorDeviceResourceV1 } from '@happier-dev/protocol/devices/simulator/v1';
+
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 
 const testState = vi.hoisted(() => ({
     useFeatureDetails: vi.fn(),
@@ -21,6 +26,17 @@ vi.mock('@/hooks/server/useFeatureDecision', () => ({
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
     machineRpcWithServerScope: (...args: readonly unknown[]) => testState.machineRpcWithServerScope(...args),
 }));
+
+const browser = await installBrowserRuntimeForTests({ url: 'https://simulator-preview.test/' });
+let hostVisible = true;
+Object.defineProperty(browser.document, 'visibilityState', { configurable: true,
+    get: () => hostVisible ? 'visible' : 'hidden' });
+beforeEach(() => {
+    browser.activate();
+    hostVisible = true;
+    browser.document.dispatchEvent(new browser.window.Event('visibilitychange'));
+});
+afterAll(() => browser.restore());
 
 const availableResource: SimulatorDeviceResourceV1 = {
     v: 1,
@@ -62,6 +78,69 @@ describe('useSimulatorPreviewSessionSurfaceRuntime', () => {
         testState.useFeatureDecision.mockReset();
         testState.machineRpcWithServerScope.mockReset();
         standardCleanup();
+    });
+
+    it.each(['layout', 'host'] as const)('releases snapshot demand while %s is hidden and refreshes on return', async hiddenOwner => {
+        vi.useFakeTimers();
+        testState.useFeatureDecision.mockReturnValue(simulatorPreviewDecision('enabled'));
+        testState.useFeatureDetails.mockReturnValue({
+            enabled: true, available: true, supportedPlatforms: ['ios'], availableDevices: [],
+            captureSupported: true, inputSupported: true, sidebandKinds: [], disabledReasons: [],
+        });
+        let displayName = availableResource.displayName;
+        const snapshotSignals: Array<AbortSignal | undefined> = [];
+        testState.machineRpcWithServerScope.mockImplementation(async (request: { signal?: AbortSignal }) => {
+            snapshotSignals.push(request.signal);
+            return { protocolVersion: 1, snapshot: {
+                v: 1, machineId: 'machine_1', generatedAt: Date.now(), refreshState: 'idle',
+                resources: [{ ...availableResource, displayName }], diagnostics: [],
+            } };
+        });
+        let presented = true;
+        const mod = await import('./useSimulatorPreviewRuntime');
+        const hook = await renderHook(() => mod.useSimulatorPreviewSessionSurfaceRuntime({
+            machineId: 'machine_1', serverId: 'server_1', viewerId: 'viewer_1', selectedSimulatorId: 'sim_1',
+        }), { wrapper: props => <PluginSurfaceFocusEligibilityProvider active={presented}>
+            {props.children}
+        </PluginSurfaceFocusEligibilityProvider> });
+        try {
+            await flushHookEffects({ cycles: 2, turns: 2 });
+            expect(snapshotSignals).toHaveLength(1);
+            expect(hook.getCurrent().resources?.[0]?.displayName).toBe(displayName);
+            const retainedResources = hook.getCurrent().resources;
+            if (hiddenOwner === 'layout') {
+                presented = false;
+                await hook.rerender();
+            } else {
+                await act(async () => {
+                    hostVisible = false;
+                    browser.document.dispatchEvent(new browser.window.Event('visibilitychange'));
+                });
+            }
+            testState.machineRpcWithServerScope.mockClear();
+            await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+            expect(testState.machineRpcWithServerScope).not.toHaveBeenCalled();
+            expect(snapshotSignals[0]?.aborted).toBe(true);
+            expect(hook.getCurrent().resources).toBe(retainedResources);
+            displayName = 'Updated simulator';
+            if (hiddenOwner === 'layout') {
+                presented = true;
+                await hook.rerender();
+            } else {
+                await act(async () => {
+                    hostVisible = true;
+                    browser.document.dispatchEvent(new browser.window.Event('visibilitychange'));
+                });
+            }
+            await flushHookEffects({ cycles: 2, turns: 2 });
+            expect(testState.machineRpcWithServerScope).toHaveBeenCalledTimes(1);
+            expect(hook.getCurrent().resources?.[0]?.displayName).toBe(displayName);
+        } finally {
+            await hook.unmount();
+            const reads = snapshotSignals.length;
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect(snapshotSignals).toHaveLength(reads);
+        }
     });
 
     it('projects server simulator capabilities into a runtime and dispatches typed API events', async () => {

@@ -1,7 +1,7 @@
 import { isSameDynamicModelCatalog } from '@/sync/domains/models/dynamicModelProbeCacheKey';
 import { normalizeAcpConfigOptionsArray, type AcpConfigOption } from '@/sync/domains/sessionControl/configOptionsControl';
 import { createUnavailablePreflightModelList, type PreflightModelList } from '@/sync/domains/models/modelOptions';
-import { ProviderModelDescriptorV1Schema } from '@happier-dev/protocol/models/descriptor';
+import { AgentProbeModelSchema } from '@happier-dev/protocol/capabilities';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import type { ProbedResourceSnapshot } from '@happier-dev/protocol/common/probedResourceCache';
 import type { SpawnFailureV1 } from '@happier-dev/protocol/machines/processes/spawnFailureV1';
@@ -57,7 +57,7 @@ function normalizePersistedModelList(input: unknown): PreflightModelList | null 
         const modelRecord = rawModel as Record<string, unknown>;
         if (typeof modelRecord.id !== 'string' || typeof modelRecord.name !== 'string') return [];
         const modelOptions = normalizeModelOptions(modelRecord.modelOptions);
-        const descriptor = createStoredReadSchema(ProviderModelDescriptorV1Schema).safeParse({
+        const descriptor = createStoredReadSchema(AgentProbeModelSchema).safeParse({
             id: modelRecord.id,
             name: modelRecord.name,
             capabilities: modelRecord.capabilities,
@@ -69,7 +69,7 @@ function normalizePersistedModelList(input: unknown): PreflightModelList | null 
             ...(typeof modelRecord.description === 'string' ? { description: modelRecord.description } : {}),
             ...(typeof modelRecord.extendedContextModelId === 'string'
                 && modelRecord.extendedContextModelId.trim().length > 0
-                ? { extendedContextModelId: modelRecord.extendedContextModelId.trim() }
+                ? { extendedContextModelId: modelRecord.extendedContextModelId }
                 : {}),
             ...(modelOptions ? { modelOptions } : {}),
             // Retained catalogs may contain synthetic rows; missing persisted evidence stays unknown until a new probe.
@@ -109,6 +109,11 @@ const persistedCache = createPersistentProbedResourceCache<PreflightModelList>({
     errorCooldownMs: DYNAMIC_MODEL_PROBE_ERROR_BACKOFF_MS,
     normalizePersistedValue: normalizePersistedModelList,
     deleteOnPersistVersionMismatch: true,
+    onAccountRetired: () => {
+        transientSuccessByKey.clear();
+        transientUnavailableByKey.clear();
+        for (const key of [...listenersByKey.keys()]) notifyDynamicModelProbeCache(key);
+    },
 });
 
 const listenersByKey = new Map<string, Set<() => void>>();
@@ -278,7 +283,7 @@ export async function runDynamicModelProbeDedupe<T>(
 /** Retry failures without renewing the timestamp of the last successful observation. */
 export function dynamicModelProbeRetryAt(entry: DynamicModelProbeCacheEntry | null): number | null {
     if (!entry) return null;
-    if (entry.reason === 'outcomeUnknown') return null;
+    if (entry.reason === 'outcomeUnknown' || entry.retryable === false) return null;
     if (entry.kind === 'error') return entry.expiresAt;
     if (entry.value.unavailable) return entry.expiresAt;
     if (entry.staticFallback) return (entry.errorUpdatedAt ?? entry.updatedAt) + DYNAMIC_MODEL_PROBE_STATIC_FALLBACK_RETRY_MS;
@@ -287,7 +292,7 @@ export function dynamicModelProbeRetryAt(entry: DynamicModelProbeCacheEntry | nu
 
 export function isDynamicModelProbeCacheFresh(entry: DynamicModelProbeCacheEntry | null, nowMs = Date.now()): boolean {
     if (!entry) return false;
-    if (entry.reason === 'outcomeUnknown') return true;
+    if (entry.reason === 'outcomeUnknown' || entry.retryable === false) return true;
     const retryAt = dynamicModelProbeRetryAt(entry);
     return nowMs < (retryAt ?? entry.expiresAt);
 }

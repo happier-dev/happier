@@ -15,7 +15,7 @@ export function resolveMachineAbsolutePath(input: Readonly<{
     const isAbsoluteWindows = /^[a-zA-Z]:[\\/]/.test(requestPath) || requestPath.startsWith('\\\\');
     if (isAbsolutePosix || isAbsoluteWindows) {
         const relative = input.agentRootPath
-            ? resolvePathRelativeToRoot({ path: requestPath, root: input.agentRootPath })
+            ? resolvePathRelativeToRoot({ path: requestPath, root: input.agentRootPath, preservePathSpelling: true })
             : null;
         if (relative === null) return requestPath;
         if (relative === '.') return input.rootPath;

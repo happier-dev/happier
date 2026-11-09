@@ -1,9 +1,11 @@
 import { areAccountSettingsJsonValuesEqual } from './accountSettingsStructuralEquality';
 import { projectRuntimeAccountSettings, type Settings } from './settings';
+import { reconcileActionsSettingsV1References } from '@happier-dev/protocol/actions/actionSettings';
+import { retainDeep } from '../state/structuralSharing';
 
 /**
  * Returns a settings projection whose content is exactly `next`, but which reuses `previous`
- * references for every key whose value is structurally unchanged.
+ * references for every key and nested entry whose value is structurally unchanged.
  *
  * Settings arriving from the server are re-parsed from scratch (`settingsParse` + secret
  * sealing), so every object/array-valued key is a fresh reference even when the account settings
@@ -25,7 +27,9 @@ export function reconcileSettingsReferences(previous: Settings | null | undefine
     const reconciled: Record<string, unknown> = {};
 
     for (const key of nextKeys) {
-        const nextValue = nextRecord[key];
+        const nextValue = key === 'actionsSettingsV1'
+            ? reconcileActionsSettingsV1References(previous.actionsSettingsV1, next.actionsSettingsV1)
+            : nextRecord[key];
         if (
             Object.prototype.hasOwnProperty.call(previousRecord, key)
             && areAccountSettingsJsonValuesEqual(previousRecord[key], nextValue)
@@ -33,7 +37,7 @@ export function reconcileSettingsReferences(previous: Settings | null | undefine
             reconciled[key] = previousRecord[key];
             continue;
         }
-        reconciled[key] = nextValue;
+        reconciled[key] = retainDeep(previousRecord[key], nextValue);
         changed = true;
     }
 

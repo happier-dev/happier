@@ -1,6 +1,6 @@
 import { z } from 'zod/mini';
 
-export const SessionActionDraftStatusSchema = z.enum([
+const SessionActionDraftStatusSchema = z.enum([
     'editing',
     'running',
     'succeeded',
@@ -8,6 +8,7 @@ export const SessionActionDraftStatusSchema = z.enum([
     'cancelled',
 ]);
 
+/** Historical device-local card format, read only by the one-way launcher import. */
 export const SessionActionDraftSchema = z.strictObject({
     id: z.string().check(z.minLength(1)),
     address: z.strictObject({

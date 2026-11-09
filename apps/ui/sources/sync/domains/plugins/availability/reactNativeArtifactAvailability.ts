@@ -10,7 +10,7 @@ import type {
     PluginSelectedArtifactLeaseAcquireResult,
 } from './artifactLease';
 import {
-    fetchPluginArtifactBytesViaMachineRpc,
+    fetchPluginArtifactBytesViaMachineTransfer,
     type PluginArtifactDaemonByteFetcher,
 } from './artifactDaemonSource';
 import {
@@ -162,7 +162,7 @@ export function createPluginReactNativeArtifactAvailabilityProducer(
 const installedReactNativeArtifactAvailabilityProducer = createPluginReactNativeArtifactAvailabilityProducer({
     getCache: getInstalledPluginReactNativeBundleCache,
     appExact: createBundledPluginUiAppExactArtifactSource(),
-    fetchDaemonArtifactBytes: fetchPluginArtifactBytesViaMachineRpc,
+    fetchDaemonArtifactBytes: fetchPluginArtifactBytesViaMachineTransfer,
 });
 
 /** Production renderer entry point; hosts receive only an opaque cache capability. */

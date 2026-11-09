@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
-    ReviewCommentCreateRequestV1,
+    ReviewCommentCreateRequestV1} from '@happier-dev/protocol/reviews/comments/v1';
+import type {
     ReviewCommentCreateResponseV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/reviews/comments/actions';
 import { buildReviewCommentTextSnapshotHashes } from '@happier-dev/protocol/reviews/comments/snapshots';
 
 import { buildDurableReviewCommentCreateRequestFromDraft, submitDurableReviewCommentDraft } from './promoteDraft';

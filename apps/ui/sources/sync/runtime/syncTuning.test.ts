@@ -20,7 +20,6 @@ describe('loadSyncTuning', () => {
         expect(tuning.sessionListBackgroundHydrationYieldEveryRows).toBeLessThanOrEqual(
             tuning.sessionListBackgroundHydrationApplyBatchSize,
         );
-        expect(tuning.sessionRealtimeProjectionMode).toBe('enabled');
     });
 
     it('applies env JSON overrides', () => {
@@ -63,14 +62,8 @@ describe('loadSyncTuning', () => {
                     sessionSocketApplyCoalescingEnabled: false,
                     sessionSocketApplyCoalescingWindowMs: 24,
                     sessionSocketApplyCoalescingMaxBatchSize: 9,
-                    sessionRealtimeProjectionMode: 'shadow',
                     sidechainDemandHydrationConcurrencyLimit: 3,
-                    changesMaxPagesPerResume: 8,
-                    webSyncInstanceLiveTtlMs: 12_000,
-                    webSyncInstanceHeartbeatMs: 4_000,
                     webSyncInstanceCursorRetentionMs: 123_000,
-                    webLifecycleHeartbeatTickMs: 31_000,
-                    webLifecycleHeartbeatDriftMs: 61_000,
                     nativeInactiveCheckpointDebounceMs: 350,
                     activityUpdateDebounceMs: 4321,
                     safeCursorLagAlertMs: 301_000,
@@ -134,14 +127,8 @@ describe('loadSyncTuning', () => {
         expect(tuning.sessionSocketApplyCoalescingEnabled).toBe(false);
         expect(tuning.sessionSocketApplyCoalescingWindowMs).toBe(24);
         expect(tuning.sessionSocketApplyCoalescingMaxBatchSize).toBe(9);
-        expect(tuning.sessionRealtimeProjectionMode).toBe('shadow');
         expect((tuning as Record<string, unknown>).sidechainDemandHydrationConcurrencyLimit).toBe(3);
-        expect(tuning.changesMaxPagesPerResume).toBe(8);
-        expect(tuning.webSyncInstanceLiveTtlMs).toBe(12_000);
-        expect(tuning.webSyncInstanceHeartbeatMs).toBe(4_000);
         expect(tuning.webSyncInstanceCursorRetentionMs).toBe(123_000);
-        expect(tuning.webLifecycleHeartbeatTickMs).toBe(31_000);
-        expect(tuning.webLifecycleHeartbeatDriftMs).toBe(61_000);
         expect(tuning.nativeInactiveCheckpointDebounceMs).toBe(350);
         expect(tuning.activityUpdateDebounceMs).toBe(4321);
         expect(tuning.safeCursorLagAlertMs).toBe(301_000);
@@ -165,18 +152,6 @@ describe('loadSyncTuning', () => {
         expect(tuning.feedItemsMaxEntries).toBe(12);
         expect(tuning.automationRunsMaxEntriesPerAutomation).toBe(14);
         expect(tuning.encryptionCacheMessageByteBudget).toBe(2048);
-    });
-
-    it('keeps the projection routing rollback switch configurable', () => {
-        const tuning = loadSyncTuning({
-            env: {
-                EXPO_PUBLIC_HAPPIER_SYNC_TUNING_JSON: JSON.stringify({
-                    sessionRealtimeProjectionMode: 'disabled',
-                }),
-            },
-        });
-
-        expect(tuning.sessionRealtimeProjectionMode).toBe('disabled');
     });
 
     it('applies Expo app config JSON overrides for native release builds', () => {
@@ -236,14 +211,8 @@ describe('loadSyncTuning', () => {
                     sessionSocketApplyCoalescingEnabled: 'yes',
                     sessionSocketApplyCoalescingWindowMs: -1,
                     sessionSocketApplyCoalescingMaxBatchSize: 0,
-                    sessionRealtimeProjectionMode: 'fast',
                     sidechainDemandHydrationConcurrencyLimit: 0,
-                    changesMaxPagesPerResume: 0,
-                    webSyncInstanceLiveTtlMs: 0,
-                    webSyncInstanceHeartbeatMs: 0,
                     webSyncInstanceCursorRetentionMs: -1,
-                    webLifecycleHeartbeatTickMs: 0,
-                    webLifecycleHeartbeatDriftMs: -1,
                     nativeInactiveCheckpointDebounceMs: -1,
                     activityUpdateDebounceMs: 0,
                     safeCursorLagAlertMs: 0,
@@ -305,14 +274,8 @@ describe('loadSyncTuning', () => {
         expect(tuning.sessionSocketApplyCoalescingEnabled).toBe(true);
         expect(tuning.sessionSocketApplyCoalescingWindowMs).toBeGreaterThan(0);
         expect(tuning.sessionSocketApplyCoalescingMaxBatchSize).toBeGreaterThan(1);
-        expect(tuning.sessionRealtimeProjectionMode).toBe('enabled');
         expect((tuning as Record<string, unknown>).sidechainDemandHydrationConcurrencyLimit).toBe(2);
-        expect(tuning.changesMaxPagesPerResume).toBeGreaterThan(0);
-        expect(tuning.webSyncInstanceLiveTtlMs).toBeGreaterThan(0);
-        expect(tuning.webSyncInstanceHeartbeatMs).toBeGreaterThan(0);
         expect(tuning.webSyncInstanceCursorRetentionMs).toBeGreaterThan(0);
-        expect(tuning.webLifecycleHeartbeatTickMs).toBe(30_000);
-        expect(tuning.webLifecycleHeartbeatDriftMs).toBe(60_000);
         expect(tuning.nativeInactiveCheckpointDebounceMs).toBe(300);
         expect(tuning.activityUpdateDebounceMs).toBe(5000);
         expect(tuning.safeCursorLagAlertMs).toBe(300_000);

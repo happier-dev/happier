@@ -1,8 +1,10 @@
 import {
-  FeaturesResponseSchema,
-  HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1,
+  FeaturesResponseSchema} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import {
+  HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1} from '@happier-dev/protocol/runtime/input/structuredInputV1';
+import {
   buildBackendTargetKeyV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { parseReleasedServerV021Features } from '@/dev/testkit';

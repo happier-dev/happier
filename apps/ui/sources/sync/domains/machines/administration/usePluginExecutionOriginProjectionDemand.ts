@@ -1,13 +1,36 @@
 import * as React from 'react';
-import { getPluginMachineExecutionOriginRef } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
-import { getPluginExecutionOriginCandidateOrigin, type PluginExecutionOriginCandidateV1 } from './pluginExecutionOrigin';
-
 import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
+import type { ComposerScopeKindV1 } from '@happier-dev/protocol/plugins/ui/composer';
+import { getPluginMachineExecutionOriginRef } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 
 import { useDaemonMergedProjectionInputs, type DaemonMergedProjectionInputsState } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { useMachinePresenceSummary, type MachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import { PLUGIN_EXECUTION_ORIGIN_CANDIDATE_SECTIONS, PLUGIN_UI_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
+import type { PluginAccountInstalledPluginsAdmission } from '@/sync/domains/plugins/availability/reader';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { getPluginExecutionOriginCandidateOrigin, type PluginExecutionOriginCandidateV1 } from './pluginExecutionOrigin';
+
+export const PLUGIN_COMPOSER_PROJECTION_SECTIONS = [...PLUGIN_UI_SECTIONS,
+    'familiesById.composerControls', 'familiesById.composerRegions',
+    'contributionIntrospection', 'composerSurfaceCatalog'] as const;
+
+/** Discovery reads declared contributors; it neither selects nor admits an executable source. */
+export function readPluginComposerProjectionDemandTargets(
+    installed: PluginAccountInstalledPluginsAdmission | null,
+    scope: ComposerScopeKindV1,
+): readonly MachineAdministrationTargetV1[] {
+    if (installed?.kind !== 'available') return [];
+    const targets = new Map<string, MachineAdministrationTargetV1>();
+    for (const plugin of installed.plugins) for (const installation of plugin.installations) {
+        const contributes = installation.declaration?.contributes;
+        const declarations = [...contributes?.composerControls ?? [], ...contributes?.composerRegions ?? []];
+        if (!declarations.some(entry => !entry.scopes || entry.scopes.includes(scope))) continue;
+        const { serverIdentityId, machineId } = installation.materialization;
+        const key = JSON.stringify([serverIdentityId, machineId]);
+        if (!targets.has(key)) targets.set(key, Object.freeze({ serverIdentityId, machineId }));
+    }
+    return [...targets.values()];
+}
 
 // Unknown presence needs the first acquisition; execution still requires
 // the canonical reachable verdict. Offline and absent Machines stay passive.

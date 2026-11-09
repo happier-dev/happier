@@ -66,7 +66,7 @@ export function readMemoryActionOutcome(
   result: ActionExecuteResult,
 ): MemoryActionOutcome {
   if (!result.ok)
-    return result.errorCode === 'version_mismatch' ? 'conflict' : 'refused';
+    return result.errorCode === 'conflict' || result.errorCode === 'version_mismatch' ? 'conflict' : 'refused';
   if (readMemoryDuplicateReview(result)) return 'review';
   if (result.result && typeof result.result === 'object' && 'ok' in result.result && result.result.ok === false) return 'refused';
   if (readMemoryCreationReceipt(result)?.attachment === 'conflict') return 'saved_unattached';

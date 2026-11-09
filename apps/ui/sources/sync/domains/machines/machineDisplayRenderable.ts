@@ -117,9 +117,7 @@ function areMachineDisplayValuesEqual(
     return previous.id === next.id
         && previous.isShared === next.isShared
         && (previous.managedMachineRef?.managedId ?? null) === (next.managedMachineRef?.managedId ?? null)
-        && previous.managedInputRuntime?.nativeReady === next.managedInputRuntime?.nativeReady
-        && previous.managedInputRuntime?.wakeState === next.managedInputRuntime?.wakeState
-        && previous.managedInputRuntime?.state === next.managedInputRuntime?.state
+        && areSnapshotProjectionsEquivalent(previous.managedInputRuntime ?? null, next.managedInputRuntime ?? null)
         && previous.access?.custodian.accountId === next.access?.custodian.accountId
         && previous.access?.custodian.displayName === next.access?.custodian.displayName
         && previous.access?.role === next.access?.role

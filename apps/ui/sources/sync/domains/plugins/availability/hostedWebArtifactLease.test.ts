@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { DaemonPluginUiArtifactBytesReadResponse } from '@happier-dev/protocol';
+import type { DaemonPluginUiArtifactBytesReadResponse } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import {
     computePluginUiArtifactFileSetSha256DigestV1,
     computePluginUiArtifactSha256DigestV1,
+    deriveGeneratedHostedWebAssetPolicyV1,
     PluginUiArtifactDigestV1Schema,
 } from '@happier-dev/protocol/plugins/ui';
 import {
@@ -14,6 +15,10 @@ import {
 } from '@happier-dev/protocol/plugins/availability';
 
 import { encodeBase64 } from '@/encryption/base64';
+import {
+    adaptPluginUiPersistentArtifactStoreForReactNativeBundleCache,
+    createPluginReactNativeBundleCache,
+} from '@/components/plugins/reactNative/bundleCache';
 import type {
     PluginUiPersistentArtifactRecord,
     PluginUiPersistentArtifactStore,
@@ -26,6 +31,8 @@ import {
 } from './reader';
 import {
     acquirePluginHostedWebArtifactLease,
+    createPluginHostedWebBrowserArtifactAvailabilityProducer,
+    projectSelectedHostedWebBrowserArtifactAvailability,
     type PluginHostedWebArtifactLeaseInput,
 } from './hostedWebArtifactLease';
 
@@ -69,13 +76,46 @@ it('bootstraps an Account hosted-web lease from advertised bytes without an expl
     } finally { if (result.kind === 'available') result.lease.dispose(); }
 });
 
+it('admits the exact portable Machine installation without an Account selection or hosting', async () => {
+    const current = fixture({ materialized: true });
+    const response = current.snapshot.intentReads[0]!.response;
+    const store = createPluginAccountAvailabilityReaderStore();
+    store.replace({ scope, snapshot: { ...current.snapshot,
+        releases: [response.release!],
+        intentReads: [{ pluginId: slot.pluginId, response: {
+            ...response, intent: null, release: null, uiArtifacts: [], hostingCapability: { enabled: false },
+        } }],
+    } });
+    const fetchDaemonArtifactBytes = vi.fn(async () => current.daemonResponse);
+    const request = { reader: store.bind(scope), artifactGraph: current.graph,
+        cacheIdentity: current.cacheIdentity, executionOrigin: current.origin,
+        fetchDaemonArtifactBytes };
+    for (const executionOrigin of [undefined, { ...current.origin,
+        materializationRef: { ...current.origin.materializationRef, materializationId: 'another-installation' } }]) {
+        expect(await acquire({ ...request, executionOrigin })).toEqual({ kind: 'unavailable', code: 'artifact_not_current' });
+    }
+    expect(fetchDaemonArtifactBytes).not.toHaveBeenCalled();
+    const result = await acquire(request);
+    try {
+        expect(result).toMatchObject({ kind: 'available', lease: { sourceKind: 'daemon' } });
+    } finally { if (result.kind === 'available') result.lease.dispose(); }
+});
+
 function fixture(input: Readonly<{
     materialized?: boolean;
+    extraFiles?: Readonly<Record<string, string>>;
 }> = {}) {
     const entryPath = 'hosted-web/hosted-artifact/index.html';
     const scriptPath = 'hosted-web/hosted-artifact/assets/app.js';
     const entryBytes = new TextEncoder().encode('<!doctype html><script src="assets/app.js"></script>');
     const scriptBytes = new TextEncoder().encode('export const mounted = true;');
+    const bytesByPath = new Map<string, Uint8Array>([
+        [entryPath, entryBytes],
+        [scriptPath, scriptBytes],
+        ...Object.entries(input.extraFiles ?? {}).map(([path, text]) => (
+            [`hosted-web/hosted-artifact/${path}`, new TextEncoder().encode(text)] as const
+        )),
+    ]);
     const files = [
         {
             relativePath: entryPath,
@@ -87,11 +127,15 @@ function fixture(input: Readonly<{
             digest: computePluginUiArtifactSha256DigestV1(scriptBytes),
             byteSize: scriptBytes.byteLength,
         },
+        ...[...bytesByPath].slice(2).map(([relativePath, bytes]) => ({
+            relativePath,
+            digest: computePluginUiArtifactSha256DigestV1(bytes),
+            byteSize: bytes.byteLength,
+        })),
     ] as const;
-    const digest = computePluginUiArtifactFileSetSha256DigestV1([
-        { relativePath: entryPath, bytes: entryBytes },
-        { relativePath: scriptPath, bytes: scriptBytes },
-    ]);
+    const digest = computePluginUiArtifactFileSetSha256DigestV1(
+        [...bytesByPath].map(([relativePath, bytes]) => ({ relativePath, bytes })),
+    );
     const archiveDigestSha256 = PluginUiArtifactDigestV1Schema.parse(`sha256:${'a'.repeat(64)}`);
     const response: PluginAccountAvailabilityIntentReadResponseV1 = {
         availabilityCursor: 1,
@@ -191,10 +235,7 @@ function fixture(input: Readonly<{
                 materializations: input.materialized ? [materialization] : [],
             }],
         } satisfies PluginAccountAvailabilitySnapshot),
-        bytesByPath: new Map<string, Uint8Array>([
-            [entryPath, entryBytes],
-            [scriptPath, scriptBytes],
-        ]),
+        bytesByPath,
         record: Object.freeze({
             persistentIdentity: Object.freeze({
                 accountScope: scope,
@@ -205,7 +246,7 @@ function fixture(input: Readonly<{
             files: Object.freeze(files.map((file) => Object.freeze({
                 ...file,
                 bytes: new Uint8Array(
-                    file.relativePath === entryPath ? entryBytes : scriptBytes,
+                    bytesByPath.get(file.relativePath)!,
                 ),
             }))),
         } satisfies PluginUiPersistentArtifactRecord),
@@ -228,7 +269,7 @@ function fixture(input: Readonly<{
             }),
             files: files.map((file) => ({
                 ...file,
-                bytesBase64: encodeBase64(file.relativePath === entryPath ? entryBytes : scriptBytes),
+                bytesBase64: encodeBase64(bytesByPath.get(file.relativePath)!),
             })),
         } satisfies DaemonPluginUiArtifactBytesReadResponse,
     });
@@ -331,6 +372,104 @@ function createReader(snapshot: PluginAccountAvailabilitySnapshot) {
     store.replace({ scope, snapshot });
     return store.bind(scope);
 }
+
+describe('verified hosted-web browser projection', () => {
+    it('acquires through the real Account cache operation without native resource registration', async () => {
+        const current = fixture();
+        const persistent = createPersistentStore(current.record);
+        const cache = createPluginReactNativeBundleCache({
+            persistentStore: adaptPluginUiPersistentArtifactStoreForReactNativeBundleCache(persistent.store),
+        });
+        const producer = createPluginHostedWebBrowserArtifactAvailabilityProducer({ getCache: () => cache });
+        const policy = deriveGeneratedHostedWebAssetPolicyV1(current.graph);
+        if (!policy) throw new Error('Expected a generated hosted-web policy');
+        const result = await producer.acquire({
+            reader: createReader(current.snapshot),
+            artifactGraph: current.graph,
+            cacheIdentity: current.cacheIdentity,
+            accountLifetime,
+            isCurrent: () => true,
+            hostedWebPolicy: { ...policy, requestPath: '/' },
+        });
+        expect(result.kind).toBe('available');
+        if (result.kind !== 'available') throw new Error('Expected cache-backed browser availability');
+        expect(result.handle.bundle.entrypoint).toBe('index.html');
+        expect(persistent.read).toHaveBeenCalledTimes(1);
+        result.handle.dispose();
+        expect(result.handle.isCurrent()).toBe(false);
+    });
+
+    it('projects the complete policy-qualified file graph without a native store or Machine target and revokes with its lease', async () => {
+        const current = fixture({ extraFiles: {
+            'assets/theme.css': 'body { color: red; }',
+            'assets/icon.svg': '<svg xmlns="http://www.w3.org/2000/svg"/>',
+            'assets/app.js.map': '{"version":3}',
+            'assets/private.bin': 'not a browser asset',
+            'assets/pound#name.json': '{"name":"hash"}',
+            'assets/percent%name.json': '{"name":"percent"}',
+            'constructor/prototype/__proto__/module.js': 'export const portable = true;',
+            '%2e%2e/encoded.json': '{"name":"literal encoded dots"}',
+        } });
+        const readerStore = createPluginAccountAvailabilityReaderStore();
+        readerStore.replace({ scope, snapshot: current.snapshot });
+        const acquired = await acquire({
+            reader: readerStore.bind(scope),
+            artifactGraph: current.graph,
+            cacheIdentity: current.cacheIdentity,
+            accountHosted: { kind: 'accountHosted', fetch: async () => current.bytesByPath },
+        });
+        expect(acquired.kind).toBe('available');
+        if (acquired.kind !== 'available') throw new Error('Expected the verified Account-hosted lease');
+
+        const result = await projectSelectedHostedWebBrowserArtifactAvailability({
+            lease: acquired.lease,
+            isCurrent: () => true,
+        });
+        expect(result.kind).toBe('available');
+        if (result.kind !== 'available') throw new Error('Expected a browser projection');
+        try {
+            expect(result.handle.bundle).toEqual({
+                v: 1,
+                entrypoint: 'index.html',
+                files: {
+                    'index.html': { mime: 'text/html', contentBase64: encodeBase64(current.record.bytes) },
+                    'assets/app.js': { mime: 'text/javascript', contentBase64: encodeBase64(current.bytesByPath.get('hosted-web/hosted-artifact/assets/app.js')!) },
+                    'assets/theme.css': { mime: 'text/css', contentBase64: encodeBase64(current.bytesByPath.get('hosted-web/hosted-artifact/assets/theme.css')!) },
+                    'assets/icon.svg': { mime: 'image/svg+xml', contentBase64: encodeBase64(current.bytesByPath.get('hosted-web/hosted-artifact/assets/icon.svg')!) },
+                    'assets/pound#name.json': { mime: 'application/json', contentBase64: encodeBase64(current.bytesByPath.get('hosted-web/hosted-artifact/assets/pound#name.json')!) },
+                    'assets/percent%name.json': { mime: 'application/json', contentBase64: encodeBase64(current.bytesByPath.get('hosted-web/hosted-artifact/assets/percent%name.json')!) },
+                    'constructor/prototype/__proto__/module.js': { mime: 'text/javascript', contentBase64: encodeBase64(current.bytesByPath.get('hosted-web/hosted-artifact/constructor/prototype/__proto__/module.js')!) },
+                    '%2e%2e/encoded.json': { mime: 'application/json', contentBase64: encodeBase64(current.bytesByPath.get('hosted-web/hosted-artifact/%2e%2e/encoded.json')!) },
+                },
+            });
+            const revoked = vi.fn();
+            const subscription = result.handle.onRevoke(revoked);
+            readerStore.replace({ scope, snapshot: snapshotWithAvailability({ current, availabilityCursor: 2, enabled: false }) });
+            expect(result.handle.isCurrent()).toBe(false);
+            expect(revoked).toHaveBeenCalledTimes(1);
+            subscription.dispose();
+        } finally {
+            result.handle.dispose();
+        }
+        expect(acquired.lease.isCurrent()).toBe(false);
+    });
+
+    it('refuses a retired lease before exposing executable bytes', async () => {
+        const current = fixture();
+        const acquired = await acquire({
+            reader: createReader(current.snapshot),
+            artifactGraph: current.graph,
+            cacheIdentity: current.cacheIdentity,
+            accountHosted: { kind: 'accountHosted', fetch: async () => current.bytesByPath },
+        });
+        if (acquired.kind !== 'available') throw new Error('Expected a verified lease');
+        acquired.lease.dispose();
+        await expect(projectSelectedHostedWebBrowserArtifactAvailability({
+            lease: acquired.lease,
+            isCurrent: () => true,
+        })).resolves.toEqual({ kind: 'unavailable', code: 'artifact_lease_revoked' });
+    });
+});
 
 describe('hosted-web Artifact lease acquisition', () => {
     it.each([

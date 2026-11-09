@@ -71,19 +71,22 @@ describe('machine terminal ops (server-scoped routing)', () => {
         }));
     });
 
-    it('makes a 0.2 package-script rejection operation-specific without retrying or disabling shell and attach', async () => {
+    it.each([
+        { kind: 'package_script', runTargetId: 'script:test' },
+        { kind: 'service_shell', serviceId: 'instance/app', expectedGeneration: 'generation-a' },
+    ] as const)('keeps an unsupported typed launch operation-specific without a shell fallback: $kind', async launch => {
         const { machineTerminalEnsure, machineTerminalRestart } = await import('./machineTerminal');
         const rejected = { ok: false, errorCode: 'terminal_invalid_request', error: 'terminal_invalid_request' };
         for (const create of [machineTerminalEnsure, machineTerminalRestart]) {
             machineRpcWithServerScopeMock.mockResolvedValueOnce(rejected);
             await expect(create('machine-1', {
-                terminalKey: 'script', launch: { kind: 'package_script', runTargetId: 'script:test' },
+                terminalKey: 'script', launch,
             })).resolves.toEqual({ ...rejected, error: 'cli_update_required' });
         }
         expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(2);
         for (const request of machineRpcWithServerScopeMock.mock.calls) {
             expect(request[0].payload).toEqual({
-                terminalKey: 'script', launch: { kind: 'package_script', runTargetId: 'script:test' },
+                terminalKey: 'script', launch,
             });
         }
         const success = { ok: true, terminalId: 'shell', reused: false };
@@ -96,7 +99,7 @@ describe('machine terminal ops (server-scoped routing)', () => {
         const denied = { ...rejected, error: 'project_workspace_changed' };
         machineRpcWithServerScopeMock.mockResolvedValueOnce(denied);
         await expect(machineTerminalEnsure('machine-1', {
-            terminalKey: 'script', launch: { kind: 'package_script', runTargetId: 'script:test' },
+            terminalKey: 'script', launch,
         })).resolves.toEqual(denied);
     });
 

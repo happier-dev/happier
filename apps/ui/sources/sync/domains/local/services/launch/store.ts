@@ -130,7 +130,6 @@ export function failLocalServiceLauncherRefresh(
         machineId: string;
         sessionId?: string;
         reasonCode: string;
-        stale?: true;
     }>,
 ): LocalServiceLauncherState {
     if (state.machineId !== null && state.machineId !== input.machineId) {
@@ -145,25 +144,17 @@ export function failLocalServiceLauncherRefresh(
         };
     }
 
-    let staleTargets: Map<string, LocalServiceLaunchTarget> | null = null;
-    if (input.stale) {
-        for (const [id, target] of state.targetsById) {
-            if (target.state === 'stale' && target.actions.length === 0) continue;
-            if (!staleTargets) staleTargets = new Map(state.targetsById);
-            staleTargets.set(id, { ...target, state: 'stale', actions: [] });
-        }
-    }
-    const targetsById = staleTargets ?? state.targetsById;
+    // A failed read observes no new Service facts. Preserve the admitted rows,
+    // actions and grouping; freshness belongs to this feed's refresh status.
     const sessionId = input.sessionId ?? state.sessionId;
     if (state.machineId === input.machineId && state.sessionId === sessionId
-        && state.refreshStatus === 'error' && state.refreshError === input.reasonCode && targetsById === state.targetsById) return state;
+        && state.refreshStatus === 'error' && state.refreshError === input.reasonCode) return state;
     return carrySnapshotTime(state, {
         ...state,
         machineId: input.machineId,
         sessionId,
         refreshStatus: 'error',
         refreshError: input.reasonCode,
-        targetsById,
     });
 }
 

@@ -3,6 +3,7 @@ import type { ManagedConnectionState } from '@happier-dev/connection-supervisor'
 import { createSocketIoBoundaryStub } from '@/dev/testkit/mocks/socketIo';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { ACCOUNT_MODE_DOWNGRADE_UNVERIFIED } from '@happier-dev/sync-client';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { setRuntimeFetch, resetRuntimeFetch } from '@/utils/system/runtimeFetch';
 
@@ -85,6 +86,45 @@ describe('apiSocket reconnect semantics', () => {
             expect(disclosure.isCurrent()).toBe(true);
             expect(getAccountEncryptionModeCacheRevision()).toBeGreaterThan(revision);
         } finally { disclosure.dispose(); }
+    });
+
+    it('settles a pushed Plain refusal without throwing and retires it on explicit custody adoption', async () => {
+        const { encodeBase64 } = await import('@/encryption/base64');
+        const { createLegacyAccountEncryptionCurrentnessFixture } = await import('@/dev/testkit/fixtures/accountEncryptionCurrentness');
+        const { fetchAccountEncryptionMode } = await import('../account/apiAccountEncryptionMode');
+        const { createServerFetchAtEndpoint } = await import('@/sync/http/client');
+        const { UpdateContainerSchema } = await import('@happier-dev/protocol/updates');
+        const secret = new Uint8Array(32).fill(31);
+        const credentials = { token: `hdr.${encodeBase64(new TextEncoder().encode(JSON.stringify({ sub: 'socket-account' })), 'base64')}.sig`,
+            secret: encodeBase64(secret, 'base64url') };
+        let reported = createLegacyAccountEncryptionCurrentnessFixture({ secret });
+        setRuntimeFetch(async () => Response.json(reported));
+        const first = await boot({ credentials });
+        await connect(first.socket);
+        const binding = first.apiSocket.getAccountEncryptionObservationBinding(credentials)!;
+        await expect(binding.read()).resolves.toMatchObject({ mode: 'e2ee' });
+        reported = createPlainAccountEncryptionCurrentnessFixture({ version: 2, updatedAt: 2 });
+        const publication = UpdateContainerSchema.parse({ id: 'conversion-update', seq: 2, createdAt: 2,
+            body: { t: 'update-account', id: 'socket-account', encryptionCurrentness: reported } });
+
+        // The server may publish before the converter receives its HTTP acknowledgement.
+        // Refuse disclosure without throwing from Socket.IO or preventing sign-out.
+        expect(() => first.trigger('update', publication)).not.toThrow();
+        await expect(binding.read()).rejects.toMatchObject({ code: ACCOUNT_MODE_DOWNGRADE_UNVERIFIED, canTryAgain: false });
+        expect(first.socket.connected).toBe(true);
+
+        // The acknowledged conversion adopts historical custody as a new credential scope.
+        const historical = { ...credentials, custody: 'historical' as const };
+        const next = await boot({ credentials: historical });
+        await connect(next.socket);
+        const adopted = next.apiSocket.getAccountEncryptionObservationBinding(historical)!;
+        const request = createServerFetchAtEndpoint({ endpointUrl: endpoint, credentials: historical,
+            accountEncryptionObservation: adopted });
+        expect(() => next.trigger('update', publication)).not.toThrow();
+        await expect(fetchAccountEncryptionMode(historical, { request, usage: 'identity' })).resolves.toMatchObject({ mode: 'plain' });
+        expect(first.socket.connected).toBe(false);
+        expect(() => next.apiSocket.disconnect()).not.toThrow();
+        expect(next.socket.connected).toBe(false);
     });
 
     it('keeps authentication failure terminal for finite Account currentness', async () => {
@@ -171,7 +211,9 @@ describe('apiSocket reconnect semantics', () => {
         await fetchAccountEncryptionMode(credentials, { request: foreignRequest, usage: 'identity' });
         await fetchAccountEncryptionMode({ ...credentials }, { request, usage: 'identity' });
         expect(reads).toHaveLength(3);
-        await fetchAccountEncryptionMode({ ...credentials, secret: 'changed-key-material' }, { request, usage: 'identity' });
+        // Different key material reads afresh; active keys never accept a plain report.
+        await expect(fetchAccountEncryptionMode({ ...credentials, secret: 'changed-key-material' }, { request, usage: 'identity' }))
+            .rejects.toMatchObject({ code: ACCOUNT_MODE_DOWNGRADE_UNVERIFIED });
         await fetchAccountEncryptionMode({ token: `${credentials.token}-forged` }, { request, usage: 'identity' });
         expect(reads).toHaveLength(5);
         const changedOriginRequest = createServerFetchAtEndpoint({ endpointUrl: endpoint, runtimeOrigin: 'https://another-carrier.test', credentials,

@@ -11,6 +11,7 @@ const daemonTargetState = vi.hoisted(() => ({
         machineId: string;
     }> | null,
     selected: null as Readonly<{ serverIdentityId: string; machineId: string }> | null,
+    selectionKind: 'online' as 'online' | 'offline',
 }));
 const featureRuntimeState = vi.hoisted(() => ({ snapshot: { status: 'loading' } as unknown }));
 const featureRuntimeOptionsSpy = vi.hoisted(() => vi.fn());
@@ -31,7 +32,11 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 }));
 
 vi.mock('./resolveDaemonMemorySearchTarget', () => ({
-    useDaemonMemorySearchTargetSelection: () => ({ resolveExecutionTarget: () => null, selectedTarget: daemonTargetState.selected }),
+    useDaemonMemorySearchTargetSelection: () => ({
+        resolveExecutionTarget: () => null,
+        selectedTarget: daemonTargetState.selected,
+        state: { kind: daemonTargetState.selectionKind },
+    }),
     resolveDaemonMemorySearchTarget: () => daemonTargetState.target,
 }));
 
@@ -47,6 +52,7 @@ afterEach(() => {
     activeServerState.serverId = 'srv_home';
     daemonTargetState.target = { serverId: 'srv_daemon', machineId: 'machine_1' };
     daemonTargetState.selected = null;
+    daemonTargetState.selectionKind = 'online';
     featureRuntimeState.snapshot = { status: 'loading' };
     featureRuntimeOptionsSpy.mockReset();
     featureEnabledState.enabled = { search: true, 'memory.search': true };
@@ -85,6 +91,24 @@ describe('useMemorySearchProvider', () => {
         await hook.rerender();
         expect(hook.getCurrent()).toMatchObject({ homeServerId: null, queryAvailable: false,
             unavailableReason: 'daemon_no_target' });
+    });
+    it('keeps retained Project results non-authoritative when the selected Machine is unavailable', async () => {
+        setReadyHomeCapability({ enabled: true });
+        daemonTargetState.selected = { serverIdentityId: 'srv_home', machineId: 'machine_1' };
+        daemonTargetState.target = { serverId: 'srv_home', machineId: 'machine_1' };
+        daemonTargetState.selectionKind = 'offline';
+        const { useMemorySearchProvider } = await import('./useMemorySearchProvider');
+        const scope = { type: 'project' as const, projectRef: { serverId: 'srv_home', projectKey: 'payments' } };
+        const hook = await renderHook(() => useMemorySearchProvider({ kind: 'exact', serverId: 'srv_home' }, {
+            corpora: ['documents', 'sessions'], scope,
+        }));
+        expect(hook.getCurrent()).toMatchObject({
+            provider: 'daemon',
+            daemonTarget: null,
+            selectedDaemonTarget: { serverId: 'srv_home', machineId: 'machine_1' },
+            queryAvailable: false,
+            unavailableReason: 'daemon_no_target',
+        });
     });
     it('keeps ready Home Sessions and daemon native corpora available together for unified search', async () => {
         setReadyHomeCapability({ enabled: true });

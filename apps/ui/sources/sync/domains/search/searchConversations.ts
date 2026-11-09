@@ -1,4 +1,5 @@
-import { isMemorySessionSearchHitV1, isMemoryExternalTranscriptSearchHitV1, type MemoryDocumentSearchCoverageV1, type MemorySearchQueryV1, type MemorySearchResultHitV1 } from '@happier-dev/protocol/memory/memorySearch';
+import { isMemorySessionSearchHitV1, isMemoryExternalTranscriptSearchHitV1, type MemoryDocumentSearchCoverageV1, type MemorySearchHitV1, type MemorySearchQueryV1, type MemorySearchResultHitV1 } from '@happier-dev/protocol/memory/memorySearch';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ExternalSessionCandidateV1, ExternalSessionsCandidatesListResponse, ExternalSessionsSource } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
 import type { MemoryIndexSourceStatusV1 } from '@happier-dev/protocol/memory/memoryStatus';
@@ -36,7 +37,9 @@ export type ConversationSearchResult = Readonly<{
 export function hasConversationSearchScanFallback(result: ConversationSearchResult | null): boolean {
     return result?.machines.some(machine => machine.standardSearchEnabled && (
         !result.sources?.some(source => source.machineId === machine.machineId)
-        || result.sources.some(source => source.machineId === machine.machineId && source.indexReady !== true)
+        || result.sources.some(source => source.machineId === machine.machineId && source.indexReady !== true
+            && !result.failures?.some(failure => failure.machineId === source.machineId && failure.agentId === source.agentId
+                && failure.sourceKey === source.sourceKey && !failure.retryable))
     )) ?? false;
 }
 
@@ -75,7 +78,8 @@ export async function searchConversations(input: Readonly<{
     retryUnreachableMachines?: boolean;
     query: MemorySearchQueryV1;
     signal?: AbortSignal;
-    concurrencyLimit: number;
+    /** Temporary cap on concurrent Machines; see the machine fan-out below. */
+    concurrencyLimit?: number;
     mode?: 'auto' | 'indexed' | 'standard';
     homeSessions?: boolean;
     daemonEnabled?: boolean;
@@ -85,7 +89,7 @@ export async function searchConversations(input: Readonly<{
     continuation?: NonNullable<ConversationSearchResult['continuations']>[number];
     /** Reuses the page owner for a failed first page, without inventing a cursor. */
     retrySource?: Pick<ConversationSearchSourceFailureV1, 'machineId' | 'agentId' | 'sourceKey'>;
-    /** Account adapter authorizes before deduplication, so an invalid newer hit cannot hide a valid one. */
+    /** Qualifies arriving hits and retained ranges of the same Sessions before deduplication. */
     authorize?: (rows: readonly ConversationSearchHit[]) => Promise<readonly ConversationSearchHit[]>;
     onSources?: (sources: NonNullable<ConversationSearchResult['sources']>) => void;
     /** Completed pages are authorized before publication while other sources run. */
@@ -105,7 +109,8 @@ export async function searchConversations(input: Readonly<{
     // A failed page has not consumed its cursor. Keep it available to
     // every caller until the producing source returns a page or rejects it.
     let pendingContinuation = continuation;
-    const hits: ConversationSearchHit[] = [];
+    const pendingHits: ConversationSearchHit[] = [];
+    let hits: readonly ConversationSearchHit[] = [];
     const continuations: NonNullable<ConversationSearchResult['continuations']>[number][] = [];
     const sourcesResult: NonNullable<ConversationSearchResult['sources']>[number][] = [];
     const resetSources: NonNullable<ConversationSearchResult['resetSources']>[number][] = [];
@@ -114,6 +119,40 @@ export async function searchConversations(input: Readonly<{
     const machineStatuses = new Map<string, ConversationSearchMachineStatus>();
     let homeStatus: ConversationSearchResult['homeStatus'];
     const readResult = async (machines: readonly ConversationSearchMachineStatus[]): Promise<ConversationSearchResult> => {
+        input.signal?.throwIfAborted();
+        // Progress carries arrivals separately from the operation's admitted
+        // results: peer/status-only publications never repeat Session reads.
+        const received = pendingHits.splice(0);
+        if (received.length) {
+            // Machine carriers do not change a Session hit's canonical identity.
+            // Compare the admitted wire facts, including seq ranges and content,
+            // so a peer replay cannot trigger another visibility read.
+            const admittedBySession = new Map<string, MemorySearchHitV1[]>();
+            for (const row of hits) {
+                if (row.mode !== 'indexed' || !isMemorySessionSearchHitV1(row.hit)) continue;
+                const previous = admittedBySession.get(row.hit.sessionId);
+                if (previous) previous.push(row.hit);
+                else admittedBySession.set(row.hit.sessionId, [row.hit]);
+            }
+            const arriving = received.filter(row => row.mode !== 'indexed' || !isMemorySessionSearchHitV1(row.hit)
+                || !admittedBySession.get(row.hit.sessionId)?.some(hit => sameStrictJsonValue(hit, row.hit, { omitUndefinedObjectMembers: true })));
+            const changedSessions = new Set(arriving.flatMap(row => row.mode === 'indexed' && isMemorySessionSearchHitV1(row.hit)
+                ? [row.hit.sessionId] : []));
+            const retained: ConversationSearchHit[] = [];
+            const candidates: ConversationSearchHit[] = [];
+            for (const row of hits) {
+                // A new range supplies fresh visibility for all retained ranges
+                // of its Session, including denial or a lower visible ceiling.
+                if (row.mode === 'indexed' && isMemorySessionSearchHitV1(row.hit) && changedSessions.has(row.hit.sessionId)) candidates.push(row);
+                else retained.push(row);
+            }
+            candidates.push(...arriving);
+            if (candidates.length) {
+                const authorized = input.authorize ? await input.authorize(candidates) : candidates;
+                input.signal?.throwIfAborted();
+                hits = [...retained, ...authorized];
+            }
+        }
         // A complete current scan supersedes only its own stale indexed projection.
         const currentHits = hits.filter(row => {
             if (row.mode !== 'indexed') return true;
@@ -126,9 +165,8 @@ export async function searchConversations(input: Readonly<{
             ...(homeStatus ? { homeStatus } : {}), ...(sourcesResult.length ? { sources: [...sourcesResult] } : {}),
             ...(remainingContinuations.length ? { continuations: [...remainingContinuations] } : {}), ...(resetSources.length ? { resetSources: [...resetSources] } : {}),
             ...(completedStandardSources.length ? { completedStandardSources: [...completedStandardSources] } : {}) };
-        const authorized = input.authorize ? await input.authorize(currentHits) : currentHits;
         input.signal?.throwIfAborted();
-        return { ...result, hits: mergeConversationSearchHits(authorized, sourcesResult) };
+        return { ...result, hits: mergeConversationSearchHits(currentHits, sourcesResult) };
     };
     // Authorization is asynchronous. Publish in order so a slower visibility
     // read cannot replace a newer page with an older snapshot.
@@ -169,10 +207,21 @@ export async function searchConversations(input: Readonly<{
             const settings = settingsRead.settings;
             standardSearchEnabled = settings.conversationSearch.standardSearch.enabled;
             let sourcesUnavailable = false;
-            const sources = input.readSources && query.scope.type === 'global'
+            const sourcesRead = input.readSources && query.scope.type === 'global'
                 && (!query.corpora || query.corpora.includes('external_transcripts'))
-                ? (await input.readSources(machine.id).catch(() => { input.signal?.throwIfAborted(); sourcesUnavailable = true; return []; })).filter(source => !externalSource
-                    || (source.agentId === externalSource.agentId && source.sourceKey === externalSource.sourceKey)) : [];
+                ? input.readSources(machine.id).catch(() => { input.signal?.throwIfAborted(); sourcesUnavailable = true; return []; })
+                    .then(sources => sources.filter(source => !externalSource
+                        || (source.agentId === externalSource.agentId && source.sourceKey === externalSource.sourceKey))) : [];
+            const needsStatus = mode !== 'standard' && !continuation?.sourceKey && input.daemonEnabled !== false && settings.enabled;
+            let statusFailure: 'outdated' | 'partial' | undefined;
+            // Source declarations and index readiness are independent reads once
+            // settings admit the index. Gather both before awaiting either reply.
+            const statusRead = needsStatus ? fetchDaemonMemoryStatus(target).catch(error => {
+                input.signal?.throwIfAborted();
+                statusFailure = isRpcMethodNotAvailableError(error) || isRpcMethodNotFoundError(error) ? 'outdated' : 'partial';
+                return null;
+            }) : null;
+            const [sources, status] = await Promise.all([sourcesRead, statusRead]);
             input.signal?.throwIfAborted();
             let machineStatus: ConversationSearchMachineStatus['status'] = 'disabled-by-settings';
             let documents: ConversationSearchMachineStatus['documents'];
@@ -180,36 +229,13 @@ export async function searchConversations(input: Readonly<{
             let indexReadFailed = false;
             let nativeIndexedUsable = false;
             let indexSources: readonly MemoryIndexSourceStatusV1[] | undefined;
-            if (mode !== 'standard' && !continuation?.sourceKey && input.daemonEnabled !== false && settings.enabled) {
-                let statusFailure: 'outdated' | 'partial' | undefined;
-                const status = await fetchDaemonMemoryStatus(target).catch(error => {
-                    input.signal?.throwIfAborted();
-                    statusFailure = isRpcMethodNotAvailableError(error) || isRpcMethodNotFoundError(error) ? 'outdated' : 'partial';
-                    return null;
-                });
-                input.signal?.throwIfAborted();
+            if (needsStatus) {
                 indexSources = status?.sources;
                 const nativeReady = settings.conversationSearch.indexExternal.enabled && status?.deepIndexReady === true;
                 nativeIndexedUsable = nativeReady && !query.query.trim();
                 const queuePending = status?.queue ? status.queue.queuedSessionCount + status.queue.indexingSessionCount + status.queue.failedSessionCount + status.queue.waitingSessionCount : 0;
                 indexed = isDaemonMemorySearchUsable(status) || nativeReady;
                 machineStatus = status === null ? statusFailure ?? 'outdated' : indexed ? 'ok' : 'partial';
-                // Pre-X5 daemons can answer Session search without the readiness RPC.
-                // Keep only that released direction; native/doc readiness is never guessed.
-                if (query.query.trim() && status === null && !input.homeSessions && (!query.corpora || query.corpora.includes('sessions'))) {
-                    const result = await searchDaemonMemory({ ...query, corpora: undefined, ...target, cursor: continuation?.cursor ?? cursor }).catch(() => {
-                        input.signal?.throwIfAborted();
-                        indexReadFailed = true;
-                        return null;
-                    });
-                    input.signal?.throwIfAborted();
-                    documents = 'unavailable';
-                    if (result?.ok) {
-                        pendingContinuation = undefined;
-                        hits.push(...indexedRows(machine.id, result.hits.filter(isMemorySessionSearchHitV1)));
-                        if (result.nextCursor) continuations.push({ machineId: machine.id, cursor: result.nextCursor });
-                    }
-                }
                 if (indexed && query.query.trim()) {
                     const corpora = (query.corpora ?? ['sessions', 'external_transcripts']).filter(corpus =>
                         (corpus !== 'sessions' || !input.homeSessions) && (corpus !== 'external_transcripts' || settings.conversationSearch.indexExternal.enabled));
@@ -237,7 +263,7 @@ export async function searchConversations(input: Readonly<{
                                     && source.source.agentId === externalSource.agentId && source.source.sourceKey === externalSource.sourceKey && source.state === 'ready')
                                 : indexSources.some(source => source.source.type === 'external_transcript' && source.state !== 'ready')))) machineStatus = 'partial';
                             if (corpora.includes('sessions') && indexSources?.some(source => source.source.type === 'happier_session' && source.state !== 'ready')) machineStatus = 'partial';
-                            hits.push(...indexedRows(machine.id, result.hits));
+                            pendingHits.push(...indexedRows(machine.id, result.hits));
                             if (!separateDocuments) documents = result.documents?.state ?? 'unavailable';
                             if (result.nextCursor) continuations.push({ machineId: machine.id, cursor: result.nextCursor });
                             if (result.hasMore || queuePending > 0) machineStatus = 'partial';
@@ -250,10 +276,19 @@ export async function searchConversations(input: Readonly<{
                         const result = await documentSearch;
                         input.signal?.throwIfAborted();
                         documents = result?.ok ? result.documents?.state ?? 'unavailable' : 'unavailable';
-                        if (result?.ok) hits.push(...indexedRows(machine.id, result.hits));
+                        if (result?.ok) pendingHits.push(...indexedRows(machine.id, result.hits));
                         if (documents !== 'ready') machineStatus = 'partial';
                     }
                 }
+            }
+            // Required decoder diagnostics have already established an unreadable
+            // source. Preserve that typed failure; the scan uses the same decoder.
+            for (const source of indexSources ?? []) {
+                if (source.source.type !== 'external_transcript' || source.state !== 'error' || source.errorCode !== 'unsupported'
+                    || source.errorReason !== 'external_sessions_transcript_read_failed') continue;
+                if (externalSource && (source.source.agentId !== externalSource.agentId || source.source.sourceKey !== externalSource.sourceKey)) continue;
+                failures.push({ machineId: machine.id, agentId: source.source.agentId, sourceKey: source.source.sourceKey,
+                    errorCode: 'agent_unavailable', retryable: false });
             }
             const projectedSources = sources.map(source => ({ ...source, machineId: machine.id,
                 key: JSON.stringify([machine.id, source.key ?? source.sourceKey]),
@@ -279,6 +314,8 @@ export async function searchConversations(input: Readonly<{
                     input.signal?.throwIfAborted();
                     const ready = source.indexReady;
                     if (mode === 'auto' && ready) continue;
+                    if (mode === 'auto' && failures.some(failure => failure.machineId === machine.id && failure.agentId === source.agentId
+                        && failure.sourceKey === source.sourceKey && !failure.retryable)) continue;
                     if (nativeIndexedUsable && !ready) machineStatus = 'partial';
                     if (!standardSearchEnabled) continue;
                     // Standard RPCs have no message-date filter contract. Do not
@@ -321,7 +358,7 @@ export async function searchConversations(input: Readonly<{
                     if (result.contentCoverage === 'complete' && !result.nextCursor && !result.preparation && !result.searchIncomplete) {
                         completedStandardSources.push({ machineId: machine.id, agentId: source.agentId, sourceKey: source.sourceKey });
                     }
-                    hits.push(...result.candidates.filter(candidate => candidate.match)
+                    pendingHits.push(...result.candidates.filter(candidate => candidate.match)
                         .map(candidate => ({ machineId: machine.id, mode: 'standard' as const, agentId: source.agentId, sourceKey: source.sourceKey, source: source.source, candidate })));
                     if (result.nextCursor) continuations.push({ machineId: machine.id, sourceKey: source.sourceKey, cursor: result.nextCursor });
                     if (result.contentCoverage !== 'complete' || result.nextCursor || result.preparation || result.searchIncomplete) machineStatus = 'partial';
@@ -340,18 +377,26 @@ export async function searchConversations(input: Readonly<{
                 ...(standardSearchEnabled === undefined ? {} : { standardSearchEnabled }) };
         }
     };
-    const machineWork = runTasksWithLimit(input.machines.filter(machine => (!continuation || continuation.machineId === machine.id)
+    // Each Machine has its own daemon and admitted RPC lifetime. A pending peer
+    // must not occupy a Session-hydration slot and block unrelated Machines.
+    const machineTasks = input.machines.filter(machine => (!continuation || continuation.machineId === machine.id)
         && (!input.retrySource || input.retrySource.machineId === machine.id)).map(machine => async () => {
         const status = await searchMachine(machine);
         machineStatuses.set(machine.id, status);
         await publish();
         return status;
-    }), input.concurrencyLimit);
+    });
+    // Temporary mitigation (FSP perf-r337 / Systemic rpc-lost-ack-1028): the scoped Machine
+    // relay loses completed replies under wide concurrent fan-out, and a lost reply never
+    // settles. Callers may cap Machines until that fix lands; then remove this input.
+    const machineWork = input.concurrencyLimit === undefined
+        ? Promise.all(machineTasks.map(task => task()))
+        : runTasksWithLimit(machineTasks, input.concurrencyLimit);
     const homeWork = home?.then(async result => {
         input.signal?.throwIfAborted();
         if (result.ok) {
             pendingContinuation = undefined;
-            hits.push(...indexedRows(null, result.hits));
+            pendingHits.push(...indexedRows(null, result.hits));
             if (result.nextCursor) continuations.push({ machineId: null, cursor: result.nextCursor });
             homeStatus = result.hasMore ? 'partial' : 'ok';
         } else homeStatus = 'unavailable';

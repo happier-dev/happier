@@ -6,11 +6,14 @@ import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/feature
 import { MemorySearchQueryV1Schema, MemorySearchResultV1Schema } from '@happier-dev/protocol/memory/memorySearch';
 import { MemoryStatusV1Schema } from '@happier-dev/protocol/memory/memoryStatus';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
-import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol';
+import { RPC_ERROR_CODES} from '@happier-dev/protocol/rpcErrors';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { SESSION_MACHINE_TARGET_UNAVAILABLE_ERROR_CODE } from '@/sync/runtime/sessionMachineRpcErrorCodes';
 import { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
 // Only HTTP, credentials and Socket acknowledgements are substituted.
 const network = await installSessionOpsNetworkBoundary();
+// Load the real Sync graph after its transport boundary, outside individual behavior budgets.
+await import('./searchDaemonMemory');
 const reply = vi.fn<(request: SessionOpsRpcRequest) => Promise<unknown>>();
 let home: Awaited<ReturnType<typeof network.addHome>>;
 afterAll(() => network.dispose());
