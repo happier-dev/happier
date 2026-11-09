@@ -56,12 +56,14 @@ describe('Unix Agent identity launch', () => {
       executable: '/opt/happier/tools/agent', args: ['--stdio'], cwd: '/srv/happier/project',
       runtimeHome: '/home/happier-agent/.local/state/happier/runtime/session',
       environment: { PATH: '/opt/happier/tools:/usr/bin', ANTHROPIC_API_KEY: 'selected',
+        HAPPIER_TEST_SELECTED_ACCESS_TOKEN: 'selected-account-token', HAPPIER_TEST_UNSELECTED_ACCESS_TOKEN: 'unselected-account-token',
         HAPPIER_FIRST_PARTY_INSTALL_HOME: '/opt/happier',
         HAPPIER_MANAGED_TOOLS_ROOT: '/var/lib/happier/tools/personal-install',
         HAPPIER_HOME_DIR: '/private/daemon', HAPPIER_DAEMON_TOKEN: 'custodian-token-sentinel', RANDOM_SECRET: 'unselected',
         HAPPIER_SESSION_CREDENTIAL_FILE: '/private/source-credential-sentinel',
+        HAPPIER_MCP_STDIO_LAUNCHER_CONFIG_FILE: '/private/host-mcp-config',
         HAPPIER_SESSION_MCP_CONTEXT_FILE: '/home/happier-agent/.local/state/happier/runtime/session/.happier/session-mcp.json' },
-      selectedEnvironmentKeys: ['ANTHROPIC_API_KEY', 'HAPPIER_FIRST_PARTY_INSTALL_HOME', 'HAPPIER_HOME_DIR', 'HAPPIER_DAEMON_TOKEN', 'HAPPIER_SESSION_CREDENTIAL_FILE', 'HAPPIER_SESSION_MCP_CONTEXT_FILE'],
+      selectedEnvironmentKeys: ['ANTHROPIC_API_KEY', 'HAPPIER_TEST_SELECTED_ACCESS_TOKEN', 'HAPPIER_FIRST_PARTY_INSTALL_HOME', 'HAPPIER_HOME_DIR', 'HAPPIER_DAEMON_TOKEN', 'HAPPIER_SESSION_CREDENTIAL_FILE', 'HAPPIER_SESSION_MCP_CONTEXT_FILE', 'HAPPIER_MCP_STDIO_LAUNCHER_CONFIG_FILE'],
       selectedMaterials: [],
       sessionMcpContext: { v: 1, socketPath: '/tmp/fixture-session.sock', bearerToken: Buffer.alloc(32, 1).toString('base64url') },
     });
@@ -72,6 +74,7 @@ describe('Unix Agent identity launch', () => {
     // Actual stdin is a byte stream; Readable.from defaults to object mode.
     const payload = await readAgentLaunchFrame(Readable.from([launch.stdinPreamble], { objectMode: false }));
     expect(payload.environment).toEqual({ PATH: '/opt/happier/tools:/usr/bin', ANTHROPIC_API_KEY: 'selected',
+      HAPPIER_TEST_SELECTED_ACCESS_TOKEN: 'selected-account-token',
       HAPPIER_FIRST_PARTY_INSTALL_HOME: '/opt/happier',
       HAPPIER_MANAGED_TOOLS_ROOT: '/var/lib/happier/tools/personal-install',
       HAPPIER_SESSION_MCP_CONTEXT_FILE: '/home/happier-agent/.local/state/happier/runtime/session/.happier/session-mcp.json' });
@@ -79,5 +82,6 @@ describe('Unix Agent identity launch', () => {
     // part of the frame, not merely the child environment projection.
     expect(JSON.stringify(payload)).not.toContain('custodian-token-sentinel');
     expect(JSON.stringify(payload)).not.toContain('source-credential-sentinel');
+    expect(JSON.stringify(payload)).not.toContain('host-mcp-config');
   });
 });
