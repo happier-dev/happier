@@ -1816,6 +1816,9 @@ describe('Service Runs on through the placement and relocation Actions', () => {
   it('offers no workers for a primary-only service', async () => {
     const { screen, runsOn } = await setup({ running: false, portable: false, waitEnabled: false });
     await vi.waitFor(() => expect(String(runsOn().props.subtitle)).toBe('projectServices.primaryOnly'));
+    // The reason is a sentence: a narrow pane wraps it rather than cutting it to its first words.
+    const { Text } = await import('@/components/ui/text/Text');
+    expect(findTestInstanceByTypeContainingText(runsOn(), Text, 'projectServices.primaryOnly')?.props.numberOfLines).toBeUndefined();
     const { WorkerDestinationPicker } = await import('@/components/projects/workers/WorkerDestinationPicker');
     expect(screen.tree.findAllByType(WorkerDestinationPicker)).toHaveLength(0);
     // A primary-only service has nothing to choose: no control that can never succeed, no dimmed row.

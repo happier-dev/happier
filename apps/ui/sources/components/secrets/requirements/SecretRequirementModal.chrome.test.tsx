@@ -66,9 +66,12 @@ vi.mock('@/components/secrets/SecretsList', () => ({
     },
 }));
 
+const catalogPersonalSecrets = [{ id: 'personal-record', name: 'My key', kind: 'apiKey' as const,
+    encryptedValue: { _isSecretValue: true as const, value: 'sk-personal' }, createdAt: 1, updatedAt: 1 }];
 vi.mock('@/components/secrets/useSavedSecretCatalog', () => ({
     useSavedSecretCatalog: () => ({
         sharedEntries,
+        personalSecrets: catalogPersonalSecrets,
         personalMutationsAvailable: true,
         personalMutations: {
             create: vi.fn(),
@@ -137,7 +140,6 @@ describe('SecretRequirementModal', () => {
                     profile: ({ id: 'p1', name: 'Profile' } satisfies Pick<AIBackendProfile, 'id' | 'name'>) as unknown as AIBackendProfile,
                     secretEnvVarName: 'OPENAI_API_KEY',
                     machineId: 'f98b860d-63e0-436e',
-                    secrets: [],
                     defaultSecretId: null,
                     onResolve: () => {},
                     onClose: () => {},
@@ -162,7 +164,6 @@ describe('SecretRequirementModal', () => {
                 profile: ({ id: 'p1', name: 'Profile' } satisfies Pick<AIBackendProfile, 'id' | 'name'>) as unknown as AIBackendProfile,
                 secretEnvVarName: 'OPENAI_API_KEY',
                 machineId: null,
-                secrets: [],
                 defaultSecretId: null,
                 onResolve: () => {},
                 onClose: () => {},
@@ -177,13 +178,34 @@ describe('SecretRequirementModal', () => {
         );
     });
 
+    it('lists personal keys from the Saved Secret catalog, and manages them only where the surface allows', async () => {
+        const { renderScreen } = await import('@/dev/testkit');
+        const { SecretRequirementModal } = await import('./SecretRequirementModal');
+        const profile = ({ id: 'p5', name: 'Profile' } satisfies Pick<AIBackendProfile, 'id' | 'name'>) as unknown as AIBackendProfile;
+        await renderScreen(React.createElement(SecretRequirementModal, {
+            profile, secretEnvVarName: 'OPENAI_API_KEY', machineId: null, defaultSecretId: null,
+            variant: 'defaultForProfile', allowManage: true, onResolve: () => {}, onClose: () => {},
+        }));
+        // A key created through the catalog's personal Actions is the record the list shows.
+        expect(observedListProps.secrets).toBe(catalogPersonalSecrets);
+        expect(observedListProps.allowAdd).toBe(true);
+        expect(observedListProps.onCreatePersonal).toBeTypeOf('function');
+        await renderScreen(React.createElement(SecretRequirementModal, {
+            profile, secretEnvVarName: 'OPENAI_API_KEY', machineId: null, defaultSecretId: null,
+            variant: 'defaultForProfile', onResolve: () => {}, onClose: () => {},
+        }));
+        expect(observedListProps.secrets).toBe(catalogPersonalSecrets);
+        expect(observedListProps.allowAdd).toBe(false);
+        expect(observedListProps.onCreatePersonal).toBeUndefined();
+    });
+
     it('feeds Profile requirements from the same shared catalog as other pickers', async () => {
         const { renderScreen } = await import('@/dev/testkit');
         const { SecretRequirementModal } = await import('./SecretRequirementModal');
 
         await renderScreen(React.createElement(SecretRequirementModal, {
             profile: ({ id: 'p2', name: 'Profile' } satisfies Pick<AIBackendProfile, 'id' | 'name'>) as unknown as AIBackendProfile,
-            secretEnvVarName: 'OPENAI_API_KEY', machineId: null, secrets: [], defaultSecretId: null,
+            secretEnvVarName: 'OPENAI_API_KEY', machineId: null, defaultSecretId: null,
             variant: 'defaultForProfile', onResolve: () => {}, onClose: () => {},
         }));
 
@@ -198,7 +220,7 @@ describe('SecretRequirementModal', () => {
 
         await renderScreen(React.createElement(SecretRequirementModal, {
             profile: ({ id: 'p4', name: 'Profile' } satisfies Pick<AIBackendProfile, 'id' | 'name'>) as unknown as AIBackendProfile,
-            secretEnvVarName: 'OPENAI_API_KEY', machineId: null, secrets: [], defaultSecretId: null,
+            secretEnvVarName: 'OPENAI_API_KEY', machineId: null, defaultSecretId: null,
             variant: 'defaultForProfile', onResolve, onSetDefaultSecretId, onClose: () => {},
         }));
 
@@ -215,13 +237,33 @@ describe('SecretRequirementModal', () => {
         });
     });
 
+    it('announces Use once as a button and names the screen close control', async () => {
+        const { renderScreen } = await import('@/dev/testkit');
+        const { SecretRequirementModal } = await import('./SecretRequirementModal');
+        const screen = await renderScreen(React.createElement(SecretRequirementModal, {
+            profile: ({ id: 'p4', name: 'Profile' } satisfies Pick<AIBackendProfile, 'id' | 'name'>) as unknown as AIBackendProfile,
+            secretEnvVarName: 'OPENAI_API_KEY', machineId: null, defaultSecretId: null,
+            sessionOnlySecretValueByEnvVarName: { OPENAI_API_KEY: 'value' },
+            layoutVariant: 'screen',
+            onResolve: vi.fn(),
+            onClose: vi.fn(),
+        }));
+        const submit = findTestInstanceByTypeContainingText(
+            screen,
+            'Pressable',
+            'profiles.requirements.actions.useOnceButton',
+        );
+        expect(submit?.props.role ?? submit?.props.accessibilityRole).toBe('button');
+        expect(screen.tree.findAll((node) => node.props.accessibilityLabel === 'common.close').length).toBeGreaterThan(0);
+    });
+
     it('returns an Enter Once value without normalizing opaque whitespace', async () => {
         const { renderScreen } = await import('@/dev/testkit');
         const { SecretRequirementModal } = await import('./SecretRequirementModal');
         const onResolve = vi.fn();
         const screen = await renderScreen(React.createElement(SecretRequirementModal, {
             profile: ({ id: 'p3', name: 'Profile' } satisfies Pick<AIBackendProfile, 'id' | 'name'>) as unknown as AIBackendProfile,
-            secretEnvVarName: 'OPENAI_API_KEY', machineId: null, secrets: [], defaultSecretId: null,
+            secretEnvVarName: 'OPENAI_API_KEY', machineId: null, defaultSecretId: null,
             sessionOnlySecretValueByEnvVarName: { OPENAI_API_KEY: '   ' },
             onResolve,
             onClose: vi.fn(),

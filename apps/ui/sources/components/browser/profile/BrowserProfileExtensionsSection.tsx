@@ -118,12 +118,13 @@ export function BrowserProfileExtensionsSection(
           if (
             !(await Modal.confirm(
               t('capabilities.store.browserExtensionProfile.removeTitle'),
-              name,
+              t('capabilities.store.browserExtensionProfile.removeBody', { name }),
               { confirmText: t('common.remove'), destructive: true },
             ))
           )
             return;
-          await run(extensionId, 'browser.extensions.remove', { extensionId });
+          // This one confirmation states the restart, so the browser owner doesn't ask again.
+          await run(extensionId, 'browser.extensions.remove', { extensionId, restartConfirmed: true });
         })(),
         { tag: 'BrowserProfileExtensionsSection.remove' },
       );

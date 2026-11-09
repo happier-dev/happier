@@ -8,7 +8,7 @@ import { usePluginTheme } from './PluginUiProvider.js';
 import { Icon } from './Icon.js';
 
 export type StoredImageProps = Readonly<{
-  /** File-backed native Session-image reference, admitted under declared Sessions READ scope. */
+  /** File-backed native Session-image reference; the current Account's access to that Session decides the read. */
   image: StoredImageRefV1;
   accessibilityLabel: string;
   /** Opens the host's shared stage when available. Defaults to true. */
@@ -18,7 +18,7 @@ export type StoredImageProps = Readonly<{
   testID?: string;
 }>;
 
-/** Read a native Session image under the plugin's declared Sessions READ scope. */
+/** Read a native Session image under the current Account's actual access to that Session. */
 export function StoredImage({ image, accessibilityLabel, testID, expandable = true, onPress }: StoredImageProps): ReactElement {
   const hostApi = usePluginHostApi();
   const presentationHost = useOptionalPluginUiPresentationHost();

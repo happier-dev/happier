@@ -27,6 +27,51 @@ inventory](https://github.com/happier-dev/happier/blob/v0.3/packages/plugin-ui/A
 `node_modules/@happier-dev/plugin-ui/API.md` in the generated project is the
 exact installed inventory. Do not guess exports from examples or app source.
 
+## Agent action launch controls (0.3 development)
+
+Use `AgentActionButton` from `@happier-dev/plugin-ui/components` when a
+configured agent action can start immediately or open for instructions. Its
+`AgentActionLaunchMode` is `start` or `review`: the main button passes the
+configured `launchMode` to `onLaunch`, and the menu offers **Start now** and
+**Add instructions…** as explicit choices. `review` opens the New Session
+composer for editing and sending; it does not mean a formal pull request review.
+
+```tsx
+import {
+  AgentActionButton,
+  type AgentActionLaunchMode,
+} from '@happier-dev/plugin-ui/components';
+
+function FixControl({ launchMode, launch, editAction }: {
+  launchMode: AgentActionLaunchMode;
+  launch: (mode: AgentActionLaunchMode) => void;
+  editAction: () => void;
+}) {
+  return <AgentActionButton
+    title="Fix with my agent"
+    actionName="Fix"
+    launchMode={launchMode}
+    onLaunch={launch}
+    onEdit={editAction}
+  />;
+}
+```
+
+Render it inside your `defineUiSurface` tree, which supplies the host, theme
+and translation providers. The button owns presentation only. Your `launch`
+callback forwards the mode and configured action to the existing Action or
+handoff owner, which resolves the prompt, Profile, placement, checkout and
+delivery. Preserve that owner's typed outcome and recovery; selecting a mode
+does not itself create a Session or acknowledge a send.
+
+`startUnavailableReason` disables the menu's **Start now** row and explains why.
+The main button still uses `launchMode`, so its launch owner must also honor
+availability. `disabled` disables both faces while the action is unavailable
+or busy. Optional `groups` and `onSelectDestination` add existing Session
+destinations; use `onMenuOpenChange` to acquire those choices only while needed.
+Each destination still goes through the same delivery owner. `onEdit` opens
+the configured action record; omit it when no editor is offered.
+
 ## Execution checklists (0.3 development)
 
 Import `PlanChecklistCard` and its `PlanChecklistItem` and
@@ -88,6 +133,49 @@ two-finger translation scrolls and pinch zooms the local picture. Browser
 long-press drag uses live pointer phases; Computer drivers with atomic drag
 send it on release and show the path locally. Keep simulator input direct and
 omit `localZoom` so pinch continues to reach the device.
+
+### Viewer control bar
+
+`RemoteViewerControlBar` and `useRemoteViewerActions` from
+`@happier-dev/plugin-ui/components` add the touch, modifier, arrow-key and
+clipboard controls Happier's own viewers use. The hook holds the input intent:
+it arms one-shot and locked modifiers, and applies them to the next key or tap.
+Pass every gesture through `prepareGesture` so the layer's taps pick up those
+modifiers, and relay what it returns:
+
+```tsx
+const actions = useRemoteViewerActions({
+  enabled: viewerHasControl,
+  sendGesture: relayToSelectedSource,
+  // Optional; omit each one the source does not support.
+  clipboardShortcut: runClipboardShortcut,
+  supportedModifiers: sourceModifiers,
+});
+
+<HappierLiveStreamInputLayer
+  /* …props from the example above… */
+  onGesture={(gesture) => {
+    const prepared = actions.prepareGesture(gesture);
+    if (prepared) relayToSelectedSource(prepared);
+  }}
+/>
+
+<RemoteViewerControlBar
+  testID="my-plugin-viewer-controls"
+  actions={actions}
+  controls={{ mode: inputMode, setMode: setInputMode, resetZoom }}
+  enabled={viewerHasControl}
+  host={viewerBarHost}
+  labels={viewerBarLabels}
+  spacing={{ inset: 8, gap: 4 }}
+/>
+```
+
+The bar owns its tabs, panels and order. You supply its leaves through `host`
+(`Surface`, `Button`, `IconButton`, `SegmentedTabBar` and `KeyHint`) and all of
+its words through `labels`, so it matches your surface and language. The bar
+disables clipboard controls when no `clipboardShortcut` is available, and lists
+only `supportedModifiers`. Modifiers reset when `enabled` turns false.
 
 ## Coach evaluator values (0.3 development)
 
@@ -642,6 +730,12 @@ admitted content mounted while refreshing or after a failed refresh, with one
 freshness line and recovery action. Before the first successful read it shows
 loading or an error with Retry. Set `isEmpty` when your decoded content is empty;
 the component does not infer emptiness from Resource bytes.
+
+In 0.3 development source, the hook's explicit `refresh()` cancels an unresolved
+read and starts its replacement, so Retry can recover a stalled read. Projection
+hooks and contextual Resource controls share this behavior. Pass
+`refresh({ supersede: false })` to queue behind the current read instead.
+Automatic watch invalidations still coalesce behind the current read.
 
 In unreleased 0.3 source, a dynamic Resource may still be preparing its runtime
 before the first read finishes. Keep that state loading rather than showing an
@@ -1989,9 +2083,10 @@ Use `StoredImage` with a `StoredImageRefV1` from
 reference, including its media identity, dimensions, byte size and `file` facts
 (Session, storage, relative path, digest and MIME type). Capture, attachment,
 snapshot and Session-event Actions can return these references. You may retain
-a reference across surface remounts or pass it to another plugin; the receiving
-plugin's declared Session scope still decides access. A reference grants no read
-permission, and arbitrary file paths cannot replace native Session-image facts.
+a reference across surface remounts or pass it to another plugin. A reference
+grants no read permission of its own: the current Account's actual access to that
+Session decides the read, and arbitrary file paths cannot replace native
+Session-image facts.
 
 ```tsx
 import { StoredImage } from '@happier-dev/plugin-ui';
@@ -1999,11 +2094,10 @@ import { StoredImage } from '@happier-dev/plugin-ui';
 <StoredImage image={imageReference} accessibilityLabel="Captured page preview" />
 ```
 
-Image reads require the plugin's declared `sessions` HostAccess **read** scope
-(and the selected scope when access is optional), not the broader linked-Session
-UI scope. The same scope owner applies on the daemon. Plain/E2EE mismatches or
-unavailable encryption material return an unavailable image, never a plaintext
-fallback. The app thumbnail and `StoredImage` share `HappierStoredImage` in
+Image reads need no `sessions` manifest grant, and the linked-Session UI scope
+does not authorize them. The daemon checks the host's actual Account and Session
+access. Plain/E2EE mismatches or unavailable encryption material return an
+unavailable image, never a plaintext fallback. The app thumbnail and `StoredImage` share `HappierStoredImage` in
 `/components`. These are development-source interfaces; package publication
 and loaded-runtime verification remain separate.
 

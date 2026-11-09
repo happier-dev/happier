@@ -189,7 +189,7 @@ it('lists the profile, turns an extension off through the restart confirmation, 
   }
 });
 
-it('removes an extension from its "…" menu after confirmation', async () => {
+it('removes an extension from a running profile with one confirmation that covers its restart', async () => {
   let installed = true;
   const { screen, inputs, dispose } = await setup({
     'browser.extensions.list': () => ({
@@ -198,7 +198,9 @@ it('removes an extension from its "…" menu after confirmation', async () => {
         ? [{ profileId, restartRequired: false, extension: record(true) }]
         : [],
     }),
-    'browser.extensions.remove': () => {
+    'browser.extensions.remove': (input: Readonly<Record<string, unknown>>) => {
+      if (input.restartConfirmed !== true)
+        return { status: 'needs_restart_confirmation', profileId };
       installed = false;
       return {
         status: 'removed',
@@ -227,7 +229,7 @@ it('removes an extension from its "…" menu after confirmation', async () => {
     expect(
       inputs.find((entry) => entry.actionId === 'browser.extensions.remove')
         ?.input,
-    ).toEqual({ machineId, profileId, extensionId });
+    ).toEqual({ machineId, profileId, extensionId, restartConfirmed: true });
     expect(screen.findHostByTestId('profile.extensions.empty')).toBeTruthy();
   } finally {
     await screen.unmount();

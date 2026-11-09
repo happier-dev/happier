@@ -181,6 +181,7 @@ type MoveState =
 async function requestServiceRelocation(
   input: Readonly<{
     address: Readonly<{ serverId: string; refId: string }>;
+    sourceMachineId: string;
     serviceName: string;
     actual: ManagedActual;
     destination: ProjectExecutionChoiceV1;
@@ -211,6 +212,7 @@ async function requestServiceRelocation(
         }),
         request: {
           workspace: input.address,
+          sourceMachineId: input.sourceMachineId,
           serviceName: input.serviceName,
           requestId,
           currentTarget: {
@@ -546,7 +548,7 @@ function ProjectServicePlacementControlsBody(props: React.ComponentProps<typeof 
       const exactDestination: ProjectExecutionChoiceV1 = destination.kind === 'primary' ? destination
         : { kind: 'workers', destination: { kind: 'machine', machineId: selectedMachineId } };
       const result = await observation.executeMove(exactDestination, (signal, onApprovalPending) => requestServiceRelocation({
-        address: placement.address, serviceName: props.serviceName, actual, destination,
+        address: placement.address, sourceMachineId: props.source.machineId, serviceName: props.serviceName, actual, destination,
         currentPlacement: ready, selectedMachineId,
         expectedAccountId: binding.accountId, signal,
         runtimeActionExecute: observation.runtimeActionExecute,
@@ -601,9 +603,12 @@ function ProjectServicePlacementControlsBody(props: React.ComponentProps<typeof 
     });
   };
 
-  // A statement with its own sentence ("runs on the primary checkout") leaves a phone row no room for the value
-  // beside it: the value reads under the sentence, at full width, instead of squeezing the sentence into a column.
-  const plainValueBeneath = compact && !portable && Boolean(value) && Boolean(hint);
+  // A row with its own sentence ("Runs next to this checkout.") leaves a narrow row no room for the value beside
+  // it: the value reads under the sentence, at full width, instead of squeezing the sentence into a column. A
+  // phone always stacks; a pane stacks when the row is narrow. A movable service keeps its control; only a plain
+  // value moves. The phone's sentence is the hint or, without one, where it runs.
+  const runsOnSubtitle = hint ?? (compact ? where : undefined);
+  const plainValueWithSentence = (compact || !portable) && Boolean(value) && Boolean(runsOnSubtitle);
   return (
     <ItemGroupRowPositionBoundary>
     <View testID={testID}>
@@ -611,20 +616,23 @@ function ProjectServicePlacementControlsBody(props: React.ComponentProps<typeof 
         <Item
           testID={`${testID}.runsOn`}
           title={t('projectServices.runsOn')}
-          subtitle={hint ?? (compact ? where : undefined)}
+          subtitle={runsOnSubtitle}
+          subtitleLines={0}
           showDivider={compact && (portable || trailingDivider)}
           showChevron={compact && portable}
-          accessoryLayout={plainValueBeneath ? 'stacked' : 'adaptive'}
+          accessoryLayout={plainValueWithSentence && compact ? 'stacked' : 'adaptive'}
           // A primary-only service has nothing to choose: its row is a plain statement, not a dimmed control.
           disabled={portable && disabled}
+          // Held only by the first binding read: say it is still checking rather than only dimming the choices.
+          loading={portable && state.kind === 'loading' && !ready}
           accessibilityExpanded={pickerOpen}
           {...(portable ? { onPress: () => {
             // Re-observe the binding before a lifecycle-sensitive choice.
             refresh();
             setPickerOpen(true);
           } } : {})}
-          {...(plainValueBeneath
-            ? { rightElement: <Text variant="body" style={{ color: theme.colors.text.primary }}>{value}</Text> }
+          {...(plainValueWithSentence
+            ? { rightElement: <Text variant="body" style={{ color: theme.colors.text.secondary }}>{value}</Text> }
             : compact || !portable
             ? { detail: value ?? undefined }
             : {
@@ -652,6 +660,7 @@ function ProjectServicePlacementControlsBody(props: React.ComponentProps<typeof 
         <SegmentedChoiceItem<'primary' | 'fail'>
           testIDPrefix={`${testID}.fallback`}
           title={t('projectServices.whenUnavailable')}
+          subtitle={placement.actual?.status === 'present' ? t('projectServices.fallbackLocked') : undefined}
           accessoryLayout={compact ? 'stacked' : 'adaptive'}
           disabled={!placement.canSaveNextStart || moving}
           showDivider={compact && trailingDivider}

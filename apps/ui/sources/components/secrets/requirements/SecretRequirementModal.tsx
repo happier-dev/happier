@@ -1,10 +1,9 @@
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 import * as React from 'react';
-import { Pressable, Platform, ScrollView, View } from 'react-native';
+import { Platform, ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { AiLaunchProfile } from '@happier-dev/protocol/profiles/read';
-import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { Typography } from '@/constants/Typography';
 import type { CustomModalInjectedProps } from '@/modal';
@@ -32,7 +31,8 @@ import { shadowLevelStyle } from '@/shadowElevation';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { useScrollViewWheelScrollTo } from '@/components/ui/scroll/useScrollViewWheelScrollTo';
 import { Icon } from '@/components/ui/icons/Icon';
-import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { IconButton } from '@/components/ui/buttons/IconButton';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 
 
 const secretRequirementSelectionMemory = new Map<string, 'machine' | 'saved' | 'once'>();
@@ -59,7 +59,6 @@ export type SecretRequirementModalProps = CustomModalInjectedProps & Readonly<{
      */
     secretEnvVarNames?: ReadonlyArray<string>;
     machineId: string | null;
-    secrets: SavedSecret[];
     defaultSecretId: string | null;
     selectedSavedSecretId?: string | null;
     /**
@@ -80,12 +79,13 @@ export type SecretRequirementModalProps = CustomModalInjectedProps & Readonly<{
      */
     variant?: SecretRequirementModalVariant;
     titleOverride?: string;
-    onChangeSecrets?: (next: SavedSecret[]) => void;
+    /** The surface lets the person add, rename, rotate and delete personal keys (through the Saved Secret catalog). */
+    allowManage?: boolean;
     onResolve: (result: SecretRequirementModalResult) => void;
     allowSessionOnly?: boolean;
     /** Exact Home feature decision; false keeps personal choices but never observes shared rows. */
     sharedSavedSecretsEnabled?: boolean;
-    /** Exact Account/Home paired with `secrets` for mounted cross-Home launchers. */
+    /** Exact Account/Home for mounted cross-Home launchers. */
     accountScope?: AccountSettingsScope | null;
     /**
      * Layout variant:
@@ -101,8 +101,8 @@ export function SecretRequirementModal(props: SecretRequirementModalProps) {
     const savedSecretCatalog = useSavedSecretCatalog({
         sharedEnabled: props.sharedSavedSecretsEnabled !== false,
         ...(Object.prototype.hasOwnProperty.call(props, 'accountScope') ? { scope: props.accountScope ?? null } : {}),
-        personalSecrets: props.secrets,
     });
+    const canManage = props.allowManage === true && savedSecretCatalog.personalMutationsAvailable;
 
     const layoutVariant: 'modal' | 'screen' = props.layoutVariant ?? 'modal';
     const useCardChrome = layoutVariant === 'modal';
@@ -369,13 +369,13 @@ export function SecretRequirementModal(props: SecretRequirementModalProps) {
                             {props.profile.name}
                         </Text>
                     </View>
-                    <Pressable
+                    <IconButton
+                        testID="secret-requirement:close"
+                        variant="plain"
+                        iconName="x"
+                        accessibilityLabel={t('common.close')}
                         onPress={props.onClose}
-                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                        style={({ pressed }) => ({ opacity: pressed ? motionTokens.press.opacity : 1 })}
-                    >
-                        <Icon name="x" size={20} color={theme.colors.text.secondary} />
-                    </Pressable>
+                    />
                 </View>
             ) : null}
 
@@ -611,14 +611,14 @@ export function SecretRequirementModal(props: SecretRequirementModalProps) {
                     {selectedSource === 'saved' && (
                         <SecretsList
                             wrapInItemList={false}
-                            secrets={props.secrets}
+                            secrets={savedSecretCatalog.personalSecrets}
                             sharedEntries={savedSecretCatalog.sharedEntries}
                             resolveSharedReference={savedSecretCatalog.resolveReference}
-                            onCreatePersonal={props.onChangeSecrets && savedSecretCatalog.personalMutationsAvailable ? savedSecretCatalog.personalMutations.create : undefined}
-                            onRenamePersonal={props.onChangeSecrets && savedSecretCatalog.personalMutationsAvailable ? savedSecretCatalog.personalMutations.rename : undefined}
-                            onRotatePersonal={props.onChangeSecrets && savedSecretCatalog.personalMutationsAvailable ? savedSecretCatalog.personalMutations.rotate : undefined}
-                            onDeletePersonal={props.onChangeSecrets && savedSecretCatalog.personalMutationsAvailable ? savedSecretCatalog.personalMutations.delete : undefined}
-                            allowAdd={Boolean(props.onChangeSecrets && savedSecretCatalog.personalMutationsAvailable)}
+                            onCreatePersonal={canManage ? savedSecretCatalog.personalMutations.create : undefined}
+                            onRenamePersonal={canManage ? savedSecretCatalog.personalMutations.rename : undefined}
+                            onRotatePersonal={canManage ? savedSecretCatalog.personalMutations.rotate : undefined}
+                            onDeletePersonal={canManage ? savedSecretCatalog.personalMutations.delete : undefined}
+                            allowAdd={canManage}
                             allowEdit
                             title={t('secrets.savedTitle')}
                             footer={null}
@@ -690,25 +690,15 @@ export function SecretRequirementModal(props: SecretRequirementModalProps) {
                                     textContentType={Platform.OS === 'ios' ? 'password' : undefined}
                                 />
                                 <View style={{ height: 10 }} />
-                                <Pressable
+                                <RoundButton
+                                    size="normal"
+                                    title={t('profiles.requirements.actions.useOnceButton')}
                                     disabled={sessionOnlyValue.length === 0}
                                     onPress={() => {
-                                        if (sessionOnlyValue.length === 0) return;
                                         props.onResolve({ action: 'enterOnce', envVarName: activeEnvVarName, value: sessionOnlyValue });
                                         props.onClose();
                                     }}
-                                    style={({ pressed }) => [
-                                        styles.primaryButton,
-                                        {
-                                            opacity: sessionOnlyValue.length === 0 ? 0.5 : (pressed ? motionTokens.press.opacitySubtle : 1),
-                                            backgroundColor: theme.colors.button.primary.background,
-                                        },
-                                    ]}
-                                >
-                                    <Text style={[styles.primaryButtonText, { color: theme.colors.button.primary.tint }]}>
-                                        {t('profiles.requirements.actions.useOnceButton')}
-                                    </Text>
-                                </Pressable>
+                                />
                             </View>
                         </ItemGroup>
                     )}
@@ -797,15 +787,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontSize: Platform.select({ ios: 15, default: 14 }),
         lineHeight: 20,
         letterSpacing: Platform.select({ ios: -0.24, default: 0.1 }),
-    },
-    primaryButton: {
-        borderRadius: 10,
-        paddingVertical: theme.space.s10,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    primaryButtonText: {
-        ...Typography.variant('body', 'semiBold'),
     },
     fieldLabel: {
         ...Typography.variant('body', 'semiBold'),

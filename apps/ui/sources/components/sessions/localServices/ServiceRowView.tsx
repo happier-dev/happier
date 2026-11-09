@@ -71,10 +71,21 @@ const ROW_ACTION_GAP_PX = 8;
 const stylesheet = StyleSheet.create((theme) => ({
     titleRow: {
         flexDirection: 'row',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        columnGap: theme.space.s8,
+        rowGap: theme.space.s2,
+    },
+    /** The dot and its word stay together: in a narrow pane they move under the name rather than cutting the word. */
+    statusGroup: {
+        flexDirection: 'row',
         alignItems: 'center',
         gap: theme.space.s8,
+        flexShrink: 1,
+        minWidth: 0,
+        maxWidth: '100%',
     },
-    // The name is what tells rows apart: it keeps its width and the status word beside it gives way first.
+    // The name is what tells rows apart: it keeps its width and its status moves to the next line when both can't fit.
     title: {
         flexShrink: 0,
         maxWidth: '100%',
@@ -108,34 +119,14 @@ const stylesheet = StyleSheet.create((theme) => ({
         maxWidth: '100%',
     },
     /**
-     * The lead (an address, a command) stays readable: when the pane is too narrow for the trailing
-     * facts beside it (the desktop rail), they wrap to their own line instead of cutting the address.
+     * The lead (an address, a command) stays readable: when the row is too narrow for the trailing
+     * facts beside it (the desktop rail, a phone), they wrap to their own line instead of being cut to a stub.
      */
     factsLead: {
         maxWidth: '100%',
     },
     factsTail: {
         flexShrink: 1,
-    },
-    /** Phone (lab PAGEp): the facts stay ONE line and ellipsize at its end, as the lab's rows do. */
-    factsRowOneLine: {
-        flexWrap: 'nowrap',
-    },
-    /** The address keeps its width while trailing facts follow it: they give way first. */
-    factsLeadOneLine: {
-        flexShrink: 0,
-    },
-    /** With nothing after it, a long command (the lead) is what ellipsizes. */
-    factsLeadAloneOneLine: {
-        flexShrink: 1,
-        minWidth: 0,
-    },
-    factsTailOneLine: {
-        minWidth: 0,
-    },
-    /** The source chip is the line's fixed mark: it never shrinks or breaks. */
-    factsBadgeOneLine: {
-        flexShrink: 0,
     },
     badgeLabel: {
         ...Typography.mono(),
@@ -259,15 +250,19 @@ function ServiceRowTitle(props: Readonly<{
     return (
         <View style={styles.titleRow}>
             <Text style={[styles.title, isInert(props.row) ? styles.titleInert : null]} numberOfLines={1}>{props.row.title}</Text>
-            {/* Unnamed: the status is the word beside it, so it is announced once. */}
-            {!ready ? <ServiceStatusDot
-                status={props.operationText || props.offline ? 'stale' : props.row.status}
-                animationEnabled={props.animationEnabled}
-                testID={`${props.testID}-dot`}
-            /> : null}
-            {!ready ? <Text testID={`${props.testID}-status-${props.operationText ? 'operation' : props.row.status}`} style={[styles.statusLabel, unsettled ? styles.statusLabelAttention : null]} numberOfLines={1}>
-                {statusLabel}
-            </Text> : null}
+            {!ready ? (
+                <View style={styles.statusGroup}>
+                    {/* Unnamed: the status is the word beside it, so it is announced once. */}
+                    <ServiceStatusDot
+                        status={props.operationText || props.offline ? 'stale' : props.row.status}
+                        animationEnabled={props.animationEnabled}
+                        testID={`${props.testID}-dot`}
+                    />
+                    <Text testID={`${props.testID}-status-${props.operationText ? 'operation' : props.row.status}`} style={[styles.statusLabel, unsettled ? styles.statusLabelAttention : null]} numberOfLines={1}>
+                        {statusLabel}
+                    </Text>
+                </View>
+            ) : null}
         </View>
     );
 }
@@ -344,12 +339,10 @@ function ServiceRowFacts(props: Readonly<{
     machineName: string | null;
     startedByName: string | null;
     unavailableMachineName: string | null;
-    /** A phone row: the facts are one ellipsized line. */
-    oneLine: boolean;
     testID: string;
 }>): React.ReactElement {
     const styles = stylesheet;
-    const { row, oneLine } = props;
+    const { row } = props;
     const facts = resolveRowFacts(row, props.machineName, props.startedByName, props.unavailableMachineName);
     const badge = row.sourceBadge ?? null;
     const lead = facts.lead.join(' · ');
@@ -358,15 +351,14 @@ function ServiceRowFacts(props: Readonly<{
     const leadText = lead && (badge || tail) ? `${lead} ·` : lead;
     return (
         <View style={styles.facts}>
-            <View testID={`${props.testID}-meta`} style={[styles.factsRow, oneLine ? styles.factsRowOneLine : null]}>
-                {leadText ? <Text style={[styles.factsLine, tail || badge ? styles.factsLead : null, oneLine ? (tail ? styles.factsLeadOneLine : styles.factsLeadAloneOneLine) : null]} numberOfLines={1}>{leadText}</Text> : null}
+            <View testID={`${props.testID}-meta`} style={styles.factsRow}>
+                {leadText ? <Text style={[styles.factsLine, tail || badge ? styles.factsLead : null]} numberOfLines={1}>{leadText}</Text> : null}
                 {badge ? (
                     <StatusPill
                         testID={`${props.testID}-source`}
                         variant="neutral"
                         label={badge}
                         hideDot
-                        style={oneLine ? styles.factsBadgeOneLine : undefined}
                         labelStyle={styles.badgeLabel}
                     />
                 ) : null}
@@ -374,7 +366,7 @@ function ServiceRowFacts(props: Readonly<{
                     <Text
                         testID={facts.tailReason ? `${props.testID}-reason` : undefined}
                         accessibilityHint={facts.tailReason?.diagnosticCode ?? undefined}
-                        style={[styles.factsLine, styles.factsTail, oneLine ? styles.factsTailOneLine : null]}
+                        style={[styles.factsLine, styles.factsTail]}
                         // Facts stay one line (a narrow pane truncates them rather than breaking a
                         // machine name across lines); a reason keeps room for its sentence.
                         numberOfLines={facts.tailReason ? 2 : 1}
@@ -737,7 +729,7 @@ export function ServiceRowView(props: Readonly<{
     const machineName = props.machineName ?? null;
     const title = <ServiceRowTitle row={row} operationText={operationText} offline={offline} machineName={machineName} animationEnabled={props.animationEnabled} testID={props.testID} />;
     const subtitle = <ServiceRowFacts row={row} machineName={machineName} startedByName={props.startedByName ?? null}
-        unavailableMachineName={props.unavailableMachineName ?? null} oneLine={props.onOpenDetail !== undefined} testID={props.testID} />;
+        unavailableMachineName={props.unavailableMachineName ?? null} testID={props.testID} />;
     const identity = <ServiceMark row={row} testID={`${props.testID}-identity`} />;
     // One tap: a running row's signature action sits on the row itself, like ▶ on a row that can be
     // started (services lab O, H-UX F-8). Pressing the row still grows it into what you do less often.
