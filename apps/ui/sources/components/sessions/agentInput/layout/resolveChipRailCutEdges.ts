@@ -31,7 +31,9 @@ export function resolveChipRailCutEdges(input: Readonly<{
     if (last.right > viewportWidth - END_OVERFLOW_TOLERANCE_PX) {
         const cutIndex = items.findIndex((item) => item.right > viewportWidth - END_INDICATOR_ROOM_PX);
         const previous = cutIndex > 0 ? items[cutIndex - 1] : undefined;
-        if (previous && previous.left >= 0) {
+        // Hiding a chip that is mostly in view would leave a gap and bury a real control: only a sliver goes.
+        const blankPx = viewportWidth - END_INDICATOR_ROOM_PX - (items[cutIndex]?.left ?? viewportWidth);
+        if (previous && previous.left >= 0 && blankPx <= END_INDICATOR_ROOM_PX) {
             end = { solidUntilPx: previous.right, clearFromPx: items[cutIndex]!.left };
         }
     }
@@ -41,7 +43,7 @@ export function resolveChipRailCutEdges(input: Readonly<{
         const inViewIndex = items.findIndex((item) => item.right > 0);
         const cut = inViewIndex >= 0 ? items[inViewIndex] : undefined;
         const next = inViewIndex >= 0 ? items[inViewIndex + 1] : undefined;
-        if (cut && cut.left < 0 && next && next.left >= 0) {
+        if (cut && cut.left < 0 && cut.right <= END_INDICATOR_ROOM_PX && next && next.left >= 0) {
             start = { clearUntilPx: cut.right, solidFromPx: next.left };
         }
     }

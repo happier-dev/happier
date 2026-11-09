@@ -746,6 +746,22 @@ describe('ExternalSessionsBrowseScreen', () => {
         }) });
         await act(async () => { fixtureStorage.getState().applySettings(fixtureStorage.getState().settings, 7); });
         expect(commits).toBe(before);
+        const { settingsParse } = await import('@/sync/domains/settings/settings');
+        await act(async () => {
+            accountSettingsState.current = { ...accountSettingsState.current,
+                actionsSettingsV1: { v: 1, actions: { 'settings.set': { disabledSurfaces: ['ui'] } } },
+            };
+            fixtureStorage.getState().applySettings(settingsParse(accountSettingsState.current), 7);
+        });
+        await act(async () => { await select('auto-link'); });
+        expect(settingsPostSpy).not.toHaveBeenCalled();
+        expect(accountSettingsState.current.externalSessionsSettingsV1).toBeUndefined();
+        await act(async () => {
+            accountSettingsState.current = { ...accountSettingsState.current,
+                actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'settings.set': ['ui'] } },
+            };
+            fixtureStorage.getState().applySettings(settingsParse(accountSettingsState.current), 7);
+        });
         await act(async () => { await select('auto-link'); });
         await vi.waitFor(() => expect(settingsPostSpy).toHaveBeenCalledTimes(1));
         expect(settingsPostSpy.mock.calls[0]?.[0]).toMatchObject({ expectedVersion: 7 });
