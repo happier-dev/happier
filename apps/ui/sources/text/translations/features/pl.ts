@@ -12382,6 +12382,7 @@ const settingsOverviewTranslations = { pl: {
         startSessionLabel: 'Rozpocznij sesję',
         saveRecoveryKeyTitle: 'Zapisz klucz odzyskiwania',
         saveRecoveryKeySubtitle: 'Jedyny sposób na odzyskanie zaszyfrowanych danych, gdy stracisz wszystkie urządzenia.',
+        saveRecoveryKeyReason: 'Potrzebujesz go, aby zalogować się na nowym urządzeniu.',
         addMachineTitle: 'Dodaj maszynę',
         addMachineSubtitle: 'Połącz maszynę, na której działają Twoi agenci.',
         homeGreetingNamed: ({ name }) => `Witaj ponownie, ${name}.`,

@@ -393,8 +393,7 @@ export const SessionsListHeader = React.memo(function SessionsListHeader() {
 
     return (
         <View style={styles.listHeaderSection}>
-            {/* The chip line above already ends in its own space; the group's untitled inset would double it. */}
-            <RecoveryKeyReminderBanner header="none" />
+            <RecoveryKeyReminderBanner host="list" />
         </View>
     );
 });
@@ -607,6 +606,7 @@ export const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: 
             <CollectionListGroupLabel
                 testID={headerTestId}
                 title={displayTitle}
+                level="subgroup"
                 {...(props.machineDetail?.name ? { detail: props.machineDetail.name } : {})}
                 {...(props.machineDetail?.end ? { detailEnd: props.machineDetail.end } : {})}
                 first={props.first}

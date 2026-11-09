@@ -12364,6 +12364,7 @@ const settingsOverviewTranslations = { fr: {
         startSessionLabel: 'Démarrer une session',
         saveRecoveryKeyTitle: 'Enregistre ta clé de récupération',
         saveRecoveryKeySubtitle: 'Le seul moyen de retrouver tes données chiffrées si tu perds tous tes appareils.',
+        saveRecoveryKeyReason: 'Tu en as besoin pour te connecter sur un nouvel appareil.',
         addMachineTitle: 'Ajouter une machine',
         addMachineSubtitle: 'Connecte une machine sur laquelle tes agents s’exécutent.',
         homeGreetingNamed: ({ name }) => `Bon retour, ${name}.`,

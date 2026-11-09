@@ -12363,6 +12363,7 @@ const settingsOverviewTranslations = { it: {
         startSessionLabel: 'Avvia una sessione',
         saveRecoveryKeyTitle: 'Salva la chiave di recupero',
         saveRecoveryKeySubtitle: 'L’unico modo per tornare ai dati cifrati se perdi tutti i dispositivi.',
+        saveRecoveryKeyReason: 'Ti serve per accedere da un nuovo dispositivo.',
         addMachineTitle: 'Aggiungi una macchina',
         addMachineSubtitle: 'Collega una macchina su cui girano i tuoi agenti.',
         homeGreetingNamed: ({ name }) => `Bentornato, ${name}.`,

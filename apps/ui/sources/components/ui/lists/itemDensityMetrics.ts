@@ -1,5 +1,5 @@
 import { Platform } from 'react-native';
-import { resolveHappierTypeScale } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_COLLECTION_LIST_METRICS, resolveHappierTypeScale } from '@happier-dev/plugin-ui/presentation';
 
 import { ICON_SIZE } from '@/components/ui/icons/Icon';
 export { HAPPIER_MENU_ROW_METRICS as MENU_ROW_METRICS } from '@happier-dev/plugin-ui/presentation';
@@ -53,7 +53,8 @@ export const ITEM_ROW_WITH_SUBTITLE_PADDING_VERTICAL_PX: Record<ResolvedItemDens
 export const ITEM_ICON_BOX_SIZE: Record<ResolvedItemDensity, number> = {
     comfortable: selectValue({ ios: 32, default: 32 }),
     cozy: selectValue({ ios: 22, default: 24 }),
-    compact: selectValue({ ios: 18, default: 20 }),
+    // A compact row is a list column's row: its glyph column is the list's own.
+    compact: HAPPIER_COLLECTION_LIST_METRICS.rowGlyphBox,
     tight: selectValue({ ios: 18, default: 18 }),
 };
 
@@ -78,7 +79,7 @@ export const ITEM_ICON_GLYPH_SIZE: Record<ResolvedItemDensity, number> = {
 export const ITEM_ICON_MARGIN_RIGHT: Record<ResolvedItemDensity, number> = {
     comfortable: 12,
     cozy: 14,
-    compact: 10,
+    compact: HAPPIER_COLLECTION_LIST_METRICS.rowGlyphGap,
     tight: 8,
 };
 

@@ -121,6 +121,7 @@ const TEXT_COLOR_ROLE: Readonly<Record<HappierCollectionListTextRole, 'text' | '
   count: 'mutedText',
   subtitle: 'secondaryText',
   groupTitle: 'secondaryText',
+  subgroupTitle: 'secondaryText',
   groupHeading: 'text',
   groupCount: 'mutedText',
 };
@@ -141,7 +142,7 @@ function NavigationListText(props: Readonly<{
       style={{
         ...resolveHappierTextStepStyle(HAPPIER_COLLECTION_LIST_TEXT[props.role], typography),
         color: theme.colors[TEXT_COLOR_ROLE[props.role]],
-        ...(props.role === 'groupTitle' || props.role === 'groupHeading' || props.role === 'subtitle' ? { flexShrink: 1 } : null),
+        ...(props.role === 'groupTitle' || props.role === 'subgroupTitle' || props.role === 'groupHeading' || props.role === 'subtitle' ? { flexShrink: 1 } : null),
       }}
     >
       {props.children}

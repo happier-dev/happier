@@ -12362,6 +12362,7 @@ const settingsOverviewTranslations = { ca: {
         startSessionLabel: 'Inicia una sessió',
         saveRecoveryKeyTitle: 'Desa la teva clau de recuperació',
         saveRecoveryKeySubtitle: 'L’única manera de tornar a les dades xifrades si perds tots els dispositius.',
+        saveRecoveryKeyReason: 'La necessites per iniciar sessió en un dispositiu nou.',
         addMachineTitle: 'Afegeix una màquina',
         addMachineSubtitle: 'Connecta una màquina on s’executin els teus agents.',
         homeGreetingNamed: ({ name }) => `Benvingut de nou, ${name}.`,

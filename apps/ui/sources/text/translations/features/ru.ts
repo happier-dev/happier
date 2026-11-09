@@ -12394,6 +12394,7 @@ const settingsOverviewTranslations = { ru: {
         startSessionLabel: 'Начать сессию',
         saveRecoveryKeyTitle: 'Сохраните ключ восстановления',
         saveRecoveryKeySubtitle: 'Единственный способ вернуть зашифрованные данные, если вы потеряете все устройства.',
+        saveRecoveryKeyReason: 'Он нужен, чтобы войти на новом устройстве.',
         addMachineTitle: 'Добавить машину',
         addMachineSubtitle: 'Подключите машину, на которой работают ваши агенты.',
         homeGreetingNamed: ({ name }) => `С возвращением, ${name}.`,

@@ -2081,10 +2081,11 @@ export function useSessionListViewStateFromPaneState(
         collapseContextKey, active: surfaceOwnership.dataActive });
     // A Runs-only list holds no place a Session could start: its group headers carry no "+".
     const newSessionEnabled = filterController.displayFilters.show !== 'runs';
-    const renderHeaderItem = React.useCallback((item: Extract<SessionListIndexItem, { type: 'header' }>, first: boolean) => (
+    const renderHeaderItem = React.useCallback((item: Extract<SessionListIndexItem, { type: 'header' }>, first: boolean, firstInSection: boolean) => (
         <SessionListHeaderItemWithFacts
             item={item}
             first={first}
+            firstInSection={firstInSection}
             collapsedKeys={collapsedKeys}
 
             onOpenProject={handleOpenProject}
@@ -2378,6 +2379,16 @@ export function useSessionListViewStateFromPaneState(
     });
     const listItemsRef = React.useRef(renderedListItems);
     listItemsRef.current = renderedListItems;
+    // A Project label directly under its section's label sits tight to it (phone-system lab D2): one pass per list.
+    const firstInSectionHeaders = React.useMemo(() => {
+        const headers = new Set<SessionListIndexItem>();
+        renderedListItems.forEach((item, index) => {
+            if (item.type === 'header' && item.headerKind === 'project' && renderedListItems[index - 1]?.type === 'header') headers.add(item);
+        });
+        return headers;
+    }, [renderedListItems]);
+    const firstInSectionHeadersRef = React.useRef(firstInSectionHeaders);
+    firstInSectionHeadersRef.current = firstInSectionHeaders;
     const renderHeaderItemRef = React.useRef(renderHeaderItem);
     renderHeaderItemRef.current = renderHeaderItem;
     const renderSessionItemRef = React.useRef(renderSessionItem);
@@ -2487,7 +2498,7 @@ export function useSessionListViewStateFromPaneState(
         if (params.item.kind === 'supporting_sections') return null;
         const item = nodeByIdRef.current.get(params.item.id) ?? listItemsRef.current[params.index] ?? null;
         if (!item) return null;
-        if (item.type === 'header') return renderHeaderItemRef.current(item, item === listItemsRef.current[0]);
+        if (item.type === 'header') return renderHeaderItemRef.current(item, item === listItemsRef.current[0], firstInSectionHeadersRef.current.has(item));
         if (item.type === 'workflow_run') return renderWorkflowRunItemRef.current(item);
         return renderSessionItemRef.current(item);
     }, []);

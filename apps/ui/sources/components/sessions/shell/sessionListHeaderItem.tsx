@@ -51,6 +51,8 @@ type SessionListHeaderItemProps = Readonly<{
     item: Extract<SessionListIndexItem, { type: 'header' }>;
     /** The column's first group sits closer to the header. */
     first?: boolean;
+    /** A Project label directly under its section's label (no rows between): it sits tight to that label. */
+    firstInSection?: boolean;
     collapsedKeys: Readonly<Record<string, boolean>>;
     projectHeaderViewModelByGroupKey: ReadonlyMap<string, SessionListProjectHeaderViewModel>;
     onOpenProject: (workspaceRefId: string, serverId?: string) => void;
@@ -251,7 +253,7 @@ const SessionListGroupHeaderItem = React.memo((rawProps: SessionListHeaderItemPr
                     : undefined}
                 onMoveUp={moveActionHandlers?.onMoveUp}
                 onMoveDown={moveActionHandlers?.onMoveDown}
-                first={props.first}
+                first={props.first === true || props.firstInSection === true}
                 collapsed={headerViewState.collapsed}
                 onToggleCollapse={headerActionHandlers.onToggleCollapse}
                 onRegisterDropTarget={props.onRegisterSessionFolderDropTarget}

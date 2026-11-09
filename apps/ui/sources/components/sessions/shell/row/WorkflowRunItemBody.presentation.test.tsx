@@ -48,7 +48,7 @@ it('renders distinct machine lines for Run-derived headers sharing the same proj
     expect(headers).toHaveLength(2);
     function Headers() {
         const { projectHeaderViewModelByGroupKey } = useSessionListGroupMachineFacts({
-            listItems, membershipItems: listItems, headerState,
+            listItems, headerState,
         });
         return <>{headers.map(item => <SessionListHeaderItem key={item.groupKey} item={item}
             collapsedKeys={{}} projectHeaderViewModelByGroupKey={projectHeaderViewModelByGroupKey}

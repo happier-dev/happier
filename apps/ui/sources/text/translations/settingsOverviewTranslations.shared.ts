@@ -43,6 +43,7 @@ export type SettingsOverviewTranslation = Readonly<{
     startSessionLabel: string;
     saveRecoveryKeyTitle: string;
     saveRecoveryKeySubtitle: string;
+    saveRecoveryKeyReason: string;
     addMachineTitle: string;
     addMachineSubtitle: string;
     homeGreetingNamed: (params: Readonly<{ name: string }>) => string;
@@ -114,6 +115,7 @@ export const settingsOverviewTranslationsEnglish = { en: {
         startSessionLabel: 'Start a session',
         saveRecoveryKeyTitle: 'Save your recovery key',
         saveRecoveryKeySubtitle: 'The only way back into encrypted data if you lose every device.',
+        saveRecoveryKeyReason: 'You need it to sign in on a new device.',
         addMachineTitle: 'Add a machine',
         addMachineSubtitle: 'Connect a machine where your agents run.',
         homeGreetingNamed: ({ name }) => `Welcome back, ${name}.`,

@@ -51,6 +51,7 @@ function listText(role: keyof typeof HAPPIER_COLLECTION_LIST_TEXT) {
 import type { NavigationBackControl } from '@/components/ui/layout/NavigationBackChrome';
 import { PhoneDestinationBackLine } from '@/components/ui/layout/usePageBackControl';
 import { useNavigationLeavesLargeTitle } from '@/components/ui/layout/navigationTitleChrome';
+import { useTouchCompactRow } from '@/components/ui/lists/collection/CollectionRowContent';
 
 const styles = StyleSheet.create((theme) => ({
     // A line state (a failed read) on the rows' text edge, between the list's rows.
@@ -90,6 +91,17 @@ const styles = StyleSheet.create((theme) => ({
         color: theme.colors.text.secondary,
     },
     // A group label inside a page section's sheet: the group's sub-heading, in the text tone.
+    // On a phone the list is the screen: its group labels are section labels, in the text tone.
+    groupTitleTouch: {
+        ...listText('groupTitleTouch'),
+        flexShrink: 1,
+        color: theme.colors.text.primary,
+    },
+    subgroupTitleTouch: {
+        ...listText('subgroupTitleTouch'),
+        flexShrink: 1,
+        color: theme.colors.text.primary,
+    },
     groupHeading: {
         ...listText('groupHeading'),
         flexShrink: 1,
@@ -150,21 +162,26 @@ const textRoleStyles = {
     count: styles.count,
     subtitle: styles.subtitle,
     groupTitle: styles.groupTitle,
+    subgroupTitle: styles.groupTitle,
     groupHeading: styles.groupHeading,
     groupCount: styles.groupCount,
 } as const;
 
-const collectionListHost: HappierCollectionListHost = {
-    Text: (props) => (
+function createCollectionListText(roleStyles: Readonly<Record<keyof typeof textRoleStyles, React.ComponentProps<typeof Text>['style']>>): HappierCollectionListHost['Text'] {
+    return (props) => (
         <Text
-            style={textRoleStyles[props.role]}
+            style={roleStyles[props.role]}
             {...(props.numberOfLines === undefined ? {} : { numberOfLines: props.numberOfLines })}
             {...(props.accessibilityRole === undefined ? {} : { accessibilityRole: props.accessibilityRole })}
             {...(props.testID === undefined ? {} : { testID: props.testID })}
         >
             {props.children}
         </Text>
-    ),
+    );
+}
+
+const collectionListHost: HappierCollectionListHost = {
+    Text: createCollectionListText(textRoleStyles),
     Scroller: (props) => <ItemList presentation="grouped" style={props.style as StyleProp<ViewStyle>}>{props.children}</ItemList>,
     SearchField: (props) => (
         <CompactSearchField
@@ -201,6 +218,12 @@ function useCollectionListGroupGlyphColor(): string {
 }
 
 const collectionListPlaneHost: HappierCollectionListHost = { ...collectionListHost, surfaceStyle: styles.plane };
+
+/** A list on a phone: its group labels read as section labels (`groupTitleTouch`). */
+const collectionListTouchHost: HappierCollectionListHost = {
+    ...collectionListHost,
+    Text: createCollectionListText({ ...textRoleStyles, groupTitle: styles.groupTitleTouch, subgroupTitle: styles.subgroupTitleTouch }),
+};
 
 const collectionListPhonePageHost: HappierCollectionListHost = {
     ...collectionListHost,
@@ -252,7 +275,9 @@ export const CollectionPageToolsInsetContext = React.createContext<number | unde
  * column's groups may fold (`disclosure`), carry their own hover actions and a collapsed rollup.
  */
 export function CollectionListGroupLabel(props: Omit<React.ComponentProps<typeof HappierCollectionListGroupLabel>, 'host'>) {
-    return <HappierCollectionListGroupLabel host={collectionListHost} {...props} />;
+    // The touch-compact decision is the one the list's rows take, so labels and rows recompose together.
+    const touch = useTouchCompactRow(true);
+    return <HappierCollectionListGroupLabel host={touch ? collectionListTouchHost : collectionListHost} {...props} />;
 }
 
 /**

@@ -49,14 +49,6 @@ export const sessionListStyles = StyleSheet.create((theme) => ({
     },
     listHeaderSection: {
     },
-    // Group labels in the rail are sentence case: the `Eyebrow` primitive they render through is
-    // uppercase by default, so the rail's labels turn that off and read by weight instead.
-    headerText: {
-        fontSize: 13,
-        color: theme.colors.text.secondary,
-        textTransform: 'none' as const,
-        letterSpacing: 0,
-    },
     groupHeaderSection: {
         paddingHorizontal: SESSION_LIST_TEXT_INSET_PX,
         paddingTop: SESSION_LIST_COLUMN_METRICS.groupLabelPaddingTopPx,

@@ -43,7 +43,8 @@ describe('Text metric scaling ownership', () => {
             { density: 'comfortable', title: 'label', subtitle: 'micro' },
             // The compact row's title is the navigation rows' body step (lab `clflat`).
             { density: 'compact', title: 'body', subtitle: 'micro' },
-            { density: 'compact', touchCompact: true, title: 'heading', subtitle: 'meta' },
+            // On a phone a flat row's title is the row-title role every phone row uses (phone-system lab).
+            { density: 'compact', touchCompact: true, title: 'label', subtitle: 'meta' },
         ] as const;
         for (const entry of cases) {
             const touchCompact = 'touchCompact' in entry;

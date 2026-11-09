@@ -40,16 +40,15 @@ const CONTENT_PADDING_PX =
 
 /**
  * The one geometry owner of collection work rows. Compact is the dense pointer row (32, lab `clflat`); a
- * touch-first compact row (`touchCompact`) sets its larger readable title in the same breathing room, so it is
- * only as tall as that line needs — never the finger's target: a full-width row is its own hit area. Text
- * scaling may grow a row.
+ * touch-first compact row (`touchCompact`) is the phone's flat row (phone-system lab: 44 tall, its title in the
+ * row-title role every phone row uses). Text scaling may grow a row.
  */
 export const HAPPIER_COLLECTION_ROW_METRICS = Object.freeze({
   height: Object.freeze({
     compact: 32,
     comfortable: 58,
     detailed: 84,
-    touchCompact: 36,
+    touchCompact: 44,
   }),
   /** The leading identity column and the mark inside it. */
   identity: Object.freeze({
@@ -87,7 +86,7 @@ const TITLE_ROLES: Readonly<
   detailed: 'label',
   comfortable: 'label',
   compact: 'body',
-  touchCompact: 'heading',
+  touchCompact: 'label',
 });
 const LINE_ROLES: Readonly<
   Record<HappierCollectionRowDensity, HappierTypeRole>

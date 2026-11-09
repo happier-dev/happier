@@ -12342,6 +12342,7 @@ const settingsOverviewTranslations = { 'zh-Hant': {
         startSessionLabel: '開始工作階段',
         saveRecoveryKeyTitle: '儲存復原金鑰',
         saveRecoveryKeySubtitle: '遺失所有裝置時取回加密資料的唯一方式。',
+        saveRecoveryKeyReason: '在新裝置上登入時需要它。',
         addMachineTitle: '新增機器',
         addMachineSubtitle: '連接一台執行你的代理的機器。',
         homeGreetingNamed: ({ name }) => `歡迎回來，${name}。`,

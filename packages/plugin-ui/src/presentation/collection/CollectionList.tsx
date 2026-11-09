@@ -28,7 +28,7 @@ import {
  * text, scroller, search field and theme-bound styles through {@link HappierCollectionListHost}, the
  * way core rows keep their Unistyles entries; nothing here reads a theme.
  */
-export type HappierCollectionListTextRole = 'title' | 'count' | 'subtitle' | 'groupTitle' | 'groupHeading' | 'groupCount';
+export type HappierCollectionListTextRole = 'title' | 'count' | 'subtitle' | 'groupTitle' | 'subgroupTitle' | 'groupHeading' | 'groupCount';
 
 export type HappierCollectionRowRole = 'catalogRow' | 'item' | 'menu';
 
@@ -157,6 +157,13 @@ export type HappierCollectionListProps = Readonly<{
 }>;
 
 /**
+ * The phone's list column geometry: the platform that reads the iOS column of `HAPPIER_TYPE_SCALE` (an iPhone
+ * or iPad app; a browser on a phone keeps the web column, as the type scale does). Static, because every
+ * column style reads it at module scope.
+ */
+const PHONE_COLUMN = Platform.OS === 'ios';
+
+/**
  * Geometry of the list anatomy, at normal text scale: the one rhythm owner for every navigation
  * column (the Sessions, Plugins and Settings columns, a list + detail rail, a plugin's
  * `NavigationList`). A column reads its header, group labels and row insets from here, so switching
@@ -165,14 +172,16 @@ export type HappierCollectionListProps = Readonly<{
 export const HAPPIER_COLLECTION_LIST_METRICS = Object.freeze({
   /**
    * The gutter: a row's sheet or pressable (its hover fill and selected chip) sits this far in from the list's
-   * edges. With `contentInset` it is the approved column frame (lab `.z-S1`: sheet 10, text 22).
+   * edges. With `contentInset` it is the approved column frame (lab `.z-S1`: sheet 10, text 22). On the phone
+   * (the iOS column of the type scale) the list shares the page's text edge instead (phone-system lab: 8 / 18).
    */
-  rowInset: 10,
+  rowInset: PHONE_COLUMN ? 8 : 10,
   /**
    * The list's text edge, from its outer edge: the title, every group label and each row's leading
-   * glyph start here, so a row's own horizontal padding is `contentInset - rowInset`.
+   * glyph start here, so a row's own horizontal padding is `contentInset - rowInset`. On the phone it is the
+   * page's `pageTextInsetPx`, so the list, its banners and a Settings page title share one left edge.
    */
-  contentInset: 22,
+  contentInset: PHONE_COLUMN ? HAPPIER_PAGE_METRICS.pageTextInsetPx : 22,
   /** A row: the `md` step of the one radius base. */
   rowRadius: HAPPIER_RADIUS_V1.md,
   /**
@@ -208,8 +217,9 @@ export const HAPPIER_COLLECTION_LIST_METRICS = Object.freeze({
     /** Air between a page directory's two columns. */
     directoryColumnGap: 40,
   }),
-  rowGlyphBox: Platform.OS === 'ios' ? 18 : 20,
-  rowGlyphGap: 10,
+  /** The glyph column; on the phone it is the page row's (20 + 12), so a list glyph and a sheet glyph match. */
+  rowGlyphBox: PHONE_COLUMN ? HAPPIER_PAGE_METRICS.rowLeadingColumnPx : 20,
+  rowGlyphGap: PHONE_COLUMN ? HAPPIER_PAGE_METRICS.rowLeadingGapPx : 10,
   /** The header's title row (title, count, the header action's 30px icon buttons). */
   titleRowHeight: 36,
   /** The narrowest a column's title gets before a control beside it yields: "My work" and its chevron. */
@@ -251,13 +261,20 @@ function collectionTextStep(role: HappierTypeRole, emphasis?: HappierTypeEmphasi
  * The list anatomy's type steps (sizes, line heights, weights). Core binds them to its own families
  * and plugin columns take the host's faces for the same weights, so the two draw one type rhythm.
  */
-export const HAPPIER_COLLECTION_LIST_TEXT: Readonly<Record<HappierCollectionListTextRole | 'rowTitle' | 'rowTitleSelected' | 'listRowTitle', HappierPageTextStep>> = Object.freeze({
+export const HAPPIER_COLLECTION_LIST_TEXT: Readonly<Record<HappierCollectionListTextRole | 'groupTitleTouch' | 'subgroupTitleTouch' | 'rowTitle' | 'rowTitleSelected' | 'listRowTitle', HappierPageTextStep>> = Object.freeze({
   title: collectionTextStep('heading'),
   count: collectionTextStep('body'),
   // The line under the title (whose list, who sees it): the quiet body step.
   subtitle: collectionTextStep('body'),
   // A navigation column's group label is quiet (lab `clflat` `.ls-h`): medium, so the rows under it lead.
   groupTitle: collectionTextStep('meta', 'medium'),
+  // On a phone a list is the whole screen, so its group labels are section labels (phone-system lab D4): the
+  // heading role, as a Settings section title. Hosts select it with the touch-compact row decision.
+  groupTitleTouch: collectionTextStep('heading'),
+  // A group inside a group (a Project under "Sessions"): a column draws it as its groups; on a phone it is the
+  // label role at regular weight, a step under its section label (phone-system lab D2).
+  subgroupTitle: collectionTextStep('meta', 'medium'),
+  subgroupTitleTouch: collectionTextStep('label', 'regular'),
   // A group label inside a page section's sheet is a sub-heading between the section title and its
   // rows (the event a set of triggers answers): a step above the rows' description, in the text tone,
   // so it reads as a heading rather than a quiet column label.
@@ -441,6 +458,8 @@ const groupLabelStyle: ViewStyle = {
   paddingBottom: M.groupLabelPaddingBottom,
 };
 const groupLabelFirstStyle: ViewStyle = { marginTop: M.groupLabelFirstPaddingTop };
+// A group inside a group follows its siblings' rows by a group pause, less than a section's (phone-system lab D2).
+const groupLabelSubgroupStyle: ViewStyle = { marginTop: HAPPIER_PAGE_METRICS.groupSeparatorGapPx };
 const groupLabelMenuStyle: ViewStyle = {
   ...groupLabelRowStyle,
   paddingHorizontal: HAPPIER_MENU_ROW_METRICS.paddingHorizontalPx,
@@ -590,8 +609,13 @@ export function HappierCollectionListGroupLabel(props: Readonly<{
   host: HappierCollectionListHost;
   title: string;
   count?: number;
-  /** The first group sits closer to the header. */
+  /** The first group sits closer to the header (a subgroup: closer to its section's label). */
   first?: boolean;
+  /**
+   * `subgroup`: a group inside a group (a Project under "Sessions"). It follows the rows before it by a group
+   * pause rather than a section gap, and its title is a step quieter than its section's label.
+   */
+  level?: 'subgroup';
   /** An identity mark before the title (the brand the rows share). */
   mark?: ReactNode;
   /** One short state at the label's end, spoken once for every row it concerns. */
@@ -645,6 +669,7 @@ export function HappierCollectionListGroupLabel(props: Readonly<{
   testID?: string;
 }>): ReactElement {
   const { Text } = props.host;
+  const titleRole = props.level === 'subgroup' ? 'subgroupTitle' : 'groupTitle';
   // Inside a page section's sheet the label heads a group of the sheet's rows
   // (`HappierPageSheetGroup`): the sub-heading step, on the rows' inset.
   const pageSection = useHappierPageSection();
@@ -660,7 +685,7 @@ export function HappierCollectionListGroupLabel(props: Readonly<{
       }]
     : props.presentation === 'menu'
       ? groupLabelMenuStyle
-      : [groupLabelStyle, props.first ? groupLabelFirstStyle : null,
+      : [groupLabelStyle, props.level === 'subgroup' ? groupLabelSubgroupStyle : null, props.first ? groupLabelFirstStyle : null,
           props.indentPx ? { paddingLeft: M.contentInset + props.indentPx } : null];
   // The title is the group's name: a long detail (a Machine, "offline") yields its width first.
   const detail = <>
@@ -697,7 +722,7 @@ export function HappierCollectionListGroupLabel(props: Readonly<{
           {...(props.testID === undefined ? {} : { testID: `${props.testID}:open` })}
         >
           {props.mark !== undefined ? <View style={groupLabelDisclosureMarkStyle}>{props.mark}</View> : null}
-          <Text role="groupTitle" numberOfLines={1}>{props.title}</Text>
+          <Text role={titleRole} numberOfLines={1}>{props.title}</Text>
           {detail}
           {props.count !== undefined ? <Text role="groupCount" {...(props.countTestID === undefined ? {} : { testID: props.countTestID })}>{props.count}</Text> : null}
           {opens ? null : chevron}
@@ -733,7 +758,7 @@ export function HappierCollectionListGroupLabel(props: Readonly<{
     >
       <View style={groupLabelLeadStyle}>
         {props.mark !== undefined ? <View style={groupLabelMarkStyle}>{props.mark}</View> : null}
-        <Text role={pageSection ? 'groupHeading' : 'groupTitle'} numberOfLines={1}>{props.title}</Text>
+        <Text role={pageSection ? 'groupHeading' : titleRole} numberOfLines={1}>{props.title}</Text>
         {detail}
         {/* With a trailing state the count stays with its title ("Skills 6 … Loaded when used"); alone it is the end column. */}
         {props.count !== undefined && (props.trailing != null || props.countPlacement === 'title') ? <Text role="groupCount" {...(props.countTestID === undefined ? {} : { testID: props.countTestID })}>{props.count}</Text> : null}

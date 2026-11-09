@@ -37,6 +37,9 @@ import { resolveAgentsMachineCandidateAvailability, type AgentAdministrationCata
 import { AgentAdministrationCatalogBoundary, useBoundaryAgentAdministrationCatalog } from './AgentAdministrationCatalogBoundary';
 import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
 import { SettingsCollectionPage } from '@/components/settings/shell/SettingsCollectionPage';
+import { SettingsCollectionGrid, type SettingsCollectionGridCell } from '@/components/settings/shell/SettingsCollectionGrid';
+import { SETTINGS_COLLECTION_GRID } from '@/components/settings/shell/settingsCollectionGrid';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useAgentAuthoringEntry } from '../authoring/useAgentAuthoringEntry';
 import { CollectionDraftRow, CollectionList, CollectionListGroupLabel, collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
 import { CollectionStatusLine, type CollectionRowStatus } from '@/components/ui/lists/collection/CollectionStatusGlyph';
@@ -523,8 +526,61 @@ export const AgentCollectionList = React.memo(function AgentCollectionList(props
             </CollectionList>
         );
     }
-    // A phone's page is the rail's own list under a large title with its count (lab sfcols:agentsP). The
-    // machine chip and "+" are the page's own controls, so Add's menu never nests in the navigation overflow.
+    // Standalone, the collection is a Settings page (R6, phone-system lab p4): each group is a section whose sheet
+    // holds the Agents as a grid of marks, names and states. The machine chip and "+" are the page's own controls,
+    // so Add's menu never nests in the navigation overflow.
+    const gridCellOf = (row: AgentCollectionRow): SettingsCollectionGridCell => {
+        const trouble = resolveRowStatus(row, resolveRowStatusLabel(row));
+        const ready = row.status === 'ready' || row.status === 'updateAvailable';
+        const state = trouble
+            ? { label: trouble.label, ...(trouble.status === 'signIn' ? { tone: 'attention' as const } : {}) }
+            : { label: ready ? t('settingsAgents.collection.ready') : resolveRowStatusLabel(row) ?? t('settingsAgents.collection.ready') };
+        const dimmed = row.status === 'notInstalled' || row.status === 'installsOnFirstUse';
+        const definition = row.definition;
+        return definition ? {
+            key: row.key,
+            testID: `settings-agents-collection.definition.${definition.id}`,
+            title: row.entry.title,
+            state,
+            dimmed,
+            mark: <HappierBrandMark brand={brandMarks?.[definition.id] ?? { displayName: row.entry.title }}
+                pixelSize={SETTINGS_COLLECTION_GRID.markPx} externallyLabelled />,
+            onPress: () => openCustomAcpEditor(router, definition.id, false),
+        } : {
+            key: row.key,
+            testID: `settings-agents-collection.row.${row.entry.agentId}`,
+            title: row.entry.title,
+            state,
+            dimmed,
+            mark: <AgentCatalogIdentityIcon entry={row.entry} machineId={machine?.id ?? null} serverId={serverId}
+                current={projectionCurrent} color={theme.colors.text.primary} size={SETTINGS_COLLECTION_GRID.markPx} />,
+            onPress: () => openAgent(row.entry),
+        };
+    };
+    const gridSections = (
+        <>
+            {customAcpRoute?.kind === 'draft' ? <CustomAcpDraftRow /> : null}
+            {emptyRow}
+            {groups.map((group) => group.rows.length > 0 ? (
+                <ItemGroup key={group.key} title={group.title}>
+                    <SettingsCollectionGrid testID={`settings-agents-collection.grid.${group.key}`} cells={group.rows.map(gridCellOf)} />
+                </ItemGroup>
+            ) : null)}
+            {visibleCustomBackends.length > 0 ? (
+                <ItemGroup title={t('settingsAgents.collection.customAgents')}>
+                    <SettingsCollectionGrid testID="settings-agents-collection.grid.custom" cells={visibleCustomBackends.map((backend) => ({
+                        key: backend.id,
+                        testID: `settings-agents-collection.custom.${backend.id}`,
+                        title: backend.title || backend.name,
+                        mark: <HappierBrandMark brand={brandMarks?.[backend.id] ?? { displayName: backend.title || backend.name }}
+                            pixelSize={SETTINGS_COLLECTION_GRID.markPx} externallyLabelled />,
+                        onPress: () => openCustomAcpEditor(router, backend.id, false),
+                    }))} />
+                </ItemGroup>
+            ) : null}
+            {columnFilter.editorOverlay}
+        </>
+    );
     return (
         <SettingsCollectionPage
             testID="settings-agents-collection.page"
@@ -543,7 +599,7 @@ export const AgentCollectionList = React.memo(function AgentCollectionList(props
                 </View>
             )}
         >
-            <CollectionList testID="settings-agents-collection.page.list" strip={columnFilter.tokenRow} search={search} scrollContent={rows} />
+            <CollectionList testID="settings-agents-collection.page.list" strip={columnFilter.tokenRow} search={search} scrollContent={gridSections} />
         </SettingsCollectionPage>
     );
 });

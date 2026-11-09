@@ -92,15 +92,15 @@ describe('useSessionListRenderModels', () => {
             expect(online?.name).toBe('NLDW3-5-36-33');
             expect(offline?.name).toBe('NLDW3-5-36-33');
             expect(online?.end).toMatch(/^\S+$/);
-            expect(offline?.end).toMatch(/^\S+ · Offline$/);
-            expect(online?.end).not.toBe(offline?.end?.split(' · ')[0]);
+            expect(offline?.end).toMatch(/^\S+$/);
+            expect(online?.end).not.toBe(offline?.end);
         } finally {
             await hook.unmount();
             storage.setState(previousState, true);
         }
     });
 
-    it('names Machines only on colliding visible Project header labels, combining offline once', async () => {
+    it('names Machines only on colliding visible Project header labels, never their availability', async () => {
         const previousState = storage.getState();
         const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
         const machines = [createMachineFixture({ id: 'header-offline', active: false,
@@ -134,21 +134,22 @@ describe('useSessionListRenderModels', () => {
         }), { initialProps: { items: listItems } });
         const headers = () => hook.getCurrent().projectHeaderViewModelState.projectHeaderViewModelByGroupKey;
         try {
-            expect(headers().get('one')).toMatchObject({ displayTitle: 'Chats', machineDetail: { name: 'Build Mac', end: 'Offline' } });
+            expect(headers().get('one')).toMatchObject({ displayTitle: 'Chats', machineDetail: { name: 'Build Mac', end: null } });
             expect(headers().get('two')).toMatchObject({ displayTitle: 'Chats', machineDetail: { name: 'Laptop', end: null } });
             expect(headers().get('runs')?.machineDetail).toBeUndefined();
             await act(async () => storage.setState(state => ({ machineDisplayById: { ...state.machineDisplayById,
                 'header-offline': { ...machines[0]!, metadata: null, availability: undefined },
             } })));
-            expect(headers().get('one')?.machineDetail).toEqual({ name: null, end: 'Offline' });
+            // A decrypting name is never rendered as a Machine named "Loading…".
+            expect(headers().get('one')?.machineDetail).toBeUndefined();
             await act(async () => storage.setState(state => ({ machineDisplayById: { ...state.machineDisplayById,
                 'header-offline': machines[0]!,
             } })));
-            expect(headers().get('one')?.machineDetail).toEqual({ name: 'Build Mac', end: 'Offline' });
+            expect(headers().get('one')?.machineDetail).toEqual({ name: 'Build Mac', end: null });
             const renamed = listItems.map(item => item.type === 'header' && item.groupKey === 'two'
                 ? { ...item, title: '/two/happier-dev' } : item);
             await hook.rerender({ items: renamed });
-            expect(headers().get('one')?.machineDetail).toEqual({ name: null, end: 'Offline' });
+            expect(headers().get('one')?.machineDetail).toBeUndefined();
             expect(headers().get('two')?.machineDetail).toBeUndefined();
             await hook.rerender({ items: renamed.map(item => item.type === 'header' && item.groupKey === 'runs'
                 ? { ...item, title: '/runs/happier-dev' } : item) });
@@ -162,112 +163,46 @@ describe('useSessionListRenderModels', () => {
             storage.setState(previousState, true);
         }
     });
-    it('projects offline-once without naming a unique header or recomputing on row title and receipt arrivals', async () => {
+    it('says nothing about availability on a Project header, and Machine presence never re-derives it (D3)', async () => {
         const previousState = storage.getState();
         const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
-        const rows = ['a', 'b', 'c'].map((id, index) => ({ ...makeRenderable(id, {
-            machineId: index === 2 ? 'other' : 'offline', host: 'build.local', path: '/repo',
-            name: index === 1 ? 'Different title' : 'Fix login',
-        }), encryptionMode: 'plain' as const }));
-        const machines = [createMachineFixture({ id: 'offline', active: false,
-            metadata: { ...createMachineFixture().metadata!, displayName: 'Build Mac' } }),
-        createMachineFixture({ id: 'other', active: true,
-            metadata: { ...createMachineFixture().metadata!, displayName: 'Laptop' } })];
+        const rows = ['a', 'b'].map(id => ({ ...makeRenderable(id, { machineId: 'offline', host: 'build.local', path: '/repo', name: id }),
+            encryptionMode: 'plain' as const }));
+        const machine = createMachineFixture({ id: 'offline', active: false,
+            metadata: { ...createMachineFixture().metadata!, displayName: 'Build Mac' } });
         storage.setState({ sessionListRowsByServerId: { 'group-home': Object.fromEntries(rows.map(row => [row.id, row])) },
-            machineDisplayById: Object.fromEntries(machines.map(machine => [machine.id, machine])) });
+            machineDisplayById: { offline: machine } });
         const listItems: SessionListIndexItem[] = [
-            { type: 'header', headerKind: 'project', title: '/repo', groupKey: 'offline-group' },
-            ...rows.slice(0, 2).map(row => ({ type: 'session' as const, serverId: 'group-home', sessionId: row.id,
+            { type: 'header', headerKind: 'project', title: '/repo', groupKey: 'offline-group',
+                workspaceScopeHint: { serverId: 'group-home', machineId: 'offline', rootPath: '/repo' } },
+            ...rows.map(row => ({ type: 'session' as const, serverId: 'group-home', sessionId: row.id,
                 groupKey: 'offline-group', groupKind: 'project' as const })),
-            { type: 'header', headerKind: 'project', title: '/other', groupKey: 'other-group' },
-            { type: 'session', serverId: 'group-home', sessionId: 'c', groupKey: 'other-group', groupKind: 'project' },
         ];
-        const common = { paneState: { summary: { sessionsReady: true, sessionCount: 3 }, visibleSessionListIndex: listItems,
-            hasHiddenInactiveSessions: false, folderFeatureEnabledServerIds: [], showLoading: false, showEmptyState: false },
-        collapsedGroupKeys: {}, workspaceLabels: {}, workspaceRefs: [], pinnedKeySet: new Set<string>(), sessionTags: {},
-        selectedSessionId: null, showServerBadge: false, showPinnedServerBadge: false,
-        rowViewModelMode: 'deferred' as const, clocksActive: false };
         syncPerformanceTelemetry.configure({ enabled: true, slowThresholdMs: 0 });
         syncPerformanceTelemetry.reset();
-        const hook = await renderHook((props: Readonly<{ collapsedGroupKeys: Record<string, boolean> }>) =>
-            useSessionListRenderModels({ ...common, ...props }), { initialProps: { collapsedGroupKeys: {} } });
-        const derivations = () => syncPerformanceTelemetry.snapshot().events
-            .filter(event => event.name === 'ui.sessionsList.render.groupMachineFacts').reduce((sum, event) => sum + event.count, 0);
-        try {
-            const first = hook.getCurrent().projectHeaderViewModelState;
-            expect(first.projectHeaderViewModelByGroupKey.get('offline-group')).toHaveProperty('machineDetail', { name: null, end: 'Offline' });
-            const initialCount = derivations();
-            expect(initialCount).toBe(1);
-            for (let arrival = 1; arrival <= 3; arrival += 1) await act(async () => storage.setState(state => ({
-                sessionListRowsByServerId: { ...state.sessionListRowsByServerId, 'group-home': {
-                    ...state.sessionListRowsByServerId['group-home'], a: { ...rows[0]!, thinkingAt: arrival, updatedAt: arrival },
-                } },
-                machineDisplayById: { ...state.machineDisplayById, offline: { ...machines[0]!, activeAt: arrival } },
-            })));
-            expect(derivations()).toBe(initialCount);
-            await act(async () => storage.setState(state => ({ sessionListRowsByServerId: {
-                ...state.sessionListRowsByServerId, 'group-home': { ...state.sessionListRowsByServerId['group-home'],
-                    b: { ...rows[1]!, metadata: { ...rows[1]!.metadata!, name: 'Fix login' } },
-                },
-            } })));
-            expect(derivations()).toBe(initialCount);
-            await act(async () => storage.setState(state => ({ machineDisplayById: {
-                ...state.machineDisplayById, offline: { ...machines[0]!, active: true },
-            } })));
-            expect(hook.getCurrent().projectHeaderViewModelState.projectHeaderViewModelByGroupKey.get('offline-group')?.machineDetail).toBeUndefined();
-            expect(derivations()).toBe(initialCount + 1);
-            const { publishMachineActivity } = await import('@/sync/domains/machines/machineActivity');
-            const online = storage.getState().machineDisplayById.offline!;
-            await act(async () => publishMachineActivity(online, { active: false, activeAt: 10 }, []));
-            expect(hook.getCurrent().projectHeaderViewModelState.projectHeaderViewModelByGroupKey.get('offline-group')?.machineDetail).toEqual({ name: null, end: 'Offline' });
-            const pushedCount = derivations();
-            await act(async () => publishMachineActivity(online, { active: false, activeAt: 11 }, []));
-            expect(derivations()).toBe(pushedCount);
-            await hook.rerender({ collapsedGroupKeys: { 'offline-group': true } });
-            const collapsed = hook.getCurrent().projectHeaderViewModelState;
-            expect(collapsed.projectHeaderViewModelByGroupKey.get('offline-group')?.machineDetail).toEqual({ name: null, end: 'Offline' });
-            await act(async () => storage.setState(state => ({ sessionListRowsByServerId: {
-                ...state.sessionListRowsByServerId, 'group-home': { ...state.sessionListRowsByServerId['group-home'],
-                    b: { ...rows[1]!, metadata: { ...rows[1]!.metadata!, machineId: 'other' } },
-                },
-            } })));
-            expect(hook.getCurrent().projectHeaderViewModelState.projectHeaderViewModelByGroupKey.get('offline-group')?.machineDetail).toBeUndefined();
-            await act(async () => storage.setState(state => ({ sessionListRowsByServerId: {
-                ...state.sessionListRowsByServerId, 'group-home': { ...state.sessionListRowsByServerId['group-home'],
-                    b: { ...rows[1]!, metadata: null },
-                },
-            } })));
-            expect(hook.getCurrent().projectHeaderViewModelState.projectHeaderViewModelByGroupKey.get('offline-group')?.machineDetail).toBeUndefined();
-        } finally {
-            await hook.unmount();
-            syncPerformanceTelemetry.configure({ enabled: false });
-            syncPerformanceTelemetry.reset();
-            storage.setState(previousState, true);
-        }
-    });
-    it('says only "Offline" for a whole offline group whose Machine name is still decrypting, never "Loading…"', async () => {
-        const previousState = storage.getState();
-        const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
-        const rows = ['h1', 'h2'].map((id) => ({ ...makeRenderable(id, { machineId: 'hydrating', host: 'build.local', path: '/repo', name: id }),
-            encryptionMode: 'plain' as const }));
-        const machine = { ...createMachineFixture({ id: 'hydrating', active: false }), metadata: null, availability: undefined };
-        storage.setState({ sessionListRowsByServerId: { 'group-home': Object.fromEntries(rows.map(row => [row.id, row])) },
-            machineDisplayById: { hydrating: machine } });
-        const listItems: SessionListIndexItem[] = [
-            { type: 'header', headerKind: 'project', title: '/repo', groupKey: 'hydrating-group' },
-            ...rows.map(row => ({ type: 'session' as const, serverId: 'group-home', sessionId: row.id,
-                groupKey: 'hydrating-group', groupKind: 'project' as const })),
-        ];
         const hook = await renderHook(() => useSessionListRenderModels({ paneState: { summary: { sessionsReady: true, sessionCount: 2 },
             visibleSessionListIndex: listItems, hasHiddenInactiveSessions: false, folderFeatureEnabledServerIds: [], showLoading: false,
             showEmptyState: false }, collapsedGroupKeys: {}, workspaceLabels: {}, workspaceRefs: [], pinnedKeySet: new Set<string>(),
         sessionTags: {}, selectedSessionId: null, showServerBadge: false, showPinnedServerBadge: false,
         rowViewModelMode: 'deferred' as const, clocksActive: false }));
+        const derivations = () => syncPerformanceTelemetry.snapshot().events
+            .filter(event => event.name === 'ui.sessionsList.render.groupMachineFacts').reduce((sum, event) => sum + event.count, 0);
+        const header = () => hook.getCurrent().projectHeaderViewModelState.projectHeaderViewModelByGroupKey.get('offline-group');
         try {
-            expect(hook.getCurrent().projectHeaderViewModelState.projectHeaderViewModelByGroupKey.get('hydrating-group'))
-                .toHaveProperty('machineDetail', { name: null, end: 'Offline' });
+            expect(header()?.machineDetail).toBeUndefined();
+            const initialCount = derivations();
+            await act(async () => storage.setState(state => ({ machineDisplayById: {
+                ...state.machineDisplayById, offline: { ...machine, active: true, activeAt: 5 },
+            } })));
+            await act(async () => storage.setState(state => ({ machineDisplayById: {
+                ...state.machineDisplayById, offline: { ...machine, active: false, activeAt: 6 },
+            } })));
+            expect(header()?.machineDetail).toBeUndefined();
+            expect(derivations()).toBe(initialCount);
         } finally {
-            hook.unmount();
+            await hook.unmount();
+            syncPerformanceTelemetry.configure({ enabled: false });
+            syncPerformanceTelemetry.reset();
             storage.setState(previousState, true);
         }
     });

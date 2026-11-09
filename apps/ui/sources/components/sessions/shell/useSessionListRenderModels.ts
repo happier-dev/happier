@@ -543,7 +543,7 @@ export function useSessionListRenderModels(input: Readonly<{
         normalizedShellState.workspaceRefs, reachabilityRenderablesByKey]);
     const { sessionReachabilitySummary, projectHeaderViewModelState: baseProjectHeaderState } = useMachineDisplayById(selectMachinePresentation);
     const projectHeaderViewModelState = useSessionListGroupMachineFacts({ listItems,
-        membershipItems: selectionScopeListItems, headerState: baseProjectHeaderState,
+        headerState: baseProjectHeaderState,
         machinesById: input.machineDisplayById, active: input.rowSubscriptionKeys?.size !== 0 });
 
     const rowViewModels = React.useMemo(() => {

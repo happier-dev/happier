@@ -12362,6 +12362,7 @@ const settingsOverviewTranslations = { pt: {
         startSessionLabel: 'Iniciar uma sessão',
         saveRecoveryKeyTitle: 'Salve sua chave de recuperação',
         saveRecoveryKeySubtitle: 'A única forma de voltar aos dados criptografados se você perder todos os dispositivos.',
+        saveRecoveryKeyReason: 'Você precisa dela para entrar em um novo dispositivo.',
         addMachineTitle: 'Adicionar uma máquina',
         addMachineSubtitle: 'Conecte uma máquina onde seus agentes rodam.',
         homeGreetingNamed: ({ name }) => `Bem-vindo de volta, ${name}.`,

@@ -78,9 +78,9 @@ const localSettingInputs = {
         storageScope: 'local',
     },
     connectedServicesIndexViewV1: {
-        // List (default, lines limits up across accounts) or Grid, for Connected services on this device.
-        schema: z.catch(z.enum(['list', 'grid']), 'list'),
-        default: 'list',
+        // Cards (default, owner R7 2026-11-09, desktop and phone) or List, for Connected services on this device.
+        schema: z.catch(z.enum(['list', 'grid']), 'grid'),
+        default: 'grid',
         description: 'Whether Connected services lists its accounts or shows them as cards on this device',
         storageScope: 'local',
     },

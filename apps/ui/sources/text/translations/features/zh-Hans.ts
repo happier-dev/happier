@@ -12342,6 +12342,7 @@ const settingsOverviewTranslations = { 'zh-Hans': {
         startSessionLabel: '开始会话',
         saveRecoveryKeyTitle: '保存恢复密钥',
         saveRecoveryKeySubtitle: '丢失所有设备时找回加密数据的唯一方式。',
+        saveRecoveryKeyReason: '在新设备上登录时需要它。',
         addMachineTitle: '添加机器',
         addMachineSubtitle: '连接一台运行你的代理的机器。',
         homeGreetingNamed: ({ name }) => `欢迎回来，${name}。`,

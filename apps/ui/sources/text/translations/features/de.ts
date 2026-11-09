@@ -12349,6 +12349,7 @@ const settingsOverviewTranslations = { de: {
         startSessionLabel: 'Sitzung starten',
         saveRecoveryKeyTitle: 'Wiederherstellungsschlüssel speichern',
         saveRecoveryKeySubtitle: 'Der einzige Weg zurück zu verschlüsselten Daten, wenn du alle Geräte verlierst.',
+        saveRecoveryKeyReason: 'Du brauchst ihn, um dich auf einem neuen Gerät anzumelden.',
         addMachineTitle: 'Rechner hinzufügen',
         addMachineSubtitle: 'Verbinde einen Rechner, auf dem deine Agenten laufen.',
         homeGreetingNamed: ({ name }) => `Willkommen zurück, ${name}.`,

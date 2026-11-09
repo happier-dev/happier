@@ -12347,6 +12347,7 @@ const settingsOverviewTranslations = { ja: {
         startSessionLabel: 'セッションを開始',
         saveRecoveryKeyTitle: 'リカバリーキーを保存',
         saveRecoveryKeySubtitle: 'すべてのデバイスを失ったときに暗号化データへ戻る唯一の方法です。',
+        saveRecoveryKeyReason: '新しいデバイスでサインインするときに必要です。',
         addMachineTitle: 'マシンを追加',
         addMachineSubtitle: 'エージェントを実行するマシンを接続します。',
         homeGreetingNamed: ({ name }) => `おかえりなさい、${name}さん。`,
