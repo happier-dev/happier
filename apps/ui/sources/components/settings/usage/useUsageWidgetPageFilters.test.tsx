@@ -1,5 +1,5 @@
 import { act } from 'react-test-renderer';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { renderHook, standardCleanup } from '@/dev/testkit';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -11,8 +11,39 @@ import { readUsageWidgetPageScope } from './usageWidgetPageContext';
 import { useUsageWidgetPageContext } from './useUsageWidgetPageContext';
 import { useUsageWidgetPageFilters } from './useUsageWidgetPageFilters';
 import { resolveUsagePageAggregation } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import { clearProjectedAgentUiBehaviorDescriptors, publishProjectedAgentUiBehaviorDescriptors } from '@/agents/registry/agentUiBehaviorProjection';
 
 afterEach(standardCleanup);
+
+it('keeps declared source choices distinct with qualified Agent identity while source details are closed', async () => {
+    const fetch = vi.spyOn(globalThis, 'fetch');
+    publishProjectedAgentUiBehaviorDescriptors({ machineId: 'research-machine', descriptorsByAgentId: {
+        'third.party/research': { kind: 'plugin.ui.v1', pluginId: 'third.party', agentId: 'third.party/research', behavior: {
+            accountingSourcePresentation: [{ sourceId: 'research-observed-v1', title: 'Research observations' }],
+        } },
+    } });
+    const sourceIds = ['claude-assistant-usage', 'claude-sdk-result', 'research-observed-v1'];
+    const scope = readUsageWidgetPageScope(normalizeUsageQuery({ sources: sourceIds }));
+    const hook = await renderHook(() => {
+        const page = useUsageWidgetPageContext({ authority: null,
+            initialFilters: { period: '7days', metric: 'tokens', costMode: 'auto', focus: null, scope } });
+        return useUsageWidgetPageFilters(page, [], false, getActiveServerSnapshot().serverId);
+    });
+    try {
+        const choices = hook.getCurrent().find(filter => filter.field === 'sources')!.options;
+        expect(choices.filter(choice => sourceIds.includes(choice.id)).map(choice => choice.id).sort()).toEqual([...sourceIds].sort());
+        expect(choices.find(choice => choice.id === 'research-observed-v1')).toMatchObject({
+            label: 'Research observations', agentId: 'third.party/research',
+        });
+        expect(choices.find(choice => choice.id === 'claude-assistant-usage')!.label)
+            .not.toBe(choices.find(choice => choice.id === 'claude-sdk-result')!.label);
+        expect(fetch).not.toHaveBeenCalled();
+    } finally {
+        await hook.unmount();
+        clearProjectedAgentUiBehaviorDescriptors();
+        fetch.mockRestore();
+    }
+});
 
 it('retains the drill choices when a batch changes only facts outside its scope options', async () => {
     const query = normalizeUsageQuery({ agents: ['codex'] });

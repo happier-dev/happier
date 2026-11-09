@@ -91,11 +91,12 @@ export function useUsageWidgetPageFilters(page: UsageWidgetPageContextState, fal
                 ...(coverageDetail ? { subtitle: coverageDetail } : {}) },
                 ...[...labels].map(([id, fallback]) => {
                     const sourceGap = gaps.find(gap => gap.source === id);
+                    const sourceAgentId = field === 'sources' ? usageSourceAgentId(id) : null;
                     return { id, label: field === 'agents' ? usageAgentTitle(id, fallback)
                         : field === 'machines' ? machineNames[id] ?? getMachineDisplayName({ id, absence: 'unlisted' })
                         : field === 'sources' ? sentenceCase(usageSourceTitle(id, fallback))
                         : fallback,
-                        ...(field === 'sources' && usageSourceAgentId(id) ? { agentId: usageSourceAgentId(id)! } : {}),
+                        ...(sourceAgentId ? { agentId: sourceAgentId } : {}),
                         // Where it was read and how it is counted (lab d2filter-SRC); coverage is said once, on
                         // "All sources", so a source with a gap carries the dot and, failing other facts, the short fact.
                         ...(field === 'sources' ? sourceOptionDetail(slices, id, sourceGap !== undefined) : {}) };

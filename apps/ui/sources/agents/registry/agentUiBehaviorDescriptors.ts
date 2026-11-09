@@ -13,7 +13,7 @@ import {
     SESSION_CONFIG_OPTION_OVERRIDES_KEY,
 } from '@happier-dev/agents';
 import { mergeSpawnConfigOptionAliases, type SpawnConfigOptionValue } from '@happier-dev/protocol/actions/sessionSpawnConfigOptions';
-import { AgentUiConnectedServicesV1Schema, type AgentUiSettingReferenceV1 } from '@happier-dev/protocol/plugins/contributions/agentUiGrammar';
+import { AgentUiAccountingSourcePresentationV1Schema, AgentUiConnectedServicesV1Schema, type AgentUiSettingReferenceV1 } from '@happier-dev/protocol/plugins/contributions/agentUiGrammar';
 
 import type {
     AgentSessionComposerNonSteerablePayloadContext,
@@ -169,6 +169,7 @@ type NormalizedContextWindowModelRule = Readonly<{
 }>;
 
 export type PluginUiBehaviorDescriptor = Readonly<{
+    accountingSourcePresentation?: readonly unknown[];
     connectedServices?: Readonly<{ poolSettings?: readonly unknown[] }>;
     /**
      * Opt-in to the host's attached-terminal viewer. Serviceability is a host
@@ -1105,7 +1106,8 @@ function createContextWindowBehaviorFromDescriptor(
 function hasNoExecuteBehaviorFields(value: Readonly<Record<string, unknown>>): boolean {
     const components = isRecord(value.components) ? value.components : null;
     const hasComponentSlots = Array.isArray(components?.slots) && components.slots.length > 0;
-    return value.connectedServices != null
+    return value.accountingSourcePresentation != null
+        || value.connectedServices != null
         || value.guidance != null
         || value.attachedSessionTerminal != null
         || value.pendingDelivery != null
@@ -1124,6 +1126,8 @@ function hasNoExecuteBehaviorFields(value: Readonly<Record<string, unknown>>): b
 
 function mergeDescriptorBehavior(a: AgentUiBehavior, b: AgentUiBehavior): AgentUiBehavior {
     return {
+        ...(a.accountingSourcePresentation || b.accountingSourcePresentation
+            ? { accountingSourcePresentation: b.accountingSourcePresentation ?? a.accountingSourcePresentation } : {}),
         ...(a.connectedServices || b.connectedServices ? { connectedServices: b.connectedServices ?? a.connectedServices } : {}),
         ...(a.guidance || b.guidance ? { guidance: { ...(a.guidance ?? {}), ...(b.guidance ?? {}) } } : {}),
         ...(a.attachedSessionTerminal || b.attachedSessionTerminal
@@ -1614,6 +1618,18 @@ function createAgentUiBehaviorFromBehaviorDescriptor(
     resolvePluginTranslation?: (pluginId: string, key: string) => string | null,
 ): AgentUiBehavior {
     const relevantInstallableDepKeys = readStringArray(descriptor.newSession?.relevantInstallableDepKeys);
+    const accountingSources = descriptor.accountingSourcePresentation === undefined
+        ? null : AgentUiAccountingSourcePresentationV1Schema.safeParse(descriptor.accountingSourcePresentation);
+    if (accountingSources && !accountingSources.success) {
+        diagnostics.push(createUiProjectionDiagnostic(
+            'A16X1_MALFORMED_DESCRIPTOR', 'accountingSourcePresentation',
+            'Accounting sources require source IDs and localized titles.',
+        ));
+    }
+    const accountingSourcePresentation = accountingSources?.success ? accountingSources.data.map(row => {
+        const translatedTitle = typeof row.title === 'string' ? null : resolvePluginTranslation?.(pluginId, row.title.key);
+        return { ...row, ...(translatedTitle ? { translatedTitle } : {}) };
+    }) : [];
     const connectedServices = descriptor.connectedServices === undefined
         ? null : AgentUiConnectedServicesV1Schema.safeParse(descriptor.connectedServices);
     if (connectedServices && !connectedServices.success) {
@@ -1706,6 +1722,7 @@ function createAgentUiBehaviorFromBehaviorDescriptor(
     };
 
     const baseBehavior: AgentUiBehavior = {
+        ...(accountingSourcePresentation.length > 0 ? { accountingSourcePresentation } : {}),
         ...(poolSettings.length > 0 ? { connectedServices: { poolSettings } } : {}),
         ...(descriptor.attachedSessionTerminal?.supported === true
             ? { attachedSessionTerminal: { supported: true } }

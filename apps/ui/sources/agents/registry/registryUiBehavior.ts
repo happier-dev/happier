@@ -7,7 +7,7 @@ import { AccountProfile } from '@happier-dev/protocol/account/profile';
 import { type ExternalSessionsAgentId, ExternalSessionLinkEnsureRequest, ExternalSessionsSource } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
 import type { AcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
 import type { PendingDeliveryDetailV1 } from '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1';
-import type { AgentUiConnectedServicePoolSettingV1, AgentUiSettingReferenceV1 } from '@happier-dev/protocol/plugins/contributions/agentUiGrammar';
+import type { AgentUiAccountingSourcePresentationV1, AgentUiConnectedServicePoolSettingV1, AgentUiSettingReferenceV1 } from '@happier-dev/protocol/plugins/contributions/agentUiGrammar';
 import { RuntimeDescriptorV1 } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
 import type { PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
 import type { DetailsTab } from '@/components/appShell/panes/model/appPaneReducer';
@@ -206,6 +206,7 @@ export type AgentUiPoolSetting = Readonly<AgentUiConnectedServicePoolSettingV1 &
 }>;
 
 export type AgentUiBehavior = Readonly<{
+    accountingSourcePresentation?: readonly Readonly<AgentUiAccountingSourcePresentationV1[number] & { translatedTitle?: string }>[];
     connectedServices?: Readonly<{ poolSettings: readonly AgentUiPoolSetting[] }>;
     /**
      * The bundled Agent that owns this behavior. It is deliberately absent
@@ -508,6 +509,8 @@ function mergeMessageBehavior(
 function mergeAgentUiBehavior(a: AgentUiBehavior, b: AgentUiBehavior): AgentUiBehavior {
     const message = mergeMessageBehavior(a.message, b.message);
     return {
+        ...(a.accountingSourcePresentation || b.accountingSourcePresentation
+            ? { accountingSourcePresentation: b.accountingSourcePresentation ?? a.accountingSourcePresentation } : {}),
         ...(a.connectedServices || b.connectedServices ? { connectedServices: b.connectedServices ?? a.connectedServices } : {}),
         ...(b.agentId ? { agentId: b.agentId } : a.agentId ? { agentId: a.agentId } : {}),
         ...(a.pendingDelivery || b.pendingDelivery

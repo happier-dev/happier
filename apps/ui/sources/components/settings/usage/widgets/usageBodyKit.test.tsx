@@ -22,6 +22,7 @@ import { UsageWidgetBatchProvider } from './usageWidgetBatch';
 import { readUsageWidgetQueryOverrides } from '../usageWidgetPageContext';
 import type { UsageWidgetBodyModel } from '../useUsageWidgetResource';
 import { usageSourceAgentId } from '@/sync/domains/usage/usageLabels';
+import { clearProjectedAgentUiBehaviorDescriptors, publishProjectedAgentUiBehaviorDescriptors } from '@/agents/registry/agentUiBehaviorProjection';
 import { describeUsagePageFailedSources, describeUsagePageNewerServerSources, describeUsagePagePartialSources, describeUsagePagePendingSources, readUsagePageAsOfMs, readUsageCoverageGaps, isUsageReadOutstanding, UsageCoverageLine, usageCoverageDescription, usageCoverageLineMode, usageCoverageSummary, usagePeriodPhrase, usageDimensionLabel, usageAgentTitle, usageSourceTitle, useSettledBodyHeightFloor, useUsageMeterListFirstReadReserve, useUsageAnalyticsView } from './usageBodyKit';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
@@ -44,6 +45,24 @@ describe('the page failure fact', () => {
 });
 
 describe('shared Usage identity and dependent coverage', () => {
+    it('names dynamic accounting coverage from its declaration while native sources stay unopened', () => {
+        const fetch = vi.spyOn(globalThis, 'fetch');
+        publishProjectedAgentUiBehaviorDescriptors({ machineId: 'research-machine', descriptorsByAgentId: {
+            'third.party/research': { kind: 'plugin.ui.v1', pluginId: 'third.party', agentId: 'third.party/research',
+                behavior: { accountingSourcePresentation: [{ sourceId: 'research-observed-v1', title: 'Research observations' }] } },
+        } });
+        try {
+            const query = normalizeUsageQuery({ period: { startMs: 1000, endMs: 2000 } });
+            const slice = resolveUsagePageAggregation({ queries: [query] }).results[0]!;
+            const observed = { ...slice, sources: [{ source: 'research-observed-v1', status: 'error' as const }] };
+            expect(usageCoverageDescription(observed, ['research-observed-v1'])).toContain('Research observations');
+            expect(usageSourceAgentId('research-observed-v1')).toBe('third.party/research');
+            expect(fetch).not.toHaveBeenCalled();
+        } finally {
+            clearProjectedAgentUiBehaviorDescriptors();
+            fetch.mockRestore();
+        }
+    });
     it('keeps unused analytics sections deferred through the body view cache', async () => {
         const admitted = usageQaAccountingFixture();
         let timelineReads = 0;
