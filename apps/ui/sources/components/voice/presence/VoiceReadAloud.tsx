@@ -46,16 +46,14 @@ const METRICS: Readonly<
   Record<
     VoiceReadAloudSize,
     Readonly<{
-      fontSize: number;
-      lineHeight: number;
       glyph: number;
       button: number;
       icon: number;
     }>
   >
 > = {
-  pill: { ...VOICE_STATUS_LINE_METRICS.pill, glyph: 15, button: 24, icon: 15 },
-  island: { ...VOICE_STATUS_LINE_METRICS.island, glyph: 18, button: 32, icon: 16 },
+  pill: { glyph: 15, button: 24, icon: 15 },
+  island: { glyph: 18, button: 32, icon: 16 },
 };
 
 /** The speaker glyph that takes the mark's place while Voice reads aloud outside a conversation. */

@@ -704,7 +704,7 @@ export function createPluginUiPrivatePresentationHost(
         paneHeaderScroll: PLUGIN_UI_PANE_HEADER_SCROLL,
         collectionRowNeedsYou: PLUGIN_UI_COLLECTION_ROW_NEEDS_YOU,
         collectionSpacesStrip: createCollectionSpacesStripHost(pluginId),
-        ...(pluginId === undefined ? {} : { renderEntityFlatReorderList(input) {
+        ...(pluginId === undefined ? {} : { renderEntityFlatReorderList(input: Parameters<NonNullable<PluginUiPresentationHost['renderEntityFlatReorderList']>>[0]) {
             return <PluginEntityFlatReorderList pluginId={pluginId} input={input} />;
         } }),
         ...(options?.renderDragSource === undefined ? {} : { renderDragSource: options.renderDragSource }),
