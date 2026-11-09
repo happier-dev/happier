@@ -31,7 +31,7 @@ const credentialBindings = {
 type FixtureOptions = { installed?: boolean; dnsInstalled?: boolean; foreignDns?: boolean; localTunnel?: boolean;
   putLost?: boolean; dnsLost?: boolean; dnsVerificationLost?: boolean; dnsAcknowledgement?: 'missing-id' | 'wrong-target';
   putAcknowledgementMismatch?: boolean; denied?: boolean; abort?: AbortController;
-  pagedForeignDns?: boolean; retainedDnsDrift?: boolean; foreignPath?: boolean; readLost?: boolean; malformedJson?: boolean;
+  pagedForeignDns?: boolean; retainedDnsReadLost?: boolean; foreignPath?: boolean; readLost?: boolean; malformedJson?: boolean;
   createLost?: boolean; tokenLost?: boolean; tokenResult?: unknown; canonicalRemote?: boolean;
   tunnelName?: string; wrongAccount?: boolean; tunnelPages?: readonly (readonly Record<string, unknown>[])[];
   wrongService?: boolean; omitPagination?: boolean; dnsPages?: readonly (readonly Record<string, unknown>[])[] };
@@ -104,7 +104,7 @@ function fixture(options: FixtureOptions = {}) {
       result = options.dnsAcknowledgement === 'missing-id' ? body
         : options.dnsAcknowledgement === 'wrong-target' ? { ...record, content: 'foreign.example.test' } : record;
     } else if (input.url === `${dnsRoot}/record-owned` && method === 'GET') {
-      if (options.retainedDnsDrift && dnsPageReads > 0) records.set('record-owned', { ...records.get('record-owned'), content: 'changed.example.test' });
+      if (options.retainedDnsReadLost) throw new Error('retained DNS read unavailable');
       result = records.get('record-owned');
     }
     else if (input.url === `${dnsRoot}/record-owned` && method === 'DELETE') {
@@ -310,10 +310,15 @@ describe('Cloudflare controller owned route lifecycle', () => {
     expect(state.mutations()).toEqual([]);
   });
 
-  it('verifies the retained DNS record again instead of reporting success from a stale preflight', async () => {
-    const state = fixture({ installed: true, dnsInstalled: true, retainedDnsDrift: true });
-    expect(await reconcileOwnedCloudflareRoutes(state.request)).toEqual({ kind: 'refused', code: 'plan_changed' });
-    expect(state.mutations()).toEqual([]);
+  it('settles an applied route change from admitted DNS ownership when the redundant record GET is unavailable', async () => {
+    const state = fixture({ installed: true, dnsInstalled: true, retainedDnsReadLost: true });
+    const nextService = 'http://replacement-caddy:8080';
+    expect(await reconcileOwnedCloudflareRoutes({ ...state.request, desired: [{ hostname, service: nextService }] }))
+      .toEqual({ kind: 'verified', tunnelId, dnsOwnership: [{ hostname, recordId: 'record-owned' }] });
+    expect(state.configuration().ingress).toContainEqual({ hostname, service: nextService });
+    expect(state.requests.filter(request => request.url.startsWith(dnsRoot)).map(({ method, url }) => ({ method, url })))
+      .toEqual([{ method: 'GET', url: `${dnsRoot}?name=${hostname}&page=1` }]);
+    expect(state.mutations().map(request => request.method)).toEqual(['PUT']);
   });
 
   it('removes an owned path without deleting DNS still used by a foreign path at the same hostname', async () => {

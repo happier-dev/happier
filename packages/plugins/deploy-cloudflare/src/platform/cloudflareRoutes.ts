@@ -242,10 +242,6 @@ export async function reconcileOwnedCloudflareRoutes(input: (CloudflareRouteRequ
       const retained = Array.isArray(nextRules) && nextRules.some(rule => object(rule) && rule.hostname === hostname);
       const records = observed.get(hostname)!;
       const recordId = ownership.get(hostname);
-      if (retained && recordId) {
-        const current = readRecord((await request('GET', `${dnsUrl}/${encodeURIComponent(recordId)}`)).result);
-        if (!pluginJsonValuesEqual(current, records[0]!)) throw new CloudflareProviderRefusal('plan_changed');
-      }
       if (retained && records.length === 0 && input.desired.some(route => route.hostname === hostname)) {
         if ((await dnsRecords(hostname)).length !== 0) throw new CloudflareProviderRefusal('plan_changed');
         const record = readRecord((await request('POST', dnsUrl, { type: 'CNAME', name: hostname, content: cname, proxied: true })).result);
