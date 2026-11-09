@@ -64,7 +64,8 @@ export function useProviderConnectionModelsSection(input: Readonly<{
     const { mutateProviderModelSettings, probeProviderConnection, pendingApproval, accountScope: { resolution } } = useProviderActionClient(serverId, input.initiatingLifetime);
     const addressedScope = input.initiatingLifetime !== null && resolution.kind === 'bound' ? resolution.scope : null;
     const catalog = useProviderConnectionModels({ enabled, active: input.active, machineId, serverId, connectionId });
-    const accountCatalogCount = useProviderCatalogCounts(serverId, input.declarationContext)?.[connectionId] ?? null;
+    const accountCatalogCount = useProviderCatalogCounts(serverId, input.declarationContext,
+        { enabled: enabled && input.active !== false })?.[connectionId] ?? null;
     const [showHidden, setShowHidden] = React.useState(false);
     const [editorOpen, setEditorOpen] = React.useState(input.startAdding === true);
     const [manualModelText, setManualModelText] = React.useState('');
@@ -76,7 +77,7 @@ export function useProviderConnectionModelsSection(input: Readonly<{
     const [generationModelId, setGenerationModelId] = React.useState<string | null>(input.startEditingGenerationOf ?? null);
     const [outputAllowanceText, setOutputAllowanceText] = React.useState<string | null>(null);
     const declaredConnectionId = ProviderConnectionIdSchema.safeParse(connectionId);
-    const providerCatalog = useProviderCatalogForServer(serverId);
+    const providerCatalog = useProviderCatalogForServer(serverId, undefined, { enabled: enabled && input.active !== false });
     const refreshGenerationSettings = React.useCallback(async () => { await catalog.refresh(); }, [catalog.refresh]);
     const generationSettings = useProviderModelGenerationSettings({
         connection: providerCatalog?.data?.connections.find(saved => saved.id === connectionId) ?? null,

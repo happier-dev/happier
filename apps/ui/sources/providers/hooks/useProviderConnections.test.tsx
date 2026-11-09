@@ -249,6 +249,44 @@ describe('useProviderConnections', () => {
         otherServerId = await account.addHome({ name: 'Other Provider Home', serverUrl: 'https://provider-settings-other.test', accountId: 'account-a', active: false });
     });
 
+    it('withdraws hidden detail catalog subscriptions and demand, then observes the current visibility on refocus', async () => {
+        const catalog = ProviderConnectionsCatalogV1Schema.parse({ ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1,
+            connections: [{ v: 1, id: 'pc_a', source: { kind: 'contribution', contributionKey: 'acme.plugin/acme' },
+                role: 'named', displayName: 'Acme', displayNameMode: 'custom', revision: 1, createdAt: 1, updatedAt: 1 }],
+        });
+        serverId = (await account.restore({ catalog, machines: [] })).serverId;
+        let renders = 0;
+        const hook = await renderHook(({ active }: { active: boolean }) => {
+            renders += 1;
+            return { query: useProviderConnections({ enabled: true, active, machineId: null, serverId, connectionId: 'pc_a' }),
+                visibility: useProviderModelPickerVisibility('pc_a', { kind: 'aggregator', serverId, enabled: active }) };
+        }, { initialProps: { active: true } });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().visibility?.shown).toBe(false));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().query.loading).toBe(false));
+        await hook.rerender({ active: false });
+        const held = hook.getCurrent();
+        renders = 0;
+        const scope = captureActiveServerAccountScopeLifetime()!.scope;
+        const reads = account.home.requestsFor(PROVIDER_CONNECTIONS_ROWS_ROUTE_V1).length;
+        await act(async () => { publishHomeAccountChange(serverId, ['self']); });
+        await flushHookEffects();
+        expect(account.home.requestsFor(PROVIDER_CONNECTIONS_ROWS_ROUTE_V1)).toHaveLength(reads);
+        const { beginProviderCatalogLoad } = await import('@/sync/store/settings/providerCatalogSnapshot');
+        await act(async () => { beginProviderCatalogLoad(scope, true); });
+        expect(renders).toBe(0);
+        expect(hook.getCurrent()).toBe(held);
+        await flushHookEffects();
+        expect(account.home.requestsFor(PROVIDER_CONNECTIONS_ROWS_ROUTE_V1)).toHaveLength(reads);
+        const updatedCatalog = { ...catalog, modelPickerVisibilityByConnectionId: { pc_a: true } };
+        account.home.answer(serverId, `GET ${PROVIDER_CONNECTIONS_ROWS_ROUTE_V1}`, {
+            select: () => ({ body: { status: 'present', revision: 2, content: { t: 'plain', v: updatedCatalog } } }),
+        });
+        await act(async () => { applyAcknowledgedProviderCatalog(scope, updatedCatalog, 2, true, null); });
+        expect(renders).toBe(0);
+        await hook.rerender({ active: true });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().visibility?.shown).toBe(true));
+    });
+
     it('withdraws the addressed catalog when its Home is missing instead of reading the active Home', async () => {
         let addressedServerId: string | null = serverId;
         const hook = await renderHook(() => useProviderConnections({

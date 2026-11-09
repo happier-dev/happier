@@ -311,7 +311,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
         ? readAccountProviderDeclaration(storedContributionKey, query.declarationContext) : null;
     const usageSources = usageDeclaration?.definition.usageSources ?? NO_USAGE_SOURCES;
     const pickerVisibility = useProviderModelPickerVisibility(connection ? props.connectionId : null,
-        pickerSourceKind ? { kind: pickerSourceKind, serverId } : undefined);
+        pickerSourceKind ? { kind: pickerSourceKind, serverId, enabled: focused } : undefined);
     // The Connection section's Models row opens the connection's Models page (lab PD1).
     const openModels = React.useCallback(() => {
         const result = runGuardedNavigation(() => router.push(providerConnectionModelsRoute(props.connectionId) as never));

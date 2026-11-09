@@ -29,8 +29,15 @@ export function useProviderCatalogSelection<T>(select: (snapshot: ProviderCatalo
     // reads the current canonical snapshot and rejoins the same observation owner.
     return React.useSyncExternalStore(enabled ? subscribeProviderCatalogSnapshots : noSubscription, read, read);
 }
-export function useProviderCatalogForServer(serverId?: string | null) {
+export function useProviderCatalogForServer(serverId?: string | null, select?: undefined,
+    options?: Readonly<{ enabled?: boolean }>): ProviderCatalogSnapshot | null;
+export function useProviderCatalogForServer<T>(serverId: string | null | undefined,
+    select: (snapshot: ProviderCatalogSnapshot | null) => T, options?: Readonly<{ enabled?: boolean }>): T;
+export function useProviderCatalogForServer<T>(serverId?: string | null,
+    select?: (snapshot: ProviderCatalogSnapshot | null) => T,
+    options?: Readonly<{ enabled?: boolean }>): T | ProviderCatalogSnapshot | null {
     const active = useAccountSettingsScope();
-    return useProviderCatalog(serverId === undefined ? active : serverId && active
-        && areServerProfileIdentifiersEquivalent(serverId, active.serverId) ? active : null);
+    return useProviderCatalogSelection<T | ProviderCatalogSnapshot | null>(snapshot => select ? select(snapshot) : snapshot,
+        serverId === undefined ? active : serverId && active
+            && areServerProfileIdentifiersEquivalent(serverId, active.serverId) ? active : null, options);
 }

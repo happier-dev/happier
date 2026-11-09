@@ -13,10 +13,11 @@ import {
     captureActiveServerAccountScopeLifetime,
     type ActiveServerAccountScopeLifetime,
 } from '@/sync/domains/scope/activeServerAccountScope';
-import { getProviderCatalogSnapshot, subscribeProviderCatalogSnapshots, type ProviderCatalogSnapshot,
+import { getProviderCatalogSnapshot, type ProviderCatalogSnapshot,
     beginProviderConnectionCheckRead, getProviderConnectionCheckSnapshot, isProviderConnectionCheckReadRequired, providerConnectionCheckQueryKey,
     subscribeProviderModelProjectionSnapshot } from '@/sync/store/settings/providerCatalogSnapshot';
-import { observeProviderCatalog, refreshProviderCatalog } from '@/sync/engine/settings/providerCatalogEngine';
+import { refreshProviderCatalog } from '@/sync/engine/settings/providerCatalogEngine';
+import { useProviderCatalog } from '@/sync/store/useProviderCatalog';
 export type ProviderConnectionRefreshScope = 'account' | 'machine';
 
 type Success = Extract<DaemonProviderConnectionsDescribeResponseV1, { status: 'success' }>;
@@ -74,9 +75,8 @@ export function useProviderConnections(input: Readonly<{
         input.enabled && binding?.isCurrent() && (accountLifetime?.isCurrent() ?? true)
             ? getProviderCatalogSnapshot(binding.scope) : null
     ), [accountLifetime, binding, input.enabled]);
-    const catalogAdmission = React.useSyncExternalStore(subscribeProviderCatalogSnapshots, readCatalogAdmission, readCatalogAdmission);
-    React.useEffect(() => active && input.enabled && binding?.isCurrent()
-        ? observeProviderCatalog(binding.scope) : undefined, [active, binding, input.enabled]);
+    const catalogAdmission = useProviderCatalog(input.enabled && binding?.isCurrent() && (accountLifetime?.isCurrent() ?? true)
+        ? binding.scope : null, { enabled: active && input.enabled });
     const [state, setState] = React.useState<ProviderConnectionsState>({
         scopeKey: null,
         accountLifetime: null,

@@ -1,5 +1,5 @@
 import { act } from 'react-test-renderer';
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
     DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1,
     PROVIDER_CONNECTIONS_ROWS_ROUTE_V1,
@@ -16,7 +16,7 @@ import { installSettingsViewCommonModuleMocks } from '@/components/settings/sett
 
 installSettingsViewCommonModuleMocks({ storage: 'real' });
 const account = createProviderSettingsAccountHarness();
-beforeAll(loadSyncSingletonForTests);
+await loadSyncSingletonForTests();
 afterEach(async () => { standardCleanup(); await account.reset(); });
 
 function catalogFixture() {

@@ -11,13 +11,14 @@ import {
     createProviderSettingsAccountHarness,
     installProviderConnectionsCatalogHttpBoundary,
 } from '@/dev/testkit/harness/providerSettingsHarness';
-import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
+import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, ProviderConnectionsCatalogV1Schema } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
+import { applyAcknowledgedProviderCatalog, isProviderConnectionCheckReadRequired, providerConnectionCheckQueryKey } from '@/sync/store/settings/providerCatalogSnapshot';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { decideApprovalAsInbox, installOwnMachineApprovalReplayBoundary } from '@/dev/testkit/harness/approvalInbox';
 import type { ProviderSettingsMachineRowV1 } from '@/providers/hooks/targetMachine';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 
@@ -52,6 +53,73 @@ describe('useProviderConnectionMachineViews', () => {
         providerHarness.reset();
         standardCleanup();
         await account.reset();
+    });
+
+    it.each(['detail', 'peers'] as const)('starts one %s check on invalidated refocus and handles the next visible invalidation', async kind => {
+        let catalog = ProviderConnectionsCatalogV1Schema.parse({ ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1,
+            connections: [{ v: 1, id: 'pc_a', source: { kind: 'contribution', contributionKey: 'acme.plugin/acme' },
+                role: 'named', displayName: 'Acme', displayNameMode: 'custom', revision: 1, createdAt: 1, updatedAt: 1 }],
+        });
+        serverId = (await account.restore({ catalog, machines, serverIdentityId: 'srv_a' })).serverId;
+        const { refreshProviderCatalog } = await import('@/sync/engine/settings/providerCatalogEngine');
+        await refreshProviderCatalog(captureActiveServerAccountScopeLifetime()!.scope);
+        let reads = 0;
+        const pending: Array<() => void> = [];
+        providerHarness.intercept(RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE, async () => {
+            reads += 1;
+            if (reads > 1) await new Promise<void>(resolve => { pending.push(resolve); });
+            return createProviderConnectionsDescribeFixture({ connections: [createProviderConnectionViewFixture({
+                connectionId: 'pc_a', displayName: `Observation ${reads}`,
+                runtime: { health: 'available', modelCount: 1, checkedAt: reads, endpoints: [] },
+            })] });
+        });
+        const { useProviderConnections } = await import('./useProviderConnections');
+        const { useProviderConnectionMachineViews } = await import('./useProviderConnectionMachineViews');
+        const { useProviderActionClient } = await import('@/providers/actions/useProviderActionClient');
+        const targets = [row('srv_a', 'machine-a', serverId)];
+        const hook = await renderHook(({ active }: { active: boolean }) => ({
+            query: kind === 'detail'
+                ? useProviderConnections({ enabled: true, active, machineId: 'machine-a', serverId, connectionId: 'pc_a' })
+                : useProviderConnectionMachineViews({ enabled: true, active, connectionId: 'pc_a', targets }),
+            binding: useProviderActionClient(serverId).accountScope.binding,
+        }),
+        { initialProps: { active: true } });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().query.loading).toBe(false));
+        expect(reads).toBe(1);
+        await hook.rerender({ active: false });
+        const changeSource = async (revision: number) => {
+            catalog = { ...catalog, connections: catalog.connections.map(connection => ({ ...connection,
+                revision, source: { kind: 'contribution' as const, contributionKey: `acme.plugin/acme${revision}` } })) };
+            await act(async () => { applyAcknowledgedProviderCatalog(captureActiveServerAccountScopeLifetime()!.scope, catalog, revision, true, null); });
+        };
+        await changeSource(2);
+        expect(reads).toBe(1);
+        const binding = hook.getCurrent().binding!;
+        expect(isProviderConnectionCheckReadRequired(binding.scope, binding.credentialKey!,
+            providerConnectionCheckQueryKey('machine-a', 'pc_a'))).toBe(true);
+        await hook.rerender({ active: true });
+        await waitForHomeGovernance(() => expect(pending.length).toBeGreaterThan(0));
+        await flushHookEffects();
+        expect(reads).toBe(2);
+        await act(async () => { pending.splice(0).forEach(resolve => resolve()); });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().query.loading).toBe(false));
+        const observation = () => {
+            const query = hook.getCurrent().query;
+            return 'data' in query ? query.data?.connections[0]?.runtime.checkedAt
+                : query.byTargetKey['srv_a\u0000machine-a']?.connection?.runtime.checkedAt;
+        };
+        await waitForHomeGovernance(() => expect(observation()).toBe(2));
+        await changeSource(3);
+        await waitForHomeGovernance(() => expect(reads).toBe(3));
+        await act(async () => { pending.splice(0).forEach(resolve => resolve()); });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().query.loading).toBe(false));
+        expect(observation()).toBe(3);
+        let refresh!: Promise<unknown>;
+        await act(async () => { refresh = hook.getCurrent().query.refresh(); });
+        await waitForHomeGovernance(() => expect(reads).toBe(4));
+        await act(async () => { pending.splice(0).forEach(resolve => resolve()); await refresh; });
+        expect(reads).toBe(4);
+        expect(observation()).toBe(4);
     });
 
     it('settles each visible Machine independently and retries only the failed row', async () => {
@@ -94,6 +162,29 @@ describe('useProviderConnectionMachineViews', () => {
         }
         await waitForHomeGovernance(() => expect(rendered.getCurrent().loading).toBe(false));
         expect(reads()).toHaveLength(4);
+    });
+
+    it('updates mounted peer rows when another reader publishes a newer canonical check', async () => {
+        let checkedAt = 100;
+        providerHarness.intercept(RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE, async () =>
+            createProviderConnectionsDescribeFixture({ connections: [createProviderConnectionViewFixture({
+                connectionId: 'pc_a', runtime: { health: 'needs_attention', modelCount: 466, checkedAt,
+                    endpoints: [{ endpointTemplateId: 'chat', status: 'unauthorized', activity: 'idle',
+                        observedAt: checkedAt, errorCode: 'provider_endpoint_unauthorized', retryAt: null }] },
+            })] }));
+        const { useProviderConnectionMachineViews } = await import('./useProviderConnectionMachineViews');
+        const input = { enabled: true, connectionId: 'pc_a', targets: [row('srv_a', 'machine-a', serverId)] };
+        const first = await renderHook(() => useProviderConnectionMachineViews(input));
+        await waitForHomeGovernance(() => expect(first.getCurrent().loading).toBe(false));
+        expect(first.getCurrent().byTargetKey['srv_a\u0000machine-a']).toMatchObject({
+            connection: { runtime: { checkedAt: 100 } },
+        });
+        checkedAt = 200;
+        const second = await renderHook(() => useProviderConnectionMachineViews(input));
+        await waitForHomeGovernance(() => expect(second.getCurrent().loading).toBe(false));
+        expect(first.getCurrent().byTargetKey['srv_a\u0000machine-a']).toMatchObject({
+            connection: { runtime: { checkedAt: 200 } },
+        });
     });
 
     it('shares the selected Machine check with its peer row and retains it on a new detail demand', async () => {
@@ -149,7 +240,7 @@ describe('useProviderConnectionMachineViews', () => {
         await act(async () => { pending.splice(0).forEach(resolve => resolve(result)); });
     });
 
-    it('refreshes peer machine facts through the connection query Account refresh without crossing Homes', async () => {
+    it('refreshes only the selected keyed Machine check without crossing queries or Homes', async () => {
         let present = true;
         providerHarness.intercept(RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE, async request => (
             createProviderConnectionsDescribeFixture({ connections: present || request.serverId === 'srv_b'
@@ -172,11 +263,13 @@ describe('useProviderConnectionMachineViews', () => {
             .toMatchObject({ status: 'success', connection: { displayName: 'Initially observed' } });
         await act(async () => { await hook.getCurrent().query.refresh('account'); });
         await flushHookEffects();
-        expect(hook.getCurrent().peers.byTargetKey['srv_a\u0000machine-b']).toMatchObject({ status: 'success', connection: null });
+        expect(hook.getCurrent().peers.byTargetKey['srv_a\u0000machine-b']).toMatchObject({
+            status: 'success', connection: { displayName: 'Initially observed' },
+        });
         expect(hook.getCurrent().peers.byTargetKey['srv_b\u0000machine-b']).toMatchObject({ status: 'success', connection: { connectionId: 'pc_a', displayName: 'Initially observed' } });
     });
 
-    it('preserves a foreign Home read still pending when the active Home refreshes', async () => {
+    it('leaves unrelated checks and a pending foreign Home read alone when the selected query refreshes', async () => {
         let settleForeign!: (value: ReturnType<typeof createProviderConnectionsDescribeFixture>) => void;
         let label = 'Initial';
         providerHarness.intercept(RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE, async request => {
@@ -195,22 +288,19 @@ describe('useProviderConnectionMachineViews', () => {
         await waitForHomeGovernance(() => expect(settleForeign).toBeTypeOf('function'));
         label = 'Refreshed';
         await act(async () => { await hook.getCurrent().query.refresh('account'); });
-        await waitForHomeGovernance(() => expect(hook.getCurrent().peers.byTargetKey['srv_a\u0000machine-b'])
-            .toMatchObject({ status: 'success', connection: { displayName: 'Refreshed' } }));
+        expect(hook.getCurrent().peers.byTargetKey['srv_a\u0000machine-b'])
+            .toMatchObject({ connection: { displayName: 'Initial' } });
         await act(async () => { settleForeign(createProviderConnectionsDescribeFixture({ connections: [
             createProviderConnectionViewFixture({ connectionId: 'pc_a', displayName: 'Foreign' }),
         ] })); });
         await waitForHomeGovernance(() => expect(hook.getCurrent().peers.loading).toBe(false));
+        expect(hook.getCurrent().peers.byTargetKey['srv_a\u0000machine-b'])
+            .toMatchObject({ status: 'success', connection: { displayName: 'Initial' } });
         expect(hook.getCurrent().peers.byTargetKey['srv_b\u0000machine-b'])
             .toMatchObject({ status: 'success', connection: { displayName: 'Foreign' } });
     });
 
-    it('follows each peer describe approval on its captured Home without replaying the read', async () => {
-        for (const homeId of [serverId, otherServerId]) {
-            await installOwnMachineApprovalReplayBoundary({
-                harness: account.home, serverId: homeId, accountId: 'account-a', machineId: 'machine-shared',
-            });
-        }
+    it('settles passive peer checks with review-required errors without creating Inbox work', async () => {
         await account.home.requireUiApproval(otherServerId, 'providers.connections.describe');
         // Keep Sync's live scopes on the active Home; the peer retains its own persisted policy.
         await account.home.requireUiApproval(serverId, 'providers.connections.describe');
@@ -224,25 +314,18 @@ describe('useProviderConnectionMachineViews', () => {
         const rendered = await renderHook(() => useProviderConnectionMachineViews({
             enabled: true, connectionId: 'pc_a', targets,
         }));
-        await waitForHomeGovernance(() => {
-            expect(account.home.artifacts(serverId).list()).toHaveLength(1);
-            expect(account.home.artifacts(otherServerId).list()).toHaveLength(1);
-        });
-        await flushHookEffects();
-        expect(rendered.getCurrent().loading).toBe(true);
-        expect(Object.values(rendered.getCurrent().byTargetKey).every(value => value.status === 'loading')).toBe(true);
+        await waitForHomeGovernance(() => expect(rendered.getCurrent().loading).toBe(false));
+        for (const key of ['srv_a\u0000machine-shared', 'srv_b\u0000machine-shared']) {
+            expect(rendered.getCurrent().byTargetKey[key]).toMatchObject({ status: 'error', error: {
+                code: 'agent_error', action: 'review_connection',
+                failureCause: { errorCode: 'action_interactive_review_required' },
+            } });
+        }
+        expect(account.home.artifacts(serverId).list()).toHaveLength(0);
+        expect(account.home.artifacts(otherServerId).list()).toHaveLength(0);
         const reads = () => providerHarness.state.requests.filter(request => request.method === RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE);
         expect(reads()).toHaveLength(0);
-        for (const [homeId, scopeId] of [[otherServerId, 'srv_b'], [serverId, 'srv_a']] as const) {
-            const decision = await decideApprovalAsInbox(scopeId, account.home.artifacts(homeId).list()[0]!.id, 'approve');
-            expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true, result: { status: 'executed' } });
-        }
-        await waitForHomeGovernance(() => expect(rendered.getCurrent().loading).toBe(false));
-        for (const [key, homeId] of [['srv_a\u0000machine-shared', 'srv_a'], ['srv_b\u0000machine-shared', 'srv_b']] as const) {
-            const state = rendered.getCurrent().byTargetKey[key];
-            expect(state?.status === 'success' ? state.connection?.displayName : null).toBe(`approved on ${homeId}`);
-        }
-        expect(reads()).toHaveLength(2);
+        expect(rendered.getCurrent().pendingApproval).toBeNull();
     });
 
     it('reads each machine through its own server profile when two profiles share a machine id', async () => {
@@ -350,8 +433,8 @@ describe('useProviderConnectionMachineViews', () => {
 
         const switchRenderStart = switchRendersAreEmpty.length;
         await act(async () => {
-            if (home === 'active') await account.restore({ accountId: 'account-b' });
-            else await account.home.switchAccount(otherServerId, 'account-b');
+            if (home === 'active') await account.restore({ accountId: 'account-b', currentAccount: true });
+            else await account.home.switchAccount(otherServerId, 'account-b', { currentAccount: true });
             await rendered.rerender();
         });
 
@@ -390,7 +473,7 @@ describe('useProviderConnectionMachineViews', () => {
         providerHarness.intercept(RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE, async () => {
             calls += 1;
             if (calls === 1) {
-                await account.home.switchAccount(otherServerId, 'peer-account-b');
+                await account.home.switchAccount(otherServerId, 'peer-account-b', { currentAccount: true });
                 retired = true;
                 return createProviderConnectionsDescribeFixture({ connections: [createProviderConnectionViewFixture({
                     connectionId: 'pc_a', displayName: 'Retired peer Account A',

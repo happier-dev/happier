@@ -904,6 +904,16 @@ describe('ProviderConnectionDetailScreen', () => {
         await flushHookEffects();
         expect(describeRequests()).toHaveLength(1);
         expect(modelRequests()).toHaveLength(1);
+        state.focused = false;
+        await screen.update(detail());
+        await flushHookEffects();
+        const reads = account.home.requestsFor(PROVIDER_CONNECTIONS_ROWS_ROUTE_V1).length;
+        const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+        await act(async () => { publishHomeAccountChange(account.serverId, ['self']); });
+        await flushHookEffects();
+        expect(account.home.requestsFor(PROVIDER_CONNECTIONS_ROWS_ROUTE_V1)).toHaveLength(reads);
+        expect(describeRequests()).toHaveLength(1);
+        expect(modelRequests()).toHaveLength(1);
     });
 
     it('recovers a directly opened detail route when Provider availability finishes loading', async () => {

@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { resolveProviderModelPickerVisibility, type ProviderModelPickerSourceKind } from '@happier-dev/protocol/providers/catalog/modelPickerVisibility';
 import { useProviderCatalogForServer } from '@/sync/store/useProviderCatalog';
+import type { ProviderCatalogSnapshot } from '@/sync/store/settings/providerCatalogSnapshot';
 import { refreshProviderCatalog } from '@/sync/engine/settings/providerCatalogEngine';
 import { useProviderActionClient, type ProviderPendingApproval } from '@/providers/actions/useProviderActionClient';
 import { useRetireProviderStateOnAccountChange } from './accountLifetimeRetirement';
@@ -28,9 +29,15 @@ export type ProviderModelPickerVisibility = Readonly<{
 export function useProviderModelPickerVisibility(connectionId: string | null, owner?: Readonly<{
     kind: ProviderModelPickerSourceKind;
     serverId?: string | null;
+    enabled?: boolean;
 }>): ProviderModelPickerVisibility | null {
     const serverId = owner?.serverId;
-    const catalog = useProviderCatalogForServer(serverId);
+    const selectVisibility = React.useCallback((snapshot: ProviderCatalogSnapshot | null) => (
+        connectionId && snapshot?.data?.connections.some(connection => connection.id === connectionId)
+            ? snapshot.data.modelPickerVisibilityByConnectionId?.[connectionId] ?? null : undefined
+    ), [connectionId]);
+    const visibilityOverride = useProviderCatalogForServer(serverId, selectVisibility,
+        { enabled: owner?.enabled !== false && Boolean(connectionId && owner) });
     const [operation, setOperation] = React.useState<Readonly<{
         scope: object;
         busy: boolean;
@@ -75,9 +82,9 @@ export function useProviderModelPickerVisibility(connectionId: string | null, ow
             }
         })();
     }, [accountLifetime, connectionId, ready, scope, serverId, setProviderModelPickerVisibility]);
-    if (!connectionId || !owner || !catalog?.data?.connections.some(connection => connection.id === connectionId)) return null;
+    if (!connectionId || !owner || visibilityOverride === undefined) return null;
     const policy = resolveProviderModelPickerVisibility({ connectionId, kind: owner.kind,
-        modelPickerVisibilityByConnectionId: catalog.data.modelPickerVisibilityByConnectionId });
+        modelPickerVisibilityByConnectionId: visibilityOverride === null ? {} : { [connectionId]: visibilityOverride } });
     return { shown: policy.shown, defaultReason: policy.defaultReason,
         busy: !ready || (operation?.scope === scope && operation.busy),
         error: operation?.scope === scope ? operation.error : null, setShown, reviewCurrentState, pendingApproval };
