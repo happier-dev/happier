@@ -170,10 +170,12 @@ export function createExecutionRunControllerMessageHandler(args: Readonly<{
   onPublicStateUpdated?: (runId: string) => void;
   onModelOutput?: () => void;
 }>): AgentMessageHandler {
-  const publishTranscriptFact = (provider: ACPProvider, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }): void => {
+  const publishTranscriptFact = (provider: ACPProvider, body: ACPMessageData, opts?: Parameters<ExecutionRunTranscriptPublisher>[2]): void => {
+    const source = args.ctrl.backend.toolNormalizationSource;
+    const publicationOptions = source ? { ...opts, toolNormalizationSource: source } : opts;
     args.ctrl.pendingHostBarrier = appendExecutionRunControllerHostBarrier(
       args.ctrl,
-      () => args.sendAcp(provider, body, opts),
+      () => args.sendAcp(provider, body, publicationOptions),
       () => args.onPublicStateUpdated?.(args.runId),
     );
   };

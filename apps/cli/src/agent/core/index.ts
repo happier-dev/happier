@@ -14,7 +14,6 @@ export type {
   AcpAgentConfig,
   AgentBackendConfig,
   AgentId,
-  AgentTransport,
   McpServerConfig,
   StartSessionResult,
 } from './AgentTypes';

@@ -148,6 +148,7 @@ type LazyExecutionRunRuntimeShellConfig = Parameters<typeof createLazyExecutionR
 }>;
 
 function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
+    onToolNormalizationSource?: CreateCliExecutionRunBackendParams['onToolNormalizationSource'];
     workflowActionContext?: CreateCliExecutionRunBackendParams['workflowActionContext'];
     readApprovalProfileId?: CreateCliExecutionRunBackendParams['readApprovalProfileId'];
     cwd: string;
@@ -518,6 +519,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                 ...(opts.workflowActionContext ? { workflowActionContext: opts.workflowActionContext } : {}),
                 ...(opts.readApprovalProfileId ? { readApprovalProfileId: opts.readApprovalProfileId } : {}),
                 start: opts.start ?? null,
+                ...(opts.onToolNormalizationSource ? { onToolNormalizationSource: opts.onToolNormalizationSource } : {}),
                 ...(opts.parentSessionStateTarget ? { parentSessionStateTarget: opts.parentSessionStateTarget } : {}),
                 ...(opts.happierSessionId ? { happierSessionId: opts.happierSessionId } : {}),
                 ...(opts.sessionInteractionHost ? { sessionInteractionHost: opts.sessionInteractionHost } : {}),
@@ -626,6 +628,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
 }
 
 export function createExecutionRunRuntime(opts: Readonly<{
+    onToolNormalizationSource?: CreateCliExecutionRunBackendParams['onToolNormalizationSource'];
     workflowActionContext?: CreateCliExecutionRunBackendParams['workflowActionContext'];
     readApprovalProfileId?: CreateCliExecutionRunBackendParams['readApprovalProfileId'];
     projectLaunchContext?: CreateCliExecutionRunBackendParams['projectLaunchContext'];
@@ -702,6 +705,7 @@ export function createExecutionRunRuntime(opts: Readonly<{
         }
         : resolvedBackendTarget?.canonical;
     const runtimeShellConfig = createEngineExecutionRunRuntimeShellConfig({
+            ...(opts.onToolNormalizationSource ? { onToolNormalizationSource: opts.onToolNormalizationSource } : {}),
             ...(opts.workflowActionContext ? { workflowActionContext: opts.workflowActionContext } : {}),
             ...(opts.readApprovalProfileId ? { readApprovalProfileId: opts.readApprovalProfileId } : {}),
             ...(opts.projectLaunchContext ? { projectLaunchContext: opts.projectLaunchContext } : {}),

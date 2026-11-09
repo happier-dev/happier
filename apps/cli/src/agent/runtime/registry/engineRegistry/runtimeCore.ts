@@ -549,6 +549,10 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                             occurrenceId: nativeIdentity.occurrenceId,
                             isCurrent: nativeIdentity.isCurrent,
                         });
+                        options.onToolNormalizationSource?.({
+                            protocol: 'native',
+                            agent: { pluginId: runtimeLease.pluginId, localId: runtimeLease.localAgentId },
+                        });
                         const baseCreateRunInvocationServices = runtimeRegistry?.createAgentInvocationServices
                             ? runtimeRegistry.createAgentInvocationServices.bind(runtimeRegistry)
                             : params.createNativeAgentInvocationServices;
@@ -704,7 +708,7 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                             : null;
                         const executionPermissionHandler = runPermissionScope?.handler ?? host?.permissionHandler;
                         const createSessionContext: NativeAgentSessionContextLeaseFactory | null = host
-                            ? async ({ services: fallbackServices, signal: runtimeSignal, readActiveTurnAdmissionWitness, readSessionRuntime, actionRequestAttributionV1 }) => {
+                            ? async ({ services: fallbackServices, signal: runtimeSignal, onInteractionUnavailable, readActiveTurnAdmissionWitness, readSessionRuntime, actionRequestAttributionV1 }) => {
                                     const sourceLifetime = new AbortController();
                                     const signal = AbortSignal.any([runtimeSignal, sourceLifetime.signal]);
                                     const sessionId = host.session.sessionId;
@@ -833,6 +837,7 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                                         const sourceCustody = nativeIdentity.sourceCustody;
                                         const nativeSessionServiceParams = {
                                             permissionHandler: executionPermissionHandler,
+                                            ...(onInteractionUnavailable ? { onUnavailable: onInteractionUnavailable } : {}),
                                             pluginId: nativeIdentity.pluginId,
                                             contributionId,
                                             runtimeId: `agent-session-projection:${options.runId ?? sessionId}`,
@@ -920,6 +925,9 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                                             isOccurrenceCurrent: nativeIdentity.isCurrent,
                                         });
                                         const protocols = createPublicAcpRuntimeProtocols({
+                                            onSessionOpening: () => options.onToolNormalizationSource?.({
+                                                protocol: 'acp', agent: { pluginId: runtimeLease.pluginId, localId: contributionId },
+                                            }),
                                             pluginId: nativeIdentity.pluginId,
                                             agentId: nativeIdentity.agentId,
                                             signal,
@@ -1023,6 +1031,7 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                         const detachedContextLeaseFactory = hasDetachedInteractionIdentity
                             ? createNativeAgentExecutionRunContextLeaseFactory({
                                 lease: runtimeLease,
+                                onToolNormalizationSource: options.onToolNormalizationSource,
                                 runId: options.runId!,
                                 controllerOccurrenceId: options.controllerOccurrenceId!,
                                 callId: options.callId!,

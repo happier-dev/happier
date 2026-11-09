@@ -32,6 +32,12 @@ class TestPermissionHandler extends BasePermissionHandler {
             this.addPendingRequestToState(toolCallId, toolName, input);
         });
     }
+
+    requestPrivate(input: unknown, traceSummary?: { kind?: string; id?: string; mode?: string; itemCount?: number; optionCount?: number }) {
+        return this.requestPermissionDecision('private-dialog', 'AskUserQuestion', input, {
+            source: 'custom_native_dialog', traceSummary,
+        });
+    }
 }
 
 describe('BasePermissionHandler tool trace', () => {
@@ -39,11 +45,29 @@ describe('BasePermissionHandler tool trace', () => {
     __resetToolTraceForTests();
   });
 
+  it.each([undefined, { kind: 'recognized', id: 'native_dialog', mode: 'notice', itemCount: 1, optionCount: 2 }])(
+    'traces only producer-supplied safe facts for a private native dialog (%j)', async (traceSummary) => {
+      await withToolTraceFile('happy-tool-trace-private-dialog-', async (filePath) => {
+        const session = new FakeSession();
+        const handler = new TestPermissionHandler(session as never, {
+          toolTrace: () => ({ protocol: 'native', agent: { pluginId: 'acme.agents', localId: 'custom' } }),
+        });
+        const pending = handler.requestPrivate({ questions: [{ question: 'private-secret', options: ['secret-choice'] }] }, traceSummary);
+        const raw = readFileSync(filePath, 'utf8');
+        expect(raw).not.toContain('private-secret');
+        expect(raw).not.toContain('secret-choice');
+        expect(JSON.parse(raw.trim()).payload.options.input).toEqual({ redacted: true, ...traceSummary });
+        await session.rpcHandlerManager.handlers.get('permission')?.({ id: 'private-dialog', approved: false, decision: 'denied' });
+        await pending;
+      });
+    },
+  );
+
   it('records permission-request events when tool tracing is enabled', async () => {
     await withToolTraceFile('happy-tool-trace-permissions-', async (filePath) => {
       const session = new FakeSession();
       const handler = new TestPermissionHandler(session as any, {
-        toolTrace: { protocol: 'codex', provider: 'codex' },
+        toolTrace: () => ({ protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } }),
       } as any);
 
       const pending = handler.request('perm-1', 'bash', { command: ['bash', '-lc', 'echo hello'] });
@@ -53,11 +77,10 @@ describe('BasePermissionHandler tool trace', () => {
       const lines = raw.trim().split('\n');
       expect(lines).toHaveLength(1);
       expect(JSON.parse(lines[0])).toMatchObject({
-        v: 1,
+        v: 2,
         direction: 'outbound',
         sessionId: 'test-session-id',
-        protocol: 'codex',
-        provider: 'codex',
+        source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } },
         kind: 'permission-request',
         payload: expect.objectContaining({
           type: 'permission-request',
@@ -77,7 +100,7 @@ describe('BasePermissionHandler tool trace', () => {
     await withToolTraceFile('happy-tool-trace-permissions-', async (filePath) => {
       const session = new FakeSession();
       const handler = new TestPermissionHandler(session as any, {
-        toolTrace: { protocol: 'codex', provider: 'codex' },
+        toolTrace: () => ({ protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } }),
       } as any);
 
       const pending = handler.request('perm-1', 'bash', { command: ['bash', '-lc', 'echo hello'] });
@@ -92,11 +115,10 @@ describe('BasePermissionHandler tool trace', () => {
       const lines = raw.trim().split('\n');
       expect(lines).toHaveLength(2);
       expect(JSON.parse(lines[1])).toMatchObject({
-        v: 1,
+        v: 2,
         direction: 'inbound',
         sessionId: 'test-session-id',
-        protocol: 'codex',
-        provider: 'codex',
+        source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } },
         kind: 'permission-response',
         payload: {
           type: 'permission-response',

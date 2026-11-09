@@ -77,7 +77,7 @@ import { createProviderEnforcedPermissionHandler } from '@/agent/permissions/pro
 import { createInitialHostRuntimeActivityMutation } from '@/agent/runtime/session/activity/createHostRuntimeActivityProjection';
 import { ExecutionRunHostBridge } from '../ExecutionRunHostBridge';
 import { createRunnerExecutionRunSnapshotResolver } from '@/agent/runtime/session/process/runnerExecutionRunSnapshot';
-import { createExecutionRunTranscriptCustodyError } from '../executionRunTranscriptPublisher';
+import { createCommittedExecutionRunTranscriptPublisher } from '../executionRunTranscriptPublisher';
 import { randomUUID } from 'node:crypto';
 import { recordTrackedRunnerAgentSessionOpenAttestation } from '@/daemon/agentRuntime/runnerAgentSessionOpenAttestation';
 import { prepareProjectAgentLaunch } from '@/workspaces/projectSetup/projectAgentLaunch';
@@ -101,6 +101,7 @@ type AdmittedSessionRunOptions = Readonly<{
   runReportPreferencesUnavailable?: boolean;
   beforeRunReportPreferencesRead?: () => Promise<void>;
   beforeTranscriptAck?: () => Promise<void>;
+  observeTranscriptObservation?: (payload: unknown) => void;
   runtimePluginIds?: readonly string[];
   acpCatalog?(directory: string): ReturnType<typeof AcpCatalogRecordV1Schema.parse>;
   run(fixture: AdmittedSessionRunFixture): Promise<void>;
@@ -274,7 +275,10 @@ export async function runRequesterAttributionCase(source: 'protected child' | 'o
       }
       const callback = args.at(-1);
       const answer = activityHome.answer(event, args[0]) ?? transcriptHome.answer(event, args[0]);
-      if (event === SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1) await options?.beforeTranscriptAck?.();
+      if (event === SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1) {
+        options?.observeTranscriptObservation?.(args[0]);
+        await options?.beforeTranscriptAck?.();
+      }
       if (answer !== null && typeof callback === 'function') callback(answer);
     });
   });
@@ -732,14 +736,10 @@ export async function runRequesterAttributionCase(source: 'protected child' | 'o
       serverId: attribution.serverId, sessionMetadata: parentMetadata, machineId: attribution.machineId,
       directory, accountEntries: [], profileEntries: [], projectEntries: [] }),
     sessionInteractionHost: { session, machineId: attribution.machineId, permissionHandler: parentPermissionHandler },
-    sendAcp: async (provider, body, opts) => {
-      const admission = await session.enqueueAgentMessageCommitted(provider, body, {
-        localId: 'id' in body && typeof body.id === 'string' ? body.id : randomUUID(),
-        ...(opts?.meta ? { meta: opts.meta } : {}),
-        provenance: { kind: 'non_dependent', source: 'sidechain' },
-      });
-      if (!admission.persisted) throw createExecutionRunTranscriptCustodyError();
-    },
+    sendAcp: createCommittedExecutionRunTranscriptPublisher({
+      enqueueAgentMessageCommitted: session.enqueueAgentMessageCommitted.bind(session),
+      readParentToolNormalizationSource: () => null,
+    }),
   }) : undefined;
   onTestFinished(async () => {
     if (completed) return;

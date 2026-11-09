@@ -1,5 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import axios from 'axios';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import { accountSettingsParse, FeaturesResponseSchema, sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol';
 import { loadMcpServerCatalogV1 } from '@happier-dev/protocol/mcp/servers/serverCatalogV1';
@@ -13,6 +12,7 @@ import type {
   AgentRuntime,
   AgentSessionRuntime,
   AgentSessionRuntimeContext,
+  AgentSessionRuntimeEvent,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import type {
   ResolvedAgentContribution,
@@ -30,12 +30,17 @@ import { resolveBackendRuntimeCore, resolveSessionOwnedRunToolPolicy } from './r
 import { createExecutionRunPermissionHandler } from '@/agent/executionRuns/policy/executionRunPermissionDecision';
 import { createRunScopedExecutionPermissionHandler } from '@/agent/executionRuns/policy/runScopedExecutionPermissionHandler';
 import { createExecutionRunAccountSettingsSnapshotResolver } from '@/api/machine/resolveExecutionRunAccountSettingsSnapshot';
+import { createProjectSessionRuntimeFixture } from '@/daemon/testkit/projectSessionRuntimeFixture';
+import { qualifyMcpExecutionSourceForHost, readMcpExecutionSource } from '@/mcp/runtime/mcpExecutionSource';
+import { readRequesterSessionCredentialsForChild, requesterSessionCredentialPath, REQUESTER_SESSION_ID_ENV } from '@/daemon/sessionEncryption/requesterSessionCustody';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { resetInMemoryAccountSettingsContextForTests } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { createManifestAgentCatalogEntry } from '@/plugins/projection/registry/agentCliMetadata';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
+import { createPluginInteractionsService } from '@/plugins/runtime/invocation/services/interactions';
 import { setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createClaudeNativeAgentSdkContext } from '../../../../../../../packages/plugins/claude/src/agent/runtime/nativeServices';
 import { createClaudeUnifiedResumeChoiceStartupHandler } from '../../../../../../../packages/plugins/claude/src/agent/runtime/terminal/unified/resumeChoice/startup';
@@ -114,11 +119,74 @@ function createContributions(delivery: AgentSessionCapabilities['delivery'] = ['
     agentId: AGENT_ID, pluginId: AGENT_ID, definition: agent.richDefinition.definition,
     cli: null, provenance: 'external',
   });
-  const contributes = createResolvedContributionRegistry({ agents: [{ ...agent, catalogEntry }] });
-  return { backend, agent, contributes };
+  const projectedAgent = { ...agent, catalogEntry };
+  const contributes = createResolvedContributionRegistry({ agents: [projectedAgent] });
+  return { backend, agent: projectedAgent, contributes };
 }
 
 describe('resolveBackendRuntimeCore Session-owned Execution Run scope', () => {
+
+  it('fails a Session-derived finite helper when a native question cannot be presented', async () => {
+    // Without declared multi-turn delivery the Session adapter is finite;
+    // bounded Session-owned Agents that declare newTurn retain their repair turn.
+    const { backend, agent } = createContributions([]);
+    let state: AgentState = { requests: {}, completedRequests: {} };
+    const parent = { sessionId: 'finite-parent',
+      rpcHandlerManager: new RpcHandlerManager({ scopePrefix: 'finite-parent', encryptionMode: 'plain', logger: () => {} }),
+      getMetadataSnapshot: () => createTestMetadata({ path: '/parent', machineId: 'machine-a' }),
+      getAgentStateSnapshot: () => state, updateMetadata: async () => undefined,
+      updateAgentState: async (update: (previous: AgentState) => AgentState) => { state = update(state); },
+      enqueueAgentMessageCommitted: async () => undefined, setExecutionRunWorkerUpdateSource() {},
+    };
+    const permissions = new ProviderEnforcedPermissionHandler(parent as unknown as ApiSessionClient, { logPrefix: '[FiniteQuestion]' });
+    const adapter = await resolveBackendRuntimeCore({
+      backend, agent, runtimeRegistry: null, executionSurfaces: createEmptyBackendExecutionSurfaces(),
+      runtimeOwner: { backendId: AGENT_ID,
+        selected: { kind: 'plugin_engine', ownerId: AGENT_ID, provenance: 'external', pluginId: AGENT_ID }, candidates: [] },
+      // The native Agent and parent persistence are the only external boundaries.
+      nativeAgentRuntime: { sessions: { open: async (request, context) => {
+        let publish: ((event: AgentSessionRuntimeEvent) => void) | undefined;
+        return {
+          watch(listener) { publish = listener; return { dispose() {} }; },
+          async send(input) {
+            publish?.({ kind: 'input-accepted', sessionId: request.sessionId, sequence: 1, emittedAtMs: 1,
+              inputIds: input.inputIds, delivery: input.delivery });
+            publish?.({ kind: 'turn-start', sessionId: request.sessionId, sequence: 2, emittedAtMs: 2,
+              turnId: input.delivery.turnId, startedBy: 'host' });
+            await context.services.interactions.askQuestions({ kind: 'questions', title: 'Choose scope',
+              questions: [{ id: 'scope', prompt: 'Which scope?', type: 'text', required: true }],
+            });
+            publish?.({ kind: 'turn-complete', sessionId: request.sessionId, sequence: 3, emittedAtMs: 3,
+              turnId: input.delivery.turnId });
+            return { status: 'admitted' };
+          },
+          async cancel() { return { status: 'notRunning' }; },
+          async dispose() {},
+        };
+      } } },
+      nativeAgentRuntimeIdentity: { pluginId: AGENT_ID, pluginVersion: '1.0.0', agentId: AGENT_ID,
+        localAgentId: 'default', occurrenceId: 'finite-occurrence', isCurrent: () => true },
+      createNativeAgentInvocationServices: async ({ session, signal, isOccurrenceCurrent }) => ({
+        ...createUnavailablePluginServices(),
+        interactions: createPluginInteractionsService({ currentSession: session?.current ?? null, signal, isOccurrenceCurrent }),
+      }),
+    });
+    const observeToolSource = vi.fn();
+    const runtime = adapter!.runtimeCore.createExecutionRunBackend({
+      scope: 'session_owned', cwd: '/parent', runId: 'finite-child', controllerOccurrenceId: 'finite-child-occurrence',
+      backendId: AGENT_ID, permissionMode: 'read_only',
+      onToolNormalizationSource: observeToolSource,
+      start: { intent: 'review', runClass: 'bounded', retentionPolicy: 'ephemeral', ioMode: 'request_response' },
+      sessionInteractionHost: { session: parent as unknown as ApiSessionClient, machineId: 'machine-a', permissionHandler: permissions },
+    });
+    if (!runtime) throw new Error('Expected a Session-derived finite helper');
+    try {
+      await runtime.provisionRuntime({ initialPrompt: 'Review the change' });
+      expect(observeToolSource).toHaveBeenCalledWith({ protocol: 'native', agent: { pluginId: AGENT_ID, localId: 'default' } });
+      await expect(runtime.waitForTurnCompletion?.()).rejects.toMatchObject({ executionRunErrorCode: 'execution_run_interaction_unavailable' });
+      expect(state.requests).toEqual({});
+    } finally { await runtime.dispose(); await permissions.abortPendingRequestsAndFlush('test cleanup'); }
+  });
 
   it('continues Discuss on the same current detached summary Run after refinement', async () => {
     const { backend, agent, contributes } = createContributions(['newTurn', 'steer', 'followUp']);
@@ -221,16 +289,16 @@ describe('resolveBackendRuntimeCore Session-owned Execution Run scope', () => {
       getMetadataSnapshot: () => ({ path: '/parent', machineId: 'machine-a' }),
       getAgentStateSnapshot: () => state, updateMetadata: async () => undefined,
       updateAgentState: async (update: (previous: AgentState) => AgentState) => { state = update(state); },
+      updateAgentStateRequestSettlement: async (update: (previous: AgentState) => AgentState) => { state = update(state); },
       enqueueAgentMessageCommitted: async () => undefined,
       setExecutionRunWorkerUpdateSource: () => {},
     };
-    const permissions = new ProviderEnforcedPermissionHandler(parent as unknown as ApiSessionClient, { logPrefix: '[ChildTrust]' });
     const token = `${Buffer.from('{"alg":"none"}').toString('base64url')}.${Buffer.from('{"sub":"trust-owner"}').toString('base64url')}.`;
     const metadata = createTestMetadata({ path: '/parent', machineId: 'machine-a' });
     const controls: SessionRuntimeControls = {};
     applySessionRuntimeControls(controls, { readPermissionHandler: () => permissions });
-    // Compose the actual Session RPC registrar with the existing runtime permission owner.
-    // Registration must not create a competing responder that settles only AgentState.
+    // Session RPC registration precedes runtime installation. Its generic
+    // routes are replaced by the live native permission owner below.
     const registration = registerSessionClientRuntimeHandlers({
       rpcHandlerManager, token, serverId: 'trust-home', serverUrl: 'http://127.0.0.1:1',
       readOwnerAccountCredentials: async () => ({ token, encryption: null }),
@@ -245,6 +313,7 @@ describe('resolveBackendRuntimeCore Session-owned Execution Run scope', () => {
       getTranscriptQueryContext: () => ({ encryptionMode: 'plain' }),
       persistVoiceAgentRunMetadataFromPublicRun: () => {}, socketEmitExecutionRunUpdated: () => {},
     });
+    const permissions = new ProviderEnforcedPermissionHandler(parent as unknown as ApiSessionClient, { logPrefix: '[ChildTrust]' });
     const trust = 'Accessing workspace:\n/tmp/new-child\nQuick safety check: Is this a project you created or one you trust?\n❯ No, exit\n  Yes, I trust this folder\nEnter to confirm · Esc to cancel';
     const focusedTrust = trust.replace('❯ No, exit', '  No, exit').replace('  Yes, I trust this folder', '❯ Yes, I trust this folder');
     const port = createFakeControlPort({ captures: [trust, focusedTrust, '──────────────────────────────\n❯ \n──────────────────────────────'] });
@@ -283,10 +352,11 @@ describe('resolveBackendRuntimeCore Session-owned Execution Run scope', () => {
       expect(requestId).toContain('execution-run:trust-child:trust-child-occurrence:');
       expect(request).toMatchObject({ tool: 'AskUserQuestion', arguments: { happierDialog: { dialogId: 'trust_folder' } } });
       expect(port.sentLiteral).toEqual([]);
-      await rpcHandlerManager.handleRequest({ method: `${parent.sessionId}:session.user_action.answer`,
+      const answer = await rpcHandlerManager.handleRequest({ method: `${parent.sessionId}:session.user_action.answer`,
         params: { id: requestId, approved: true, answers: { claudeUnifiedTerminalTrustFolder: ['trust_once'] } },
         callerAuthority: 'present_user',
       });
+      expect(answer, JSON.stringify(answer)).toBeUndefined();
       await vi.waitFor(() => expect(state.requests?.[requestId]).toBeUndefined());
       expect(port.sentKeys).toEqual(['ArrowDown', 'Enter']);
       expect(state.completedRequests?.[requestId]).toMatchObject({ status: 'approved' });
@@ -584,32 +654,48 @@ describe('resolveBackendRuntimeCore Session-owned Execution Run scope', () => {
     };
 
     const ownerToken = `e30.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
-    const features = FeaturesResponseSchema.parse({ features: { teams: { enabled: true, credentialResources: { enabled: true } } }, capabilities: {} });
-    vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => Response.json(features)));
-    // Home transport is replaced; the detached Run consumes the actual Machine
-    // snapshot resolver, shared-resource admission and MCP materializer.
-    vi.spyOn(axios, 'get').mockImplementation(async url => {
-      const target = new URL(String(url));
-      expect(target.origin).toBe('https://detached-run-owner.test');
-      if (target.pathname === '/v2/account/settings') return { status: 200, data: { version: 1, content: { t: 'plain', v: {} } } };
-      if (target.pathname === '/v1/account/encryption/currentness') return { status: 200, data: {
-        mode: 'plain', version: 1, settingsVersion: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
-      } };
-      if (target.pathname === '/v1/account/entity-rows/mcp' && snapshot.mcpServerCatalog?.status === 'ready') return {
-        status: 200, data: { status: 'present', revision: 1, content: { t: 'plain', v: snapshot.mcpServerCatalog.catalog } },
-      };
-      if (target.pathname === '/v1/account/saved-secrets/resources/materials') return { status: 200, data: { resources: [{
+    if (snapshot.mcpServerCatalog?.status !== 'ready') throw new Error('Expected the fixture MCP catalog');
+    // Home transport is replaced; actual Account/Session birth and Machine
+    // custody qualify the source before the detached Run materializes MCP.
+    const sourceFixture = await createProjectSessionRuntimeFixture({
+      accountId: 'owner', serverId: 'detached-run-owner', serverUrl: 'https://detached-run-owner.test',
+      homeServerIdentityId: 'srv_detached_run_owner', boundSessionId: 'detached-source-parent',
+      credentials: { token: ownerToken, encryption: null }, mcpCatalog: snapshot.mcpServerCatalog.catalog,
+      readAdditionalHttpResponse: async url => {
+        if (new URL(url).pathname !== '/v1/account/saved-secrets/resources/materials') return undefined;
+        return { status: 200, data: { resources: [{
         resourceId: 'wilson-token', encryptionMode: 'plain', recipientEnvelope: null,
         storedContent: snapshot.savedSecretResources?.[0]?.storedContent,
         entry: { ref: 'happier:shared-secret:v1:wilson-token', source: 'shared_resource', relationship: 'owner',
           ownerAccountId: 'owner', name: 'Test token', kind: 'token', revision: 1, materialStatus: 'ready',
           capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } },
-      }] } };
-      return { status: 404, data: {} };
+        }] } };
+      },
     });
-    const resolveOwnerSnapshot = createExecutionRunAccountSettingsSnapshotResolver({ machineId: 'machine-a',
+    const features = FeaturesResponseSchema.parse({ features: { teams: { enabled: true, credentialResources: { enabled: true } } }, capabilities: {} });
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => Response.json(features)));
+    const childEnvironment = createEnvKeyScope([REQUESTER_SESSION_ID_ENV]);
+    childEnvironment.patch({ [REQUESTER_SESSION_ID_ENV]: 'detached-source-parent' });
+    onTestFinished(() => childEnvironment.restore());
+    const sourceCredentials = await readRequesterSessionCredentialsForChild(requesterSessionCredentialPath({
+      happyHomeDir: sourceFixture.directory, sessionId: 'detached-source-parent', attribution: sourceFixture.bootstrap.attribution,
+    }));
+    if (!sourceCredentials) throw new Error('Expected the actual admitted child credential custody');
+    const ownerSnapshot = createExecutionRunAccountSettingsSnapshotResolver({ machineId: 'machine',
       serverHttpBaseUrl: 'https://detached-run-owner.test', readCredentials: async () => ({ token: ownerToken, encryption: null }),
       isOwnerCurrent: () => true, onSettings: () => {} });
+    let qualifiedSource: ReturnType<typeof readMcpExecutionSource> | undefined;
+    const resolveOwnerSnapshot = Object.assign(ownerSnapshot, {
+      readAgentExecutionContext: async (signal?: AbortSignal) => {
+        qualifiedSource ??= readMcpExecutionSource({ credentials: sourceCredentials,
+          sessionId: 'detached-source-parent', machineId: 'machine', serverHttpBaseUrl: 'https://detached-run-owner.test',
+          signal: sourceFixture.signal }).then(source => qualifyMcpExecutionSourceForHost(source, sourceFixture.signal));
+        const source = await qualifiedSource;
+        signal?.throwIfAborted();
+        if (source.kind !== 'requester' || source.identity.kind === 'owner_person') throw new Error('Expected admitted Agent source custody');
+        return { requesterIdentity: source.identity, isolationEnabled: false };
+      },
+    });
 
     const runtime = adapter?.runtimeCore.createExecutionRunBackend({
       scope: 'detached',
@@ -626,7 +712,7 @@ describe('resolveBackendRuntimeCore Session-owned Execution Run scope', () => {
         capabilitySelection: { mcp: {
         v: 1, managedServersEnabled: false, forceIncludeServerIds: ['wilson-brief'], forceExcludeServerIds: [],
       } } },
-      machineId: 'machine-a', resolveAccountSettingsSnapshot: resolveOwnerSnapshot,
+      machineId: 'machine', resolveAccountSettingsSnapshot: resolveOwnerSnapshot,
     } as never);
     const messages: import('@/agent/core/AgentMessage').AgentMessage[] = [];
     runtime?.subscribeMessages(message => messages.push(message));
@@ -665,6 +751,7 @@ describe('resolveBackendRuntimeCore Session-owned Execution Run scope', () => {
       expect(observedContext.executionRun.services).not.toHaveProperty('transcripts');
     } finally {
       await runtime?.dispose();
+      await resolveOwnerSnapshot.dispose();
     }
   });
 

@@ -495,20 +495,6 @@ describe('native Agent tool approval policy', () => {
 });
 
 describe('ProviderEnforcedPermissionHandler always-auto-approve matching', () => {
-  it('keeps source-owned terminal-dialog trace redaction on the canonical Protocol policy seam', () => {
-    const baseHandlerSource = readFileSync(
-      new URL('../BasePermissionHandler.ts', import.meta.url),
-      'utf8',
-    );
-
-    expect(baseHandlerSource.includes(
-      "import { CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE } from '@happier-dev/protocol/agents/claude/permissionRequestSource';",
-    )).toBe(true);
-    expect(baseHandlerSource.includes(
-      "import { CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE } from '@happier-dev/plugin-sdk/agents';",
-    )).toBe(false);
-  });
-
   afterEach(() => {
     delete process.env.HAPPIER_STACK_TOOL_TRACE;
     delete process.env.HAPPIER_STACK_TOOL_TRACE_FILE;
@@ -1240,9 +1226,7 @@ describe('ProviderEnforcedPermissionHandler always-auto-approve matching', () =>
       const session = new FakeSession();
       const handler = new ProviderEnforcedPermissionHandler(session as any, {
         logPrefix: '[Test]',
-        // Type-level support for toolTrace is intentionally part of the implementation task.
-        // For the RED test, cast to avoid production changes before the failing assertion.
-        toolTrace: { protocol: 'acp', provider: 'opencode' },
+        toolTrace: () => ({ protocol: 'acp', agent: { pluginId: 'happier.agent.opencode', localId: 'opencode' } }),
       } as any);
 
       const pending = handler.handleToolCall('perm-1', 'Bash', { command: 'echo hello' });
@@ -1253,8 +1237,7 @@ describe('ProviderEnforcedPermissionHandler always-auto-approve matching', () =>
       expect(JSON.parse(lines[0] as string)).toMatchObject({
         direction: 'outbound',
         sessionId: 'test-session-id',
-        protocol: 'acp',
-        provider: 'opencode',
+        source: { protocol: 'acp', agent: { pluginId: 'happier.agent.opencode', localId: 'opencode' } },
         kind: 'permission-request',
         payload: expect.objectContaining({
           type: 'permission-request',
@@ -1282,7 +1265,7 @@ describe('ProviderEnforcedPermissionHandler always-auto-approve matching', () =>
       const session = new FakeSession();
       const handler = new ProviderEnforcedPermissionHandler(session as any, {
         logPrefix: '[Test]',
-        toolTrace: { protocol: 'claude', provider: 'claude' },
+        toolTrace: () => ({ protocol: 'native', agent: { pluginId: 'happier.agent.claude', localId: 'claude' } }),
       });
       const pending = handler.handleToolCall('dialog-1', 'AskUserQuestion', {
         happierDialog: {
@@ -1315,13 +1298,6 @@ describe('ProviderEnforcedPermissionHandler always-auto-approve matching', () =>
           options: {
             input: {
               redacted: true,
-              dialog: {
-                kind: 'unrecognized',
-                mode: 'generic',
-                dialogId: 'unrecognized_confirmation',
-              },
-              questionCount: 1,
-              optionCount: 2,
             },
           },
         },

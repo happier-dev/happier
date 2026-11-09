@@ -1,10 +1,36 @@
-import type { ToolTraceEventV1 } from './toolTrace';
+import { resolveToolEnvelopeMeta } from '@happier-dev/protocol/tools/v2/meta';
+import { getToolTraceSourceKey, readToolTraceEvent, type ToolTraceEvent, type ToolTraceEventV1 } from './toolTraceEvent';
 
 export type ToolTraceFixturesV1 = {
     v: 1;
     generatedAt: number;
     examples: Record<string, ToolTraceEventV1[]>;
 };
+
+export type ToolTraceFixturesV2 = {
+    v: 2;
+    generatedAt: number;
+    examples: Record<string, ToolTraceEvent[]>;
+};
+
+export function readToolTraceFixtures(value: unknown): ToolTraceFixturesV1 | ToolTraceFixturesV2 | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const fixture = value as Record<string, unknown>;
+    if ((fixture.v !== 1 && fixture.v !== 2) || typeof fixture.generatedAt !== 'number') return null;
+    if (!fixture.examples || typeof fixture.examples !== 'object' || Array.isArray(fixture.examples)) return null;
+    const examples: Record<string, ToolTraceEvent[]> = {};
+    for (const [key, values] of Object.entries(fixture.examples)) {
+        if (!Array.isArray(values)) return null;
+        const events: ToolTraceEvent[] = [];
+        for (const value of values) {
+            const event = readToolTraceEvent(value);
+            if (!event || (fixture.v === 1 && event.v !== 1)) return null;
+            events.push(event);
+        }
+        examples[key] = events;
+    }
+    return { v: fixture.v, generatedAt: fixture.generatedAt, examples } as ToolTraceFixturesV1 | ToolTraceFixturesV2;
+}
 
 function isRecordableKind(kind: string): boolean {
     return (
@@ -17,17 +43,17 @@ function isRecordableKind(kind: string): boolean {
     );
 }
 
-function getToolNameForKey(event: ToolTraceEventV1): string | null {
+function getToolNameForKey(event: ToolTraceEvent): string | null {
     if (event.kind === 'tool-call') {
         const payload = event.payload as any;
-        const canonical = payload?.input?._happier?.canonicalToolName;
+        const canonical = resolveToolEnvelopeMeta(payload?.input)?.canonicalToolName;
         if (typeof canonical === 'string' && canonical.length > 0) return canonical;
         const name = payload?.name;
         return typeof name === 'string' && name.length > 0 ? name : null;
     }
     if (event.kind === 'tool-result' || event.kind === 'tool-call-result') {
         const payload = event.payload as any;
-        const canonical = payload?.output?._happier?.canonicalToolName;
+        const canonical = resolveToolEnvelopeMeta(payload?.output)?.canonicalToolName;
         if (typeof canonical === 'string' && canonical.length > 0) return canonical;
         const name = payload?.name ?? payload?.toolName;
         return typeof name === 'string' && name.length > 0 ? name : null;
@@ -40,7 +66,7 @@ function getToolNameForKey(event: ToolTraceEventV1): string | null {
     return null;
 }
 
-function getCallIdForIndex(event: ToolTraceEventV1): string | null {
+export function getCallIdForIndex(event: ToolTraceEvent): string | null {
     const payload: any = event.payload as any;
     if (event.kind === 'tool-call') {
         const callId = payload?.callId ?? payload?.id ?? payload?.toolCallId;
@@ -83,18 +109,15 @@ function truncateDeep(value: unknown, opts?: { maxString?: number; maxArray?: nu
     return out;
 }
 
-function sanitizeEventForFixture(event: ToolTraceEventV1): ToolTraceEventV1 {
+export function sanitizeEventForFixture(event: ToolTraceEvent): ToolTraceEvent {
     return {
         ...event,
         payload: truncateDeep(event.payload),
     };
 }
 
-export function extractToolTraceFixturesFromJsonlLines(lines: string[]): ToolTraceFixturesV1 {
-    const examples: Record<string, ToolTraceEventV1[]> = {};
-    const recordableEvents: ToolTraceEventV1[] = [];
-    const callIdToToolName: Map<string, string> = new Map();
-
+export function readToolTraceFixtureEvents(lines: readonly string[]): Array<{ event: ToolTraceEvent; toolName: string | null }> {
+    const events: Array<{ event: ToolTraceEvent; toolName: string | null }> = [];
     for (const line of lines) {
         const trimmed = line.trim();
         if (trimmed.length === 0) continue;
@@ -106,44 +129,48 @@ export function extractToolTraceFixturesFromJsonlLines(lines: string[]): ToolTra
             continue;
         }
 
-        const event = parsed as Partial<ToolTraceEventV1>;
-        if (event?.v !== 1) continue;
-        if (typeof event.kind !== 'string' || typeof event.protocol !== 'string') continue;
+        const event = readToolTraceEvent(parsed);
+        if (!event) continue;
         if (!isRecordableKind(event.kind)) continue;
 
-        recordableEvents.push(event as ToolTraceEventV1);
+        events.push({ event, toolName: getToolNameForKey(event) });
     }
+    return events;
+}
+
+export function extractToolTraceFixturesFromJsonlLines(lines: string[]): ToolTraceFixturesV2 {
+    const examples: Record<string, ToolTraceEvent[]> = {};
+    const recordableEvents = readToolTraceFixtureEvents(lines);
+    const callIdToToolName: Map<string, string> = new Map();
 
     // First pass: index tool names by callId so tool-result events can be keyed by tool name even if
     // the tool-call is missing/dropped (permission-request + tool-result) or arrives later.
-    for (const fullEvent of recordableEvents) {
-        const provider = typeof fullEvent.provider === 'string' && fullEvent.provider.length > 0 ? fullEvent.provider : 'unknown';
+    for (const { event: fullEvent, toolName } of recordableEvents) {
+        const sourceKey = getToolTraceSourceKey(fullEvent);
         const callId = getCallIdForIndex(fullEvent);
         const sessionId = typeof fullEvent.sessionId === 'string' ? fullEvent.sessionId : 'unknown';
         const callIndexKey =
             callId
-                ? `${fullEvent.protocol}/${provider}/${sessionId}/${callId}`
+                ? `${sourceKey}/${sessionId}/${callId}`
                 : null;
         if (!callIndexKey) continue;
         if (fullEvent.kind !== 'tool-call' && fullEvent.kind !== 'permission-request') continue;
 
-        const toolName = getToolNameForKey(fullEvent);
         if (toolName) callIdToToolName.set(callIndexKey, toolName);
     }
 
     // Second pass: bucket events.
-    for (const fullEvent of recordableEvents) {
-        const provider = typeof fullEvent.provider === 'string' && fullEvent.provider.length > 0 ? fullEvent.provider : 'unknown';
-        const baseKey = `${fullEvent.protocol}/${provider}/${fullEvent.kind}`;
+    for (const { event: fullEvent, toolName: toolNameFromEvent } of recordableEvents) {
+        const sourceKey = getToolTraceSourceKey(fullEvent);
+        const baseKey = `${sourceKey}/${fullEvent.kind}`;
 
         const callId = getCallIdForIndex(fullEvent);
         const sessionId = typeof fullEvent.sessionId === 'string' ? fullEvent.sessionId : 'unknown';
         const callIndexKey =
             callId
-                ? `${fullEvent.protocol}/${provider}/${sessionId}/${callId}`
+                ? `${sourceKey}/${sessionId}/${callId}`
                 : null;
 
-        const toolNameFromEvent = getToolNameForKey(fullEvent);
         const toolNameFromCallId =
             (fullEvent.kind === 'tool-result' || fullEvent.kind === 'tool-call-result') && callIndexKey
                 ? (callIdToToolName.get(callIndexKey) ?? null)
@@ -158,7 +185,7 @@ export function extractToolTraceFixturesFromJsonlLines(lines: string[]): ToolTra
     }
 
     return {
-        v: 1,
+        v: 2,
         generatedAt: Date.now(),
         examples,
     };

@@ -18,7 +18,8 @@ import {
   type PendingRequest,
   type PermissionResult,
 } from '@/agent/permissions/BasePermissionHandler';
-import type { ToolTraceProtocol } from '@/agent/tools/trace/toolTrace';
+import type { ToolNormalizationSourceV3 } from '@happier-dev/protocol/tools/v2/meta';
+import type { SessionPermissionDecisionRequest } from '@happier-dev/plugin-sdk/sessions';
 import { resolveProviderPermissionForHappierAction } from '@/agent/tools/happierTools/resolveHappierActionForMcpToolName';
 import type { AccountSettings, CodingPromptBehaviorV1 } from '@happier-dev/protocol';
 import { NATIVE_TOOL_APPROVAL_ONCE_REQUEST_SOURCE } from '@happier-dev/protocol/sessions/permissions/v1';
@@ -41,6 +42,7 @@ import { resolveEffectivePermissionMode } from '@happier-dev/protocol/actions/pe
 export type { PermissionResult, PendingRequest };
 
 type HandlerOpts = Readonly<{
+  requestCoverage?: import('@happier-dev/agents').AgentStateRequestCoverageOptions;
   pushSender?: PermissionRequestPushSender | null;
   getAccountSettings?: (() => AccountSettings | null) | null;
   getCodingPromptBehavior?: (() => CodingPromptBehaviorV1 | null) | null;
@@ -48,7 +50,7 @@ type HandlerOpts = Readonly<{
   getMcpToolContext?: (() => McpToolPolicyContext | null) | null;
   getAccountSettingsSecretsReadKeys?: (() => ReadonlyArray<Uint8Array | null | undefined>) | null;
   onAbortRequested?: (() => void | Promise<void>) | null;
-  toolTrace?: { protocol: ToolTraceProtocol; provider: string } | null;
+  toolTrace?: (() => ToolNormalizationSourceV3 | null) | null;
   alwaysAutoApproveToolNameIncludes?: ReadonlyArray<string>;
   isMediatorPluginCurrent?: ((pluginId: string) => boolean) | null;
   isMediatorContributionCurrent?: ((mediator: Readonly<{
@@ -83,6 +85,7 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
     params: Readonly<{ logPrefix: string }> & HandlerOpts,
   ) {
     super(session, {
+      ...('requestCoverage' in params ? { requestCoverage: params.requestCoverage } : {}),
       pushSender: params.pushSender ?? null,
       getAccountSettings: params.getAccountSettings ?? null,
       getCodingPromptBehavior: params.getCodingPromptBehavior ?? null,
@@ -216,6 +219,17 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
     input: unknown,
     context?: AcpPermissionCallContext,
   ): PermissionResult | null {
+    const decision = this.resolveImmediateDecision(toolCallId, toolName, input, context);
+    return context?.nativeChoices && decision?.decision !== 'denied' && decision?.decision !== 'abort'
+      ? null : decision;
+  }
+
+  private resolveImmediateDecision(
+    toolCallId: string,
+    toolName: string,
+    input: unknown,
+    context?: AcpPermissionCallContext,
+  ): PermissionResult | null {
     // Publishing a host-bound question asks for human input; it grants no tool
     // authority. Startup has no admitted turn, and must still reach the person.
     if (isHostOccurrenceQuestion(toolName, context)) return null;
@@ -291,6 +305,7 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
     if (isHostOccurrenceQuestion(toolName, context)) return null;
     const immediate = this.getImmediateDecision(toolCallId, toolName, input, context);
     if (immediate) return immediate;
+    if (context?.nativeChoices) return null;
 
     const effective = resolveCausalPermissionMode({
       currentPermissionMode: this.currentPermissionMode,
@@ -321,6 +336,7 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
     options?: AcpPermissionCallContext & Readonly<{
       owner?: PermissionRequestOwner | null;
       source?: string | null;
+      traceSummary?: SessionPermissionDecisionRequest['traceSummary'];
       signal?: AbortSignal;
       acknowledgeDecisionApplication?: (decision: PermissionResult) => Promise<void>;
     }>,
@@ -394,6 +410,8 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
     });
     if (!effective.ok) {
       return this.requestPermissionDecision(toolCallId, toolName, input, {
+        ...(options?.traceSummary ? { traceSummary: options.traceSummary } : {}),
+        ...(options?.nativeChoices ? { nativeChoices: options.nativeChoices } : {}),
         ...(owner ? { owner } : {}),
         ...(source ? { source } : {}),
         ...(options?.signal ? { signal: options.signal } : {}),
@@ -406,6 +424,8 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
     }
 
     const pending = this.requestPermissionDecision(toolCallId, toolName, input, {
+      ...(options?.traceSummary ? { traceSummary: options.traceSummary } : {}),
+        ...(options?.nativeChoices ? { nativeChoices: options.nativeChoices } : {}),
       ...(owner ? { owner } : {}),
       ...(persistedSource ? { source: persistedSource } : {}),
       ...(options?.signal ? { signal: options.signal } : {}),

@@ -3,6 +3,7 @@ import { materializeActionRequestAttributionV1 } from '@happier-dev/protocol/act
 import { resolveExecutionRunInputAuthority } from '@/agent/executionRuns/policy/executionRunPermissionDecision';
 import { FollowPolicyV1Schema, resolveWorkerUpdateFollowDeliveryV1, type FollowPolicyV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
 import type { ExecutionRunOutputObservation } from '@happier-dev/protocol/reviews/reviewNarration';
+import type { StructuredQuestionAnswerDetailsV1 } from '@happier-dev/protocol/tools/structuredQuestionAnswersV1';
 import { readExecutionRunOfferedModel } from './structuredOutputAdmission';
 
 import {
@@ -695,9 +696,11 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
               ? [controller.currentInputTurn, controller.lastInputTurn]
                   .find((candidate) => candidate?.turnId === runtimeTurnId)
               : undefined;
+            const toolNormalizationSource = controller.backend.toolNormalizationSource;
+            const sourceOptions = toolNormalizationSource ? { ...opts, toolNormalizationSource } : opts;
             const runScopedOpts = inputTurn
               ? {
-                  ...opts,
+                  ...sourceOptions,
                   meta: {
                     ...opts.meta,
                     happierExecutionRunInputTurnV1: {
@@ -707,7 +710,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
                     },
                   },
                 }
-              : opts;
+              : sourceOptions;
             const projected = createExecutionRunTranscriptProjection({
               controller,
               sidechainId,
@@ -1361,6 +1364,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
   }
 
   private createExecutionRunRuntime(opts: ExecutionRunRuntimeCreateOptions): ExecutionRunHostRuntime {
+    let toolNormalizationSource: ExecutionRunHostRuntime['toolNormalizationSource'];
     const runScope = opts.runId ? this.runs.get(opts.runId)?.sessionId : undefined;
     const scope = (
       (typeof runScope === 'string' && runScope.trim().length > 0)
@@ -1393,6 +1397,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       ? opts.resolveAccountSettingsSnapshot
       : this.bindInvocationAccountSettingsSnapshot(opts.projectLaunchContext?.ingress);
     const runtime = createExecutionRunBridgeRuntime({
+      onToolNormalizationSource: (source) => { toolNormalizationSource = source; },
       ...(scope === 'detached' && opts.runId ? { workflowActionContext: {
         readRunId: () => {
           const controller = readWorkflowController();
@@ -1568,6 +1573,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     const retainedRuntime = releaseRequester ? withExecutionRunHostRuntimeCleanup(runtime, releaseRequester) : runtime;
     // Preserve runtime accessors and the host's pending-permission projection.
     return Object.create(retainedRuntime, {
+      toolNormalizationSource: { get: () => toolNormalizationSource },
       readPendingPermissionRequests: { value: () => {
         const controller = opts.runId ? this.controllers.get(opts.runId) : null;
         if (!controller || controller.kind !== 'backend' || controller.cancelled
@@ -3569,7 +3575,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     runId: string,
     params:
       | Readonly<{ requestId: string; approved: boolean }>
-      | Readonly<{ requestId: string; answers: StructuredQuestionAnswersV1 }>,
+      | Readonly<{ requestId: string; answers: StructuredQuestionAnswersV1; answerDetails?: StructuredQuestionAnswerDetailsV1 }>,
   ): Promise<Readonly<{ ok: true } | { ok: false; errorCode: string; error: string }>> {
     const run = this.runs.get(runId) ?? null;
     if (!run || run.status !== 'running') {
@@ -3604,7 +3610,8 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       requestId: params.requestId,
       status: 'answers' in params || params.approved ? 'approved' : 'denied',
       decision: 'answers' in params || params.approved ? 'approved' : 'denied',
-      ...('answers' in params ? { answers: params.answers } : {}),
+      ...('answers' in params ? { answers: params.answers,
+        ...(params.answerDetails === undefined ? {} : { answerDetails: params.answerDetails }) } : {}),
     });
     this.emitPublicStateUpdated(runId);
     return completed

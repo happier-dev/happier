@@ -43,12 +43,11 @@ describe('ToolTraceWriter', () => {
       const writer = new ToolTraceWriter({ filePath });
 
       writer.record({
-        v: 1,
+        v: 2,
         ts: 1700000000000,
         direction: 'outbound',
         sessionId: 'sess_123',
-        protocol: 'acp',
-        provider: 'codex',
+        source: { protocol: 'acp', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } },
         kind: 'tool-call',
         payload: { name: 'read', input: { filePath: '/etc/hosts' } },
       });
@@ -57,10 +56,9 @@ describe('ToolTraceWriter', () => {
       const lines = raw.trim().split('\n');
       expect(lines).toHaveLength(1);
       expect(JSON.parse(lines[0])).toMatchObject({
-        v: 1,
+        v: 2,
         sessionId: 'sess_123',
-        protocol: 'acp',
-        provider: 'codex',
+        source: { protocol: 'acp', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } },
         kind: 'tool-call',
       });
     });
@@ -72,12 +70,11 @@ describe('ToolTraceWriter', () => {
       const writer = new ToolTraceWriter({ filePath });
 
       writer.record({
-        v: 1,
+        v: 2,
         ts: 1700000000000,
         direction: 'outbound',
         sessionId: 'sess_123',
-        protocol: 'acp',
-        provider: 'opencode',
+        source: { protocol: 'acp', agent: { pluginId: 'happier.agent.opencode', localId: 'opencode' } },
         kind: 'tool-call',
         payload: {
           type: 'tool-call',
@@ -110,12 +107,11 @@ describe('ToolTraceWriter', () => {
 
       expect(() => {
         writer.record({
-          v: 1,
+          v: 2,
           ts: 1700000000000,
           direction: 'outbound',
           sessionId: 'sess_123',
-          protocol: 'acp',
-          provider: 'codex',
+          source: { protocol: 'acp', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } },
           kind: 'tool-call',
           payload: circular,
         });
@@ -131,6 +127,17 @@ describe('ToolTraceWriter', () => {
 });
 
 describe('recordToolTraceEvent', () => {
+  it('records qualified native provenance without a vendor protocol', async () => {
+    await withToolTraceFile('happy-tool-trace-native-', (filePath) => {
+      const source = { protocol: 'native' as const, agent: { pluginId: 'acme.muse', localId: 'muse' } };
+      recordToolTraceEvent({
+        direction: 'outbound', sessionId: 'native-session', source,
+        kind: 'tool-call', payload: { name: 'Read', input: { path: '/source' } },
+      });
+      expect(JSON.parse(readFileSync(filePath, 'utf8'))).toMatchObject({ v: 2, source });
+    });
+  });
+
   it('writes multiple events to a single file when only DIR is set', () => {
     vi.useFakeTimers();
     withToolTraceDir('happy-tool-trace-dir-', (dir) => {
@@ -138,8 +145,7 @@ describe('recordToolTraceEvent', () => {
       recordToolTraceEvent({
         direction: 'outbound',
         sessionId: 'sess_1',
-        protocol: 'acp',
-        provider: 'codex',
+        source: { protocol: 'acp', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } },
         kind: 'tool-call',
         payload: { type: 'tool-call', name: 'read', input: { filePath: '/etc/hosts' } },
       });
@@ -147,8 +153,7 @@ describe('recordToolTraceEvent', () => {
       recordToolTraceEvent({
         direction: 'outbound',
         sessionId: 'sess_1',
-        protocol: 'acp',
-        provider: 'codex',
+        source: { protocol: 'acp', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } },
         kind: 'tool-result',
         payload: { type: 'tool-result', callId: 'c1', output: { ok: true } },
       });

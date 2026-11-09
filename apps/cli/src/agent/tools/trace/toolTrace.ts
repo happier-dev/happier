@@ -4,21 +4,9 @@ import { configuration } from '@/configuration';
 import { safeJsonStringify } from '@/utils/safeJson';
 import { ensureProtectedLocalStateDirectorySync, ensureProtectedLocalStateFileSync } from '@/utils/fs/protectedLocalState';
 
-export type ToolTraceProtocol = 'acp' | 'codex' | 'claude';
-
-export type ToolTraceDirection = 'outbound' | 'inbound';
-
-export type ToolTraceEventV1 = {
-    v: 1;
-    ts: number;
-    direction: ToolTraceDirection;
-    sessionId: string;
-    protocol: ToolTraceProtocol;
-    provider?: string;
-    kind: string;
-    payload: unknown;
-    localId?: string;
-};
+import type { ToolTraceEventV2 } from './toolTraceEvent';
+export { getToolTraceSourceKey, readToolTraceEvent } from './toolTraceEvent';
+export type { ToolTraceDirection, ToolTraceEvent, ToolTraceEventV1, ToolTraceEventV2, ToolTraceProtocol } from './toolTraceEvent';
 
 export class ToolTraceWriter {
     private readonly filePath: string;
@@ -39,7 +27,7 @@ export class ToolTraceWriter {
         ensureProtectedLocalStateFileSync(this.filePath, { authority: 'owned' });
     }
 
-    record(event: ToolTraceEventV1): void {
+    record(event: ToolTraceEventV2): void {
         let line = '';
         try {
             line = `${safeJsonStringifyToolTraceEvent(event)}\n`;
@@ -56,7 +44,7 @@ export class ToolTraceWriter {
     }
 }
 
-function safeJsonStringifyToolTraceEvent(event: ToolTraceEventV1): string {
+function safeJsonStringifyToolTraceEvent(event: ToolTraceEventV2): string {
     try {
         return safeJsonStringify(event);
     } catch (error) {
@@ -69,7 +57,7 @@ function safeJsonStringifyToolTraceEvent(event: ToolTraceEventV1): string {
                 {
                     ...event,
                     payload: `[unserializable payload: ${details}]`,
-                } satisfies ToolTraceEventV1,
+                } satisfies ToolTraceEventV2,
             );
         } catch {
             return safeJsonStringify({
@@ -77,8 +65,7 @@ function safeJsonStringifyToolTraceEvent(event: ToolTraceEventV1): string {
                 ts: event.ts,
                 direction: event.direction,
                 sessionId: event.sessionId,
-                protocol: event.protocol,
-                provider: event.provider,
+                source: event.source,
                 kind: event.kind,
                 localId: event.localId,
                 payload: '[unserializable payload]',
@@ -113,7 +100,7 @@ function resolveToolTraceFilePath(): string {
     return cachedDefaultTraceFilePath;
 }
 
-function isToolTraceEnabled(): boolean {
+export function isToolTraceEnabled(): boolean {
     return isTruthyEnv(process.env.HAPPIER_STACK_TOOL_TRACE);
 }
 
@@ -138,7 +125,7 @@ export function initToolTraceIfEnabled(): void {
     }
 }
 
-export function recordToolTraceEvent(params: Omit<ToolTraceEventV1, 'v' | 'ts'> & { ts?: number }): void {
+export function recordToolTraceEvent(params: Omit<ToolTraceEventV2, 'v' | 'ts'> & { ts?: number }): void {
     if (!isToolTraceEnabled()) return;
 
     const filePath = resolveToolTraceFilePath();
@@ -148,12 +135,11 @@ export function recordToolTraceEvent(params: Omit<ToolTraceEventV1, 'v' | 'ts'> 
     }
 
     cachedWriter.record({
-        v: 1,
+        v: 2,
         ts: typeof params.ts === 'number' ? params.ts : Date.now(),
         direction: params.direction,
         sessionId: params.sessionId,
-        protocol: params.protocol,
-        provider: params.provider,
+        source: params.source,
         kind: params.kind,
         payload: params.payload,
         localId: params.localId,

@@ -153,6 +153,7 @@ function withSessionRunAgentEnvironment<Request extends AgentSessionOpenRequest>
 export type NativeAgentSessionContextLeaseFactory = ((params: Readonly<{
     services: PluginServices;
     signal: AbortSignal;
+    onInteractionUnavailable?(): void;
     readSessionRuntime(): AgentSessionRuntime | null;
     readActiveTurnAdmissionWitness?: () => AgentInvocationTurnAdmissionWitness | null;
     actionRequestAttributionV1?: ActionRequestAttributionV1;
@@ -186,6 +187,7 @@ type NativeAgentExecutionRunContextLease = Readonly<{
 export type NativeAgentExecutionRunContextLeaseFactory = ((params: Readonly<{
     services: PluginServices;
     signal: AbortSignal;
+    onInteractionUnavailable?(): void;
     readActiveTurnAdmissionWitness?: () => AgentInvocationTurnAdmissionWitness | null;
     actionRequestAttributionV1?: ActionRequestAttributionV1;
 }>) => Promise<NativeAgentExecutionRunContextLease> | NativeAgentExecutionRunContextLease) & Pick<
@@ -229,6 +231,7 @@ export function createRunScopedWorkStateService(signal: AbortSignal): WorkStateS
  */
 export function createNativeAgentExecutionRunContextLeaseFactory(params: Readonly<{
     lease: NativeAgentRuntimeLeaseIdentity;
+    onToolNormalizationSource?: CreateCliExecutionRunBackendParams['onToolNormalizationSource'];
     runId: string;
     controllerOccurrenceId: string;
     callId: string;
@@ -359,11 +362,13 @@ export function createNativeAgentExecutionRunContextLeaseFactory(params: Readonl
     const bindInvocationServices = async ({
         services,
         signal,
+        onInteractionUnavailable,
         readActiveTurnAdmissionWitness,
         actionRequestAttributionV1,
     }: Readonly<{
         services: PluginServices;
         signal: AbortSignal;
+        onInteractionUnavailable?: () => void;
         readActiveTurnAdmissionWitness?: () => AgentInvocationTurnAdmissionWitness | null;
         actionRequestAttributionV1?: ActionRequestAttributionV1;
     }>): Promise<Readonly<{
@@ -376,6 +381,7 @@ export function createNativeAgentExecutionRunContextLeaseFactory(params: Readonl
             contributionId: params.lease.localAgentId,
             runtimeId: `native-agent-run:${runId}`,
             executionRunId: runId,
+            ...(onInteractionUnavailable ? { onUnavailable: onInteractionUnavailable } : {}),
             occurrenceId: params.lease.occurrenceId,
             isCurrent: params.lease.isCurrent,
             signal,
@@ -391,10 +397,11 @@ export function createNativeAgentExecutionRunContextLeaseFactory(params: Readonl
             : services;
         return Object.freeze({ services: boundServices, currentSession });
     };
-    const factory: NativeAgentExecutionRunContextLeaseFactory = async ({ services, signal, readActiveTurnAdmissionWitness, actionRequestAttributionV1 }) => {
+    const factory: NativeAgentExecutionRunContextLeaseFactory = async ({ services, signal, onInteractionUnavailable, readActiveTurnAdmissionWitness, actionRequestAttributionV1 }) => {
         const bound = await bindInvocationServices({
             services,
             signal,
+            ...(onInteractionUnavailable ? { onInteractionUnavailable } : {}),
             ...(readActiveTurnAdmissionWitness ? { readActiveTurnAdmissionWitness } : {}),
             ...(!readActiveTurnAdmissionWitness && actionRequestAttributionV1 ? { actionRequestAttributionV1 } : {}),
         });
@@ -527,6 +534,7 @@ export function createNativeAgentExecutionRunContextLeaseFactory(params: Readonl
             }
             const created = createNativeAgentInvocationContext({
                 lease: params.lease,
+                onToolNormalizationSource: params.onToolNormalizationSource,
                 runId,
                 signal,
                 services: bound.services,
@@ -802,6 +810,7 @@ function buildLaunchEnvironment(
 
 function createNativeAgentInvocationContext(params: Readonly<{
     lease: NativeAgentRuntimeLeaseIdentity;
+    onToolNormalizationSource?: CreateCliExecutionRunBackendParams['onToolNormalizationSource'];
     runId: string;
     signal: AbortSignal;
     services: PluginServices;
@@ -848,6 +857,9 @@ function createNativeAgentInvocationContext(params: Readonly<{
         }),
         agent: Object.freeze({ id: params.lease.agentId }),
         protocols: createPublicAcpRuntimeProtocols({
+            onSessionOpening: () => params.onToolNormalizationSource?.({
+                protocol: 'acp', agent: { pluginId: params.lease.pluginId, localId: params.lease.localAgentId },
+            }),
             pluginId: params.lease.pluginId,
             agentId: params.lease.agentId,
             signal: params.signal,
@@ -1335,12 +1347,17 @@ export function createNativeAgentExecutionRunHostRuntime(params: Readonly<{
                 ? (executionRunContextLease = await params.createExecutionRunContext({
                     services: fallbackServices,
                     signal,
+                    ...(!params.retainedConversation ? { onInteractionUnavailable: () => failRuntime(
+                        'Execution-run permission interaction target is unavailable',
+                        'execution_run_interaction_unavailable',
+                    ) } : {}),
                     ...(params.retainedConversation ? { readActiveTurnAdmissionWitness: readConversationAdmissionWitness } : {}),
                     ...(!params.retainedConversation && initialActionAttribution
                         ? { actionRequestAttributionV1: materializeActionRequestAttributionV1(initialActionAttribution) } : {}),
                 })).context
                 : createNativeAgentInvocationContext({
                     lease: params.lease,
+                    onToolNormalizationSource: params.options.onToolNormalizationSource,
                     runId,
                     signal,
                     services: params.bindInvocationServices

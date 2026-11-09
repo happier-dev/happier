@@ -8,6 +8,7 @@ import type { AgentSessionInput, AgentSessionSendResult, AgentSessionRuntimeEven
 import type { RuntimeTurnPromptMeta } from '@/agent/runtime/turns/runtimeTurnOperations';
 import type { SessionProviderInputOutcome } from '@/agent/runtime/session/input/providerInputOutcome';
 import type { AgentInvocationTurnAdmissionWitness } from '@/plugins/runtime/invocation/services/types';
+import type { ToolNormalizationSourceV3 } from '@happier-dev/protocol/tools/v2/meta';
 
 /** The incumbent host admission context; routing never crosses the Agent SDK input boundary. */
 export type ExecutionRunInputContext = Omit<RuntimeTurnPromptMeta, 'structuredInput'>;
@@ -51,6 +52,8 @@ export type RuntimePermissionResponseOutcome = Readonly<{ delivered: true }>
     }>;
 
 export type ExecutionRunHostRuntime = Readonly<{
+    /** Actual opened Agent transport, reported by the admitted host composition. */
+    toolNormalizationSource?: ToolNormalizationSourceV3;
     /** Host projection from the current permission store, never plugin-authored state. */
     readPendingPermissionRequests?: () => readonly Readonly<{ requestId: string; createdAt?: number }>[];
     permissionCapability?: ExecutionRunPermissionCapability;

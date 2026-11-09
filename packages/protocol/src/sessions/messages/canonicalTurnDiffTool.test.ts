@@ -14,6 +14,8 @@ function createEmptyTurnDiffInput() {
   return {
     files: [],
     _happier: {
+      v: 2,
+      protocol: 'codex',
       sessionChangeScope: 'turn',
       workspaceMutationSignal: 'turn-change-set',
       turnId: 'turn-1',
@@ -33,6 +35,16 @@ function createEmptyTurnDiffInput() {
 }
 
 describe('canonical turn diff transcript helpers', () => {
+  it('reads V3 turn evidence while rejecting invalid qualified tool provenance', () => {
+    const payload = createEmptyTurnDiffInput();
+    const current = { ...payload, _happier: { ...payload._happier, v: 3, protocol: 'native',
+      agent: { pluginId: 'acme.agents', localId: 'muse' } } };
+    expect(readTurnChangeToolMetadata(current)).toMatchObject({ provider: 'codex', turnId: 'turn-1' });
+    expect(isCanonicalTurnDiffPayload({ ...current, _happier: { ...current._happier,
+      agent: { ...current._happier.agent, unexpected: true } } })).toBe(false);
+    expect(isCanonicalTurnDiffPayload({ _happier: { canonicalToolName: 'Diff' } })).toBe(false);
+  });
+
   it('reads turn-change metadata from JSON strings and wrapper fields', () => {
     const payload = createEmptyTurnDiffInput();
 
@@ -56,6 +68,10 @@ describe('canonical turn diff transcript helpers', () => {
   it('reads repository checkpoint metadata from turn-scoped tool envelopes', () => {
     const payload = {
       _happier: {
+        v: 2,
+        protocol: 'codex',
+        rawToolName: 'RepositoryCheckpointDiff',
+        canonicalToolName: 'Diff',
         sessionChangeScope: 'turn',
         turnId: 'turn-checkpoint-1',
         sessionId: 'session-checkpoint-1',
@@ -167,6 +183,10 @@ describe('canonical turn diff transcript helpers', () => {
     const input = {
       files: [],
       _happier: {
+        v: 2,
+        protocol: 'codex',
+        provider: 'codex',
+        rawToolName: 'RepositoryCheckpointDiff',
         canonicalToolName: 'Diff',
       },
     };

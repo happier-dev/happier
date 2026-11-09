@@ -8,6 +8,23 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 }
 
 describe('curateToolTraceFixturesFromJsonlLines', () => {
+  it('curates current qualified native provenance', () => {
+    const source = { protocol: 'native', agent: { pluginId: 'acme.agents', localId: 'muse' } };
+    const fixtures = curateToolTraceFixturesFromJsonlLines([JSON.stringify({
+      v: 2, ts: 1, direction: 'outbound', sessionId: 'native-session', source,
+      kind: 'tool-call', payload: { name: 'Read', input: { path: '/source' } },
+    })]);
+    expect(fixtures.examples['native/acme.agents/muse/tool-call/Read']).toHaveLength(1);
+  });
+
+  it.each(['codex', 'claude'] as const)('keeps historical %s keys eligible for their existing allowlist', (protocol) => {
+    const key = `${protocol}/${protocol}/tool-call/Read`;
+    const fixtures = curateToolTraceFixturesFromJsonlLines(toJsonlLines([
+      makeTraceEvent({ ts: 1, protocol, provider: protocol, kind: 'tool-call', payload: { name: 'Read' } }),
+    ]), { allowlistKeys: new Set([key]) });
+    expect(fixtures.examples[key]).toHaveLength(1);
+  });
+
   it('prefers higher-signal examples and obeys maxExamplesPerKey', () => {
     const fixtures = curateToolTraceFixturesFromJsonlLines(
       toJsonlLines([

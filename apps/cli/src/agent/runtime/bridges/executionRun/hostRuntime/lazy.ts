@@ -169,6 +169,7 @@ export function createLazyExecutionRunHostRuntime(params: Readonly<{
   return wrapExecutionRunHostRuntime({
     readPermissionCapability: () => permissionCapability ?? undefined,
     readInteraction: () => resolvedRuntime?.interaction,
+    readToolNormalizationSource: () => resolvedRuntime?.toolNormalizationSource,
     async readResumeSupport(opts) {
       const runtime = await resolveRuntime();
       return await runtime.readResumeSupport(opts);

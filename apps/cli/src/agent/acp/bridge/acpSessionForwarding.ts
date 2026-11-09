@@ -1,9 +1,10 @@
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
+import type { ToolNormalizationSourceV3 } from '@happier-dev/protocol/tools/v2/meta';
 
 export type AcpSendFn = (
   provider: ACPProvider,
   body: ACPMessageData,
-  opts?: { meta?: Record<string, unknown>; localId?: string },
+  opts?: { meta?: Record<string, unknown>; localId?: string; toolNormalizationSource?: ToolNormalizationSourceV3 },
 ) => void;
 
 export function namespaceSidechainCallId(params: { sidechainId: string; toolCallId: string }): string {

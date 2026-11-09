@@ -1,26 +1,13 @@
 import { recordToolTraceEvent } from '@/agent/tools/trace/toolTrace';
+import type { ToolNormalizationSourceV3 } from '@happier-dev/protocol/tools/v2/meta';
+import type { ACPMessageData } from './sessionMessageTypes';
 
-export function isToolTraceEnabled(): boolean {
-    return ['1', 'true', 'yes', 'on'].includes((process.env.HAPPIER_STACK_TOOL_TRACE ?? '').toLowerCase());
-}
-
-export function recordCodexToolTraceEventIfNeeded(opts: { sessionId: string; body: any }): void {
-    if (opts.body?.type !== 'tool-call' && opts.body?.type !== 'tool-call-result') return;
-
-    recordToolTraceEvent({
-        direction: 'outbound',
-        sessionId: opts.sessionId,
-        protocol: 'codex',
-        provider: 'codex',
-        kind: opts.body.type,
-        payload: opts.body,
-    });
-}
+export { isToolTraceEnabled } from '@/agent/tools/trace/toolTrace';
 
 export function recordAcpToolTraceEventIfNeeded(opts: {
     sessionId: string;
-    provider: string;
-    body: any;
+    source: ToolNormalizationSourceV3;
+    body: ACPMessageData;
     localId?: string;
 }): void {
     if (
@@ -37,8 +24,7 @@ export function recordAcpToolTraceEventIfNeeded(opts: {
     recordToolTraceEvent({
         direction: 'outbound',
         sessionId: opts.sessionId,
-        protocol: 'acp',
-        provider: opts.provider,
+        source: opts.source,
         kind: opts.body.type,
         payload: opts.body,
         localId: opts.localId,

@@ -1,3 +1,5 @@
+import { evaluatePermissionResponseAuthorityV1 } from '@happier-dev/agents/permissions';
+import { resolvePendingRequestAttentionReasonV1 } from '@happier-dev/protocol/sessions/personal/attention';
 import { readRunScopedExecutionPermissionRequestIdentity } from '@happier-dev/protocol/execution/runs/runPrimitives';
 /**
  * Base Permission Handler
@@ -28,23 +30,24 @@ import { AgentState } from "@/api/types";
 import { updateAgentStateBestEffort as updateAgentStateBestEffortShared } from "@/api/session/sessionWritesBestEffort";
 import { isToolAllowedForSession, makeToolIdentifier } from './permissionToolIdentifier';
 import { applyAllowedToolsToAllowlist, applyUpdatedPermissionsToAllowlist } from './applyPermissionAllowlistUpdates';
-import { recordToolTraceEvent, type ToolTraceProtocol } from '@/agent/tools/trace/toolTrace';
+import { recordToolTraceEvent } from '@/agent/tools/trace/toolTrace';
+import type { ToolNormalizationSourceV3 } from '@happier-dev/protocol/tools/v2/meta';
 import { PluginContributionLocalIdSchema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { ExecutionRunStartResponseSchema, ExecutionRunWaitResultSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
 import { SessionPermissionExternalHumanDecisionActorV1Schema, SessionPermissionRemoteRespondInputV1Schema, SessionUserActionRemoteAnswerInputV1Schema, SessionPermissionRequestIdV1Schema, SESSION_PERMISSION_REMOTE_QUESTION_CHOICE_UTF8_BYTES, SESSION_PERMISSION_REMOTE_QUESTION_TEXT_UTF8_BYTES, SESSION_PERMISSION_REMOTE_SUMMARY_DETAIL_UTF8_BYTES, SESSION_PERMISSION_REMOTE_SUMMARY_TITLE_UTF8_BYTES, SESSION_PERMISSION_REMOTE_SUMMARY_TOOL_LABEL_UTF8_BYTES } from '@happier-dev/protocol/sessions/permissions/v1';
 import { SessionPermissionRemoteGrantRecordV1Schema, SessionPermissionRemoteSettlementRecordV1Schema, SESSION_REMOTE_PERMISSION_ACTIVE_GRANTS_MAX, SESSION_REMOTE_PERMISSION_MEDIATION_ROWS_MAX } from '@happier-dev/protocol/sessions/permissions/mediationRecordsV1';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
-import { SessionPermissionRespondRpcParamsV1Schema, SessionUserActionPassUpRpcParamsV1Schema } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
+import { NativePermissionChoiceAnswerV1Schema, NativePermissionChoicesV1Schema, type NativePermissionChoiceAnswerV1, type NativePermissionChoicesV1, type SessionPermissionRespondRpcParamsV1, SessionPermissionRespondRpcParamsV1Schema, SessionUserActionPassUpRpcParamsV1Schema } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 import type { SessionQuestionHandlerV1 } from '@happier-dev/protocol/sessions/permissions/questionV1';
 import { NATIVE_TOOL_APPROVAL_REQUEST_SOURCE, NATIVE_TOOL_APPROVAL_ONCE_REQUEST_SOURCE } from '@happier-dev/protocol/sessions/permissions/v1';
 import { SessionInputCausalPermissionAuthorityV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
-import { StructuredQuestionAnswersV1Schema, StructuredQuestionResponseV1Schema } from '@happier-dev/protocol/tools/structuredQuestionAnswersV1';
+import { StructuredQuestionAnswersV1Schema, StructuredQuestionResponseV1Schema, type StructuredQuestionAnswerDetailsV1 } from '@happier-dev/protocol/tools/structuredQuestionAnswersV1';
 import { TurnIdSchema } from '@happier-dev/protocol/sessions/idsV1';
 import type { AccountSettings, SessionPermissionRemoteRespondInputV1, SessionPermissionRemoteRespondOutputV1, SessionPermissionRemotePendingListOutputV1, SessionUserActionRemoteAnswerInputV1, SessionUserActionRemoteAnswerOutputV1, SessionPermissionRemoteGrantRecordV1, SessionPermissionRemoteGrantsListOutputV1, SessionPermissionRemoteGrantRevokeOutputV1, SessionPermissionMediationRecordIdentityV1, SessionPermissionExternalHumanDecisionActorV1, SessionPermissionSourceAuthorityV1, AgentRequestQuestionSummary, StructuredQuestionAnswersV1 } from '@happier-dev/protocol';
 import { buildAgentRequestSemanticSummary, formatPermissionRequestSummary, requiresFullFormForRemoteUserAction, summarizeToolInputForNotification } from '@happier-dev/protocol/activity/agentRequestSummary';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
-import { CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE } from '@happier-dev/protocol/agents/claude/permissionRequestSource';
+import type { SessionPermissionDecisionRequest } from '@happier-dev/plugin-sdk/sessions';
 import { SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS, parseSocketRpcAuthorizationContext } from '@happier-dev/protocol/socketRpc';
 import type { SocketRpcSessionPermissionRespondAuthorizationContext } from '@happier-dev/protocol/socketRpc';
 import type { RpcHandlerContext } from '@/api/rpc/types';
@@ -109,7 +112,9 @@ export interface PermissionResponse {
     id: string;
     /** Exact host-projected turn custody; absent only for released legacy requests. */
     turnId?: string;
-    approved: boolean;
+    approved?: boolean;
+    nativeChoice?: NativePermissionChoiceAnswerV1;
+    mode?: SessionPermissionRespondRpcParamsV1['mode'];
     decision?: 'approved' | 'approved_for_session' | 'approved_execpolicy_amendment' | 'denied' | 'abort';
     answeringClientCategory?: import('@happier-dev/protocol/sessions/permissions/respondRpcParamsV1').SessionPermissionAnsweringClientCategoryV1;
     // When the user chooses "don't ask again (session)", the UI may send a tool allowlist.
@@ -123,6 +128,7 @@ export interface PermissionResponse {
      * When present, the agent can complete the request without requiring an additional free-form user message.
      */
     answers?: StructuredQuestionAnswersV1 | Readonly<Record<string, string>>;
+    answerDetails?: StructuredQuestionAnswerDetailsV1;
     execPolicyAmendment?: {
         command: string[];
     };
@@ -132,6 +138,7 @@ export interface PermissionResponse {
  * Pending permission request stored while awaiting user response.
  */
 export interface PendingRequest {
+    nativeChoices?: NativePermissionChoicesV1;
     resolve: (value: PermissionResult) => void;
     reject: (error: Error) => void;
     toolName: string;
@@ -156,11 +163,16 @@ export interface PendingRequest {
  * Result of a permission request.
  */
 export interface PermissionResult {
+    nativeChoice?: NativePermissionChoiceAnswerV1;
+    mode?: SessionPermissionRespondRpcParamsV1['mode'];
+    allowedTools?: readonly string[];
+    updatedPermissions?: unknown;
     decision: 'approved' | 'approved_for_session' | 'approved_execpolicy_amendment' | 'denied' | 'abort';
     execPolicyAmendment?: {
         command: string[];
     };
     answers?: StructuredQuestionAnswersV1;
+    answerDetails?: StructuredQuestionAnswerDetailsV1;
 }
 
 /**
@@ -526,12 +538,13 @@ function isPermissionResponseAuthorityValid(params: Readonly<{
     context: Readonly<{
         toolName: string;
         toolInput: unknown;
+        kind?: PermissionRequestCoordinatorContext['kind'];
         source?: string;
         permissionSuggestions?: readonly unknown[];
     }>;
 }>): boolean {
     const { response, context } = params;
-    const requestKind = resolveAgentRequestKind(context.toolName);
+    const requestKind = resolveAgentRequestKind(context.toolName, context.kind);
     const hasAllowedTools = typeof response.allowedTools !== 'undefined' || typeof response.allowTools !== 'undefined';
     const hasUpdatedPermissions = typeof response.updatedPermissions !== 'undefined';
     const hasExecPolicyAmendment = typeof response.execPolicyAmendment !== 'undefined';
@@ -627,8 +640,9 @@ export type MediatedPermissionResponseInput = Readonly<{
     sourceRevisionOrEpoch: string;
     idempotencyKey: string;
     actor: Readonly<{ namespace: string; principalId: string }>;
-    decision: 'allow' | 'deny';
-    scope: 'request' | 'session';
+    decision?: 'allow' | 'deny';
+    scope?: 'request' | 'session';
+    nativeChoice?: NativePermissionChoiceAnswerV1;
     mediator: Readonly<{ pluginId: string; contributionLocalId: string }>;
     signal?: AbortSignal;
 }>;
@@ -654,7 +668,8 @@ export type MediatedUserActionResponseInput = Readonly<{
 }>;
 
 type PreparedMediatedPermissionResponse = Readonly<{
-    input: SessionPermissionRemoteRespondInputV1;
+    input: SessionPermissionRemoteRespondInputV1 & Readonly<{ decision: 'allow' | 'deny'; scope: 'request' | 'session' }>;
+    existingRecord?: Awaited<ReturnType<PermissionMediationRecordStore['read']>>;
     mediator: Readonly<{ pluginId: string; contributionLocalId: string }>;
     actor: SessionPermissionExternalHumanDecisionActorV1;
     claim: PermissionResponseClaim;
@@ -679,7 +694,7 @@ export abstract class BasePermissionHandler {
     private readonly getCodingPromptBehaviorFn: (() => CodingPromptBehaviorV1 | null) | null;
     private readonly getWorkspaceWrites: (() => 'allow' | 'deny' | undefined) | null;
     private readonly getAccountRoleOverrides: () => AccountRoleOverridesReadV1;
-    private readonly toolTrace: { protocol: ToolTraceProtocol; provider: string } | null;
+    private readonly toolTrace: (() => ToolNormalizationSourceV3 | null) | null;
     private readonly triggerAbortCallbackOnAbortDecision: boolean;
     /** Runtime-registry currentness for a mediator whose grant may have survived admission. */
     private readonly isMediatorPluginCurrent: (pluginId: string) => boolean;
@@ -771,7 +786,7 @@ export abstract class BasePermissionHandler {
         const pending = this.pendingRequests.get(requestId);
         const currentDecision = pending?.resolveCurrentPermissionDecision?.();
         if (!context || !pending?.coordinatorManaged || !this.isApprovalReviewerEnabled() || context.source === HAPPIER_ACTION_REQUEST_SOURCE
-            || context.kind === 'user_action' || resolveAgentRequestKind(context.toolName) !== 'permission'
+            || context.kind === 'user_action' || resolveAgentRequestKind(context.toolName, context.kind) !== 'permission'
             || currentDecision?.decision === 'denied' || currentDecision?.decision === 'abort') return 'escalate';
         // Public permission sources may carry non-JSON records. Admit a strict,
         // immutable snapshot before disclosure or JSON-value comparison.
@@ -890,6 +905,7 @@ export abstract class BasePermissionHandler {
     constructor(
         session: ApiSessionClient,
         opts?: {
+            requestCoverage?: import('@happier-dev/agents').AgentStateRequestCoverageOptions;
             pushSender?: PermissionRequestPushSender | null;
             getAccountSettings?: (() => AccountSettings | null) | null;
             getCodingPromptBehavior?: (() => CodingPromptBehaviorV1 | null) | null;
@@ -897,7 +913,7 @@ export abstract class BasePermissionHandler {
             getWorkspaceWrites?: (() => 'allow' | 'deny' | undefined) | null;
             getAccountSettingsSecretsReadKeys?: (() => ReadonlyArray<Uint8Array | null | undefined>) | null;
             onAbortRequested?: (() => void | Promise<void>) | null;
-            toolTrace?: { protocol: ToolTraceProtocol; provider: string } | null;
+            toolTrace?: (() => ToolNormalizationSourceV3 | null) | null;
             triggerAbortCallbackOnAbortDecision?: boolean;
             mediationRecordStore?: PermissionMediationRecordStore | null;
             isMediatorPluginCurrent?: ((pluginId: string) => boolean) | null;
@@ -926,6 +942,7 @@ export abstract class BasePermissionHandler {
             : (() => false);
         this.requestStore = new AgentStateRequestStore({
             session,
+            ...(opts && 'requestCoverage' in opts ? { requestCoverage: opts.requestCoverage } : {}),
             logPrefix: this.getLogPrefix(),
             pushSender: opts?.pushSender ?? null,
             getAccountSettings: this.getAccountSettingsSnapshotFn,
@@ -947,13 +964,7 @@ export abstract class BasePermissionHandler {
         this.mediationRecordStore = this.injectedMediationRecordStore
             ?? createPermissionMediationRecordStore(session);
         this.startRemoteMediationGrantHydration();
-        this.toolTrace =
-            opts?.toolTrace && typeof opts.toolTrace === 'object'
-                ? {
-                    protocol: opts.toolTrace.protocol,
-                    provider: opts.toolTrace.provider,
-                }
-                : null;
+        this.toolTrace = opts?.toolTrace ?? null;
         this.setupRpcHandler();
         this.seedAllowedToolsFromAgentState();
     }
@@ -1145,6 +1156,7 @@ export abstract class BasePermissionHandler {
                         const settlement = await this.settleMediatedPermissionNonAuthorizing({
                             requestId: stored.identity.requestId,
                             settlementId: stored.record.settlementId,
+                            nativeChoice: stored.record.nativeChoice,
                         });
                         return settlement !== 'unavailable';
                     }
@@ -1178,20 +1190,23 @@ export abstract class BasePermissionHandler {
         if (!parsed.success) return null;
         const record = parsed.data;
         return this.prepareMediatedPermissionResponse({
-            sessionId: stored.identity.sessionId,
-            turnId: stored.identity.turnId,
-            requestId: stored.identity.requestId,
-            sourceRef: record.sourceAuthority.sourceRef,
-            sourceRevisionOrEpoch: record.sourceAuthority.sourceRevisionOrEpoch,
-            idempotencyKey: record.idempotencyKey,
-            actor: {
-                namespace: record.actor.namespace,
-                principalId: record.actor.principalId,
+            input: {
+                sessionId: stored.identity.sessionId,
+                turnId: stored.identity.turnId,
+                requestId: stored.identity.requestId,
+                sourceRef: record.sourceAuthority.sourceRef,
+                sourceRevisionOrEpoch: record.sourceAuthority.sourceRevisionOrEpoch,
+                idempotencyKey: record.idempotencyKey,
+                actor: {
+                    namespace: record.actor.namespace,
+                    principalId: record.actor.principalId,
+                },
+                decision: record.decision,
+                scope: record.requestedScope,
+                ...(record.nativeChoice ? { nativeChoice: record.nativeChoice } : {}),
             },
-            decision: record.decision,
-            scope: record.requestedScope,
             mediator: record.actor.assertedBy,
-        });
+        }, stored);
     }
 
     private addRemoteMediationGrant(
@@ -1499,6 +1514,16 @@ export abstract class BasePermissionHandler {
     }
 
     private buildPermissionResult(response: PermissionResponse): PermissionResult {
+        if (response.nativeChoice && response.decision) {
+            return {
+                decision: response.decision,
+                nativeChoice: response.nativeChoice,
+                ...(response.mode !== undefined ? { mode: response.mode } : {}),
+                ...(response.allowedTools !== undefined ? { allowedTools: response.allowedTools } : {}),
+                ...(response.updatedPermissions !== undefined ? { updatedPermissions: response.updatedPermissions } : {}),
+                ...(response.execPolicyAmendment !== undefined ? { execPolicyAmendment: response.execPolicyAmendment } : {}),
+            };
+        }
         if (response.approved) {
             const wantsExecpolicyAmendment =
                 response.decision === 'approved_execpolicy_amendment' && Boolean(response.execPolicyAmendment?.command?.length);
@@ -1540,24 +1565,28 @@ export abstract class BasePermissionHandler {
         return {
             status: response.approved ? 'approved' : 'denied',
             decision: result.decision,
+            ...(response.mode !== undefined ? { mode: response.mode } : {}),
             ...(typeof derivedAllowTools !== 'undefined' ? { allowedTools: derivedAllowTools } : {}),
             ...(typeof updatedPermissions !== 'undefined' ? { updatedPermissions } : {}),
             ...(permissionDecisionActorV1 ? {
                 extraCompletedFields: {
                     permissionDecisionActorV1,
+                    ...(response.nativeChoice ? { nativeChoice: response.nativeChoice } : {}),
                     ...(response.answeringClientCategory ? { answeringClientCategory: response.answeringClientCategory } : {}),
                 },
             } : remoteMediationSettlementId ? {
                 // The encrypted, host-owned System Record is the sole place
                 // that carries the asserted external person. AgentState keeps
                 // only this non-authorizing correlation pointer.
-                extraCompletedFields: { remoteMediationSettlementId },
-            } : {}),
+                extraCompletedFields: { remoteMediationSettlementId, ...(response.nativeChoice ? { nativeChoice: response.nativeChoice } : {}) },
+            } : response.nativeChoice ? { extraCompletedFields: { nativeChoice: response.nativeChoice } } : {}),
         };
     }
 
     private applyPermissionResponseAnswers(response: PermissionResponse, result: PermissionResult): boolean {
-        if (!response.approved || typeof response.answers === 'undefined') return true;
+        if (!response.approved) return true;
+        if (response.answerDetails !== undefined) result.answerDetails = response.answerDetails;
+        if (typeof response.answers === 'undefined') return true;
 
         const answersRaw = response.answers;
         if (!answersRaw || typeof answersRaw !== 'object' || Array.isArray(answersRaw)) return false;
@@ -1601,12 +1630,12 @@ export abstract class BasePermissionHandler {
             }
         }
 
-        if (this.toolTrace) {
+        const toolTraceSource = this.toolTrace?.();
+        if (toolTraceSource) {
             recordToolTraceEvent({
                 direction: 'inbound',
                 sessionId: this.session.sessionId,
-                protocol: this.toolTrace.protocol,
-                provider: this.toolTrace.provider,
+                source: toolTraceSource,
                 kind: 'permission-response',
                 payload: {
                     type: 'permission-response',
@@ -1758,7 +1787,9 @@ export abstract class BasePermissionHandler {
             // adapter must not bypass the canonical question authority owner.
             const context = expectedRequestKind === undefined
                 ? this.requestCoordinator.getResponseContext(response.id) : null;
-            if (context && (context.kind ?? resolveAgentRequestKind(context.toolName)) === 'user_action'
+            if (context && resolvePendingRequestAttentionReasonV1({
+                kind: resolveAgentRequestKind(context.toolName, context.kind), source: context.source,
+            }) === 'user_action_required'
                 && (rpcContext?.sessionActionOrigin || permissionDecisionActorV1)) {
                 return await handleUserActionAnswer(response, rpcContext, permissionDecisionActorV1 ?? undefined);
             }
@@ -1995,7 +2026,7 @@ export abstract class BasePermissionHandler {
         let hasUnprojectedSourceRequest = false;
         const requests: MediatedPendingRequest[] = [];
         for (const context of this.requestCoordinator.listResponseContexts()) {
-            const kind = resolveAgentRequestKind(context.toolName);
+            const kind = resolveAgentRequestKind(context.toolName, context.kind);
             if (kind !== 'permission' && kind !== 'user_action') continue;
             const sourceAuthority = context.owner?.sourceAuthority;
             if (
@@ -2078,6 +2109,11 @@ export abstract class BasePermissionHandler {
                 turnId: turnId.data,
                 createdAtMs: context.createdAt,
                 allowedScopes,
+                ...(context.nativeChoices ? { nativeChoices: context.nativeChoices,
+                    nativeChoiceAvailability: context.nativeChoices.choices.map(choice => ({ choiceId: choice.id,
+                        ...evaluatePermissionResponseAuthorityV1({ response: choice.response, nativeScope: choice.scope }),
+                    })),
+                } : {}),
                 agentRequestSummary,
             });
         }
@@ -2372,7 +2408,24 @@ export abstract class BasePermissionHandler {
             return { status: 'rejected', code: 'requestNotFound' };
         }
         if (params.signal?.aborted) return { status: 'rejected', code: 'canceled' };
-        const prepared = this.prepareMediatedPermissionResponse(params);
+        const parsedInput = SessionPermissionRemoteRespondInputV1Schema.safeParse({
+            sessionId: params.sessionId, turnId: params.turnId, requestId: params.requestId,
+            sourceRef: params.sourceRef, sourceRevisionOrEpoch: params.sourceRevisionOrEpoch,
+            idempotencyKey: params.idempotencyKey, actor: params.actor,
+            ...(params.nativeChoice ? { nativeChoice: params.nativeChoice } : {}),
+            ...(params.decision !== undefined ? { decision: params.decision } : {}),
+            ...(params.scope !== undefined ? { scope: params.scope } : {}),
+        });
+        if (!parsedInput.success) return { status: 'rejected', code: 'actorUnattributable' };
+        if (parsedInput.data.sessionId !== this.session.sessionId) return { status: 'rejected', code: 'requestNotFound' };
+        const store = this.mediationRecordStore;
+        if (!store) return { status: 'rejected', code: 'mediationStateUnavailable' };
+        const existingRecord = await store.read({ identity: mediationRecordIdentity(parsedInput.data), signal: params.signal });
+        if (existingRecord.status === 'unavailable' || this.mediationRecordStore !== store)
+            return { status: 'rejected', code: 'mediationStateUnavailable' };
+        const selected = this.prepareMediatedPermissionResponse({ input: parsedInput.data, mediator: params.mediator },
+            existingRecord.status === 'found' ? existingRecord.stored : undefined);
+        const prepared = selected ? { ...selected, existingRecord } : null;
         if (!prepared) return { status: 'rejected', code: 'actorUnattributable' };
         // `requestId` is Session-local. Claim it only after all three public
         // custody members identify this handler's live Session and turn.
@@ -2507,7 +2560,7 @@ export abstract class BasePermissionHandler {
             !context
             || context.correlation !== 'record'
             || context.status !== 'live'
-            || resolveAgentRequestKind(context.toolName) !== 'user_action'
+            || resolveAgentRequestKind(context.toolName, context.kind) !== 'user_action'
             || !matchesMediatedPermissionTurnId(context.turnId, params.input)
             || !matchesRemoteMediationSourceAuthority(
                 context.owner?.sourceAuthority,
@@ -2562,20 +2615,12 @@ export abstract class BasePermissionHandler {
     }
 
     private prepareMediatedPermissionResponse(
-        params: MediatedPermissionResponseInput,
+        params: Readonly<{
+            input: SessionPermissionRemoteRespondInputV1;
+            mediator: MediatedPermissionResponseInput['mediator'];
+        }>,
+        admittedRecord?: PermissionMediationStoredRecord,
     ): PreparedMediatedPermissionResponse | null {
-        const inputResult = SessionPermissionRemoteRespondInputV1Schema.safeParse({
-            sessionId: params.sessionId,
-            turnId: params.turnId,
-            requestId: params.requestId,
-            sourceRef: params.sourceRef,
-            sourceRevisionOrEpoch: params.sourceRevisionOrEpoch,
-            idempotencyKey: params.idempotencyKey,
-            actor: params.actor,
-            decision: params.decision,
-            scope: params.scope,
-        });
-        if (!inputResult.success) return null;
         const mediatorPluginId = PluginIdSchema.safeParse(params.mediator?.pluginId);
         const mediatorContributionLocalId = PluginContributionLocalIdSchema.safeParse(
             params.mediator?.contributionLocalId,
@@ -2588,14 +2633,43 @@ export abstract class BasePermissionHandler {
         const actor = SessionPermissionExternalHumanDecisionActorV1Schema.safeParse({
             kind: 'externalHuman',
             assurance: 'pluginAsserted',
-            namespace: inputResult.data.actor.namespace,
-            principalId: inputResult.data.actor.principalId,
+            namespace: params.input.actor.namespace,
+            principalId: params.input.actor.principalId,
             assertedBy: mediator,
         });
         if (!actor.success) return null;
+        let decision = params.input.decision;
+        let scope = params.input.scope;
+        if (admittedRecord) {
+            // A retry consumes the already-admitted owner record, never caller proof.
+            if (!isDeepStrictEqual(admittedRecord.record.nativeChoice, params.input.nativeChoice)) return null;
+            if (params.input.nativeChoice) {
+                decision = admittedRecord.record.decision;
+                scope = admittedRecord.record.requestedScope;
+            }
+        } else {
+            const context = this.requestCoordinator.getResponseContext(params.input.requestId);
+            if (context) {
+                const response = this.resolveIncomingPermissionResponse({
+                    id: params.input.requestId, turnId: params.input.turnId,
+                    ...(params.input.nativeChoice ? { nativeChoice: params.input.nativeChoice } : {}),
+                    approved: params.input.decision === 'allow',
+                    decision: params.input.decision === 'allow' ? 'approved' : 'denied',
+                }, context);
+                if (!response) return null;
+                if (response.nativeChoice) {
+                    const choice = context.nativeChoices?.choices.find(candidate => candidate.id === response.nativeChoice?.choiceId);
+                    if (!choice) return null;
+                    decision = response.approved ? 'allow' : 'deny';
+                    scope = choice.scope === 'session' ? 'session' : 'request';
+                }
+            } else if (params.input.nativeChoice) return null;
+        }
+        if (decision === undefined || scope === undefined) return null;
+        const input = { ...params.input, decision, scope };
 
         return {
-            input: inputResult.data,
+            input,
             mediator,
             actor: actor.data,
             claim: {
@@ -2603,12 +2677,13 @@ export abstract class BasePermissionHandler {
                 origin: 'remoteMediation',
                 actor: actor.data,
                 mediatorPluginId: mediator.pluginId,
-                turnId: inputResult.data.turnId,
-                sourceRef: inputResult.data.sourceRef,
-                sourceRevisionOrEpoch: inputResult.data.sourceRevisionOrEpoch,
-                idempotencyKey: inputResult.data.idempotencyKey,
-                decision: inputResult.data.decision,
-                scope: inputResult.data.scope,
+                turnId: params.input.turnId,
+                sourceRef: params.input.sourceRef,
+                sourceRevisionOrEpoch: params.input.sourceRevisionOrEpoch,
+                idempotencyKey: params.input.idempotencyKey,
+                ...(input.nativeChoice ? { nativeChoice: input.nativeChoice } : {}),
+                decision: input.decision,
+                scope: input.scope,
             },
         };
     }
@@ -2628,7 +2703,7 @@ export abstract class BasePermissionHandler {
             context
             && context.correlation === 'record'
             && context.status === 'live'
-            && resolveAgentRequestKind(context.toolName) === 'permission'
+            && resolveAgentRequestKind(context.toolName, context.kind) === 'permission'
             && matchesMediatedPermissionTurnId(context.turnId, prepared.input)
             && matchesRemoteMediationSourceAuthority(
                 context.owner?.sourceAuthority,
@@ -2641,7 +2716,7 @@ export abstract class BasePermissionHandler {
         const outstanding = this.requestStore.readOutstandingRequest(prepared.input.requestId);
         const hasMatchingOutstandingClaim = Boolean(
             outstanding
-            && resolveAgentRequestKind(outstanding.toolName) === 'permission'
+            && resolveAgentRequestKind(outstanding.toolName, outstanding.kind) === 'permission'
             && matchesMediatedPermissionTurnId(outstanding.turnId, prepared.input)
             && matchesRemoteMediationSourceAuthority(
                 outstanding.owner?.sourceAuthority,
@@ -2699,7 +2774,7 @@ export abstract class BasePermissionHandler {
         const completed = this.session.getAgentStateSnapshot?.()?.completedRequests?.[params.input.requestId];
         if (!completed || typeof completed !== 'object' || Array.isArray(completed)) return false;
         const entry = completed as Readonly<Record<string, unknown>>;
-        if (typeof entry.tool !== 'string' || resolveAgentRequestKind(entry.tool) !== 'permission') return false;
+        if (typeof entry.tool !== 'string' || resolveAgentRequestKind(entry.tool, entry.kind) !== 'permission') return false;
         if (!matchesMediatedPermissionTurnId(entry.turnId, params.input)) return false;
         const owner = normalizePermissionRequestOwner(entry.owner, 'stored');
         return matchesRemoteMediationSourceAuthority(
@@ -2768,7 +2843,7 @@ export abstract class BasePermissionHandler {
         const recordSessionId = recordSession.sessionId;
         const identity = mediationRecordIdentity(input);
 
-        const existing = await recordStore.read({ identity, signal: params.signal });
+        const existing = prepared.existingRecord ?? await recordStore.read({ identity, signal: params.signal });
         if (params.signal?.aborted) return { status: 'rejected', code: 'canceled' };
         if (!this.isCurrentRemoteMediationLedger({
             store: recordStore,
@@ -2807,7 +2882,7 @@ export abstract class BasePermissionHandler {
             onSettlementPersisted();
             const settlement = await this.requestCoordinator.withResponseClaim(
                 input.requestId,
-                async () => await this.settleMediatedPermissionNonAuthorizing({ requestId: input.requestId }),
+                async () => await this.settleMediatedPermissionNonAuthorizing({ requestId: input.requestId, nativeChoice: input.nativeChoice }),
             );
             if (settlement === 'unavailable') {
                 return { status: 'rejected', code: 'mediationStateUnavailable' };
@@ -2839,7 +2914,7 @@ export abstract class BasePermissionHandler {
                 : null);
         if (
             !context
-            || resolveAgentRequestKind(context.toolName) !== 'permission'
+            || resolveAgentRequestKind(context.toolName, context.kind) !== 'permission'
             || !matchesMediatedPermissionTurnId(context.turnId, input)
         ) {
             return this.isCompletedMediatedPermissionRequestVisible({
@@ -2894,6 +2969,7 @@ export abstract class BasePermissionHandler {
             actor,
             decision: input.decision,
             requestedScope: input.scope,
+            ...(input.nativeChoice ? { nativeChoice: input.nativeChoice } : {}),
             effect: input.decision === 'allow' && input.scope === 'session'
                 ? {
                     kind: 'sessionGrant',
@@ -3044,6 +3120,7 @@ export abstract class BasePermissionHandler {
                     async () => await this.settleMediatedPermissionNonAuthorizing({
                         requestId: input.requestId,
                         settlementId: creation.staleCreated.record.settlementId,
+                        nativeChoice: creation.staleCreated.record.nativeChoice,
                     }),
                 );
                 if (settlement === 'unavailable') {
@@ -3205,7 +3282,7 @@ export abstract class BasePermissionHandler {
             rejection: Extract<SessionPermissionRemoteRespondOutputV1, Readonly<{ status: 'rejected' }>>,
         ): Promise<Extract<SessionPermissionRemoteRespondOutputV1, Readonly<{ status: 'rejected' }>> | null> => {
             const live = this.requestCoordinator.getResponseContext(params.input.requestId);
-            if (!live || resolveAgentRequestKind(live.toolName) !== 'permission') {
+            if (!live || resolveAgentRequestKind(live.toolName, live.kind) !== 'permission') {
                 return params.mustComplete
                     ? { status: 'rejected', code: 'requestNotPending' }
                     : null;
@@ -3221,6 +3298,7 @@ export abstract class BasePermissionHandler {
                 const settlement = await this.settleMediatedPermissionNonAuthorizing({
                     requestId: params.input.requestId,
                     settlementId: params.stored.record.settlementId,
+                    nativeChoice: params.stored.record.nativeChoice,
                 });
                 if (settlement === 'unavailable') {
                     return { status: 'rejected', code: 'mediationStateUnavailable' };
@@ -3254,7 +3332,7 @@ export abstract class BasePermissionHandler {
                     status: 'live' as const,
                 }
                 : null);
-        if (!context || resolveAgentRequestKind(context.toolName) !== 'permission') {
+        if (!context || resolveAgentRequestKind(context.toolName, context.kind) !== 'permission') {
             return params.mustComplete
                 ? { status: 'rejected', code: 'requestNotPending' }
                 : null;
@@ -3295,6 +3373,7 @@ export abstract class BasePermissionHandler {
                 const settlement = await this.settleMediatedPermissionNonAuthorizing({
                     requestId: currentGrant.requestId,
                     settlementId: currentGrant.settlementId,
+                    nativeChoice: currentGrant.nativeChoice,
                 });
                 if (settlement === 'unavailable') {
                     return { status: 'rejected', code: 'mediationStateUnavailable' };
@@ -3314,17 +3393,18 @@ export abstract class BasePermissionHandler {
         if (!completionIsCurrent()) {
             return { status: 'rejected', code: 'mediationStateUnavailable' };
         }
-        const completed = await this.handlePermissionResponseWithContext({
-            response: {
-                id: completionStored.record.requestId,
-                approved: completionStored.record.decision === 'allow',
-                decision: completionStored.record.decision === 'allow' ? 'approved' : 'denied',
-            },
-            context,
-            legacyPending,
-            remoteMediationSettlementId: params.outcome.settlementId,
+        const routed = await this.handleIncomingPermissionResponse({
+            id: completionStored.record.requestId,
+            turnId: completionStored.record.turnId,
+            approved: completionStored.record.decision === 'allow',
+            decision: completionStored.record.decision === 'allow' ? 'approved' : 'denied',
+            ...(completionStored.record.nativeChoice ? { nativeChoice: completionStored.record.nativeChoice } : {}),
+        }, {
+            expectedRequestKind: 'permission',
+            admittedRemoteRecord: completionStored,
             isCurrent: completionIsCurrent,
         });
+        const completed = routed.status === 'resolved';
         if (!completed && params.mustComplete) {
             // Lifecycle cancellation may win after the System Record CAS but
             // while the ordinary AgentState terminal write is in flight. The
@@ -3357,6 +3437,7 @@ export abstract class BasePermissionHandler {
     private async settleMediatedPermissionNonAuthorizing(params: Readonly<{
         requestId: string;
         settlementId?: string;
+        nativeChoice?: NativePermissionChoiceAnswerV1;
     }>): Promise<'completed' | 'not_pending' | 'unavailable'> {
         const legacyPending = this.pendingRequests.get(params.requestId);
         const context = this.requestCoordinator.getResponseContext(params.requestId)
@@ -3372,7 +3453,13 @@ export abstract class BasePermissionHandler {
                     status: 'live' as const,
                 }
                 : null);
-        if (!context || resolveAgentRequestKind(context.toolName) !== 'permission') return 'not_pending';
+        if (!context || resolveAgentRequestKind(context.toolName, context.kind) !== 'permission') return 'not_pending';
+        // Neutralization retires the admitted occurrence, never a replacement
+        // that reused its request id while the remote record was committing.
+        if ((context.nativeChoices !== undefined || params.nativeChoice !== undefined)
+            && (!context.nativeChoices || context.nativeChoices.requirementId !== params.nativeChoice?.requirementId)) {
+            return 'not_pending';
+        }
 
         const completed = await this.handlePermissionResponseWithContext({
             response: {
@@ -3412,6 +3499,7 @@ export abstract class BasePermissionHandler {
             || record.idempotencyKey !== input.idempotencyKey
             || record.decision !== input.decision
             || record.requestedScope !== input.scope
+            || !isDeepStrictEqual(record.nativeChoice, input.nativeChoice)
             || record.actor.namespace !== input.actor.namespace
             || record.actor.principalId !== input.actor.principalId
             || record.actor.assertedBy.pluginId !== mediator.pluginId
@@ -3473,19 +3561,62 @@ export abstract class BasePermissionHandler {
         return authorization.actor;
     }
 
+    private resolveIncomingPermissionResponse(
+        response: PermissionResponse,
+        context: PermissionRequestCoordinatorContext,
+        relationship?: 'owner' | 'sharedApprover',
+        admitted = false,
+    ): PermissionResponse | null {
+        let selected = response;
+        let nativeScope: NativePermissionChoicesV1['choices'][number]['scope'] | undefined;
+        if (context.nativeChoices !== undefined) {
+            const offered = NativePermissionChoicesV1Schema.safeParse(context.nativeChoices);
+            const answer = NativePermissionChoiceAnswerV1Schema.safeParse(response.nativeChoice);
+            if (!offered.success || !answer.success || offered.data.requirementId !== answer.data.requirementId) return null;
+            const choice = offered.data.choices.find(candidate => candidate.id === answer.data.choiceId);
+            if (!choice || (answer.data.feedback !== undefined && choice.allowsFeedback !== true)) return null;
+            nativeScope = choice.scope;
+            selected = {
+                ...choice.response,
+                id: response.id,
+                ...(response.turnId !== undefined ? { turnId: response.turnId } : {}),
+                ...(response.answeringClientCategory !== undefined ? { answeringClientCategory: response.answeringClientCategory } : {}),
+                approved: choice.decision !== 'denied' && choice.decision !== 'abort',
+                decision: choice.decision,
+                nativeChoice: answer.data,
+            };
+        } else if (response.nativeChoice !== undefined || response.approved === undefined
+            || !isPermissionResponseAuthorityValid({ response, context })) return null;
+        if (!admitted && !evaluatePermissionResponseAuthorityV1({ response: selected, nativeScope, relationship }).allowed) return null;
+        return selected;
+    }
+
     private async handleIncomingPermissionResponse(
         response: PermissionResponse,
         options?: Readonly<{
             expectedRequestKind?: 'permission' | 'user_action';
             permissionDecisionActorV1?: SocketRpcSessionPermissionRespondAuthorizationContext['actor'];
             answeredBy?: SessionQuestionHandlerV1;
+            admittedRemoteRecord?: PermissionMediationStoredRecord;
             isCurrent?: () => boolean;
         }>,
     ): Promise<PermissionResponseRoutingResult> {
-        return await this.requestCoordinator.withResponseClaim(response.id, async () => {
+        const admit = async (): Promise<PermissionResponseRoutingResult> => {
             const actor = options?.permissionDecisionActorV1;
+            const context = this.requestCoordinator.getResponseContext(response.id);
+            const completed = !context ? this.session.getAgentStateSnapshot?.()?.completedRequests?.[response.id] : undefined;
+            const completedNativeChoices = NativePermissionChoicesV1Schema.safeParse(completed?.nativeChoices);
+            const nativeContext = context ?? (completed?.nativeChoices !== undefined ? {
+                requestId: response.id, toolName: completed.tool, toolInput: completed.arguments,
+                createdAt: completed.createdAt, nativeChoices: completedNativeChoices.success ? completedNativeChoices.data : null,
+                sourceLocalId: null, correlation: 'agent_state' as const, status: 'agent_state_only' as const,
+            } : null);
+            if (nativeContext) {
+                const canonical = this.resolveIncomingPermissionResponse(response, nativeContext, actor?.relationship, Boolean(options?.admittedRemoteRecord));
+                if (!canonical) return { status: 'invalid' };
+                response = canonical;
+            } else if (response.nativeChoice !== undefined) return { status: 'not_found' };
             const result = actor ? this.buildPermissionResult(response) : null;
-            const context = actor ? this.requestCoordinator.getResponseContext(response.id) : null;
             const responseTurnId = TurnIdSchema.safeParse(response.turnId);
             const contextTurnId = context?.turnId;
             const hasMatchingTurnCustody = context
@@ -3497,6 +3628,7 @@ export abstract class BasePermissionHandler {
                 ? {
                     version: 1,
                     origin: 'presentUser',
+                    ...(response.nativeChoice ? { nativeChoice: response.nativeChoice } : {}),
                     actor,
                     ...(contextTurnId
                         ? { turnId: contextTurnId }
@@ -3520,8 +3652,8 @@ export abstract class BasePermissionHandler {
                 && context
                 && hasMatchingTurnCustody
                 && options?.expectedRequestKind !== 'user_action'
-                && resolveAgentRequestKind(context.toolName) === 'permission'
-                && isPermissionResponseAuthorityValid({ response, context }),
+                && resolveAgentRequestKind(context.toolName, context.kind) === 'permission'
+                && (response.nativeChoice !== undefined || isPermissionResponseAuthorityValid({ response, context })),
             );
             if (actor && context && options?.expectedRequestKind !== 'user_action' && !hasMatchingTurnCustody) {
                 return { status: 'not_found' };
@@ -3547,20 +3679,22 @@ export abstract class BasePermissionHandler {
                     : { status: 'not_found' };
             }
 
-            let completed = false;
+            let responseCompleted = false;
             try {
                 const routed = await this.handleIncomingPermissionResponseUnclaimed(response, options);
-                completed = routed.status === 'resolved';
+                responseCompleted = routed.status === 'resolved';
                 return routed;
             } finally {
-                if (!completed) {
+                if (!responseCompleted) {
                     await this.requestCoordinator.releaseResponseClaim({
                         requestId: response.id,
                         claim,
                     });
                 }
             }
-        });
+        };
+        return options?.admittedRemoteRecord ? await admit()
+            : await this.requestCoordinator.withResponseClaim(response.id, admit);
     }
 
     private async handleIncomingPermissionResponseUnclaimed(
@@ -3569,6 +3703,7 @@ export abstract class BasePermissionHandler {
             expectedRequestKind?: 'permission' | 'user_action';
             permissionDecisionActorV1?: SocketRpcSessionPermissionRespondAuthorizationContext['actor'];
             answeredBy?: SessionQuestionHandlerV1;
+            admittedRemoteRecord?: PermissionMediationStoredRecord;
             isCurrent?: () => boolean;
         }>,
     ): Promise<PermissionResponseRoutingResult> {
@@ -3596,22 +3731,25 @@ export abstract class BasePermissionHandler {
         if (responseTurnId !== undefined && responseTurnId !== context.turnId) {
             return { status: 'not_found' };
         }
-        const isCurrent = responseTurnId !== undefined
+        const isCurrent = responseTurnId !== undefined || response.nativeChoice !== undefined
             ? () => {
                 if (options?.isCurrent && !options.isCurrent()) return false;
                 // The terminal writer checks currentness before removing the request.
                 const current = this.requestStore.readOutstandingRequest(response.id);
-                return current?.turnId === responseTurnId;
+                return (responseTurnId === undefined || current?.turnId === responseTurnId)
+                    && (response.nativeChoice === undefined || current?.nativeChoices?.requirementId === response.nativeChoice.requirementId);
             }
             : options?.isCurrent;
         if (
             options?.expectedRequestKind
-            && resolveAgentRequestKind(context.toolName) !== options.expectedRequestKind
+            && resolvePendingRequestAttentionReasonV1({
+                kind: resolveAgentRequestKind(context.toolName, context.kind), source: context.source,
+            }) !== `${options.expectedRequestKind}_required`
         ) {
             logger.debug(`${this.getLogPrefix()} Permission response arrived on the wrong RPC route; ignored`);
             return { status: 'not_found' };
         }
-        if (!isPermissionResponseAuthorityValid({ response, context })) {
+        if (response.nativeChoice === undefined && !isPermissionResponseAuthorityValid({ response, context })) {
             logger.debug(`${this.getLogPrefix()} Permission response authority did not match the current request; ignored`);
             return { status: 'invalid' };
         }
@@ -3619,6 +3757,7 @@ export abstract class BasePermissionHandler {
         if (response.approved && isAgentStructuredQuestionRequest(context)) {
             const answers = normalizeStructuredQuestionPermissionAnswers({
                 toolName: context.toolName, toolInput: context.toolInput, answers: response.answers ?? {},
+                ...(response.answerDetails === undefined ? {} : { answerDetails: response.answerDetails }),
             });
             if (!answers) return { status: 'invalid' };
             response = { ...response, answers };
@@ -3632,6 +3771,7 @@ export abstract class BasePermissionHandler {
                 permissionDecisionActorV1: options.permissionDecisionActorV1,
             } : {}),
             ...(options?.answeredBy ? { answeredBy: options.answeredBy } : {}),
+            ...(options?.admittedRemoteRecord ? { remoteMediationSettlementId: options.admittedRemoteRecord.record.settlementId } : {}),
             ...(isCurrent ? { isCurrent } : {}),
         });
         return completed ? { status: 'resolved' } : { status: 'not_found' };
@@ -3669,6 +3809,7 @@ export abstract class BasePermissionHandler {
         const effectiveResponse: PermissionResponse = currentDecision && currentDecisionBlocksApproval
             ? {
                 id: response.id,
+                ...(response.nativeChoice ? { nativeChoice: response.nativeChoice } : {}),
                 approved: false,
                 decision: currentDecision.decision,
             }
@@ -3695,6 +3836,7 @@ export abstract class BasePermissionHandler {
         const completedRequest = {
             ...responseCompletion,
             ...(result.answers ? { structuredAnswersV1: result.answers } : {}),
+            ...(result.answerDetails === undefined ? {} : { answerDetails: result.answerDetails }),
             ...(answeredBy ? { answeredBy } : {}),
             ...(orphanedQuestionAnswer ? { extraCompletedFields: {
                 ...responseCompletion.extraCompletedFields,
@@ -3749,6 +3891,7 @@ export abstract class BasePermissionHandler {
     private autoApproveNowAllowedPendingRequests(excludePermissionId: string): void {
         for (const [permissionId, pending] of this.pendingRequests.entries()) {
             if (permissionId === excludePermissionId) continue;
+            if (pending.nativeChoices !== undefined) continue;
             if (resolveAgentRequestKind(pending.toolName) !== 'permission') continue;
             // A causal external source is its own permission authority. A
             // present-user session allowlist update for one prompt must not
@@ -3940,6 +4083,7 @@ export abstract class BasePermissionHandler {
         owner: PermissionRequestOwner;
         decision: 'approved' | 'denied' | 'abort';
         answers?: StructuredQuestionAnswersV1;
+        answerDetails?: StructuredQuestionAnswerDetailsV1;
     }>): Promise<boolean> {
         const pending = this.pendingRequests.get(params.requestId);
         const context = this.requestCoordinator.getResponseContext(params.requestId);
@@ -3950,7 +4094,7 @@ export abstract class BasePermissionHandler {
         const nativeApproval = context !== null
             && (context.source === NATIVE_TOOL_APPROVAL_ONCE_REQUEST_SOURCE
                 || context.source === NATIVE_TOOL_APPROVAL_REQUEST_SOURCE)
-            && (context.kind ?? resolveAgentRequestKind(context.toolName)) === 'permission';
+            && resolveAgentRequestKind(context.toolName, context.kind) === 'permission';
         if (!pending || !context || !outstanding
             || (!occurrenceQuestion && !nativeApproval)
             || !params.source.trim() || context.source !== params.source.trim()
@@ -3959,7 +4103,9 @@ export abstract class BasePermissionHandler {
                 normalizePermissionRequestOwnerWithoutSourceAuthority(params.owner),
             )) return false;
         const answers = params.answers === undefined ? undefined : StructuredQuestionAnswersV1Schema.parse(params.answers);
-        const result: PermissionResult = { decision: params.decision, ...(answers ? { answers } : {}) };
+        const answerDetails = params.answerDetails;
+        const result: PermissionResult = { decision: params.decision, ...(answers ? { answers } : {}),
+            ...(answerDetails === undefined ? {} : { answerDetails }) };
         return await this.requestCoordinator.completeObservedResponse({ context, completion: {
             result,
             completedRequest: {
@@ -3967,6 +4113,7 @@ export abstract class BasePermissionHandler {
                 decision: params.decision,
                 answeredBy: { kind: 'person' },
                 ...(answers ? { structuredAnswersV1: answers } : {}),
+                ...(answerDetails === undefined ? {} : { answerDetails }),
             },
         } });
     }
@@ -3978,6 +4125,8 @@ export abstract class BasePermissionHandler {
         options?: Readonly<{
             owner?: PermissionRequestOwner | null;
             source?: string | null;
+            traceSummary?: SessionPermissionDecisionRequest['traceSummary'];
+            nativeChoices?: NativePermissionChoicesV1;
             signal?: AbortSignal;
             causalPermissionContext?: AcpPermissionCallContext;
             resolveCurrentPermissionDecision?: () => PermissionResult;
@@ -3987,7 +4136,7 @@ export abstract class BasePermissionHandler {
     ): Promise<PermissionResult> {
         const source = typeof options?.source === 'string' ? options.source.trim() : '';
         const existingQuestion = this.requestCoordinator.getResponseContext(toolCallId);
-        const isQuestion = isAgentStructuredQuestionRequest({ toolName, source });
+        const isQuestion = !options?.nativeChoices && isAgentStructuredQuestionRequest({ toolName, source });
         const questionV1 = isQuestion
             ? existingQuestion?.questionV1 ?? { mode: 'wait' as const, lasting: false, type: 'decision' as const }
             : undefined;
@@ -3998,7 +4147,7 @@ export abstract class BasePermissionHandler {
         const publish = (currentHandler: SessionQuestionHandlerV1 | undefined): Promise<PermissionResult> => {
             const hasExistingContext = this.requestCoordinator.getResponseContext(toolCallId) !== null;
             if (!hasExistingContext) {
-                this.recordPermissionRequestTrace(toolCallId, toolName, input, source);
+                this.recordPermissionRequestTrace(toolCallId, toolName, options?.traceSummary);
             }
 
             const owner = resolvePermissionRequestOwner({
@@ -4012,6 +4161,7 @@ export abstract class BasePermissionHandler {
                 pendingRecord = {
                     toolName,
                     input,
+                    ...(options?.nativeChoices ? { nativeChoices: options.nativeChoices } : {}),
                     ...(owner ? { owner } : {}),
                     ...(options?.causalPermissionContext ? { causalPermissionContext: options.causalPermissionContext } : {}),
                     ...(options?.resolveCurrentPermissionDecision
@@ -4030,22 +4180,28 @@ export abstract class BasePermissionHandler {
                 };
                 this.pendingRequests.set(toolCallId, pendingRecord);
                 ownsPendingRecord = true;
+            } else if (options?.nativeChoices && !isDeepStrictEqual(pendingRecord.nativeChoices, options.nativeChoices)) {
+                pendingRecord.nativeChoices = options.nativeChoices;
+                pendingRecord.acknowledgeDecisionApplication = options.acknowledgeDecisionApplication;
+                pendingRecord.resolveCurrentPermissionDecision = options.resolveCurrentPermissionDecision;
             }
 
             const pending = this.requestCoordinator.requestDecision({
                 requestId: toolCallId,
                 toolName,
                 toolInput: input,
+                ...(options?.nativeChoices ? { nativeChoices: options.nativeChoices } : {}),
                 createdAt: Date.now(),
                 ...(options?.mcpTool ? { mcpTool: options.mcpTool } : {}),
                 ...(turnId ? { turnId } : {}),
                 ...(options?.causalPermissionContext?.lifetime ? { lifetime: options.causalPermissionContext.lifetime } : {}),
                 ...(source ? { source } : {}),
+                ...(options?.nativeChoices ? { kind: 'permission' as const } : {}),
                 ...(questionV1 ? { questionV1, currentHandler, kind: 'user_action' } : {}),
                 ...(owner ? { owner } : {}),
             }, { signal: options?.signal });
 
-            if (ownsPendingRecord) void this.respondAsApprovalReviewer(toolCallId);
+            if (ownsPendingRecord && !options?.nativeChoices) void this.respondAsApprovalReviewer(toolCallId);
 
             return pending.finally(() => {
                 if (ownsPendingRecord && this.pendingRequests.get(toolCallId) === pendingRecord) {
@@ -4078,7 +4234,7 @@ export abstract class BasePermissionHandler {
      * Add a pending request to the agent state.
      */
     protected addPendingRequestToState(toolCallId: string, toolName: string, input: unknown): void {
-        this.recordPermissionRequestTrace(toolCallId, toolName, input);
+        this.recordPermissionRequestTrace(toolCallId, toolName);
         this.requestStore.publishRequest({
             requestId: toolCallId,
             toolName,
@@ -4090,22 +4246,21 @@ export abstract class BasePermissionHandler {
     private recordPermissionRequestTrace(
         toolCallId: string,
         toolName: string,
-        input: unknown,
-        source?: string | null,
+        traceSummary?: SessionPermissionDecisionRequest['traceSummary'],
     ): void {
-        if (this.toolTrace) {
+        const toolTraceSource = this.toolTrace?.();
+        if (toolTraceSource) {
             recordToolTraceEvent({
                 direction: 'outbound',
                 sessionId: this.session.sessionId,
-                protocol: this.toolTrace.protocol,
-                provider: this.toolTrace.provider,
+                source: toolTraceSource,
                 kind: 'permission-request',
                 payload: {
                     type: 'permission-request',
                     permissionId: toolCallId,
                     toolName,
                     description: `${toolName} permission`,
-                    options: { input: resolvePermissionRequestTraceInput({ input, source }) },
+                    options: { input: resolvePermissionRequestTraceInput(traceSummary) },
                 },
             });
         }
@@ -4384,45 +4539,6 @@ function normalizePermissionRequestOwnerWithoutSourceAuthority(
     return normalizePermissionRequestOwner(owner);
 }
 
-function resolvePermissionRequestTraceInput(params: Readonly<{
-    input: unknown;
-    source?: string | null;
-}>): unknown {
-    if (params.source !== CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE) {
-        return params.input;
-    }
-
-    const input = readPlainRecord(params.input);
-    const dialogInput = readPlainRecord(input?.happierDialog);
-    const questions = Array.isArray(input?.questions) ? input.questions : [];
-    const optionCount = questions.reduce((count, question) => {
-        const questionRecord = readPlainRecord(question);
-        return count + (Array.isArray(questionRecord?.options) ? questionRecord.options.length : 0);
-    }, 0);
-    const dialog: Record<string, string> = {};
-    if (dialogInput?.kind === 'recognized' || dialogInput?.kind === 'unrecognized') {
-        dialog.kind = dialogInput.kind;
-    }
-    if (
-        typeof dialogInput?.dialogId === 'string'
-        && /^[a-z0-9_]{1,80}$/.test(dialogInput.dialogId)
-    ) {
-        dialog.dialogId = dialogInput.dialogId;
-    }
-    if (dialogInput?.mode === 'generic' || dialogInput?.mode === 'notice') {
-        dialog.mode = dialogInput.mode;
-    }
-
-    return {
-        redacted: true,
-        ...(Object.keys(dialog).length > 0 ? { dialog } : {}),
-        questionCount: questions.length,
-        optionCount,
-    };
-}
-
-function readPlainRecord(value: unknown): Record<string, unknown> | null {
-    return value && typeof value === 'object' && !Array.isArray(value)
-        ? value as Record<string, unknown>
-        : null;
+function resolvePermissionRequestTraceInput(traceSummary: SessionPermissionDecisionRequest['traceSummary']): unknown {
+    return { redacted: true, ...traceSummary };
 }

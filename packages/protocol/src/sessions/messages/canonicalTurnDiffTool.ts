@@ -11,6 +11,7 @@ import {
   TurnChangeSetSchema,
 } from '../changes/schemas.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
+import { resolveToolEnvelopeMeta } from '../../tools/v2/meta.js';
 
 type RecordLike = Record<string, unknown>;
 
@@ -68,7 +69,7 @@ export function readTurnChangeToolMetadata(input: unknown): TurnChangeToolMetada
   const record = asRecord(input);
   if (!record) return null;
 
-  const meta = asRecord(record._happier) ?? asRecord(record._happy);
+  const meta = resolveToolEnvelopeMeta(record);
   if (meta) {
     if (meta.sessionChangeScope !== 'turn') return null;
     const turnId = readNonEmptyString(meta.turnId);
@@ -166,7 +167,7 @@ export function extractCanonicalDiffFiles(input: unknown, metadata: TurnChangeTo
 
 function readCanonicalToolName(value: unknown): string | null {
   const record = asRecord(value);
-  const meta = asRecord(record?._happier) ?? asRecord(record?._happy);
+  const meta = resolveToolEnvelopeMeta(record);
   return readNonEmptyString(meta?.canonicalToolName);
 }
 

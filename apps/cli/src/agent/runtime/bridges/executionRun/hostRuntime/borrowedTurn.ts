@@ -16,6 +16,7 @@ export function borrowExecutionRunRuntimeTurn(
     return wrapExecutionRunHostRuntime({
         readPermissionCapability: () => runtime.permissionCapability,
         readInteraction: () => runtime.interaction,
+        readToolNormalizationSource: () => runtime.toolNormalizationSource,
         readResumeSupport: opts => runtime.readResumeSupport(opts),
         readPrepareInputBudget: () => runtime.prepareInputBudget ? async () => {
             assertCurrent();

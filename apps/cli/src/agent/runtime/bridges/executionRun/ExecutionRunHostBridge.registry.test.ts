@@ -18,6 +18,7 @@ import { writeAcpTestAgentScript } from '@/agent/acp/testkit/subprocessHarness';
 import { AcpCatalogRecordV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { createExecutionRunRpcActionExecutor } from '@/rpc/handlers/executionRuns/dispatchExecutionRunRpcAction';
 import { resolveExecutionRunPolicy } from '@/agent/executionRuns/policy/executionRunPolicy';
+import type { AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
 
 const presentUser = { verifiedPeerAuthority: 'present_user' } as const;
 const readRun = async (fixture: AdmittedSessionRunFixture, runId: string) => fixture.bridge
@@ -37,6 +38,43 @@ const rawStart = (fixture: AdmittedSessionRunFixture, input: Record<string, unkn
   }, presentUser);
 
 describe('ExecutionRunHostBridge admitted registry integration', () => {
+  it('persists streamed child tool provenance from its admitted runtime through the Run scope', async () => {
+    const observations: unknown[] = [];
+    await withAdmittedSessionRun({ directOwner: true, observeTranscriptObservation: payload => observations.push(payload), run: async fixture => {
+      fixture.nativeOpen.mockImplementation(async request => {
+        let publish: ((event: AgentSessionRuntimeEvent) => void) | undefined;
+        let sequence = 0;
+        const base = () => ({ sessionId: request.sessionId, sequence: ++sequence, emittedAtMs: Date.now() });
+        return {
+          watch(listener) { publish = listener; return { dispose() {} }; },
+          async send(input) {
+            const turnId = input.delivery.turnId;
+            publish?.({ ...base(), kind: 'input-accepted', inputIds: input.inputIds, delivery: input.delivery });
+            publish?.({ ...base(), kind: 'turn-start', turnId, startedBy: 'host' });
+            publish?.({ ...base(), kind: 'tool-call', turnId, toolCallId: 'child-read', toolName: 'Read', input: { path: 'README.md' } });
+            publish?.({ ...base(), kind: 'tool-result', turnId, toolCallId: 'child-read', output: { text: 'Read content' } });
+            publish?.({ ...base(), kind: 'message-delta', turnId, channel: 'assistant', text: JSON.stringify({ summary: 'Read completed.', deliverables: [] }) });
+            publish?.({ ...base(), kind: 'turn-complete', turnId });
+            return { status: 'admitted' };
+          },
+          async cancel() { return { status: 'notRunning' }; },
+          async dispose() {},
+        };
+      });
+      const started = await fixture.start();
+      await wait(fixture, started.runId);
+      const source = { v: 3, protocol: 'native', agent: fixture.agentIdentity };
+      for (const data of [
+        { type: 'tool-call', callId: expect.stringMatching(/:child-read$/), input: expect.objectContaining({ _happier: expect.objectContaining(source) }) },
+        { type: 'tool-result', callId: expect.stringMatching(/:child-read$/), output: expect.objectContaining({ _happier: expect.objectContaining(source) }) },
+      ]) {
+        expect(observations).toContainEqual(expect.objectContaining({ content: expect.objectContaining({
+          t: 'plain', v: expect.objectContaining({ content: expect.objectContaining({ data: expect.objectContaining(data) }) }),
+        }) }));
+      }
+    } });
+  });
+
   it('writes a running marker on start and a terminal marker on completion', async () => {
     await withAdmittedSessionRun({ run: async fixture => {
       const native = createNativeSessionBoundary();

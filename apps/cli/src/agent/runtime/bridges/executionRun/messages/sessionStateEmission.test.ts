@@ -98,6 +98,28 @@ function createRunningRun(): ExecutionRunState {
 }
 
 describe('createExecutionRunControllerMessageHandler', () => {
+  it.each(['native', 'acp'] as const)('publishes child tools with the opened %s source instead of the parent routing identity', async (protocol) => {
+    const source = { protocol, agent: { pluginId: 'acme.child', localId: 'reviewer' } };
+    const ctrl = createController({ backend: { toolNormalizationSource: source } });
+    const published: Array<{ body: ACPMessageData; source: unknown }> = [];
+    const handler = createExecutionRunControllerMessageHandler({
+      ctrl, runId: 'run_1', sidechainId: 'sidechain_1', ioMode: 'streaming',
+      computeSidechainStreamText: () => null,
+      sendAcp: async (_provider, body, opts) => {
+        published.push({ body, source: opts?.toolNormalizationSource });
+      },
+      parentProvider: 'different-parent', runs: new Map([['run_1', createRunningRun()]]),
+      backendSupportsResume: true, writeActivityMarker: async () => {}, getNowMs: () => 123,
+    });
+    handler({ type: 'tool-call', toolName: 'read', args: { file: 'README.md' }, callId: 'tool_1' });
+    handler({ type: 'tool-result', toolName: 'read', result: 'ok', callId: 'tool_1' });
+    await ctrl.pendingHostBarrier;
+    expect(published).toEqual([
+      { body: expect.objectContaining({ type: 'tool-call', callId: 'sc:sidechain_1:tool_1' }), source },
+      { body: expect.objectContaining({ type: 'tool-result', callId: 'sc:sidechain_1:tool_1' }), source },
+    ]);
+  });
+
   it('joins a streamed walkthrough answer to its admitted stop question after the controller advances', async () => {
     // Captured QA shape: Session seq 25 is participant_message.v1 with a stop stamp;
     // seq 26 is an ACP sidechain message with happierStreamSegmentV1 (2026-10-25).

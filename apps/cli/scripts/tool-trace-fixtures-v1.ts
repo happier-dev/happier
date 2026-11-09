@@ -4,6 +4,7 @@ import path from 'node:path';
 import { curateToolTraceFixturesFromJsonlLines } from '../src/agent/tools/trace/curateToolTraceFixtures';
 import { resolveStackToolTraceDir } from '../src/agent/tools/trace/resolveStackToolTraceDir';
 import { mergeToolTraceFixturesV1 } from '../src/agent/tools/trace/mergeToolTraceFixtures';
+import { readToolTraceFixtures } from '../src/agent/tools/trace/extractToolTraceFixtures';
 
 function parseArgs(argv: string[]) {
     const out: Record<string, string | boolean> = {};
@@ -76,7 +77,7 @@ function main() {
     const allowlistKeys = allowlistPath ? readAllowlistKeys(allowlistPath) : undefined;
 
     const inPath = args.in as string | undefined;
-    const outPath = (args.out as string | undefined) ?? '/tmp/tool-trace-fixtures.candidate.v1.json';
+    const outPath = (args.out as string | undefined) ?? '/tmp/tool-trace-fixtures.candidate.v2.json';
     const write = args.write === true;
 
     const inputs: string[] = (() => {
@@ -110,20 +111,18 @@ function main() {
             '__fixtures__',
             'tool-trace-fixtures.v1.json',
         );
-        let existing: any = null;
+        let existing: ReturnType<typeof readToolTraceFixtures> = null;
         try {
-            existing = JSON.parse(readFileSync(repoPath, 'utf8'));
+            existing = readToolTraceFixtures(JSON.parse(readFileSync(repoPath, 'utf8')));
         } catch {
             existing = null;
         }
-
         // Keep the committed keyset stable even if the current trace inputs don't include every allowlisted key.
         const merged = mergeToolTraceFixturesV1({
-            existing: existing && existing.v === 1 && existing.examples ? existing : null,
+            existing,
             next: fixtures,
             allowlistKeys,
         });
-
         writeFileSync(repoPath, JSON.stringify(merged, null, 2));
         // eslint-disable-next-line no-console
         console.log(`[tool-trace-fixtures-v1] wrote repo fixture: ${repoPath}`);

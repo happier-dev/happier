@@ -15121,13 +15121,13 @@ describe('runHostSessionRuntime', () => {
     await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
   });
 
-  it('does not stamp provider-enforced permission traces from the shared host path by default', async () => {
+  it('leaves permission trace source unavailable when the runtime has no source', async () => {
     const harness = createHarness();
     let observedToolTrace: unknown;
     const createProviderEnforcedPermissionHandlerFn = vi.fn((params: {
-      toolTrace?: unknown;
+      toolTrace?: (() => unknown) | null;
     }) => {
-      observedToolTrace = params.toolTrace;
+      observedToolTrace = params.toolTrace?.();
       return {
         setPermissionMode: () => undefined,
         reset: () => undefined,
@@ -15138,36 +15138,22 @@ describe('runHostSessionRuntime', () => {
 
     await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
 
-    expect(createProviderEnforcedPermissionHandlerFn).toHaveBeenCalledWith(
-      expect.not.objectContaining({
-        toolTrace: expect.objectContaining({ protocol: 'acp' }),
-      }),
-    );
     expect(observedToolTrace).toBeNull();
   });
 
-  it('passes provider-owned permission trace adapters through the shared host path', async () => {
+  it('provides the selected qualified source to permission traces', async () => {
     const harness = createHarness();
-    const createProviderEnforcedPermissionHandlerFn = vi.fn(() => ({
-      setPermissionMode: () => undefined,
-      reset: () => undefined,
-      updateSession: () => undefined,
-    }));
-    harness.deps.createProviderEnforcedPermissionHandlerFn = createProviderEnforcedPermissionHandlerFn;
-    harness.config.resolvePermissionToolTrace = () => ({
-      protocol: 'claude',
-      provider: 'claude',
+    let readSource: (() => unknown) | null = null;
+    const createProviderEnforcedPermissionHandlerFn = vi.fn((params: { toolTrace?: (() => unknown) | null }) => {
+      readSource = params.toolTrace ?? null;
+      return { setPermissionMode: () => undefined, reset: () => undefined, updateSession: () => undefined };
     });
+    harness.deps.createProviderEnforcedPermissionHandlerFn = createProviderEnforcedPermissionHandlerFn;
+    const source = { protocol: 'native' as const, agent: { pluginId: 'acme.agents', localId: 'muse' } };
+    harness.config.checkpointToolSource = source;
 
     await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
 
-    expect(createProviderEnforcedPermissionHandlerFn).toHaveBeenCalledWith(
-      expect.objectContaining({
-        toolTrace: {
-          protocol: 'claude',
-          provider: 'claude',
-        },
-      }),
-    );
+    expect((readSource as (() => unknown) | null)?.()).toEqual(source);
   });
 });

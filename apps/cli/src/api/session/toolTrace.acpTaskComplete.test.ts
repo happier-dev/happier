@@ -9,7 +9,7 @@ describe('recordAcpToolTraceEventIfNeeded', () => {
     await withToolTraceFile('happy-acp-trace-', async (filePath) => {
       recordAcpToolTraceEventIfNeeded({
         sessionId: 'sess_123',
-        provider: 'opencode',
+        source: { protocol: 'acp', agent: { pluginId: 'happier.agent.opencode', localId: 'opencode' } },
         body: { type: 'task_complete', id: 'tc_1' },
       });
 
@@ -21,11 +21,10 @@ describe('recordAcpToolTraceEventIfNeeded', () => {
 
       const evt = JSON.parse(lines[0] as string) as any;
       expect(evt).toMatchObject({
-        v: 1,
+        v: 2,
         direction: 'outbound',
         sessionId: 'sess_123',
-        protocol: 'acp',
-        provider: 'opencode',
+        source: { protocol: 'acp', agent: { pluginId: 'happier.agent.opencode', localId: 'opencode' } },
         kind: 'task_complete',
         payload: { type: 'task_complete' },
       });

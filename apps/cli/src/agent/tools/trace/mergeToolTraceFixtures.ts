@@ -1,13 +1,13 @@
-import type { ToolTraceFixturesV1 } from './extractToolTraceFixtures';
+import type { ToolTraceFixturesV1, ToolTraceFixturesV2 } from './extractToolTraceFixtures';
 
 export function mergeToolTraceFixturesV1(params: Readonly<{
-  existing: ToolTraceFixturesV1 | null;
-  next: ToolTraceFixturesV1;
+  existing: ToolTraceFixturesV1 | ToolTraceFixturesV2 | null;
+  next: ToolTraceFixturesV2;
   allowlistKeys?: ReadonlySet<string> | undefined;
-}>): ToolTraceFixturesV1 {
+}>): ToolTraceFixturesV2 {
   if (!params.allowlistKeys) return params.next;
 
-  const mergedExamples: ToolTraceFixturesV1['examples'] = {};
+  const mergedExamples: ToolTraceFixturesV2['examples'] = {};
   for (const key of params.allowlistKeys) {
     const fromNext = params.next.examples[key];
     if (fromNext) {
@@ -25,4 +25,3 @@ export function mergeToolTraceFixturesV1(params: Readonly<{
     examples: mergedExamples,
   };
 }
-

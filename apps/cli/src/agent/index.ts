@@ -13,7 +13,6 @@ export type {
   AgentBackendConfig,
   AcpAgentConfig,
   McpServerConfig,
-  AgentTransport,
   AgentId,
   SessionId,
   ToolCallId,

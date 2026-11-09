@@ -1,4 +1,5 @@
 import type { CatalogAgentId } from '@/agent/catalog/ids';
+import type { AgentRuntimeKind } from '@happier-dev/agents';
 
 import type { SessionId } from './AgentMessage';
 
@@ -8,9 +9,6 @@ export interface McpServerConfig {
   args?: string[];
   env?: Record<string, string>;
 }
-
-/** Transport type for agent communication */
-export type AgentTransport = 'native-claude' | 'acp';
 
 /** Agent identifier */
 export type AgentId = CatalogAgentId;
@@ -26,7 +24,7 @@ export interface AgentBackendConfig {
   agentName: AgentId;
 
   /** Transport protocol to use */
-  transport: AgentTransport;
+  transport: AgentRuntimeKind;
 
   /** Environment variables to pass to the agent */
   env?: Record<string, string>;

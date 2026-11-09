@@ -10,6 +10,7 @@ export type ExecutionRunHostRuntimeWrapper = Readonly<{
   passthrough?: Readonly<Record<string, unknown>>;
   readPermissionCapability?: () => ExecutionRunPermissionCapability | undefined;
   readInteraction?: () => ExecutionRunInteractionV1 | undefined;
+  readToolNormalizationSource: () => ExecutionRunHostRuntime['toolNormalizationSource'];
   readResumeSupport: ExecutionRunHostRuntime['readResumeSupport'];
   readPrepareInputBudget?: () => ExecutionRunHostRuntime['prepareInputBudget'];
   readModelContextWindowTokens?: () => ExecutionRunHostRuntime['readModelContextWindowTokens'];
@@ -43,6 +44,9 @@ export function wrapExecutionRunHostRuntime(
     },
     get interaction() {
       return wrapper.readInteraction?.();
+    },
+    get toolNormalizationSource() {
+      return wrapper.readToolNormalizationSource();
     },
     async readResumeSupport(opts) {
       return await wrapper.readResumeSupport(opts);

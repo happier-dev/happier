@@ -203,6 +203,8 @@ export type BackendExecutionSurfaces = Readonly<{
 export type ExecutionRunProjectLaunchContext = Omit<Parameters<typeof import('@/daemon/agentRuntime/runnerAgentProjectLaunch').createRunnerAgentProjectLaunchInvocation>[0], 'cwd' | 'signal' | 'sessionId'>;
 
 export type CreateCliExecutionRunBackendParams = Readonly<{
+    /** Host-only actual transport publication; never an Agent SDK request field. */
+    onToolNormalizationSource?: (source: import('@happier-dev/protocol/tools/v2/meta').ToolNormalizationSourceV3) => void;
     /** Current Run attachment, captured once by each new Action admission. */
     readApprovalProfileId?: () => string | null;
     /** Host-private detached Workflow controller; never part of the Agent SDK. */
