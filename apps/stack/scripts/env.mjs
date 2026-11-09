@@ -3,7 +3,7 @@ import { parseArgs } from './utils/cli/args.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { ensureEnvFilePruned, ensureEnvFileUpdated } from './utils/env/env_file.mjs';
 import { parseEnvToObject } from './utils/env/dotenv.mjs';
-import { resolveActiveStackEnvFilePath } from './utils/paths/paths.mjs';
+import { getStackName, resolveActiveStackEnvFilePath } from './utils/paths/paths.mjs';
 import { readTextOrEmpty } from './utils/fs/ops.mjs';
 
 function resolveTargetEnvPath() {
@@ -73,9 +73,18 @@ async function main() {
 
   if (subcmd === 'list') {
     const keys = Object.keys(parsed ?? {}).sort((a, b) => a.localeCompare(b));
+    let databaseNote;
+    if (!json && String(parsed.HAPPIER_STACK_SHARED_DB_SOURCE_STACK ?? '').trim()) {
+      const { readStackDatabaseIdentity } = await import('./stack/stack_database_identity.mjs');
+      const database = await readStackDatabaseIdentity({ stackName: getStackName(process.env), env: parsed, configuredOnly: true });
+      databaseNote = `[env] DB provider overridden by shared source ${database.sourceStack ?? '(unavailable)'} (effective: ${database.provider ?? 'unavailable'}; basis: ${database.basis})`;
+    }
+    const providerKey = keys.includes('HAPPIER_DB_PROVIDER') ? 'HAPPIER_DB_PROVIDER'
+      : keys.includes('HAPPY_DB_PROVIDER') ? 'HAPPY_DB_PROVIDER' : null;
     const text = [
       `[env] path: ${envPath}`,
-      ...keys.map((k) => `${k}=${parsed[k] ?? ''}`),
+      ...(databaseNote && !providerKey ? [databaseNote] : []),
+      ...keys.flatMap(k => [`${k}=${parsed[k] ?? ''}`, ...(databaseNote && k === providerKey ? [databaseNote] : [])]),
     ].join('\n');
     printResult({ json, data: { ok: true, envPath, env: parsed }, text });
     return;

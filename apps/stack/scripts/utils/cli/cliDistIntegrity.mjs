@@ -1,10 +1,10 @@
-import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import cliDistBuildManifest from './cliDistBuildManifestLoader.mjs';
+import { probeRuntimeImport } from '../proc/runtimeImportProbe.mjs';
 
 export const CLI_DIST_INTEGRITY_PROBE_ENV = 'HAPPIER_CLI_DIST_INTEGRITY_PROBE';
 export const CLI_DIST_BUILD_MANIFEST = cliDistBuildManifest.CLI_DIST_BUILD_MANIFEST;
@@ -60,7 +60,8 @@ export async function probeCliDistRuntimeImport(entrypoint, options = {}) {
   }
   const nodeExecutable = options.nodeExecutable ?? process.execPath;
   const timeoutMsRaw = Number(options.timeoutMs ?? DEFAULT_CLI_DIST_RUNTIME_IMPORT_TIMEOUT_MS);
-  const timeoutMs = Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0
+  // Source preparation passes null: the enclosing request owns cancellation.
+  const timeoutMs = options.timeoutMs === null ? undefined : Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0
     ? Math.trunc(timeoutMsRaw)
     : DEFAULT_CLI_DIST_RUNTIME_IMPORT_TIMEOUT_MS;
   const scratch = await mkdtemp(join(tmpdir(), 'hstack-cli-import-probe-'));
@@ -78,48 +79,15 @@ export async function probeCliDistRuntimeImport(entrypoint, options = {}) {
     HAPPIER_STACK_CLI_HOME_DIR: scratch,
   };
   try {
-  await new Promise((resolve, reject) => {
-    const child = spawn(nodeExecutable, [entry, 'daemon', '--help'], {
-      cwd: options.cwd,
-      env,
-      signal: options.signal,
-      stdio: ['ignore', 'ignore', 'pipe'],
-    });
-    let stderr = '';
-    let settled = false;
-    let timedOut = false;
-    let spawnError = null;
-    const timeout = setTimeout(() => {
-      if (settled) return;
-      timedOut = true;
-      child.kill('SIGKILL');
-    }, timeoutMs);
-    timeout.unref?.();
-    child.stderr?.on('data', (chunk) => {
-      stderr += String(chunk);
-    });
-    child.on('error', (error) => {
-      spawnError = options.signal?.aborted ? options.signal.reason ?? error : error;
-    });
-    child.on('close', (code, signal) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      if (timedOut) {
-        reject(new Error(`[cli-dist] runtime import probe timed out after ${timeoutMs}ms for ${entry}`));
-        return;
-      }
-      if (spawnError) {
-        reject(spawnError);
-        return;
-      }
-      if (code === 0) {
-        resolve();
-        return;
-      }
-      const suffix = stderr.trim() ? `\n${stderr.trim()}` : '';
-      reject(new Error(`[cli-dist] runtime import probe failed for ${entry} (code=${code}, signal=${signal ?? 'none'}).${suffix}`));
-    });
-  });
+    const result = await probeRuntimeImport({ entrypoint: entry, args: ['daemon', '--help'],
+      nodeExecutable, cwd: options.cwd, env, signal: options.signal, timeoutMs });
+    if (result.status === 'failed') {
+      const message = result.loadError?.code === 'import_timeout'
+        ? `[cli-dist] runtime import probe timed out after ${timeoutMs}ms for ${entry}`
+        : `[cli-dist] runtime import probe failed for ${entry} (code=${result.exitCode}, signal=${result.signal ?? 'none'}).\n${result.loadError?.name}: ${result.loadError?.message}`;
+      throw Object.assign(new Error(message), {
+        firstFailingModule: result.firstFailingModule, loadError: result.loadError,
+      });
+    }
   } finally { await rm(scratch, { recursive: true, force: true }); }
 }

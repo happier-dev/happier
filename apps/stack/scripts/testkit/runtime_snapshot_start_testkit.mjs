@@ -4,10 +4,11 @@ import { fileURLToPath } from 'node:url';
 
 import { resolveStackCredentialPaths } from '../utils/auth/credentials_paths.mjs';
 import { buildStackStableScopeId } from '../utils/auth/stable_scope_id.mjs';
-import { pickNextFreeTcpPort } from '../utils/net/ports.mjs';
+import { allocateAvailableLocalhostPort } from './core/ephemeral_port.mjs';
 import { runNodeCapture } from './core/run_node_capture.mjs';
 import { writeRuntimeSnapshotLayout } from './core/runtime_snapshot_layout.mjs';
 import { writeStubHappierCliFiles } from './core/stub_happier_cli_files.mjs';
+import { buildStubHappierServerSetSource } from './core/stub_happier_cli_server_set.mjs';
 import { createTempFixture } from './core/temp_fixture.mjs';
 import { stopRuntimeSnapshotFixture } from './core/runtime_snapshot_cleanup.mjs';
 import { prepareRuntimeSnapshotFixtureLifetime } from './core/runtime_snapshot_lifetime.mjs';
@@ -22,6 +23,9 @@ const FIXTURE_LIFETIME_HELPER_PATH = fileURLToPath(
 );
 const DAEMON_STATE_PATHS_HELPER_PATH = fileURLToPath(
   new URL('../utils/auth/credentials_paths.mjs', import.meta.url),
+);
+const PROCESS_LIVENESS_HELPER_PATH = fileURLToPath(
+  new URL('../utils/proc/pids.mjs', import.meta.url),
 );
 
 export async function waitForHealth(baseUrl, { timeoutMs = 30_000, intervalMs = 250 } = {}) {
@@ -41,19 +45,22 @@ export async function waitForHealth(baseUrl, { timeoutMs = 30_000, intervalMs = 
   throw new Error(`Timed out waiting for ${baseUrl}/health (${lastError})`);
 }
 
-function createFixtureDaemonCliScript({
+export function createFixtureDaemonCliScript({
   startLogLine,
   statusLogLine,
   includeServerUrlInStartLog = false,
   includeRunningInStatusLog = false,
+  sessionCreateResult = null,
 }) {
   return `
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { killDetachedProcessGroup, spawnDaemonLikeProcess } from ${JSON.stringify(DAEMON_LIKE_PROCESS_HELPER_PATH)};
 import { resolveStackDaemonStatePaths } from ${JSON.stringify(DAEMON_STATE_PATHS_HELPER_PATH)};
+import { isPidAlive } from ${JSON.stringify(PROCESS_LIVENESS_HELPER_PATH)};
 
 const args = process.argv.slice(2);
+${buildStubHappierServerSetSource()}
 const home = String(process.env.HAPPIER_HOME_DIR || process.env.HAPPIER_STACK_CLI_HOME_DIR || '').trim();
 if (!home) {
   console.error('missing HAPPIER_HOME_DIR');
@@ -74,6 +81,11 @@ const removeState = () => {
     try { rmSync(path); } catch {}
   }
 };
+if (args[0] === 'session' && args[1] === 'create') {
+  const running = statePaths.some(path => existsSync(path));
+  console.log(JSON.stringify(running ? ${JSON.stringify(sessionCreateResult)} : { v: 1, ok: false, kind: 'session_create', error: { code: 'machine_offline' } }));
+  process.exit(running ? 0 : 1);
+}
 if (args[0] !== 'daemon') process.exit(0);
 const sub = args[1] || '';
 if (sub === 'start') {
@@ -81,6 +93,8 @@ if (sub === 'start') {
     ? "append('start:' + String(process.env.HAPPIER_SERVER_URL || ''));"
     : `append(${JSON.stringify(startLogLine)});`}
   append('direct_peer_bind_port=' + String(process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT || ''));
+  append('iroh_relay_policy=' + String(process.env.HAPPIER_IROH_RELAY_POLICY || ''));
+  append('iroh_relay_urls=' + String(process.env.HAPPIER_IROH_RELAY_URLS || ''));
   append('direct_peer_advertised_hosts=' + String(process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS || ''));
   append('direct_peer_feature_enabled=' + String(process.env.HAPPIER_FEATURE_MACHINES_TRANSFER_DIRECT_PEER__ENABLED || ''));
   append('direct_peer_server_enabled=' + String(process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED || ''));
@@ -116,7 +130,13 @@ if (sub === 'stop') {
   process.exit(0);
 }
 if (sub === 'status') {
-  const running = statePaths.some((path) => existsSync(path));
+  const running = statePaths.some((path) => {
+    try {
+      return isPidAlive(Number(JSON.parse(readFileSync(path, 'utf8')).pid));
+    } catch {
+      return false;
+    }
+  });
   ${includeRunningInStatusLog
     ? `append(${JSON.stringify(statusLogLine)} + String(running));`
     : `append(${JSON.stringify(statusLogLine)});`}
@@ -144,7 +164,7 @@ export async function createStartableRuntimeSnapshotFixture(t, {
   const resolvedServerPort =
     Number.isFinite(serverPort) && Number(serverPort) > 0
       ? Number(serverPort)
-      : await pickNextFreeTcpPort(20_000, { host: '127.0.0.1' });
+      : await allocateAvailableLocalhostPort();
   const root = fixture.root;
   const storageDir = join(root, 'storage');
   const stackDir = join(storageDir, stackName);
@@ -185,6 +205,8 @@ if (envCapturePath) {
     HAPPIER_SQLITE_MIGRATIONS_DIR: process.env.HAPPIER_SQLITE_MIGRATIONS_DIR ?? null,
     HAPPIER_SERVER_LIGHT_DATA_DIR: process.env.HAPPIER_SERVER_LIGHT_DATA_DIR ?? null,
     HAPPIER_PUBLIC_SERVER_URL: process.env.HAPPIER_PUBLIC_SERVER_URL ?? null,
+    HAPPIER_IROH_RELAY_POLICY: process.env.HAPPIER_IROH_RELAY_POLICY ?? null,
+    HAPPIER_IROH_RELAY_URLS: process.env.HAPPIER_IROH_RELAY_URLS ?? null,
     PUBLIC_URL: process.env.PUBLIC_URL ?? null,
   }, null, 2) + '\\n', 'utf8');
 }

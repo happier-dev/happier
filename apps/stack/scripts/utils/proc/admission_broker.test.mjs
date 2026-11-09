@@ -11,16 +11,95 @@ import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { brokerAddress, createAdmissionBroker, readAdmissionMemorySample } from './admission_broker.mjs';
-import { connectAdmissionBroker } from './admission_client.mjs';
+import { connectAdmissionBroker, runAdmissionCommand } from './admission_client.mjs';
 import { slotAddress } from './admission_socket.mjs';
 import { createWorkspaceBuildResourcePriorityScope, tryWorkspaceBuildResources } from './workspace_build_admission.mjs';
 import { createWorkspaceBundleLockPriorityScope } from '../../../../../packages/cli-common/workspaceBundleLock.mjs';
 import { DEFAULT_FILE_CHANGE_CATCH_UP_MS } from '../../../../../packages/cli-common/fileChangeObserver.mjs';
 import { admitWorkerDiskBudget } from '../dev_targets/worker_disk_budget.mjs';
+import { HEAVYWEIGHT_COMMAND_RESOURCES } from '../dev_targets/command_resources.mjs';
 
 const linux = { skip: process.platform !== 'linux' };
 
-test('two tsrs UI reservations fit exactly and wait one KiB below their combined floor', linux, async t => {
+test('CPU admission grants reach the real payload worker controls', linux, async t => {
+  const { root } = await fixture(t, { cpuCores: 2 });
+  const resultPath = join(root, 'worker-controls.json');
+  for (const env of [{}, { GOMAXPROCS: '', HAPPIER_VITEST_GOVERNOR_MAX_WORKERS: '' }]) {
+    const status = await runAdmissionCommand({ root, className: 'native-source-test', floorKiB: 1,
+    machine: 'fixture', repoDir: root, cacheBaseDir: root, env, command: process.execPath,
+    args: ['--input-type=module', '-e',
+      'import{writeFileSync}from"node:fs";writeFileSync(process.argv[1],JSON.stringify({go:process.env.GOMAXPROCS,vitest:process.env.HAPPIER_VITEST_GOVERNOR_MAX_WORKERS}))',
+      resultPath] });
+    assert.equal(status, 0);
+    assert.deepEqual(JSON.parse(await readFile(resultPath, 'utf8')), { go: '1', vitest: '1' });
+  }
+});
+
+test('fixed CPU capacity queues work without observing memory until a holder releases', linux, async t => {
+  const clock = captureRecoveryClock(t);
+  let reads = 0;
+  const { root, broker } = await fixture(t, { cpuCores: 2, readMemory: () => {
+    reads += 1;
+    return { availableMemoryKiB: 100, totalMemoryKiB: 100 };
+  } });
+  const first = await acquire(root, 1, t);
+  const held = await first.admit();
+  const second = await acquire(root, 1, t);
+  await second.admit();
+  const third = await acquire(root, 1, t);
+  const barrier = await request(root, { kind: 'sample' });
+  await barrier.next(); barrier.socket.destroy();
+  assert.equal(broker.status().activeCount, 2);
+  assert.equal(broker.status().reservedCpuCores, 2);
+  assert.equal(broker.status().unreservedCpuCores, 0);
+  assert.equal(broker.status().queuedCpuCores, 1);
+  const before = reads;
+  await clock.tick();
+  const after = await request(root, { kind: 'sample' });
+  await after.next(); after.socket.destroy();
+  assert.equal(reads, before, 'CPU-only waiters must not trigger memory/process walks');
+  await held.release();
+  await third.admit();
+  assert.equal(broker.status().reservedCpuCores, 2);
+});
+
+test('CPU capacity refusal is observable and dynamic export workers fit both resources', linux, async t => {
+  const { root, broker } = await fixture(t, { cpuCores: 2 });
+  const oversized = await acquire(root, 1, t, { requestedCpuCores: 3 });
+  assert.equal((await oversized.next()).reason, 'HSTACK_CPU_CAPACITY');
+  const client = await acquire(root, 90, t, { commandClass: 'source-web-export', floorOptions: [
+    { floorKiB: 90, workers: 3 }, { floorKiB: 80, workers: 2 }, { floorKiB: 60, workers: 1 },
+  ] });
+  const held = await client.admit();
+  assert.equal(held.admitted.workers, 2);
+  assert.equal(held.admitted.cpuCores, 2);
+  assert.equal(broker.status().reservedMemoryKiB, 80);
+  assert.equal(broker.status().reservedCpuCores, 2);
+});
+
+test('broker succession recovers CPU reservations from live slot sockets', linux, async t => {
+  const { root, broker, sampleResources } = await fixture(t, { cpuCores: 2 });
+  const first = await acquire(root, 1, t, { requestedCpuCores: 2 });
+  const held = await first.admit();
+  await broker.close();
+  let capacityReads = 0;
+  const replacement = createAdmissionBroker({ root, oldLockPath: join(root, 'old-admission.lock'), sampleResources,
+    readCpuCapacity: () => { capacityReads += 1; return 2; } });
+  await replacement.start();
+  t.after(() => replacement.close());
+  assert.equal(replacement.status().reservedCpuCores, 2);
+  const queued = await acquire(root, 1, t);
+  const barrier = await request(root, { kind: 'sample' });
+  await barrier.next(); barrier.socket.destroy();
+  assert.equal(replacement.status().activeCount, 1);
+  assert.equal(replacement.status().waitingCount, 1);
+  assert.equal(capacityReads, 1, 'fixed host capacity is read once, never on arrival');
+  await held.release();
+  await queued.admit();
+  assert.equal(replacement.status().reservedCpuCores, 1);
+});
+
+test('tsrs compilation retains its memory floor and reserves the host CPU', linux, async t => {
   const { HEAVYWEIGHT_COMMAND_RESOURCES } = await import('../dev_targets/command_resources.mjs');
   const floorKiB = HEAVYWEIGHT_COMMAND_RESOURCES['compilation-ui-tsrs']?.memoryKiB;
   assert.equal(floorKiB, 10 * 1024 * 1024);
@@ -29,7 +108,7 @@ test('two tsrs UI reservations fit exactly and wait one KiB below their combined
     readMemory: () => ({ availableMemoryKiB: capacityKiB, totalMemoryKiB: 64 * 1024 * 1024 }),
   });
   const first = await acquire(root, floorKiB, t, { className: 'compilation-ui-tsrs' });
-  await first.admit();
+  const held = await first.admit();
   const second = await acquire(root, floorKiB, t, { className: 'compilation-ui-tsrs' });
   const sample = await request(root, { kind: 'sample' });
   await sample.next();
@@ -40,10 +119,13 @@ test('two tsrs UI reservations fit exactly and wait one KiB below their combined
   const exact = await request(root, { kind: 'sample' });
   await exact.next();
   exact.socket.destroy();
+  assert.equal(broker.status().activeCount, 1);
+  assert.equal(broker.status().reservedCpuCores, 128);
+  await held.release();
   await second.admit();
-  assert.equal(broker.status().activeCount, 2);
+  assert.equal(broker.status().activeCount, 1);
   assert.equal(broker.status().waitingCount, 0);
-  assert.equal(broker.status().reservedMemoryKiB, 2 * floorKiB);
+  assert.equal(broker.status().reservedMemoryKiB, floorKiB);
 });
 
 test('canonical validation floors admit concurrent focused work up to exact capacity', linux, async t => {
@@ -109,7 +191,8 @@ async function request(root, value) {
 }
 
 async function acquire(root, floorKiB, t, extra = {}) {
-  const client = await request(root, { kind: 'acquire', className: 'validation', floorKiB,
+  const client = await request(root, { kind: 'acquire', className: 'validation',
+    cpuCost: HEAVYWEIGHT_COMMAND_RESOURCES[extra.commandClass ?? extra.className ?? 'native-source-test']?.cpuCores ?? 'host', floorKiB,
     pid: process.pid, repoDir: root, cacheBaseDir: root, locks: [], env: {}, ...extra });
   t.after(() => client.socket.destroy());
   return { ...client, admit: async beforeReady => {
@@ -133,13 +216,14 @@ async function acquire(root, floorKiB, t, extra = {}) {
   } };
 }
 
-async function fixture(t, { readMemory = () => ({ availableMemoryKiB: 100, totalMemoryKiB: 100 }), admitDisk } = {}) {
+async function fixture(t, { readMemory = () => ({ availableMemoryKiB: 100, totalMemoryKiB: 100 }), admitDisk, cpuCores = 128 } = {}) {
   // Unix socket metadata needs a short pathname, independent of the command's
   // potentially deep workspace/custody TMPDIR. This remains a private root.
   const root = await mkdtemp('/tmp/happier-broker-test-');
   const sampleResources = ({ slots }) => readAdmissionMemorySample({ slots,
     readMemory, readProcesses: () => new Map() });
   const broker = createAdmissionBroker({ root, oldLockPath: join(root, 'old-admission.lock'), sampleResources,
+    readCpuCapacity: () => cpuCores,
     ...(admitDisk ? { admitDisk } : {}) });
   await broker.start();
   t.after(async () => { await broker.close(); await rm(root, { recursive: true, force: true }); });
@@ -832,6 +916,7 @@ test('a control stream EPIPE drops only that client and preserves broker admissi
     import { brokerAddress, createAdmissionBroker } from ${JSON.stringify(new URL('./admission_broker.mjs', import.meta.url).href)};
     const root = process.argv[1];
     const broker = createAdmissionBroker({ root, oldLockPath: join(root, 'old-admission.lock'),
+      readCpuCapacity: () => 2,
       sampleResources: async () => ({ availableMemoryKiB: 100, totalMemoryKiB: 100 }) });
     const controls = new Set();
     const servers = new Map();
@@ -841,7 +926,7 @@ test('a control stream EPIPE drops only that client and preserves broker admissi
       controls.add(socket);
       socket.on('error', () => {});
       await once(socket, 'connect');
-      socket.write(JSON.stringify({ kind: 'acquire', className: 'validation', floorKiB,
+      socket.write(JSON.stringify({ kind: 'acquire', className: 'validation', cpuCost: 1, floorKiB,
         pid: process.pid, repoDir: root, locks: [] }) + '\\n');
       return socket;
     }
@@ -954,7 +1039,7 @@ for (const adaptive of [false, true]) test(`an unachievable ${adaptive ? 'adapti
   const head = await acquire(root, adaptive ? 120 : 80, t, adaptive ? {
     floorOptions: [{ floorKiB: 120, workers: 2 }, { floorKiB: 80, workers: 1 }],
   } : {});
-  const check = await request(root, { kind: 'check', floorKiB: 10 });
+  const check = await request(root, { kind: 'check', floorKiB: 10, cpuCost: 1 });
   const spare = await check.next();
   check.socket.destroy();
   assert.equal(spare.achievableMemoryKiB, 60);

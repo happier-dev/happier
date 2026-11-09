@@ -21,6 +21,8 @@ export function buildStackFixtureEnv({
 
   return sanitizeDefinedEnv({
     ...seed,
+    // Ordinary fixtures must never provision or retire a real host relay.
+    HAPPIER_IROH_RELAY_POLICY: 'disabled',
     ...(homeDir ? { HAPPIER_STACK_HOME_DIR: homeDir } : {}),
     ...(storageDir ? { HAPPIER_STACK_STORAGE_DIR: storageDir } : {}),
     ...(workspaceDir ? { HAPPIER_STACK_WORKSPACE_DIR: workspaceDir } : {}),

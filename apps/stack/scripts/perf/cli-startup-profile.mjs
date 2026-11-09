@@ -60,7 +60,7 @@ for (const key of process.argv.length > 4 ? process.argv.slice(4) : ['noop', 'he
   const preRequestCalls = Object.fromEntries([
     'Configuration', 'readSettings', 'readStoredCredentials', 'resolveCliApiToken',
     'validateCliApiTokenEnvironment', 'applyServerSelectionFromArgs',
-    'refreshTerminalPresentUserPolicy', 'fetchServerFeaturesSnapshot', 'observeServerFeaturesSnapshot',
+    'fetchServerFeaturesSnapshot', 'observeServerFeaturesSnapshot',
     'readAccountSecurityRoute', 'readSelectedAccountSecurity',
   ].map(name => [name, (trace.coverageAtFirstRequest ?? []).reduce((total, script) => (
     total + script.functions.filter(fn => fn.functionName === name)

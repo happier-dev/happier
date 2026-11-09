@@ -1,43 +1,22 @@
 import { existsSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { resolveDependencyInstallRoot, waitForDependencyRefresh } from '../../utils/proc/dependency_refresh.mjs';
 import { readCliDistIntegrity, resolveCliDistEntrypointFromBin } from '../../utils/cli/cliDistIntegrity.mjs';
 
-function resolveTsxLoaderPath(cliDir) {
-  const resolvers = [
-    createRequire(join(cliDir, 'package.json')),
-    createRequire(import.meta.url),
-  ];
-
-  for (const require of resolvers) {
-    try {
-      const tsxPkgJsonPath = require.resolve('tsx/package.json');
-      const tsxLoaderPath = join(dirname(tsxPkgJsonPath), 'dist', 'esm', 'index.mjs');
-      if (existsSync(tsxLoaderPath)) return tsxLoaderPath;
-    } catch {
-      // Try the next resolver.
-    }
-  }
-
-  return null;
-}
-
 function resolveTsxCliEntrypoint(cliDir) {
   const srcEntrypoint = join(cliDir, 'src', 'index.ts');
-  if (!existsSync(srcEntrypoint)) {
-    return null;
-  }
-
-  const tsxLoaderPath = resolveTsxLoaderPath(cliDir);
-  if (!tsxLoaderPath) {
+  // The source CLI shares the checkout's source-tool workspace resolver, so
+  // workspace packages load their authored exports instead of compiled dist.
+  const sourceRuntimePath = join(cliDir, '..', '..', 'packages', 'cli-common', 'registerSourceRuntime.mjs');
+  if (!existsSync(srcEntrypoint) || !existsSync(sourceRuntimePath)) {
     return null;
   }
 
   return {
     kind: 'tsx',
-    nodeArgs: ['--import', tsxLoaderPath, srcEntrypoint],
+    nodeArgs: ['--conditions=happier-source', '--import', pathToFileURL(sourceRuntimePath).href, srcEntrypoint],
     distEntrypoint: resolveCliDistEntrypointFromBin(join(cliDir, 'bin', 'happier.mjs')),
     tsconfigPath: join(cliDir, 'tsconfig.json'),
   };

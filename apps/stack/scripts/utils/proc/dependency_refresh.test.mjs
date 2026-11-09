@@ -1,16 +1,58 @@
 import assert from 'node:assert/strict';
+import childProcess from 'node:child_process';
+import { once } from 'node:events';
+import { syncBuiltinESMExports } from 'node:module';
 import { cp, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import test from 'node:test';
 
 import { adoptDependencyInstallation, assertDependenciesReady, inspectDependencyRefresh, markDependencyMutation, readDependencyPublicationState,
-  resolveDependencyRefreshLockPath, resolveDependencyRefreshMarkerPath, withDependencyRefresh, withDependencyRefreshLock } from './dependency_refresh.mjs';
+  resolveDependencyRefreshLockPath, resolveDependencyRefreshMarkerPath, resolveLockedInstallEnv, withDependencyRefresh, withDependencyRefreshLock } from './dependency_refresh.mjs';
 import { ensureDepsInstalled } from './pm.mjs';
 import { withPnpmInstallGuard } from '../worktrees/pnpm_install_guard.mjs';
 import { bootstrapRemoteDependencies } from '../dev_targets/remote_dependency_bootstrap.mjs';
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import { inspectUiPostinstallOutputs } from './ui_postinstall.mjs';
+import { buildNativeAdmissionFixtureEnv, installNativeAdmissionFixture } from '../../testkit/core/native_admission_fixture.mjs';
+import { createAdmissionBroker } from './admission_broker.mjs';
+
+test('dependency mutation launches no unadmitted installer processes', { skip: process.platform !== 'linux' }, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-dependency-capacity-' });
+  const native = await installNativeAdmissionFixture({ root: fixture.root });
+  const broker = createAdmissionBroker({ root: native.admissionRoot,
+    oldLockPath: fixture.path('old-admission.lock'),
+    sampleResources: async () => ({ availableMemoryKiB: 64 * 1024 * 1024, totalMemoryKiB: 64 * 1024 * 1024 }) });
+  await broker.start();
+  t.after(() => broker.close());
+  const originalSpawn = childProcess.spawn;
+  let unadmittedInstallers = 0;
+  const spawn = t.mock.method(childProcess, 'spawn', (command, args, options) => {
+    if (command === '/bin/sh' && args.at(-1)?.endsWith('/native_host_admission_state.sh')) {
+      args = [...args.slice(0, -1), join(dirname(native.admissionClientPath), 'native_host_admission_state.sh')];
+    }
+    if (command === process.execPath && args.includes('fixture-installer')) {
+      if (!options.env.HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT) unadmittedInstallers++;
+    }
+    return originalSpawn(command, args, options);
+  });
+  syncBuiltinESMExports();
+  try {
+    const env = { ...buildNativeAdmissionFixtureEnv(), HAPPIER_STACK_HOME_DIR: fixture.root,
+      HAPPIER_STACK_SKIP_REFRESH_DEPS: '0', HAPPIER_STACK_DISABLE_REFRESH_DEPS: '0' };
+    await writeFile(fixture.path('package.json'), '{"private":true}');
+    await withDependencyRefresh({ installDir: fixture.root, env, signal: t.signal }, async ({ env: installEnv }) => {
+      const child = childProcess.spawn(process.execPath, ['-e', 'process.exit(0)', 'fixture-installer'],
+        { env: installEnv, stdio: 'ignore' });
+      assert.deepEqual(await once(child, 'close'), [0, null]);
+      await mkdir(fixture.path('node_modules'));
+    });
+    assert.equal(unadmittedInstallers, 0, 'cold dependency refresh must acquire host capacity before launching an installer');
+  } finally {
+    spawn.mock.restore();
+    syncBuiltinESMExports();
+  }
+});
 
 test('publication retains Expo-consumed changes across server-only repairs and failed output attempts', async t => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-publication-outputs-' });

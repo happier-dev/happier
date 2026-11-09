@@ -7,7 +7,7 @@ import {
   DEFAULT_BOUNDED_LOG_MAX_BYTES,
 } from '../proc/boundedLog.mjs';
 import { isPidAlive } from '../proc/pids.mjs';
-import { readStackRuntimeStateFile } from './runtime_state.mjs';
+import { readJsonIfExists } from '../fs/json.mjs';
 import { normalizeStackRuntimeOwnerStartedAt } from './runtime_owner_incarnation.mjs';
 
 function parseFlagValue(flag) {
@@ -209,7 +209,9 @@ async function tick() {
     return;
   }
 
-  const runtimeState = runtimeStatePath ? await readStackRuntimeStateFile(runtimeStatePath) : null;
+  // Observe the document without loading the mutable lifecycle/dependency
+  // graph. The stop owner loads and authorizes that graph only when sweeping.
+  const runtimeState = runtimeStatePath ? await readJsonIfExists(runtimeStatePath) : null;
   if (!runtimeState) {
     await writeLog('runtime state missing; exiting');
     finalize(0);

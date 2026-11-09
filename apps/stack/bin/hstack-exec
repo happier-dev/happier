@@ -66,8 +66,8 @@ fi
 # native projection before either direct admission or command placement.
 . "$script_dir/../scripts/utils/dev_targets/native_command_policy.sh" || exit 1
 . "$script_dir/../scripts/utils/dev_targets/native_dispatch_recovery.sh" || exit 1
-. "$script_dir/../scripts/utils/dev_targets/native_placement.sh" || exit 1
 . "$script_dir/../scripts/utils/dev_targets/native_execution_signals.sh" || exit 1
+. "$script_dir/../scripts/utils/dev_targets/native_placement.sh" || exit 1
 . "$script_dir/../scripts/utils/proc/native_process_identity.sh" || exit 1
 . "$script_dir/../scripts/utils/proc/native_process_priority.sh" || exit 1
 . "$script_dir/../scripts/utils/proc/native_host_admission_state.sh" || exit 1
@@ -480,31 +480,33 @@ run_local() {
 }
 
 run_selected_local() {
-  # Automatic placement treats the primary Linux guest as another execution
-  # target. Apply the same nested-worker policy used for remote Linux targets
-  # before entering its existing machine-wide admission gate. Explicit local
-  # placement bypasses distribution, not the worker budget that keeps the
-  # authoritative machine responsive.
+  # Explicit local placement retains the payload's normal admission owner.
+  # Heavy worker allowances arrive with its admitted slot; light tools share
+  # the existing adaptive budget on the selected machine.
   # The command delimiter belongs to this launcher, not the dispatched payload.
   # Remove it before a tool-specific rewriter chooses the executable position.
   if [ "${1-}" = -- ]; then shift; fi
   resolve_nested_worker_policy "$@"
   selected_local_workers=
-  selected_local_cpu=${local_candidate_cpu-}
-  case "$selected_local_cpu" in
-    ''|*[!0-9]*|0)
-      selected_local_cpu=$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || true)
-      ;;
-  esac
-  selected_local_active=${selected_active-0}
-  if [ "$(uname -s 2>/dev/null || true)" = Linux ]; then
-    selected_local_active=$(
-      heavyweight_admission_root=$native_host_admission_root
-      heavyweight_count_admitted_owners || exit 1
-      printf '%s' "$heavyweight_active_count"
-    )
+  # Heavy payloads get their CPU allowance from their admitted slot.
+  # Only light tools retain the existing adaptive sharing policy.
+  if [ -z "${policy_placementHeavyClass:-$policy_heavyClass}" ]; then
+    selected_local_cpu=${local_candidate_cpu-}
+    case "$selected_local_cpu" in
+      ''|*[!0-9]*|0)
+        selected_local_cpu=$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || true)
+        ;;
+    esac
+    selected_local_active=${selected_active-0}
+    if [ "$(uname -s 2>/dev/null || true)" = Linux ]; then
+      selected_local_active=$(
+        heavyweight_admission_root=$native_host_admission_root
+        heavyweight_count_admitted_owners || exit 1
+        printf '%s' "$heavyweight_active_count"
+      )
+    fi
+    selected_local_workers=$(resolve_worker_cpu_budget "$selected_local_cpu" "$selected_local_active")
   fi
-  selected_local_workers=$(resolve_worker_cpu_budget "$selected_local_cpu" "$selected_local_active")
   case "$selected_local_workers" in ''|*[!0-9]*) selected_local_workers= ;; esac
 
   if [ -n "$selected_local_workers" ] && [ "$selected_local_workers" -lt "$selected_local_cpu" ]; then
@@ -1113,6 +1115,8 @@ fi
 relative_cwd=${invoked_cwd#"$repo_root"}
 relative_cwd=${relative_cwd#/}
 [ "$explicit_relative_cwd_set" -eq 1 ] && relative_cwd=$explicit_relative_cwd
+heavyweight_placement_required=0
+[ -n "${policy_placementHeavyClass:-$policy_heavyClass}" ] && heavyweight_placement_required=1
 heavyweight_admission_required=0
 [ -n "$policy_heavyClass" ] && heavyweight_admission_required=1
 heavyweight_placement_class=${policy_placementHeavyClass:-$policy_heavyClass}
@@ -1128,6 +1132,8 @@ if [ -n "$heavyweight_placement_class" ]; then
     minimum_memory_capacity_kib=$(heavyweight_memory_floor_kib "$heavyweight_placement_class")
   fi
 fi
+# Explicit worker options are declared demand, resolved by the generated policy.
+heavyweight_requested_cpu=$(eval "${explicit_remote_environment-}"; heavyweight_requested_cpu_cores "$@") || exit 1
 heavyweight_remote_class=$policy_heavyClass
 typecheck_affinity_key=
 case "$policy_heavyClass" in compilation|compilation-*)
@@ -1303,8 +1309,12 @@ native_go_toolchain_evidence_is_available $(quote_remote "$probe_source_repo/pac
   probe="$probe
 unreserved_memory=\${mem_available_kib:-0}
 achievable_memory=unknown
-queued_memory=unknown"
-  if [ "$heavyweight_admission_required" -eq 1 ]; then
+queued_memory=unknown
+total_cpu=unknown
+reserved_cpu=unknown
+unreserved_cpu=unknown
+queued_cpu=unknown"
+  if [ "$heavyweight_placement_required" -eq 1 ]; then
     probe="$probe
 if [ \"\$platform\" = linux ]; then
   budget=\$($(quote_remote "$remote_executor_repo/apps/stack/bin/hstack-exec") --heavyweight-memory-sample) || exit 1
@@ -1313,6 +1323,14 @@ if [ \"\$platform\" = linux ]; then
   unreserved_memory=\$(printf '%s\\n' \"\$budget\" | sed -n 's/.*\"unreservedMemoryKiB\":\(-\{0,1\}[0-9][0-9]*\).*/\1/p')
   queued_memory=\$(printf '%s\\n' \"\$budget\" | sed -n 's/.*\"queuedMemoryKiB\":\([0-9][0-9]*\).*/\1/p')
   [ -n \"\$queued_memory\" ] || queued_memory=0
+  total_cpu=\$(printf '%s\\n' \"\$budget\" | sed -n 's/.*\"totalCpuCores\":\([0-9][0-9]*\).*/\1/p')
+  reserved_cpu=\$(printf '%s\\n' \"\$budget\" | sed -n 's/.*\"reservedCpuCores\":\([0-9][0-9]*\).*/\1/p')
+  unreserved_cpu=\$(printf '%s\\n' \"\$budget\" | sed -n 's/.*\"unreservedCpuCores\":\([0-9][0-9]*\).*/\1/p')
+  queued_cpu=\$(printf '%s\\n' \"\$budget\" | sed -n 's/.*\"queuedCpuCores\":\([0-9][0-9]*\).*/\1/p')
+  [ -n \"\$total_cpu\" ] || total_cpu=unknown
+  [ -n \"\$reserved_cpu\" ] || reserved_cpu=unknown
+  [ -n \"\$unreserved_cpu\" ] || unreserved_cpu=unknown
+  [ -n \"\$queued_cpu\" ] || queued_cpu=unknown
 fi"
   fi
   probe="$probe
@@ -1323,7 +1341,7 @@ dependency_busy=0"
 dependency_busy=\$(node --input-type=module -e $(quote_remote "$dependency_probe") $(quote_remote "$remote_executor_repo/apps/stack/scripts/utils/proc/dependency_refresh.mjs") $(quote_remote "$remote_repo")) || exit 1"
   fi
   probe="$probe
-printf '%s %s %s %s\\n' \"\$unreserved_memory\" \"\$dependency_busy\" \"\$achievable_memory\" \"\$queued_memory\""
+printf '%s %s %s %s %s %s %s %s\\n' \"\$unreserved_memory\" \"\$dependency_busy\" \"\$achievable_memory\" \"\$queued_memory\" \"\$total_cpu\" \"\$reserved_cpu\" \"\$unreserved_cpu\" \"\$queued_cpu\""
   remote_command="${path_setup}cd -- $(quote_remote "$remote_cwd") && $availability && { ${capability_setup}bash -lc $(quote_remote "$probe") && printf '%s\\n' \"\$runtime_worker_target\"; }"
   set --
   # Only AUTO candidate placement may abandon a slow connect and choose another
@@ -1375,22 +1393,22 @@ read_fresh_cache() {
     [ "$go_toolchain_required" != 1 ] || return 1
     # Old samples and another command's prerequisites cannot prove this
     # command/cwd/runtime contract. Preserve the first 20 telemetry fields.
-    cached_command_key=$(printf '%s\n' "$cached_sample" | awk '{print $22}')
+    cached_command_key=$(printf '%s\n' "$cached_sample" | awk '{print (NF >= 26 ? $26 : $22)}')
     [ "$cached_command_key" = "$command_key" ] || return 1
-    if [ "$heavyweight_admission_required" -eq 1 ] && printf '%s\n' "$cached_sample" | awk '$16 == "linux" && ($17 == "" || $20 == "" || $20 == "unknown") {exit 0} {exit 1}'; then
+    if [ "$heavyweight_placement_required" -eq 1 ] && printf '%s\n' "$cached_sample" | awk '$16 == "linux" && ($17 == "" || $20 == "" || $20 == "unknown") {exit 0} {exit 1}'; then
       return 1
     fi
-    score=$(score_load_sample "$cached_sample" "$heavyweight_admission_required" "$minimum_memory_capacity_kib")
+    score=$(score_load_sample "$cached_sample" "$heavyweight_placement_required" "$minimum_memory_capacity_kib")
     if [ -z "$score" ]; then
       # Capacity eligibility belongs to this invocation. Keep the healthy
       # raw sample reusable by focused work on the same smaller machine.
-      [ -n "$(score_load_sample "$cached_sample" "$heavyweight_admission_required")" ] || return 1
+      [ -n "$(score_load_sample "$cached_sample" "$heavyweight_placement_required")" ] || return 1
       printf '2 - %s\n' "$capacity"
       return 0
     fi
     available=1
   fi
-  printf '%s %s %s %s\n' "$available" "$score" "$capacity" "$(printf '%s\n' "$cached_sample" | awk '{print $21}')"
+  printf '%s %s %s %s\n' "$available" "$score" "$capacity" "$(printf '%s\n' "$cached_sample" | awk '{print (NF >= 26 ? $25 : $21)}')"
 }
 
 report_placement_exclusion() {
@@ -1512,10 +1530,10 @@ EOF
     esac
     # APFS rounds capacity to 100% while still reporting multiple GiB as
     # available. Refuse exhaustion using the available-block count instead.
-    sample_score=$(score_load_sample "$sample" "$heavyweight_admission_required")
-    score=$(score_load_sample "$sample" "$heavyweight_admission_required" "$minimum_memory_capacity_kib")
+    sample_score=$(score_load_sample "$sample" "$heavyweight_placement_required")
+    score=$(score_load_sample "$sample" "$heavyweight_placement_required" "$minimum_memory_capacity_kib")
     capacity=$(printf '%s\n' "$sample" | awk '{if ($1 ~ /^[0-9]+$/ && $1 > 0) print $1}')
-    telemetry=$(printf '%s\n' "$sample" | awk -v heavy="$heavyweight_admission_required" '{for(i=1;i<=15;i++){if($i !~ /^[0-9]+([.][0-9]+)?$/)$i=0} platform=($16=="linux"||$16=="darwin")?$16:"unknown"; printf "%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s\n",$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,platform,($17==""?$7:$17),($18==""?0:$18),($19==""?"unknown":$19),($20==""?(heavy?0:"unknown"):$20)}')
+    telemetry=$(printf '%s\n' "$sample" | awk -v heavy="$heavyweight_placement_required" '{for(i=1;i<=15;i++){if($i !~ /^[0-9]+([.][0-9]+)?$/)$i=0} platform=($16=="linux"||$16=="darwin")?$16:"unknown"; printf "%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s",$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,platform,($17==""?$7:$17),($18==""?0:$18),($19==""?"unknown":$19),($20==""?(heavy?0:"unknown"):$20); for(i=21;i<=24;i++) printf " %s", ($i ~ /^[0-9]+$/ ? $i : "unknown"); printf "\n"}')
     telemetry_cache="$cache_dir/$name.telemetry"
     telemetry_temporary=$(create_cache_temporary "$telemetry_cache" 2>/dev/null || true)
     if [ -n "$telemetry_temporary" ]; then
@@ -1611,7 +1629,7 @@ probe_children=
 # controller would win load scoring. Explicit local placement and configured
 # unreachable-worker fallback retain their own admission paths.
 if [ "${include_local-0}" = 1 ] && [ -z "$explicit_target" ] \
-  && { [ "$heavyweight_admission_required" -eq 0 ] || [ "$(uname -s 2>/dev/null || true)" != Linux ]; }; then
+  && { [ "$heavyweight_placement_required" -eq 0 ] || [ "$(uname -s 2>/dev/null || true)" != Linux ]; }; then
   cpu=$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || printf 1)
   load_value=$(sysctl -n vm.loadavg 2>/dev/null | awk '{print $2}')
   [ -n "$load_value" ] || load_value=$(awk '{print $1}' /proc/loadavg 2>/dev/null || printf 999999)
@@ -1636,7 +1654,7 @@ EOF
       "--cache=${HAPPIER_STACK_PM_CACHE_BASE_DIR:-$stack_dir/cli/cache}" >/dev/null; then
     local_budget_available=0
   fi
-  if [ "$heavyweight_admission_required" -eq 1 ] && [ "$(uname -s)" = Linux ]; then
+  if [ "$heavyweight_placement_required" -eq 1 ] && [ "$(uname -s)" = Linux ]; then
     local_unreserved_memory=$(read_native_admission_fact --unreserved-memory) || local_budget_available=0
   fi
   local_score=
@@ -1646,7 +1664,7 @@ EOF
     local_probe_reason=go-toolchain
   fi
   if [ "$local_budget_available" = 1 ]; then
-    local_score=$(score_load_sample "$cpu $load_value $free 0 0 0 ${local_mem_available:-0} ${local_mem_total:-0} 0 0 0 0 0 0 0 linux $local_unreserved_memory" "$heavyweight_admission_required" "$minimum_memory_capacity_kib")
+    local_score=$(score_load_sample "$cpu $load_value $free 0 0 0 ${local_mem_available:-0} ${local_mem_total:-0} 0 0 0 0 0 0 0 linux $local_unreserved_memory" "$heavyweight_placement_required" "$minimum_memory_capacity_kib")
   fi
   if [ -z "$local_score" ]; then
     printf '0 local 0 - %s %s\n' "$cpu" "$local_probe_reason" > "$probe_tmp/local"
@@ -1769,32 +1787,44 @@ for result_path in "$probe_tmp"/[0-9]* "$probe_tmp/local"; do
     candidate_heavyweight_active=${remaining_active_counts#* }
     candidate_queued=0
     candidate_queued_memory=0
+    candidate_cpu_fits=1
     if [ "$candidate_name" = local ]; then
       candidate_queued=$(read_native_admission_fact --waiting-count) || candidate_queued=0
     fi
     candidate_effective=$(awk -v score="$candidate_score" -v active="$candidate_active" -v queued="$candidate_queued" -v capacity="$candidate_capacity" 'BEGIN {printf "%.6f", score + ((active + queued) / capacity)}')
-    if [ "$heavyweight_admission_required" -eq 1 ] || [ "$candidate_name" = "$typecheck_running_target" ]; then
+    if [ "$heavyweight_placement_required" -eq 1 ] || [ "$candidate_name" = "$typecheck_running_target" ]; then
       candidate_memory=$(awk '{print ($17 != "" ? $17 : $7)}' "$cache_dir/$candidate_name.telemetry" 2>/dev/null || true)
       # A backlog is queued memory divided by admission's achievable capacity:
       # the memory waves ahead of a new job. Compare it before CPU load rather
       # than inventing a weight between those independent resources.
       candidate_queue_sample=$(awk '{capacity=($19 ~ /^[0-9]+$/ && $19 > 0 ? $19 : $8); queued=$20+0; printf "%.0f %.9f", queued, (capacity > 0 ? queued/capacity : 0)}' "$cache_dir/$candidate_name.telemetry" 2>/dev/null || printf '0 0')
       candidate_queued_memory=${candidate_queue_sample%% *}
-      if [ "$heavyweight_admission_required" -eq 1 ]; then candidate_queue_pressure=${candidate_queue_sample#* }; fi
+      if [ "$heavyweight_placement_required" -eq 1 ]; then candidate_queue_pressure=${candidate_queue_sample#* }; fi
+      # CPU headroom is optional cached admission metadata. Older brokers keep
+      # the existing memory/load order without another observation.
+      candidate_cpu_sample=$(awk 'NF >= 24 && $21 ~ /^[0-9]+$/ && $21 > 0 && $23 ~ /^[0-9]+$/ && $24 ~ /^[0-9]+$/ {print $21, $23, $24}' "$cache_dir/$candidate_name.telemetry" 2>/dev/null || true)
+      if [ -n "$candidate_cpu_sample" ]; then
+        IFS=' ' read -r candidate_total_cpu candidate_unreserved_cpu candidate_queued_cpu <<EOF
+$candidate_cpu_sample
+EOF
+        candidate_cpu_required=$(heavyweight_cpu_cores "$heavyweight_placement_class" "$candidate_total_cpu" "${heavyweight_placement_workers:-$candidate_total_cpu}" "$heavyweight_requested_cpu") || exit 1
+        [ "$candidate_unreserved_cpu" -ge "$candidate_cpu_required" ] || candidate_cpu_fits=0
+        candidate_queue_pressure=$(awk -v memory="$candidate_queue_pressure" -v queued="$candidate_queued_cpu" -v total="$candidate_total_cpu" 'BEGIN {cpu=queued/total; printf "%.9f", (cpu>memory?cpu:memory)}')
+      fi
       if [ "$candidate_name" = local ]; then candidate_memory=${local_unreserved_memory:-$local_mem_available}; fi
       case "$candidate_memory" in ''|*[!0-9]*) candidate_memory=0 ;; esac
     fi
     # A same-project follower performs its own flush on the leader's worker;
     # source/compiler equality is established there before heavy admission.
-    if [ "$candidate_name" = "$typecheck_running_target" ] && [ "$candidate_memory" -ge "$minimum_memory_capacity_kib" ] && [ "$candidate_queued_memory" = 0 ]; then candidate_native_preference=-2; fi
-    if [ "$heavyweight_admission_required" -eq 1 ] && [ "$candidate_memory" -lt "$minimum_memory_capacity_kib" ]; then
+    if [ "$candidate_name" = "$typecheck_running_target" ] && [ "$candidate_memory" -ge "$minimum_memory_capacity_kib" ] && [ "$candidate_queued_memory" = 0 ] && [ "$candidate_cpu_fits" = 1 ]; then candidate_native_preference=-2; fi
+    if [ "$heavyweight_placement_required" -eq 1 ] && { [ "$candidate_memory" -lt "$minimum_memory_capacity_kib" ] || [ "$candidate_cpu_fits" != 1 ]; }; then
       # Fitting workers precede busy workers using the existing preference
       # order (native=0, cross-target=1), then compare backlog and load.
       candidate_native_preference=$(( ${candidate_native_preference:-0} + 2 ))
     fi
     # Preserve affinity/native/fit priority. Within it, backlog precedes the
     # zero-headroom distinction and the finite CPU/active-dispatch score.
-    if [ "$heavyweight_admission_required" -eq 1 ] && [ "$candidate_memory" -eq 0 ]; then
+    if [ "$heavyweight_placement_required" -eq 1 ] && [ "$candidate_memory" -eq 0 ]; then
       candidate_empty_memory=1
     fi
   else
@@ -1918,7 +1948,9 @@ if [ -z "$reservation_temporary" ] \
 fi
 release_placement_decision
 release_reservation() {
-  rm -f -- "$reservation_path" 2>/dev/null || true
+  if [ "${reservation_remote_pending-0}" = 0 ]; then
+    rm -f -- "$reservation_path" 2>/dev/null || true
+  fi
   if [ "$reservation_lock_held" -eq 1 ]; then
     flock -u 8 2>/dev/null || true
     exec 8>&-
@@ -2199,31 +2231,9 @@ fi
 if [ "$control_stdin" = 1 ]; then
   remote_command="HAPPIER_REMOTE_EXEC_CONTROL_STDIN=1 HAPPIER_RUNTIME_BUILD_WORKER_NAME=$(quote_remote "$selected_name") $remote_command"
 fi
-orphan_execution_ids=
-remote_orphan_cleanup=
-for orphan_reservation in "$cache_dir/$selected_name.active."*; do
-  [ -f "$orphan_reservation" ] || continue
-  [ "$orphan_reservation" != "$reservation_path" ] || continue
-  dispatch_reservation_is_active "$orphan_reservation" && continue
-  orphan_id=$(sed -n '3p' "$orphan_reservation" 2>/dev/null || true)
-  case "$orphan_id" in native-*) ;; *) continue ;; esac
-  case "$orphan_id" in *[!A-Za-z0-9_-]*) continue ;; esac
-  orphan_execution_ids="$orphan_execution_ids $orphan_id"
-  remote_orphan_cleanup="$remote_orphan_cleanup printf '%s\\n' $(quote_remote "[preferred-execution] reaping remote execution $orphan_id whose controller is gone") >&2; bash $(quote_remote "$remote_custody") cancel $(quote_remote "$remote_home/remote-exec/$orphan_id.pid") $(quote_remote "$orphan_id");"
-done
-if [ -n "$remote_orphan_cleanup" ]; then
-  remote_command="bash -lc $(quote_remote "set -e;$remote_orphan_cleanup exec env $remote_command")"
-fi
 # The SSH login shell must not run an exit hook after custody has returned the
 # command's status. Replace that shell, including any environment assignments.
 remote_command="exec env $remote_command"
-release_orphan_reservations() {
-  for orphan_reservation in "$cache_dir/$selected_name.active."*; do
-    [ -f "$orphan_reservation" ] || continue
-    orphan_id=$(sed -n '3p' "$orphan_reservation" 2>/dev/null || true)
-    case " $orphan_execution_ids " in *" $orphan_id "*) rm -f -- "$orphan_reservation" 2>/dev/null || true ;; esac
-  done
-}
 
 umask 077
 retry_other_target_before_dispatch() {
@@ -2271,7 +2281,7 @@ trap - EXIT HUP INT TERM
 flush_selected_sync "$@" &
 flush_pid=$!
 cancel_selected_flush() {
-  kill -TERM "$flush_pid" 2>/dev/null || true
+  executor_signal_pid controller_flush_cleanup "$flush_pid"
   wait "$flush_pid" 2>/dev/null || true
   release_reservation
   exit 130
@@ -2362,20 +2372,43 @@ release_custody_pipe() {
   [ -z "$admission_error_log" ] || rm -f -- "$admission_error_log" "$admission_error_pipe"
 }
 trap release_custody_pipe EXIT
+cancel_remote_execution_record() {
+  cancel_command="bash $(quote_remote "$remote_custody") cancel $(quote_remote "$1") $(quote_remote "$2") $(quote_remote "$3") $(quote_remote "$execution_id")"
+  # Cancellation must survive loss of the authoritative SSH control master.
+  # A transport failure is not evidence that the remote execution is gone.
+  if [ -n "$ssh_config" ]; then
+    ssh -T -F "$ssh_config" -o ControlMaster=no -o ControlPath=none -o BatchMode=yes "$ssh_target" "$cancel_command" >/dev/null
+  else
+    ssh -T -o ControlMaster=no -o ControlPath=none -o BatchMode=yes "$ssh_target" "$cancel_command" >/dev/null
+  fi
+}
+for orphan_reservation in "$cache_dir/$selected_name.active."*; do
+  [ -f "$orphan_reservation" ] || continue
+  [ "$orphan_reservation" != "$reservation_path" ] || continue
+  dispatch_reservation_is_active "$orphan_reservation" && continue
+  orphan_id=$dispatch_metadata_execution_id
+  case "$orphan_id" in native-*) ;; *) continue ;; esac
+  case "$orphan_id" in *[!A-Za-z0-9_-]*) continue ;; esac
+  printf '[preferred-execution] reaping remote execution %s whose controller is gone\n' "$orphan_id" >&2
+  if cancel_remote_execution_record "$remote_home/remote-exec/$orphan_id.pid" "$orphan_id" controller_orphan_cleanup; then
+    rm -f -- "$orphan_reservation" 2>/dev/null || true
+  else
+    printf '[preferred-execution] remote cancellation unconfirmed for %s; retaining reservation %s\n' "$orphan_id" "$orphan_reservation" >&2
+  fi
+done
+reservation_remote_pending=1
 if [ "$_selected_available" = busy ]; then
   printf '[preferred-execution] workers busy; queued on %s for memory, waiting (Ctrl-C cancels)\n' "$selected_name" >&2
 fi
 run_selected_ssh_with_custody &
 ssh_pid=$!
 cancel_remote_execution() {
-  cancel_command="bash $(quote_remote "$remote_custody") cancel $(quote_remote "$pid_file") $(quote_remote "$execution_id")"
-  # A failed authoritative channel may also mean its shared control master
-  # died. Cancellation uses the same verified host config on an independent
-  # connection, and the execution ID/PID guard prevents touching another job.
-  if [ -n "$ssh_config" ]; then
-    ssh -T -F "$ssh_config" -o ControlMaster=no -o ControlPath=none -o BatchMode=yes -o ConnectTimeout=5 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$ssh_target" "$cancel_command" >/dev/null 2>&1 || true
+  if cancel_remote_execution_record "$pid_file" "$execution_id" custody_cancel; then
+    reservation_remote_pending=0
+    return 0
   else
-    ssh -T -o ControlMaster=no -o ControlPath=none -o BatchMode=yes -o ConnectTimeout=5 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$ssh_target" "$cancel_command" >/dev/null 2>&1 || true
+    printf '[preferred-execution] remote cancellation unconfirmed for %s; retaining reservation %s\n' "$execution_id" "$reservation_path" >&2
+    return 1
   fi
 }
 if [ "$explicit_tty" = 1 ]; then
@@ -2384,13 +2417,13 @@ if [ "$explicit_tty" = 1 ]; then
     while IFS= read -r custody_line; do :; done
     cancel_remote_execution
     custody_ssh_command=$(ps -p "$ssh_pid" -o command= 2>/dev/null || true)
-    case "$custody_ssh_command" in *"$execution_id"*) kill -TERM "$ssh_pid" 2>/dev/null || true ;; esac
+    case "$custody_ssh_command" in *"$execution_id"*) executor_signal_pid controller_tty_lifeline_eof "$ssh_pid" ;; esac
   ) < "$custody_pipe" &
   custody_watcher_pid=$!
 fi
 cancel_remote() {
   cancel_remote_execution
-  kill -TERM "$ssh_pid" 2>/dev/null || true
+  executor_signal_pid controller_interrupt "$ssh_pid"
   [ -n "$authoritative_ssh_error_log" ] && rm -f -- "$authoritative_ssh_error_log" 2>/dev/null || true
   release_reservation
   release_custody_pipe
@@ -2401,7 +2434,7 @@ if [ "$control_stdin" = 1 ]; then
   (
     exec 9>&-
     while IFS= read -r control_line; do printf '%s\n' "$control_line" > "$custody_pipe"; done
-    kill -TERM "$$" 2>/dev/null || true
+    executor_signal_pid controller_input_eof "$$"
   ) <&5 &
   control_input_pid=$!
   exec 5<&-
@@ -2410,11 +2443,13 @@ wait "$ssh_pid"
 status=$?
 trap - HUP INT TERM
 if [ "$status" -eq 255 ] && ssh_refused_before_session "$authoritative_ssh_error_log"; then
+  reservation_remote_pending=0
   cat "$authoritative_ssh_error_log" >&2
   rm -f -- "$authoritative_ssh_error_log" 2>/dev/null || true
   authoritative_ssh_error_log=
   handle_selected_command_connection_failure "$@"
 fi
+if [ "$status" -ne 255 ]; then reservation_remote_pending=0; fi
 if [ "$status" -eq 255 ]; then
   # -E redirects SSH's ordinary ERROR diagnostics away from stderr. Preserve
   # them before cleanup so a lost transport does not become a silent exit 255.
@@ -2484,7 +2519,6 @@ if [ "$admission_result" = "HSTACK_ADMISSION_UNAVAILABLE:$admission_failure_id" 
 fi
 [ -n "$authoritative_ssh_error_log" ] && rm -f -- "$authoritative_ssh_error_log" 2>/dev/null || true
 release_reservation
-[ "$status" = 255 ] || release_orphan_reservations
 record_remote_command_completion
 exit "$status"
 }

@@ -11,10 +11,10 @@ function skipWatchSubpathError(error, watchPath, logger) {
   return true;
 }
 
-function safeWatch(path, handler, { watchImpl, ignorePath, logger, persistent }) {
+function safeWatch(path, handler, { watchImpl, ignorePath, logger, persistent, recursive }) {
   let watcher;
   try {
-    watcher = watchImpl(path, { recursive: true, persistent, ...(ignorePath ? { ignore: ignorePath } : {}) }, handler);
+    watcher = watchImpl(path, { recursive, persistent, ...(ignorePath ? { ignore: ignorePath } : {}) }, handler);
   } catch (error) {
     // Retain the non-recursive fallback only for unsupported recursion or a skipped
     // descendant. Resource exhaustion and failure of the watched root are fatal.
@@ -52,6 +52,7 @@ export function watchDebounced({
   shouldPoll = null,
   pollIntervalMs = 0,
   persistent = true,
+  recursive = true,
   watchImpl = watch,
   setIntervalImpl = setInterval,
   clearIntervalImpl = clearInterval,
@@ -151,7 +152,7 @@ export function watchDebounced({
       const w = safeWatch(
         p,
         (eventType, filename) => observeNativeEvent(eventType, filename, p),
-        { watchImpl, ignorePath, logger, persistent },
+        { watchImpl, ignorePath, logger, persistent, recursive },
       );
       if (w) watchers.push(w);
     }

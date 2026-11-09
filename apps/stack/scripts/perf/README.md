@@ -105,9 +105,24 @@ are not a quiet-host baseline, even when percentiles can be computed.
 Production captures require the stack to report `sourceUi=export` and both
 server/daemon identities to have nonempty matching selected/loaded values and
 live stack-owned PIDs. Configure `HAPPIER_UI_EXPORT_SOURCE_MAPS=1` before the
-orchestrator's export start for original module/symbol attribution. The export
-producer includes that option in its existing reuse decision. Source maps are
-read after the capture, so their fetch/decoding is outside its counts/profile.
+orchestrator's export start to generate source maps. The export
+producer includes that option in its existing reuse decision. Source attribution
+uses only inline map bytes supplied by CDP `Debugger.scriptParsed` for the
+profile frame's script ID; decoding happens after capture, outside its
+counts/profile. Script URL equality is not identity: a borrowed development
+Expo can serve changed code and maps at the same URL while a capture runs.
+External map URLs, including export `.map` URLs, cannot prove that pairing and
+are not fetched or used for attribution. Such CPU and allocation frames retain
+their generated locations (`mapped: false`); `attribution.mapFailures` gives
+`external-map-pairing-unproven`. Missing script/map metadata and malformed inline
+maps also carry explicit reasons. `attribution.scriptMaps` records each attempted
+script's CDP hash/length and pairing basis without retaining script or map bytes.
+An inline map remains tied to its original script ID across a reload, even when
+the next loaded script has the same URL. See the
+[CDP scriptParsed contract](https://chromedevtools.github.io/devtools-protocol/tot/Debugger/#event-scriptParsed).
+Existing captures with fetched external maps do not establish source-level CPU
+attribution; retain their generated CPU evidence and rerun before citing source
+buckets. Enabling export maps alone does not establish a matching pair.
 For component-name investigation, the orchestrator can select borrowed dev UI
 and the lane uses `--ui-mode=dev`; dev timings never enter production comparison.
 

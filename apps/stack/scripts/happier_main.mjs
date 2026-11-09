@@ -1,11 +1,10 @@
 import './utils/env/env.mjs';
 import { spawnSync } from 'node:child_process';
-import { existsSync, realpathSync } from 'node:fs';
-import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { join } from 'node:path';
 import { parseArgs } from './utils/cli/args.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
-import { getComponentDir, getRootDir, getStackName, resolveExplicitStackEnvFilePath } from './utils/paths/paths.mjs';
-import { resolveCliHomeDir } from './utils/stack/dirs.mjs';
+import { getComponentDir, getRootDir, getStackName } from './utils/paths/paths.mjs';
+import { readPrefixServerSelection, resolveStackHappierCliHome, splitHstackHappierWrapperArgs } from './stack/stack_happier_passthrough_entrypoint.mjs';
 import { getPublicServerUrlEnvOverride, resolveStackCanonicalServerUrl, resolveStackServerEndpoint } from './utils/server/urls.mjs';
 import { resolveStackEnvPath } from './utils/paths/paths.mjs';
 import {
@@ -48,9 +47,10 @@ function runCliProfileReconciliation({ resolvedCli, env, cliHomeDir, internalSer
   }
   const result =
     resolvedCli.kind === 'runtime'
-      ? spawnSync(resolvedCli.command, [...resolvedCli.args, ...args], { stdio: 'ignore', env })
+      ? spawnSync(resolvedCli.command, [...resolvedCli.args, ...args], { windowsHide: true, stdio: 'ignore', env })
       : spawnSync(process.execPath, ['--no-warnings', '--no-deprecation', ...resolvedCli.nodeArgs, ...args], {
           stdio: 'ignore',
+          windowsHide: true,
           env,
         });
   if (result.error || result.status !== 0) {
@@ -78,138 +78,6 @@ function printHstackHappierHelp({ json }) {
   });
 }
 
-function splitHstackHappierWrapperArgs(argv) {
-  const wrapperFlags = ['--stack-help', '--runtime', '--source'];
-  let childIndex = 0;
-  while (wrapperFlags.includes(argv[childIndex]) || String(argv[childIndex] ?? '').startsWith('--runtime=')) childIndex += 1;
-  // Mode flags belong to the wrapper prefix. Everything from the child command
-  // onward, including a child's own separator, belongs to the CLI.
-  return {
-    wrapperArgv: argv.slice(0, childIndex),
-    forwardedArgv: argv.slice(argv[childIndex] === '--' ? childIndex + 1 : childIndex),
-  };
-}
-
-function takePrefixFlagValue(args, name) {
-  const a0 = String(args[0] ?? '');
-  if (a0 === name) {
-    const next = String(args[1] ?? '');
-    const value = next.trim();
-    if (!value || value.startsWith('--')) {
-      throw new Error(`Missing value for ${name}`);
-    }
-    return { value, consumed: 2 };
-  }
-  if (a0.startsWith(`${name}=`)) {
-    const value = a0.slice(name.length + 1).trim();
-    if (!value) {
-      throw new Error(`Missing value for ${name}`);
-    }
-    return { value, consumed: 1 };
-  }
-  return { value: null, consumed: 0 };
-}
-
-function readPrefixServerSelection(argv) {
-  const args = Array.isArray(argv) ? argv.map((a) => String(a ?? '')) : [];
-  const readExplicitServerFlags = (scanArgs, { includeServer }) => {
-    let server = null;
-    let serverUrl = null;
-    let webappUrl = null;
-    let publicServerUrl = null;
-    let localServerUrl = null;
-
-    for (let i = 0; i < scanArgs.length; i += 1) {
-      const slice = scanArgs.slice(i);
-
-      if (includeServer) {
-        const serverFlag = takePrefixFlagValue(slice, '--server');
-        if (serverFlag.consumed) {
-          server = serverFlag.value;
-          i += serverFlag.consumed - 1;
-          continue;
-        }
-      }
-      const serverUrlFlag = takePrefixFlagValue(slice, '--server-url');
-      if (serverUrlFlag.consumed) {
-        serverUrl = serverUrlFlag.value;
-        i += serverUrlFlag.consumed - 1;
-        continue;
-      }
-      const webappUrlFlag = takePrefixFlagValue(slice, '--webapp-url');
-      if (webappUrlFlag.consumed) {
-        webappUrl = webappUrlFlag.value;
-        i += webappUrlFlag.consumed - 1;
-        continue;
-      }
-      const localServerUrlFlag = takePrefixFlagValue(slice, '--local-server-url');
-      if (localServerUrlFlag.consumed) {
-        localServerUrl = localServerUrlFlag.value;
-        i += localServerUrlFlag.consumed - 1;
-        continue;
-      }
-      const publicServerUrlFlag = takePrefixFlagValue(slice, '--public-server-url');
-      if (publicServerUrlFlag.consumed) {
-        publicServerUrl = publicServerUrlFlag.value;
-        i += publicServerUrlFlag.consumed - 1;
-      }
-    }
-
-    return { server, serverUrl, webappUrl, publicServerUrl, localServerUrl };
-  };
-
-  const { server, serverUrl, webappUrl, publicServerUrl, localServerUrl } = readExplicitServerFlags(args, { includeServer: true });
-
-  return {
-    hasExplicitSelection: Boolean(server || serverUrl || webappUrl || publicServerUrl || localServerUrl),
-    explicitServerUrl: serverUrl || publicServerUrl || null,
-  };
-}
-
-function isIdentityScopedCliHomeDir(value) {
-  return /(^|[\\/])cli-identities([\\/]|$)/.test(String(value ?? '').trim());
-}
-
-function resolvePhysicalPathAllowMissing(value) {
-  const raw = String(value ?? '').trim();
-  if (!raw) return '';
-  const resolved = resolve(raw);
-  const missingParts = [];
-  let current = resolved;
-
-  while (!existsSync(current)) {
-    const parent = dirname(current);
-    if (parent === current) return resolved;
-    missingParts.unshift(basename(current));
-    current = parent;
-  }
-
-  try {
-    const physicalExisting = realpathSync(current);
-    return missingParts.length > 0 ? resolve(physicalExisting, ...missingParts) : physicalExisting;
-  } catch {
-    return resolved;
-  }
-}
-
-function isPathInside(baseDir, candidate) {
-  const base = String(baseDir ?? '').trim();
-  const value = String(candidate ?? '').trim();
-  if (!base || !value) return false;
-  try {
-    const rel = relative(resolvePhysicalPathAllowMissing(base), resolvePhysicalPathAllowMissing(value));
-    return rel === '' || (!!rel && !rel.startsWith('..') && !isAbsolute(rel));
-  } catch {
-    return false;
-  }
-}
-
-function resolveStackCliHomeOverrideForBase(value, stackBaseDir) {
-  const raw = String(value ?? '').trim();
-  if (!raw) return '';
-  return isPathInside(stackBaseDir, raw) ? raw : '';
-}
-
 async function main() {
   const argv = process.argv.slice(2);
   const { wrapperArgv, forwardedArgv } = splitHstackHappierWrapperArgs(argv);
@@ -228,7 +96,7 @@ async function main() {
   const runtimeStatePath = join(stackEnvPathInfo.baseDir, 'stack.runtime.json');
   const endpoint = await resolveStackServerEndpoint({ stackName });
   const serverPort = endpoint.port;
-  const prefixServerSelection = readPrefixServerSelection(argv);
+  const prefixServerSelection = readPrefixServerSelection(forwardedArgv);
   const activeRuntimeState = await readActiveStackRuntimeStateFile(runtimeStatePath, { stackName });
   const runtimeLaunchContext = await resolveStackRuntimeLaunchContext({
     argv: wrapperArgv,
@@ -280,38 +148,12 @@ async function main() {
   // We treat an invocation as "stack-scoped" only when the stack env file actually exists (or when the
   // CLI home dir is explicitly overridden by the stack). This keeps plain `hstack happier` able to
   // reuse the user's CLI settings even when stack helper env vars are present in test/dev harnesses.
-  const stackEnvFilePath = resolveExplicitStackEnvFilePath(env);
-  const stackCliHomeOverride = resolveStackCliHomeOverrideForBase(
-    env.HAPPIER_STACK_CLI_HOME_DIR,
-    stackEnvPathInfo.baseDir,
-  );
-  const isStackScopedInvocation =
-    Boolean(stackCliHomeOverride) ||
-    Boolean(stackEnvFilePath && existsSync(stackEnvFilePath));
+  const { cliHomeDir, isStackScopedInvocation } = resolveStackHappierCliHome({ env, stackBaseDir: stackEnvPathInfo.baseDir });
   if (isStackScopedInvocation) {
     publicServerUrl = await resolveStackCanonicalServerUrl({
       env: process.env, serverPort, stackName, envPublicUrl: endpoint.publicServerUrl,
     });
   }
-  const explicitHomeDir = String(env.HAPPIER_HOME_DIR ?? '').trim();
-  const explicitStackIdentityHomeDir =
-    isIdentityScopedCliHomeDir(explicitHomeDir) && isPathInside(stackEnvPathInfo.baseDir, explicitHomeDir)
-      ? explicitHomeDir
-      : '';
-  const stackScopedCliHomeDir =
-    (explicitStackIdentityHomeDir
-      ? explicitStackIdentityHomeDir
-      : (stackCliHomeOverride || join(stackEnvPathInfo.baseDir, 'cli')));
-  const cliHomeDir = isStackScopedInvocation
-    ? resolveCliHomeDir(
-        {
-          ...process.env,
-          HAPPIER_STACK_CLI_HOME_DIR: stackScopedCliHomeDir,
-        },
-        { preferStackCliHomeDir: true },
-      )
-    : resolveCliHomeDir(process.env);
-
   if (isStackScopedInvocation) {
     env.HAPPIER_HOME_DIR = cliHomeDir;
   } else {
@@ -404,7 +246,10 @@ async function main() {
   }
 
   env = applyCliRuntimeLaunchProvenanceEnv({ env, cliLaunchSpec });
-  if (isStackScopedInvocation && !prefixServerSelection.hasExplicitSelection) {
+  // Auth recovery supplies the evidence required to refresh a retained Home's
+  // endpoints. Its current endpoint and stable scope are already selected by
+  // the environment; keep the authenticated descriptor intact until then.
+  if (isStackScopedInvocation && !prefixServerSelection.hasExplicitSelection && !prefixServerSelection.isAuthCommand) {
     runCliProfileReconciliation({ resolvedCli, env, cliHomeDir, internalServerUrl, publicServerUrl });
   }
   if (isStackScopedInvocation && requiresStackDaemonPreflight(forwardedArgv)) {
@@ -414,6 +259,7 @@ async function main() {
       stackName,
       env,
       argv: wrapperArgv,
+      childArgs: forwardedArgv,
       cliIdentity,
       activeRuntimeState,
     });

@@ -7,6 +7,56 @@ command_vitest_environment_names='HAPPIER_VITEST_MAX_WORKERS VITEST_UI_MAX_FORKS
 command_controller_environment_names='HOME PATH TMPDIR XDG_RUNTIME_DIR NODE_OPTIONS CI SSH_AUTH_SOCK HAPPIER_EXEC_CONFIG_PATH HAPPIER_STACK_HOME_DIR HAPPIER_STACK_STORAGE_DIR HAPPIER_STACK_SANDBOX_DIR HAPPIER_STACK_PM_CACHE_BASE_DIR HAPPIER_WORKSPACE_BUILD_MODE HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD HAPPIER_WORKSPACE_DIST_BUILD_LOCK_LEASES HAPPIER_TYPECHECK_DISPATCHED HSTACK_EXEC_PRE_DISPATCH_BUSY_TARGETS HSTACK_EXEC_PRE_DISPATCH_CAPACITY_TARGETS HSTACK_EXEC_PRE_DISPATCH_DISK_TARGETS HSTACK_EXEC_PRE_DISPATCH_EXCLUDED_TARGETS HSTACK_EXEC_PRE_DISPATCH_REFUSALS HSTACK_EXEC_PRE_DISPATCH_RETRY_COUNT HSTACK_EXEC_PRE_DISPATCH_SYNC_FAILED'
 controller_coalescing_environment_names='CI GOMAXPROCS HAPPIER_CLI_TEST_SKIP_BUILD HAPPIER_EXEC_CONFIG_PATH HAPPIER_STACK_DISABLE_REFRESH_DEPS HAPPIER_STACK_HOME_DIR HAPPIER_STACK_PM_CACHE_BASE_DIR HAPPIER_STACK_SANDBOX_DIR HAPPIER_STACK_SKIP_REFRESH_DEPS HAPPIER_STACK_STORAGE_DIR HAPPIER_TYPECHECK_DISPATCHED HAPPIER_TYPECHECK_LOCATIONS_ONLY HAPPIER_TYPESCRIPT_COMPILER HAPPIER_VITEST_GOVERNOR_MAX_WORKERS HAPPIER_VITEST_MAX_WORKERS HAPPIER_WORKSPACE_BUILD_MODE HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD HAPPIER_WORKSPACE_DIST_BUILD_LOCK_LEASES HOME HSTACK_EXEC_PRE_DISPATCH_BUSY_TARGETS HSTACK_EXEC_PRE_DISPATCH_CAPACITY_TARGETS HSTACK_EXEC_PRE_DISPATCH_DISK_TARGETS HSTACK_EXEC_PRE_DISPATCH_EXCLUDED_TARGETS HSTACK_EXEC_PRE_DISPATCH_REFUSALS HSTACK_EXEC_PRE_DISPATCH_RETRY_COUNT HSTACK_EXEC_PRE_DISPATCH_SYNC_FAILED NODE_OPTIONS PATH SSH_AUTH_SOCK TMPDIR VITEST_MAX_FORKS VITEST_MAX_THREADS VITEST_MIN_FORKS VITEST_MIN_THREADS VITEST_UI_MAX_FORKS XDG_RUNTIME_DIR'
 placement_probe_connect_timeout_seconds() { printf '%s' '7'; }
+heavyweight_cpu_cores() {
+  case "$1" in
+    validation) heavyweight_cpu_cost=$2 ;;
+    focused-validation) heavyweight_cpu_cost=1 ;;
+    focused-validation-ui) heavyweight_cpu_cost=1 ;;
+    entry-loads) heavyweight_cpu_cost=$2 ;;
+    native-source-test) heavyweight_cpu_cost=1 ;;
+    native-custody) heavyweight_cpu_cost=1 ;;
+    source-bundle) heavyweight_cpu_cost=$2 ;;
+    source-web-export) heavyweight_cpu_cost=${3:-$2} ;;
+    dependency-install) heavyweight_cpu_cost=$2 ;;
+    package-dist) heavyweight_cpu_cost=$2 ;;
+    runtime-build) heavyweight_cpu_cost=$2 ;;
+    compilation) heavyweight_cpu_cost=$2 ;;
+    compilation-ui) heavyweight_cpu_cost=$2 ;;
+    compilation-ui-tsrs) heavyweight_cpu_cost=$2 ;;
+    compilation-cli) heavyweight_cpu_cost=$2 ;;
+    compilation-server) heavyweight_cpu_cost=$2 ;;
+    *) heavyweight_cpu_cost=$2 ;;
+  esac
+  heavyweight_cpu_requested=${4:-0}
+  [ "$heavyweight_cpu_requested" != host ] || heavyweight_cpu_requested=$2
+  if [ "$heavyweight_cpu_requested" -gt "$heavyweight_cpu_cost" ]; then heavyweight_cpu_cost=$heavyweight_cpu_requested; fi
+  printf '%s' "$heavyweight_cpu_cost"
+}
+heavyweight_include_requested_cpu() {
+  [ "$heavyweight_requested_cpu" != host ] || return 0
+  case "$1" in
+    '') return 0 ;;
+    *[!0-9]*|0*) heavyweight_requested_cpu=host; return 0 ;;
+  esac
+  if ! [ "$1" -le 9007199254740991 ] 2>/dev/null; then heavyweight_requested_cpu=host
+  elif [ "$1" -gt "$heavyweight_requested_cpu" ]; then heavyweight_requested_cpu=$1; fi
+}
+heavyweight_requested_cpu_cores() {
+  heavyweight_requested_cpu=0
+  for heavyweight_cpu_value in "${GOMAXPROCS-}" "${HAPPIER_VITEST_MAX_WORKERS-}" "${VITEST_UI_MAX_FORKS-}" "${VITEST_MAX_FORKS-}" "${VITEST_MAX_THREADS-}" "${VITEST_MIN_FORKS-}" "${VITEST_MIN_THREADS-}" "${HAPPIER_VITEST_GOVERNOR_MAX_WORKERS-}"; do
+    heavyweight_include_requested_cpu "$heavyweight_cpu_value"
+  done
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --maxWorkers|--max-workers|--minWorkers|--min-workers|--poolOptions.threads.maxThreads|--poolOptions.forks.maxForks|--poolOptions.threads.minThreads|--poolOptions.forks.minForks) shift; heavyweight_cpu_value=${1-host} ;;
+      --maxWorkers=*|--max-workers=*|--minWorkers=*|--min-workers=*|--poolOptions.threads.maxThreads=*|--poolOptions.forks.maxForks=*|--poolOptions.threads.minThreads=*|--poolOptions.forks.minForks=*) heavyweight_cpu_value=${1#*=} ;;
+      *) shift; continue ;;
+    esac
+    heavyweight_include_requested_cpu "$heavyweight_cpu_value"
+    [ "$#" -eq 0 ] || shift
+  done
+  printf '%s' "$heavyweight_requested_cpu"
+}
 heavyweight_memory_floor_kib() {
   case "$1" in
     validation) heavyweight_policy_floor='2097152' ;;

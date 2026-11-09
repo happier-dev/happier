@@ -4,15 +4,47 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import http from 'node:http';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
 
-import { withPatchedProcessEnv } from './testkit/core/env_scope.mjs';
+import { buildStackFixtureEnv, withPatchedProcessEnv } from './testkit/core/env_scope.mjs';
 import { spawnDetachedInlineNodeTestProcess } from './testkit/core/spawn_test_process.mjs';
 import { readStackInfoSnapshot, resolveStackComponentRuntime } from './stack/stack_info_snapshot.mjs';
+import { resolveQaBrowserUrl } from './utils/dev_targets/qa_browser.mjs';
+import { resolveRemoteStackStatePaths } from './utils/dev_targets/remote_commands.mjs';
 import { createRuntimeSnapshotFixture } from './testkit/runtime_snapshot_testkit.mjs';
 import { beginPendingSourceStart } from './runtime/shared/pending_source_start.mjs';
 import { resolvePreferredStackDaemonStatePaths } from './utils/auth/credentials_paths.mjs';
 import { applyStackDaemonLifecycleScopeEnv } from './utils/auth/stable_scope_id.mjs';
 import { captureStackRuntimeStopSnapshot, finalizeStackRuntimeStop, recordStackRuntimeStart, recordStackRuntimeStopRequest, recordStackRuntimeUpdate } from './utils/stack/runtime_state.mjs';
+
+test('stack info preserves a remote daemon sign-in requirement', { timeout: 30_000 }, async t => {
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-info-sign-in-'));
+  t.after(() => rm(tmp, { recursive: true, force: true }));
+  withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: tmp });
+  const stackName = 'sign-in-required';
+  const base = join(tmp, stackName);
+  await mkdir(base);
+  await writeFile(join(base, 'env'), 'HAPPIER_STACK_RUNTIME_MODE=source\nHAPPIER_STACK_SERVE_UI=0\n');
+  await recordStackRuntimeStart(join(base, 'stack.runtime.json'), { stackName, ownerPid: null,
+    sourceRuntimeIdentities: {}, placement: { daemon: 'worker' }, remoteTargets: { worker: {
+      services: { daemon: true }, status: 'starting', phase: 'credentials',
+      serviceStatus: { daemon: 'sign-in-required' },
+    } } });
+  const result = await readStackInfoSnapshot({ rootDir: process.cwd(), stackName });
+  assert.equal(result.runtime.components.daemon.status, 'sign-in-required');
+  assert.equal(result.runtime.components.daemon.running, false);
+  assert.ok(result.runtime.health.issues.includes('daemon_sign_in_required'));
+  const info = await promisify(execFile)(process.execPath,
+    [fileURLToPath(new URL('./stack_commands.mjs', import.meta.url)), 'info', stackName], {
+      signal: t.signal,
+      env: buildStackFixtureEnv({ stripStackEnv: true, homeDir: join(tmp, 'home'), storageDir: tmp,
+        extraEnv: { HAPPIER_STACK_SYNC_BUNDLED_WORKSPACES: '0', HAPPIER_STACK_UPDATE_CHECK: '0',
+          HAPPIER_STACK_SKIP_REFRESH_DEPS: '1', HAPPIER_STACK_DISABLE_REFRESH_DEPS: '1' } }),
+    });
+  assert.ok(info.stdout.includes('daemon: sign-in required'), 'the CLI must present the typed authentication requirement');
+});
 
 for (const mode of ['owned', 'remote-owned', 'borrowed', 'remote-borrowed', 'dev-borrowed']) {
   const borrowed = mode.endsWith('borrowed');
@@ -156,12 +188,16 @@ test('stack info shares daemon transport observation within a snapshot and refre
   await mkdir(join(statePath, '..'), { recursive: true });
   const writeState = pid => writeFile(statePath, JSON.stringify({ pid, httpPort: server.address().port, controlToken: 'fixture-token' }));
   await writeState(child.pid);
+  await writeFile(statePath, JSON.stringify({ ...JSON.parse(await readFile(statePath, 'utf8')),
+    startedWithRuntimeEntrypoint: '/source/cli/src/index.mjs' }));
   const first = await readStackInfoSnapshot({ rootDir: process.cwd(), stackName });
   assert.equal(first.runtime.components.daemon.status, 'running');
+  assert.deepEqual(first.runtime.daemonEntry, { selected: null, loaded: '/source/cli/src/index.mjs' });
   assert.equal(requests, 1, 'one snapshot must not repeat the daemon transport probe');
   reachable = false;
   const second = await readStackInfoSnapshot({ rootDir: process.cwd(), stackName });
   assert.equal(second.runtime.components.daemon.status, 'unreachable');
+  assert.deepEqual(second.runtime.daemonEntry, { selected: null, loaded: null });
   assert.equal(requests, 2, 'the next snapshot must obtain fresh daemon evidence');
   await writeState(process.pid);
   await readStackInfoSnapshot({ rootDir: process.cwd(), stackName });
@@ -223,9 +259,16 @@ test('stack info refuses old healthy HTTP as replacement readiness until the sel
   assert.equal(ready.runtime.health.issues.includes('runtime_identity_pending'), false);
   await mkdir(join(fixture.stackDir, 'source-runtime'), { recursive: true });
   await writeFile(join(fixture.stackDir, 'source-runtime/reload.json'), JSON.stringify({ status: 'preparing' }));
+  const preparation = await beginPendingSourceStart({ stackBaseDir: fixture.stackDir });
+  t.after(() => preparation.dispose());
   const preparing = await readStackInfoSnapshot({ rootDir: process.cwd(), stackName: fixture.stackName });
   assert.equal(preparing.runtime.health.status, 'degraded', 'old healthy HTTP cannot complete a pending replacement build');
   assert.ok(preparing.runtime.health.issues.includes('runtime_preparing'));
+  await preparation.setPhase({ phase: 'failed', component: 'server' });
+  const waitingForInput = await readStackInfoSnapshot({ rootDir: process.cwd(), stackName: fixture.stackName });
+  assert.equal(waitingForInput.runtime.health.status, 'healthy', 'reload diagnostics cannot override failed preparation');
+  assert.equal(waitingForInput.runtime.health.issues.includes('runtime_preparing'), false);
+  await preparation.dispose();
   for (const status of ['ready', 'failed']) {
     await writeFile(join(fixture.stackDir, 'source-runtime/reload.json'), JSON.stringify({ status }));
     const settled = await readStackInfoSnapshot({ rootDir: process.cwd(), stackName: fixture.stackName });
@@ -254,6 +297,13 @@ test('stack info projects pending source queue and build phases and retires them
   const remote = await readStackInfoSnapshot({ rootDir: process.cwd(), stackName: fixture.stackName });
   assert.deepEqual(remote.runtime.sourcePreparation.targets, { 'server-host': { phase: 'building', component: 'server' },
     'daemon-host': { phase: 'queued', component: 'daemon' } });
+  await pending.setPhase({ phase: 'failed', component: 'server' });
+  await pending.setPhase({ phase: 'failed', component: 'server' }, 'server-host');
+  await pending.setPhase({ phase: 'failed', component: 'daemon' }, 'daemon-host');
+  const failed = await readStackInfoSnapshot({ rootDir: process.cwd(), stackName: fixture.stackName });
+  assert.equal(failed.runtime.sourcePreparation, null, 'a failed preparation waiting for edits is not preparing');
+  assert.notEqual(failed.runtime.health.status, 'preparing');
+  assert.equal(failed.runtime.health.issues.includes('runtime_preparing'), false);
   await pending.publish(async () => {});
   const settled = await readStackInfoSnapshot({ rootDir: process.cwd(), stackName: fixture.stackName });
   assert.equal(settled.runtime.sourcePreparation, null);
@@ -976,6 +1026,50 @@ test('readStackInfoSnapshot keeps a live owner\'s recorded snapshot identity whi
   }
 });
 
+test('QA browser selects fresh Stack-info endpoints after borrowed UI and server ports change', async t => {
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-browser-current-endpoints-'));
+  t.after(() => rm(tmp, { recursive: true, force: true }));
+  const stackName = 'browser-current-endpoints';
+  const producerName = 'browser-expo-producer';
+  const baseDir = join(tmp, stackName);
+  const producerDir = join(tmp, producerName);
+  const envPath = join(baseDir, 'env');
+  await mkdir(baseDir);
+  await mkdir(producerDir);
+  const firstServer = await spawnStackOwnedHealthServer(t, { stackName, envPath, cliHomeDir: join(baseDir, 'cli') });
+  const secondServer = await spawnStackOwnedHealthServer(t, { stackName, envPath, cliHomeDir: join(baseDir, 'cli') });
+  const metros = await Promise.all([withHappierHealthServer({ metroStatus: true }), withHappierHealthServer({ metroStatus: true })]);
+  for (const metro of metros) t.after(() => metro.close());
+  await writeFile(envPath, `HAPPIER_STACK_SERVER_PORT=${firstServer.port}\nHAPPIER_STACK_DAEMON=0\nHAPPIER_STACK_RUNTIME_MODE=source\nHAPPIER_STACK_EXPO_SOURCE_STACK=${producerName}\n`);
+  await writeFile(join(producerDir, 'env'), 'HAPPIER_STACK_DAEMON=0\n');
+  const restore = withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: tmp,
+    HAPPIER_STACK_ENV_FILE: join(tmp, 'foreign-stack', 'env') });
+  t.after(restore);
+  let previous;
+  for (const [index, server] of [firstServer, secondServer].entries()) {
+    await writeFile(join(baseDir, 'stack.runtime.json'), JSON.stringify({ stackName,
+      ownerPid: server.pid, processes: { serverPid: server.pid }, ports: { server: server.port },
+      sourceRuntimeIdentities: {}, sourceUi: 'borrowed' }));
+    await writeFile(join(producerDir, 'stack.runtime.json'), JSON.stringify({ stackName: producerName,
+      script: 'dev.mjs', processes: {}, expo: { webPort: metros[index].port, webEnabled: true } }));
+    const info = await readStackInfoSnapshot({ rootDir: process.cwd(), stackName });
+    assert.equal(info.ports.server, server.port);
+    assert.equal(info.pinned.serverPort, firstServer.port);
+    const selected = resolveQaBrowserUrl(undefined, [], info);
+    assert.equal(selected, info.urls.uiUrl);
+    const url = new URL(selected);
+    assert.equal(url.port, String(metros[index].port));
+    assert.equal(new URL(url.searchParams.get('server')).port, String(server.port));
+    assert.equal(url.searchParams.get('happier_hmr'), '0');
+    if (previous) {
+      assert.notEqual(selected, previous, 'a new invocation must not retain the old ingress');
+      assert.equal(resolveQaBrowserUrl(previous, [], info), previous, 'an explicit diagnostic URL remains caller-selected');
+    }
+    previous = selected;
+  }
+  assert.throws(() => resolveQaBrowserUrl(undefined, [], { urls: { uiUrl: null } }), /no current UI endpoint/);
+});
+
 test('readStackInfoSnapshot projects the owned runtime port when a foreign pinned endpoint disagrees', async (t) => {
   const tmp = await mkdtemp(join(tmpdir(), 'hstack-info-mismatched-server-port-'));
   const storageDir = join(tmp, 'storage');
@@ -1104,6 +1198,14 @@ test('readStackInfoSnapshot exposes the server-served web UI when a runtime snap
 
 test('readStackInfoSnapshot distinguishes the selected snapshot from the loaded snapshot until manual restart', async (t) => {
   const fixture = await createRuntimeSnapshotFixture(t, { stackName: 'runtime-manual-restart' });
+  const selectedManifestPath = join(fixture.snapshotDir, 'manifest.json');
+  const selectedManifest = JSON.parse(await readFile(selectedManifestPath, 'utf8'));
+  await writeFile(selectedManifestPath, JSON.stringify({ ...selectedManifest,
+    source: { ...selectedManifest.source, dbProvider: 'mysql' } }));
+  const loadedSnapshotDir = join(fixture.stackDir, 'runtime', 'builds', 'snap-loaded');
+  await mkdir(loadedSnapshotDir, { recursive: true });
+  await writeFile(join(loadedSnapshotDir, 'manifest.json'), JSON.stringify({ ...selectedManifest,
+    snapshotId: 'snap-loaded', source: { ...selectedManifest.source, dbProvider: 'postgres' } }));
   const envPath = join(fixture.stackDir, 'env');
   const runtimeProcess = await spawnStackOwnedHealthServer(t, {
     stackName: fixture.stackName,
@@ -1135,9 +1237,45 @@ test('readStackInfoSnapshot distinguishes the selected snapshot from the loaded 
     assert.equal(out.runtime.loadedSnapshotId, 'snap-loaded');
     assert.equal(out.runtime.pendingManualRestart, true);
     assert.equal(out.runtime.mode, 'require');
+    assert.equal(out.database.provider, 'postgres', 'loaded provider wins over both configuration and a newer selected snapshot');
+    assert.equal(out.database.basis, 'loaded-runtime-snapshot');
   } finally {
     restore();
   }
+});
+
+test('stack info reads loaded native database identity on its runtime host', async t => {
+  const fixture = await createRuntimeSnapshotFixture(t, { stackName: 'remote-native-db' });
+  const target = { name: 'worker', platform: 'posix', ssh: 'fixture-ssh',
+    repoDir: fileURLToPath(new URL('../../../', import.meta.url)), cliHomeDir: join(fixture.root, 'worker', 'cli') };
+  const paths = resolveRemoteStackStatePaths(target, { stackName: fixture.stackName, runtimeMode: 'source-snapshot' });
+  const env = 'HAPPIER_STACK_RUNTIME_MODE=require\nHAPPIER_STACK_DAEMON=0\nHAPPIER_STACK_SERVE_UI=0\nHAPPIER_DB_PROVIDER=sqlite\n';
+  await mkdir(paths.stackBaseDir, { recursive: true });
+  await writeFile(paths.stackEnvPath, env);
+  await writeFile(join(fixture.stackDir, 'env'), env);
+  const loadedDir = join(paths.stackBaseDir, 'runtime', 'builds', 'snap-loaded');
+  await mkdir(loadedDir, { recursive: true });
+  await writeFile(join(loadedDir, 'manifest.json'), JSON.stringify({ snapshotId: 'snap-loaded', source: { dbProvider: 'postgres' } }));
+  const server = await spawnStackOwnedHealthServer(t, { stackName: fixture.stackName,
+    envPath: paths.stackEnvPath, cliHomeDir: paths.cliHomeDir });
+  await writeFile(join(paths.stackBaseDir, 'stack.runtime.json'), JSON.stringify({ version: 1, stackName: fixture.stackName,
+    ownerPid: server.pid, runtimeSnapshotId: 'snap-loaded', processes: { serverPid: server.pid }, ports: { server: server.port } }));
+  await writeFile(join(fixture.stackDir, 'dev-targets.json'), JSON.stringify({ version: 3, targets: [target],
+    runtimePlacement: { server: { mode: 'prefer-target', target: target.name, fallback: 'error' } } }));
+  await writeFile(join(fixture.stackDir, 'stack.runtime.json'), JSON.stringify({ version: 1, stackName: fixture.stackName,
+    placement: { server: target.name }, remoteTargets: { [target.name]: { runtimeMode: 'controlled',
+      services: { server: true }, status: 'running', serviceStatus: { server: 'running' } } } }));
+  withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: fixture.storageDir });
+  let probes = 0;
+  const out = await readStackInfoSnapshot({ rootDir: target.repoDir, stackName: fixture.stackName,
+    runRemoteProcessImpl: async ({ args }) => {
+      probes++;
+      const result = await promisify(execFile)('bash', ['-c', args.at(-1)]);
+      return { code: 0, out: result.stdout, err: result.stderr };
+    } });
+  assert.equal(out.database.provider, 'postgres');
+  assert.equal(out.database.basis, 'loaded-runtime-snapshot');
+  assert.equal(probes, 1, 'one host observation reads the loaded native manifest');
 });
 
 test('readStackInfoSnapshot reports the loaded runtime snapshot while its trusted owner is live before a listener is ready', async (t) => {

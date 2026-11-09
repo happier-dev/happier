@@ -24,13 +24,12 @@ import { emitSourceRuntimeSourceTimes, formatSourceRuntimeSourceTimes } from '..
 import { redactFailureDiagnostic } from '../../utils/proc/proc.mjs';
 
 /** Normalize once at the reload boundary, before dispatch to execution hosts. */
-export function resolveSourceRuntimeReloadArguments({ args, onHost = false, requestStartedAt = Date.now() }) {
+export function resolveSourceRuntimeReloadArguments({ args, requestStartedAt = Date.now() }) {
   const { flags, kv } = parseArgs(args);
   const requestedBoundary = normalizeSourceCapturedAfter(kv.get('--source-after'));
-  // The controller chooses one boundary for every execution host. An on-host
-  // worker honors that forwarded boundary rather than advancing its own clock.
-  const sourceCapturedAfter = flags.has('--allow-older-source') || (onHost && requestedBoundary != null)
-    ? requestedBoundary : Math.max(requestStartedAt, requestedBoundary ?? requestStartedAt);
+  // An explicit fix time permits fast adoption of a completed rolling prebuild.
+  // The same boundary travels to every worker instead of advancing its clock.
+  const sourceCapturedAfter = requestedBoundary ?? (flags.has('--allow-older-source') ? undefined : requestStartedAt);
   if (sourceCapturedAfter != null) args = [...(args ?? []), `--source-after=${new Date(sourceCapturedAfter).toISOString()}`];
   return { args, flags, kv, sourceCapturedAfter };
 }
@@ -38,7 +37,7 @@ export function resolveSourceRuntimeReloadArguments({ args, onHost = false, requ
 /** Called by the existing restart owner before any incumbent retirement. */
 export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repoDir, args, env,
   activation = Promise.resolve(true), onPrepared = async () => {}, onHost = false, onPhase, sourceStartRequestId }) {
-  const request = resolveSourceRuntimeReloadArguments({ args, onHost });
+  const request = resolveSourceRuntimeReloadArguments({ args });
   const { flags, kv, sourceCapturedAfter } = request;
   args = request.args;
   const uiMode = resolveSourceQaUiMode({ uiMode: kv.get('--ui') ?? (flags.has('--ui') ? '' : undefined),
@@ -80,6 +79,7 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
     // waiting for an edit. This record carries logs and terminal outcomes.
     await writeJsonAtomic(statusPath, { logPath });
     await log('[reload] preparing replacement while incumbent runtime remains loaded');
+    await log(`[reload] source capture boundary: ${sourceCapturedAfter == null ? 'newest completed compatible capture' : new Date(sourceCapturedAfter).toISOString()}; fast adoption: --source-after=<ISO fix time> can reuse a completed rolling prebuild`);
     if (placement?.target && !connection.startServer) {
       throw new Error('[reload] remote server placement cannot be activated with an external-server source start; incumbent retained');
     }
@@ -124,7 +124,7 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
       if (daemon) components.daemon = daemon;
       const ui = components.server && uiMode === 'export' ? await exportSourceWebUi({ repoDir, baseDir: sourceRoot,
         stackBaseDir, pending, env, signal: pending.signal, sourceCapturedAfter }) : null;
-      await log('[reload] build complete; checking replacement daemon loader, server health and UI boot');
+      await log('[reload] producer capture adopted; checking replacement daemon loader, server health and UI boot');
       await pending.setPhase({ phase: 'checking' });
       const admitted = await admitSourceRuntimeReload({ stackBaseDir, components, ui, pending,
         env: { ...serverEnv, HAPPIER_STACK_REPO_DIR: repoDir } });

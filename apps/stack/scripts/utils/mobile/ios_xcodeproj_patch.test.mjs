@@ -265,11 +265,11 @@ test('patchIosXcodeProjectsForSigningAndIdentity repairs a widget target identit
   assert.match(pbxproj, /WIDGET_RELEASE[\s\S]*PRODUCT_NAME = "\$\(TARGET_NAME\)";/);
 });
 
-test('patchIosXcodeProjectsForSigningAndIdentity preserves an already distinct widget target identity', async (t) => {
+test('patchIosXcodeProjectsForSigningAndIdentity preserves a distinct widget identity under the app bundle id', async (t) => {
   const uiDir = await withTempUiDir(t);
   const pbxprojPath = await writeMinimalIosProjectWithWidgetTarget({
     uiDir,
-    widgetBundleIdentifier: 'custom.widgets.bundle',
+    widgetBundleIdentifier: 'dev.happier.app.dev.internal.devclient.CustomWidgets',
     widgetProductName: 'CustomWidgets',
   });
 
@@ -282,10 +282,30 @@ test('patchIosXcodeProjectsForSigningAndIdentity preserves an already distinct w
   const pbxproj = await readFile(pbxprojPath, 'utf-8');
   assert.match(pbxproj, /APP_DEBUG[\s\S]*PRODUCT_BUNDLE_IDENTIFIER = dev\.happier\.app\.dev\.internal\.devclient;/);
   assert.match(pbxproj, /APP_DEBUG[\s\S]*PRODUCT_NAME = Happier-next-dev;/);
-  assert.match(pbxproj, /WIDGET_DEBUG[\s\S]*PRODUCT_BUNDLE_IDENTIFIER = custom\.widgets\.bundle;/);
+  assert.match(pbxproj, /WIDGET_DEBUG[\s\S]*PRODUCT_BUNDLE_IDENTIFIER = dev\.happier\.app\.dev\.internal\.devclient\.CustomWidgets;/);
   assert.match(pbxproj, /WIDGET_DEBUG[\s\S]*PRODUCT_NAME = CustomWidgets;/);
-  assert.match(pbxproj, /WIDGET_RELEASE[\s\S]*PRODUCT_BUNDLE_IDENTIFIER = custom\.widgets\.bundle;/);
+  assert.match(pbxproj, /WIDGET_RELEASE[\s\S]*PRODUCT_BUNDLE_IDENTIFIER = dev\.happier\.app\.dev\.internal\.devclient\.CustomWidgets;/);
   assert.match(pbxproj, /WIDGET_RELEASE[\s\S]*PRODUCT_NAME = CustomWidgets;/);
+});
+
+// iOS rejects an embedded extension whose bundle id is not prefixed with the parent app's
+// ("Embedded binary's bundle identifier is not prefixed with the parent app's bundle identifier").
+test('patchIosXcodeProjectsForSigningAndIdentity repairs a widget identity left under an earlier app bundle id', async (t) => {
+  const uiDir = await withTempUiDir(t);
+  const pbxprojPath = await writeMinimalIosProjectWithWidgetTarget({
+    uiDir,
+    widgetBundleIdentifier: 'com.happier.local.leeroy.dev.ExpoWidgetsTarget',
+  });
+
+  await patchIosXcodeProjectsForSigningAndIdentity({
+    uiDir,
+    iosBundleId: 'dev.happier.app.dev.internal.devclient',
+    iosAppName: 'Happier (next dev)',
+  });
+
+  const pbxproj = await readFile(pbxprojPath, 'utf-8');
+  assert.match(pbxproj, /WIDGET_DEBUG[\s\S]*PRODUCT_BUNDLE_IDENTIFIER = "dev\.happier\.app\.dev\.internal\.devclient\.ExpoWidgetsTarget";/);
+  assert.match(pbxproj, /WIDGET_RELEASE[\s\S]*PRODUCT_BUNDLE_IDENTIFIER = "dev\.happier\.app\.dev\.internal\.devclient\.ExpoWidgetsTarget";/);
 });
 
 test('patchIosXcodeProjectsForSigningAndIdentity tolerates missing Info.plist and leaves pre-patched pbxproj unchanged', async (t) => {

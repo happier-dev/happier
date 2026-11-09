@@ -43,7 +43,7 @@ export function readVitestSourcePreparation(repoRoot, configPath, isKnownSourceC
       try { setupSource = readFileSync(resolve(dirname(path), literal[1]), 'utf8'); }
       catch (error) { if (error.code === 'ENOENT') return null; throw error; }
       if (!/from\s*['"]\.\/test-setup['"]/u.test(setupSource)) return null;
-      if (/\bbuildMode\s*:\s*['"]full['"]/u.test(setupSource)) buildsDist = true;
+      if (/\bbuildMode\s*:\s*['"](?:full|shared-only)['"]/u.test(setupSource)) buildsDist = true;
       else if (!/\bbuildMode\s*:\s*['"]none['"]/u.test(setupSource)) return null;
     }
     return { buildsDist };

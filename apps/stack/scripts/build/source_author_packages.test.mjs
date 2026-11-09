@@ -14,6 +14,7 @@ import { emitSourceAuthorPackages } from './source_author_packages.mjs';
 import { setBundleReadOnly } from './build_source_runtime.mjs';
 import { resolveTypeScriptCliInvocation } from '../../../../scripts/workspaces/resolveTypeScriptCliInvocation.mjs';
 import { runCapture } from '../utils/proc/proc.mjs';
+import { resolveInstalledRuntimePackage } from '../../../../packages/cli-common/workspaceRuntimeDependencies.mjs';
 
 test('source author runtime emits the 18-package closure without native declaration compilers', async context => {
   const fixture = await createTempFixture(context, { prefix: 'source-author-js-' });
@@ -22,6 +23,11 @@ test('source author runtime emits the 18-package closure without native declarat
   const runtimeDir = fixture.path('runtime');
   await mkdir(projectDir, { recursive: true });
   await mkdir(runtimeDir);
+  const workspaceOwner = fixture.path('workspaces.mjs');
+  await build({ entryPoints: [fileURLToPath(new URL('../../../../packages/cli-common/src/workspaces/index.ts', import.meta.url))],
+    outfile: workspaceOwner, bundle: true, platform: 'node', format: 'esm', conditions: ['happier-source'], logLevel: 'silent' });
+  const { bundleInstalledPackageWithRuntimeDependencies, materializePrepublicationWorkspacePackageRoots } =
+    await import(pathToFileURL(workspaceOwner).href);
   await writeFile(join(projectDir, 'package.json'), JSON.stringify({ name: '@happier-dev/cli',
     bundledDependencies: Array.from({ length: 18 }, (_, index) => index === 17 ? '@happier-dev/plugin-sdk' : `@happier-dev/author-${index}`) }));
   for (let index = 0; index < 18; index++) {
@@ -32,14 +38,23 @@ test('source author runtime emits the 18-package closure without native declarat
     await writeFile(join(directory, 'package.json'), JSON.stringify({ name: `@happier-dev/${name}`,
       version: '0.0.0', type: 'module', main: './dist/index.js', types: './dist/index.d.ts',
       exports: { '.': { 'happier-source': './src/index.ts', types: './dist/index.d.ts', default: './dist/index.js' } },
-      ...(dependency ? { dependencies: { [dependency]: '0.0.0' }, bundledDependencies: index === 17 ? Array.from({ length: 17 }, (_, index) => `@happier-dev/author-${index}`) : [dependency] } : {}),
+      ...(dependency ? { dependencies: { [dependency]: '0.0.0' }, bundledDependencies: index === 17 ? Array.from({ length: 17 }, (_, index) => `@happier-dev/author-${index}`) : [dependency] } : {
+        dependencies: { zod: '4.6.7' }, optionalDependencies: { 'happier-author-fixture-absent-optional': '1.0.0' },
+      }),
       ...(index === 17 ? { happier: { publicSdkRelease: { posture: 'developer_preview' } } } : {}) }));
     await writeFile(join(directory, 'tsconfig.json'), JSON.stringify({ compilerOptions: {
-      target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext', declaration: true, resolveJsonModule: true,
+      target: 'ES2022', module: index ? 'NodeNext' : 'ESNext', moduleResolution: index ? 'NodeNext' : 'Bundler', declaration: true, resolveJsonModule: true, strict: true,
       rootDir: 'src', outDir: 'dist' }, include: ['src/**/*.ts'] }));
     await writeFile(join(directory, 'src/index.ts'), dependency
       ? `export { value } from '${dependency}';\n` : 'import data from "./data.json" with { type: "json" }; export const value = data.value;\n');
-    if (!index) await writeFile(join(directory, 'src/data.json'), '{"value":"captured"}');
+    if (!index) {
+      await writeFile(join(directory, 'src/data.json'), '{"value":"captured"}');
+      await writeFile(join(directory, 'src/schema.ts'), 'import { z } from "zod/mini"; export const schema: z.ZodMiniType<string> = z.string().check(z.refine(value => value.trim().length > 0));\n');
+      await writeFile(join(directory, 'src/selection.ts'), 'import { schema } from "./schema.js"; export function selectedSchema() { return schema; }\n');
+      bundleInstalledPackageWithRuntimeDependencies({ packageName: 'zod',
+        resolveFromPackageJsonPath: fileURLToPath(new URL('../../../../packages/protocol/package.json', import.meta.url)),
+        destNodeModulesDir: join(directory, 'node_modules') });
+    }
   }
   await installSourcePreparationInputs(repoDir, 'daemon');
   const sourceInputDigests = {};
@@ -63,7 +78,7 @@ test('source author runtime emits the 18-package closure without native declarat
     syncBuiltinESMExports();
   }
   assert.equal(declarationCompilers, 0, 'ordinary daemon preparation launches zero declaration compilers at real closure scale');
-  const declarations = result.codeFiles.filter(path => /\.d\.[cm]?ts$/.test(path));
+  const declarations = result.codeFiles.filter(path => /[\\/]dist[\\/].*\.d\.[cm]?ts$/.test(path));
   assert.equal(declarations.length, 0, 'daemon preparation must not emit plugin-author declarations');
   assert.equal(result.codeFiles.filter(path => path.endsWith(join('dist', 'index.js'))).length, 18);
   const sdk = join(runtimeDir, 'authoring/node_modules/@happier-dev/plugin-sdk');
@@ -75,10 +90,6 @@ test('source author runtime emits the 18-package closure without native declarat
   await build({ entryPoints: [fileURLToPath(new URL('../../../cli/src/plugins/authoring/sourceDeclarations.ts', import.meta.url))],
     outfile: declarationOwner, bundle: true, platform: 'node', format: 'esm', conditions: ['happier-source'], logLevel: 'silent' });
   const { emitSourceAuthorDeclarations } = await import(pathToFileURL(declarationOwner).href);
-  const workspaceOwner = fixture.path('workspaces.mjs');
-  await build({ entryPoints: [fileURLToPath(new URL('../../../../packages/cli-common/src/workspaces/index.ts', import.meta.url))],
-    outfile: workspaceOwner, bundle: true, platform: 'node', format: 'esm', conditions: ['happier-source'], logLevel: 'silent' });
-  const { materializePrepublicationWorkspacePackageRoots } = await import(pathToFileURL(workspaceOwner).href);
   const materializationRoot = fixture.path('materialized');
   const packageNames = Array.from({ length: 18 }, (_, index) => index === 17 ? '@happier-dev/plugin-sdk' : `@happier-dev/author-${index}`);
   await setBundleReadOnly(runtimeDir, true);
@@ -93,14 +104,18 @@ test('source author runtime emits the 18-package closure without native declarat
   const materializedSdk = join(materializationRoot, 'node_modules/@happier-dev/plugin-sdk');
   await rm(join(repoDir, 'packages'), { recursive: true, force: true });
   let authorCompilers = 0;
-  await emitSourceAuthorDeclarations([materializedSdk], async projectPath => {
+  await emitSourceAuthorDeclarations([materializedSdk], async (projectPath, workingDirectory) => {
     const args = ['-p', projectPath];
     const invocation = resolveTypeScriptCliInvocation({ args, workspaceDir: repoDir, admissionClass: 'source-bundle', invocationKind: 'build' });
-    await runCapture(invocation.command, [...invocation.argsPrefix, ...args], { cwd: repoDir, env: process.env });
+    await runCapture(invocation.command, [...invocation.argsPrefix, ...args], { cwd: workingDirectory, env: process.env });
     authorCompilers++;
   });
   assert.equal(authorCompilers, 18, 'an explicit author preparation emits each captured package once, dependency first');
   assert.match(await readFile(join(materializedSdk, 'dist/index.d.ts'), 'utf8'), /author-16/);
+  const materializedLeaf = resolveInstalledRuntimePackage({
+    packageName: '@happier-dev/author-0', resolveFromPackageJsonPath: join(materializedSdk, 'package.json'),
+  }).packageDir;
+  assert.match(await readFile(join(materializedLeaf, 'dist/selection.d.ts'), 'utf8'), /selectedSchema/);
   assert.ok((await readdir(join(sdk, 'dist/.happier-source'))).includes('tsconfig.json'),
     'author compilation leaves the original source runtime capture intact');
   const value = await import(pathToFileURL(join(materializedSdk, 'dist/index.js')).href);

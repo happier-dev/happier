@@ -1,14 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import { once } from 'node:events';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { runStackScriptWithStackEnv } from './stack/run_script_with_stack_env.mjs';
 import { writeFakeBin } from './testkit/core/fake_bin_harness.mjs';
 import { createTempFixture } from './testkit/core/temp_fixture.mjs';
-import { withPatchedProcessEnv } from './testkit/core/env_scope.mjs';
+import { spawnTestProcess } from './testkit/core/spawn_test_process.mjs';
+import { createManagedChildLifecycle } from '../../../scripts/testing/process/managedChildLifecycle.mjs';
 import { renderMutagenProject, resolveMutagenSessionName } from './utils/dev_targets/mutagen_project.mjs';
 import { resolveDevTargetMutagenRuntime } from './utils/dev_targets/mutagen_runtime.mjs';
 import { INDEPENDENT_DEV_TARGET_SYNC_OWNER } from './utils/dev_targets/sync_project.mjs';
@@ -42,9 +43,16 @@ async function startMetroFixture({ statusDelayMs = 0 } = {}) {
 
 test('source restart carries the borrowed UI origin through the real remote stack chain',
   { skip: process.platform === 'win32', timeout: 60_000 }, async (t) => {
-    const fixture = await createTempFixture(t, { prefix: 'hstack-borrowed-origin-chain-' });
+    const fixture = await createTempFixture(t, { prefix: 'hstack-borrowed-origin-chain-', registerCleanup: false });
     const metro = await startMetroFixture({ statusDelayMs: 100 });
-    t.after(() => metro.close());
+    let child;
+    let lifecycle;
+    t.after(async () => {
+      if (child?.exitCode === null && child.signalCode === null) await lifecycle.cleanupChild();
+      lifecycle?.dispose();
+      await metro.close();
+      await fixture.cleanup();
+    });
 
     const storageDir = fixture.path('stacks');
     const consumerStack = 'borrowed-origin-consumer';
@@ -107,7 +115,7 @@ else if (command.includes('HSTACK_QA_HOST=')) {
   process.stdout.write('HSTACK_SOURCE_RELOAD_PREPARED\\n');
   process.stdin.setEncoding('utf8');
   process.stdin.on('data', value => { if (value.includes('activate')) process.exit(0); });
-} else if (command.includes(' stack env ') && command.includes(' stack start ')) {
+} else if (command.includes('ensureEnvFileMutated') && command.includes(' stack start ')) {
   fs.writeFileSync(process.env.HSTACK_REMOTE_COMMAND_CAPTURE, command);
   process.stdout.write('HSTACK_SOURCE_START_SUPERSEDED\\n');
 } else {
@@ -168,17 +176,23 @@ else if (command.includes('HSTACK_QA_HOST=')) {
       writeFile(join(mutagen.opensshDir, 'config'), 'Host fixture-target-ssh\n  HostName fixture.invalid\n'),
     ]);
 
-    const restore = withPatchedProcessEnv(t, env);
-    try {
-      await runStackScriptWithStackEnv({
-        rootDir: stackRootDir,
-        stackName: consumerStack,
-        scriptPath: 'run.mjs',
+    // Keep the genuine wrapper in a managed child so the existing test timeout
+    // also tears down its supervisor and SSH fixtures before removing inputs.
+    child = spawnTestProcess(process.execPath, ['--input-type=module', '--eval', `
+      import { runStackScriptWithStackEnv } from ${JSON.stringify(new URL('./stack/run_script_with_stack_env.mjs', import.meta.url).href)};
+      await runStackScriptWithStackEnv(${JSON.stringify({
+        rootDir: stackRootDir, stackName: consumerStack, scriptPath: 'run.mjs',
         args: ['--runtime=source', '--restart', '--no-browser'],
-      });
-    } finally {
-      restore();
-    }
+      })});
+    `], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    lifecycle = createManagedChildLifecycle(child);
+    let output = '';
+    child.stdout.on('data', chunk => { output += chunk; });
+    child.stderr.on('data', chunk => { output += chunk; });
+    t.signal.addEventListener('abort', () => { void lifecycle.cleanupChild(); }, { once: true });
+    const [code] = await once(child, 'exit');
+    await lifecycle.finalizeChildExit();
+    assert.equal(code, 0, output);
 
     const [reloadPreparationCommand, command] = await Promise.all([
       readFile(reloadPreparationCapturePath, 'utf8'),

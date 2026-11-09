@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { mkdir, realpath, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 
 import { withDependencyRefresh } from '../../utils/proc/dependency_refresh.mjs';
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
@@ -10,7 +12,10 @@ import { writeStubCliDistBuildManifest } from '../../testkit/core/stub_happier_c
 import { resolveCliEntrypoint } from './resolveCliEntrypoint.mjs';
 
 async function makeCliFixture(name) {
-  const root = join(tmpdir(), `happier-stack-cli-entrypoint-${name}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  const checkout = join(tmpdir(), `happier-stack-cli-entrypoint-${name}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  const root = join(checkout, 'apps', 'cli');
+  await mkdir(join(checkout, 'packages', 'cli-common'), { recursive: true });
+  await writeFile(join(checkout, 'packages', 'cli-common', 'registerSourceRuntime.mjs'), 'export {};\n', 'utf8');
   await mkdir(join(root, 'bin'), { recursive: true });
   await mkdir(join(root, 'package-dist'), { recursive: true });
   await mkdir(join(root, 'src'), { recursive: true });
@@ -45,22 +50,31 @@ test('resolveCliEntrypoint keeps dist first for packaged/runtime mode', async ()
   assert.deepEqual(resolved?.nodeArgs, [join(cliDir, 'package-dist', 'index.mjs')]);
 });
 
-test('resolveCliEntrypoint resolves TSX from the selected CLI checkout before stack-local tooling', async () => {
-  const cliDir = await makeCliFixture('source-tsx-from-cli-dir');
-  const cliTsxLoaderPath = join(cliDir, 'node_modules', 'tsx', 'dist', 'esm', 'index.mjs');
-  await mkdir(join(cliDir, 'node_modules', 'tsx', 'dist', 'esm'), { recursive: true });
-  await writeFile(
-    join(cliDir, 'node_modules', 'tsx', 'package.json'),
-    JSON.stringify({ name: 'tsx', version: '0.0.0-fixture' }, null, 2) + '\n',
-    'utf8',
-  );
-  await writeFile(cliTsxLoaderPath, 'export {};\n', 'utf8');
+test('resolveCliEntrypoint registers the selected checkout source runtime, not stack-local tooling', async () => {
+  const cliDir = await makeCliFixture('source-runtime-from-cli-checkout');
 
   const resolved = await resolveCliEntrypoint({ cliDir, preferSource: true });
 
   assert.equal(resolved?.kind, 'tsx');
-  assert.equal(await realpath(resolved?.nodeArgs[1]), await realpath(cliTsxLoaderPath));
+  assert.equal(await realpath(fileURLToPath(resolved?.nodeArgs[2])),
+    await realpath(join(cliDir, '..', '..', 'packages', 'cli-common', 'registerSourceRuntime.mjs')));
   assert.equal(resolved?.nodeArgs.at(-1), join(cliDir, 'src', 'index.ts'));
+});
+
+test('source CLI launch consumes authored workspace exports, not compiled dist', async () => {
+  // The real checkout CLI: a stale package dist must not shadow its authored
+  // source export (HOME-ENROLL: login failed on an export missing from dist).
+  const cliDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..', 'cli');
+  const resolved = await resolveCliEntrypoint({ cliDir, preferSource: true });
+  assert.equal(resolved?.kind, 'tsx');
+  const probe = "process.stdout.write(import.meta.resolve('@happier-dev/sync-client'))";
+  const result = spawnSync(process.execPath, [...resolved.nodeArgs.slice(0, -1), '--input-type=module', '--eval', probe], {
+    cwd: cliDir,
+    env: { ...process.env, NODE_OPTIONS: '', TSX_TSCONFIG_PATH: resolved.tsconfigPath },
+    encoding: 'utf8',
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /\/packages\/sync-client\/src\/index\.ts$/);
 });
 
 test('source CLI selection waits for an in-progress installation before admitting its source loader', async t => {

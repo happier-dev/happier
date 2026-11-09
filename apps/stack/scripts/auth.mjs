@@ -13,7 +13,7 @@ import { homedir } from 'node:os';
 import { spawn } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { parseEnvToObject } from './utils/env/dotenv.mjs';
 import { run, runCapture } from './utils/proc/proc.mjs';
@@ -523,6 +523,7 @@ async function runNodeCapture({ cwd, env, args, stdin }) {
       cwd,
       env,
       stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
     });
     let stdout = '';
     let stderr = '';
@@ -663,6 +664,7 @@ async function ensurePresetMigrationsApplied({ serverDir, baseDir, envIn, quiet 
 
 async function listAccountsFromPglite({ cwd, dbDir }) {
   const lockModuleUrl = new URL('./utils/pglite_lock.mjs', import.meta.url).toString();
+  const socketModuleUrl = pathToFileURL(join(cwd, 'sources/storage/pgliteFramedSocketServer.mjs')).href;
   const script = `
 process.on('uncaughtException', (e) => {
   console.error(e instanceof Error ? e.message : String(e));
@@ -676,12 +678,12 @@ const DB_DIR = ${JSON.stringify(dbDir)};
 const { acquirePgliteDirLock } = await import(${JSON.stringify(lockModuleUrl)});
 const releaseLock = await acquirePgliteDirLock(DB_DIR, { purpose: 'auth:listAccountsFromPglite' });
 const { PGlite } = await import('@electric-sql/pglite');
-const { PGLiteSocketServer } = await import('@electric-sql/pglite-socket');
+const { FramedPgliteSocketServer } = await import(${JSON.stringify(socketModuleUrl)});
 const { PrismaClient } = await import('@prisma/client');
 const pglite = new PGlite(DB_DIR);
 try {
   await pglite.waitReady;
-  const server = new PGLiteSocketServer({ db: pglite, host: '127.0.0.1', port: 0 });
+  const server = new FramedPgliteSocketServer({ db: pglite, host: '127.0.0.1', port: 0 });
   await server.start();
   try {
     const raw = server.getServerConn();
@@ -716,6 +718,7 @@ try {
 
 async function insertAccountsIntoPglite({ cwd, dbDir, accounts }) {
   const lockModuleUrl = new URL('./utils/pglite_lock.mjs', import.meta.url).toString();
+  const socketModuleUrl = pathToFileURL(join(cwd, 'sources/storage/pgliteFramedSocketServer.mjs')).href;
   const script = `
 process.on('uncaughtException', (e) => {
   console.error(e instanceof Error ? e.message : String(e));
@@ -726,7 +729,7 @@ process.on('unhandledRejection', (e) => {
   process.exit(1);
 });
 const { PGlite } = await import('@electric-sql/pglite');
-const { PGLiteSocketServer } = await import('@electric-sql/pglite-socket');
+const { FramedPgliteSocketServer } = await import(${JSON.stringify(socketModuleUrl)});
 const { PrismaClient } = await import('@prisma/client');
 import fs from 'node:fs';
 const DB_DIR = ${JSON.stringify(dbDir)};
@@ -737,7 +740,7 @@ const accounts = raw ? JSON.parse(raw) : [];
 const pglite = new PGlite(DB_DIR);
 try {
   await pglite.waitReady;
-  const server = new PGLiteSocketServer({ db: pglite, host: '127.0.0.1', port: 0 });
+  const server = new FramedPgliteSocketServer({ db: pglite, host: '127.0.0.1', port: 0 });
   await server.start();
   try {
     const rawConn = server.getServerConn();
@@ -1535,6 +1538,7 @@ async function cmdLogin({ argv, json }) {
   const rootDir = getRootDir(import.meta.url);
   const stackName = getStackName();
   const { flags, kv } = parseArgs(argv);
+  const recoveryKeyStdin = flags.has('--recovery-key-stdin');
 
   const tty = isTty();
   const { port, url: internalServerUrl } = await getAuthServerEndpoint();
@@ -1567,6 +1571,7 @@ async function cmdLogin({ argv, json }) {
 
   const serviceMode = (process.env.HAPPIER_STACK_SERVICE_MODE ?? '').toString().trim() === '1';
   const prefersExpoAuthInAuto =
+    !recoveryKeyStdin &&
     requestedWebappMode === 'auto' &&
     !explicitWebappUrl &&
     !envWebappUrl &&
@@ -1663,6 +1668,7 @@ async function cmdLogin({ argv, json }) {
   const buildLoginInvocation = async (runEnv) => await buildStackAuthLoginInvocation({
     rootDir,
     stackName,
+    recoveryKeyStdin,
     webappUrl: String(runEnv.HAPPIER_WEBAPP_URL ?? '').trim() || HOSTED_WEBAPP_URL,
     env: { ...runEnv, ...(method ? { HAPPIER_AUTH_METHOD: method } : {}) },
   });
@@ -1828,7 +1834,7 @@ async function cmdLogin({ argv, json }) {
     if (action === 'wait') {
       // eslint-disable-next-line no-console
       console.error(`[auth] ${stackName}: stack runtime is already starting; waiting for health before guided login...`);
-      if (serviceMode && method !== 'web') {
+      if (serviceMode && method !== 'web' && !recoveryKeyStdin) {
         // Service-mode stacks tend to be the crash-looping case: auth must not sit around
         // waiting for a UI that is not going to stabilize. Fall back immediately to mobile.
         // eslint-disable-next-line no-console
@@ -1839,7 +1845,7 @@ async function cmdLogin({ argv, json }) {
         try {
           await waitForGuidedServerReadyOrThrow('already starting');
         } catch (waitErr) {
-          if (method === 'web') {
+          if (method === 'web' || recoveryKeyStdin) {
             throw waitErr;
           }
           // The runtime is alive but the UI is not becoming healthy. Fall back to mobile auth so
@@ -1912,7 +1918,7 @@ async function cmdLogin({ argv, json }) {
   };
 
   let webappUrlForDaemon = webappUrl;
-  if (method !== 'mobile' && (effectiveWebappMode === 'expo' || webappUrlSource === 'expo' || startedStackForExpoAuth)) {
+  if (!recoveryKeyStdin && method !== 'mobile' && (effectiveWebappMode === 'expo' || webappUrlSource === 'expo' || startedStackForExpoAuth)) {
     const guidedEnv = applyStackActiveServerScopeEnv({
       env: { ...scopedEnv, HAPPIER_STACK_AUTH_FLOW: '1' },
       stackName,
@@ -2069,7 +2075,7 @@ async function main() {
 
   const usageByCmd = new Map([
     ['status', 'hstack auth status [--json]'],
-    ['login', 'hstack auth login [--identity=<name>] [--no-open] [--force] [--method=web|mobile] [--print] [--webapp=auto|stack|public|expo|hosted] [--webapp-url=<url>] [--start-if-needed] [--json]'],
+    ['login', 'hstack auth login [--identity=<name>] [--no-open] [--force] [--method=web|mobile] [--print] [--webapp=auto|stack|public|expo|hosted] [--webapp-url=<url>] [--start-if-needed] [--recovery-key-stdin] [--json]'],
     ['seed', 'hstack auth seed [name=dev-auth] [--login|--no-login] [--force] [--server=...] [--skip-default-seed] [--non-interactive] [--json]'],
     [
       'copy-from',
@@ -2103,7 +2109,7 @@ async function main() {
         sectionTitle('Usage (global)'),
         bullets([
           `${dim('status:')} ${cmdFmt('hstack auth status')} ${dim('[--json]')}`,
-          `${dim('login:')}  ${cmdFmt('hstack auth login')} ${dim('[--identity=<name>] [--no-open] [--force] [--method=web|mobile] [--print] [--webapp=auto|stack|public|expo|hosted] [--webapp-url=<url>] [--start-if-needed] [--json]')}`,
+          `${dim('login:')}  ${cmdFmt('hstack auth login')} ${dim('[--identity=<name>] [--no-open] [--force] [--method=web|mobile] [--print] [--webapp=auto|stack|public|expo|hosted] [--webapp-url=<url>] [--start-if-needed] [--recovery-key-stdin] [--json]')}`,
           `${dim('seed stack:')} ${cmdFmt('hstack auth seed')} ${dim('[name=dev-auth] [--login|--no-login] [--force] [--server=...] [--skip-default-seed] [--non-interactive] [--json]')}`,
           `${dim('seed:')}   ${cmdFmt('hstack auth copy-from <sourceStack|legacy> --all')} ${dim('[--except=main,dev-auth] [--force] [--with-infra] [--link] [--json]')}`,
           `${dim('dev key:')} ${cmdFmt('hstack auth dev-key')} ${dim('[--print] [--format=base64url|backup] [--set=<secret>] [--clear] [--json]')}`,
@@ -2112,12 +2118,13 @@ async function main() {
         sectionTitle('Usage (stack-scoped)'),
         bullets([
           `${dim('status:')} ${cmdFmt('hstack stack auth <name> status')} ${dim('[--json]')}`,
-          `${dim('login:')}  ${cmdFmt('hstack stack auth <name> login')} ${dim('[--identity=<name>] [--no-open] [--force] [--method=web|mobile] [--print] [--webapp=auto|stack|public|expo|hosted] [--webapp-url=<url>] [--start-if-needed] [--json]')}`,
+          `${dim('login:')}  ${cmdFmt('hstack stack auth <name> login')} ${dim('[--identity=<name>] [--no-open] [--force] [--method=web|mobile] [--print] [--webapp=auto|stack|public|expo|hosted] [--webapp-url=<url>] [--start-if-needed] [--recovery-key-stdin] [--json]')}`,
           `${dim('seed:')}   ${cmdFmt('hstack stack auth <name> copy-from <sourceStack|legacy>')} ${dim('[--force] [--with-infra] [--link] [--json]')}`,
         ]),
         '',
         sectionTitle('Advanced'),
         bullets([
+          'Recovery-key login: --recovery-key-stdin reads JSON with a recoveryKey field from stdin only; combine with --start-if-needed to bootstrap the listener without device approval.',
           `${dim('UX labels only:')} ${cmdFmt('hstack auth login --context=selfhost|dev|stack')}`,
           `${dim('import legacy creds into main:')} ${cmdFmt('hstack auth copy-from legacy --allow-main')} ${dim('[--link] [--force]')}`,
         ]),

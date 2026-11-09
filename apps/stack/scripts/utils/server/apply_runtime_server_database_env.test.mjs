@@ -1,8 +1,10 @@
+// @happier-test-preparation source
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
+import { DatabaseSync } from 'node:sqlite';
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 
 import { applyRuntimeServerDatabaseEnv } from './apply_runtime_server_database_env.mjs';
@@ -10,7 +12,7 @@ import { resolveServerMigrationsEnabled } from '@happier-dev/cli-common/firstPar
 import { resolveServerRuntimeLaunchSpec } from '../../runtime/launch/resolveServerRuntimeLaunchSpec.mjs';
 import { spawnRuntimeServerAfterMigration } from '../../runtime/launch/runServerRuntimeMigration.mjs';
 
-test('applyRuntimeServerDatabaseEnv uses the bounded server-light pool by default', () => {
+test('applyRuntimeServerDatabaseEnv uses the single-connection server-light pool by default', () => {
   const env = {
     HAPPIER_SERVER_LIGHT_DATA_DIR: '/tmp/happier-data',
   };
@@ -19,7 +21,7 @@ test('applyRuntimeServerDatabaseEnv uses the bounded server-light pool by defaul
 
   assert.equal(
     env.DATABASE_URL,
-    'file:/tmp/happier-data/happier-server-light.sqlite?socket_timeout=30&connection_limit=4',
+    'file:/tmp/happier-data/happier-server-light.sqlite?socket_timeout=30&connection_limit=1',
   );
 });
 
@@ -57,7 +59,14 @@ test('shared database preset loads host-owned source settings without replacing 
   await mkdir(sourceDir, { recursive: true });
   await writeFile(fixture.path('dev', 'env'), `HAPPIER_DB_PROVIDER=sqlite\nHAPPIER_SERVER_LIGHT_DATA_DIR=${sourceDir}\nDATABASE_URL=file:${sourceDir}/custom.sqlite?socket_timeout=17&connection_limit=3\nHAPPIER_SERVER_LIGHT_FILES_DIR=${sourceDir}/public\nHAPPIER_SERVER_LIGHT_PRIVATE_FILES_DIR=${sourceDir}/private\n`);
   await writeFile(join(sourceDir, 'handy-master-secret.txt'), 'fixture-only-master-secret');
-  await writeFile(join(sourceDir, 'custom.sqlite'), 'fixture database path; not opened by this env test');
+  const sourceDb = new DatabaseSync(join(sourceDir, 'custom.sqlite'));
+  sourceDb.exec("CREATE TABLE _prisma_migrations (migration_name TEXT, checksum TEXT, finished_at TEXT, rolled_back_at TEXT);"
+    + "INSERT INTO _prisma_migrations VALUES ('20260101000000_fixture', '', 'done', NULL)");
+  sourceDb.close();
+  const serverDir = fixture.path('consumer-server');
+  const migrationDir = join(serverDir, 'prisma/sqlite/migrations/20260101000000_fixture');
+  await mkdir(migrationDir, { recursive: true });
+  await writeFile(join(migrationDir, 'migration.sql'), 'SELECT 1;\n');
   const qaDir = fixture.path('qa', 'server-light');
   const env = { HAPPIER_SERVER_LIGHT_DATA_DIR: qaDir, HAPPIER_SERVER_LIGHT_FILES_DIR: join(qaDir, 'files'),
     HAPPIER_STACK_SHARED_DB_SOURCE_STACK: 'dev', HAPPIER_STACK_SHARED_DB_SOURCE_ENV_FILE: fixture.path('dev', 'env'),
@@ -74,7 +83,7 @@ test('shared database preset loads host-owned source settings without replacing 
   assert.equal(resolveServerMigrationsEnabled(env), false);
   for (const migration of [{ mode: 'in-process' }, { mode: 'external', command: '/server/scripts/migrate.mjs', cwd: '/server' }]) {
     const serverLaunchSpec = resolveServerRuntimeLaunchSpec({
-      sourceRuntimeLaunch: { entrypoint: '/server/main.mjs', serverDir: '/server', migration },
+      sourceRuntimeLaunch: { entrypoint: join(serverDir, 'main.mjs'), serverDir, migration },
       migrationsEnabled: resolveServerMigrationsEnabled(env),
     });
     const server = { pid: 123 };

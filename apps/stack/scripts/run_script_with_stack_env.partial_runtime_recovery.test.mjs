@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import os from 'node:os';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -21,8 +21,10 @@ import {
 } from './stack/run_script_with_stack_env.mjs';
 import { withPatchedProcessEnv } from './testkit/core/env_scope.mjs';
 import { getComponentDir } from './utils/paths/paths.mjs';
+import { resolveStackCredentialPaths } from './utils/auth/credentials_paths.mjs';
 import {
   readStackRuntimeStateFile,
+  recordStackRuntimeServerActivation,
   recordStackRuntimeStart,
   recordStackRuntimeUpdate,
 } from './utils/stack/runtime_state.mjs';
@@ -75,6 +77,89 @@ test('background readiness timeout preserves a live progressing runner but not a
     }),
     false,
   );
+});
+
+test('background readiness waits for canonical owned-server publication after health', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-server-publication-' });
+  const runtimeStatePath = fixture.path('stack.runtime.json');
+  const expectedRuntimeState = await recordStackRuntimeStart(runtimeStatePath, {
+    stackName: 'server-publication', script: 'run.mjs', ownerPid: process.pid,
+  });
+  let healthProbes = 0;
+  let runnerObservations = 0;
+  const readiness = {
+    stackName: 'server-publication', scriptPath: 'run.mjs', args: ['--no-daemon'],
+    env: {}, runtimeStatePath, expectedRuntimeState,
+    isRunnerAlive: () => { runnerObservations += 1; return true; },
+    waitForServerReadyImpl: async () => { healthProbes += 1; },
+  };
+  await assert.rejects(waitForBackgroundStackReadiness({ ...readiness, timeoutMs: 30 }),
+    { code: 'ESTACKREADINESSPENDING' }, 'healthy HTTP must not precede owned-process publication');
+  assert.equal(healthProbes, 1, 'publication waiting does not repeatedly probe healthy HTTP');
+
+  // Adoption has no wrapper: its canonical listener publication is sufficient.
+  await recordStackRuntimeServerActivation(runtimeStatePath, {
+    listenerPid: process.pid, wrapperPid: null, stablePort: 12345,
+  });
+  await waitForBackgroundStackReadiness(readiness);
+
+  await recordStackRuntimeUpdate(runtimeStatePath, {
+    processes: { serverPid: null, serverWrapperPid: process.pid },
+  });
+  await waitForBackgroundStackReadiness(readiness);
+
+  await assert.rejects(waitForBackgroundStackReadiness({ ...readiness, timeoutMs: 30,
+    expectedRuntimeState: { ...expectedRuntimeState, ownerPid: process.pid + 1 },
+  }), { code: 'ESTACKREADINESSPENDING' }, 'another owner cannot satisfy this start');
+  await recordStackRuntimeServerActivation(runtimeStatePath, {
+    managedBackendPid: process.pid, stablePort: 12345, backendPort: 12346, mode: 'managed-backend',
+  });
+  await assert.rejects(waitForBackgroundStackReadiness({ ...readiness, timeoutMs: 30 }),
+    { code: 'ESTACKREADINESSPENDING' }, 'the managed public gateway is not published yet');
+  await recordStackRuntimeServerActivation(runtimeStatePath, {
+    managedBackendPid: process.pid, managedGatewayPid: process.pid, stablePort: 12345,
+    backendPort: 12346, mode: 'managed-gateway',
+  });
+  await waitForBackgroundStackReadiness(readiness);
+  const settledRunnerObservations = runnerObservations;
+  const settledHealthProbes = healthProbes;
+  // Observe beyond the existing startup loop's cadence: publication ends its
+  // liveness reads and HTTP probes rather than leaving an idle readiness task.
+  await new Promise(resolve => setTimeout(resolve, 300));
+  assert.equal(runnerObservations, settledRunnerObservations);
+  assert.equal(healthProbes, settledHealthProbes);
+});
+
+test('background readiness uses supervised remote server publication and bypasses an external server', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-remote-server-publication-' });
+  const runtimeStatePath = fixture.path('stack.runtime.json');
+  const expectedRuntimeState = await recordStackRuntimeStart(runtimeStatePath, {
+    stackName: 'remote-server-publication', script: 'dev.mjs', ownerPid: process.pid,
+    placement: { server: 'target' },
+  });
+  const readiness = {
+    stackName: 'remote-server-publication', scriptPath: 'dev.mjs', args: ['--no-daemon'],
+    env: {}, runtimeStatePath, expectedRuntimeState, isRunnerAlive: () => true,
+    waitForServerReadyImpl: async () => {},
+  };
+  await assert.rejects(waitForBackgroundStackReadiness({ ...readiness, timeoutMs: 30 }),
+    { code: 'ESTACKREADINESSPENDING' });
+  await recordStackRuntimeUpdate(runtimeStatePath, {
+    remoteTargets: { target: { services: { server: true }, serviceStatus: { server: 'running' } } },
+  });
+  await waitForBackgroundStackReadiness(readiness);
+  await recordStackRuntimeUpdate(runtimeStatePath, {
+    remoteTargets: { target: { serviceStatus: { server: 'stopped' } } },
+  });
+  const externalServerUrl = 'http://127.0.0.1:12345';
+  for (const scriptPath of ['run.mjs', 'dev.mjs']) {
+    await waitForBackgroundStackReadiness({
+      ...readiness, scriptPath,
+      args: ['--no-daemon', '--no-server', `--server-url=${externalServerUrl}`],
+      internalServerUrl: 'http://127.0.0.1:54321',
+      waitForServerReadyImpl: async url => { assert.equal(url, externalServerUrl); },
+    });
+  }
 });
 
 test('a repeated background start attaches to a live canonical owner even before all components are ready', () => {
@@ -269,88 +354,106 @@ test('background runtime readiness does not await a daemon without credentials',
   }
 });
 
-test('source background restart readiness rejects the incumbent daemon before the launch generation is published', async () => {
-  const temp = await withTempDir();
-  const runtimeStatePath = join(temp.dir, 'stack.runtime.json');
-  const launchOwnerPid = 4101;
-  const launchOwnerStartedAt = '2026-07-27T08:00:00.000Z';
-  const launchOwnerFingerprint = 'owner-launch-incarnation';
-  const incumbentDaemonPid = 4102;
-  const incumbentProcessFingerprint = 'daemon-incumbent-incarnation';
-  const replacementDaemonPid = 4103;
-  const replacementProcessFingerprint = 'daemon-replacement-incarnation';
-  const writeRuntimeDaemon = async ({
-    daemonPid,
-    daemonProcessFingerprint,
-    daemonDistFingerprint,
-  }) => {
-    await writeFile(runtimeStatePath, `${JSON.stringify({
-      ownerPid: launchOwnerPid,
-      startedAt: launchOwnerStartedAt,
-      processes: { daemonPid },
-      daemon: { distClosureFingerprint: daemonDistFingerprint },
-      processInstances: {
-        owner: { pid: launchOwnerPid, fingerprint: launchOwnerFingerprint },
-        processes: {
-          daemonPid: { pid: daemonPid, fingerprint: daemonProcessFingerprint },
-        },
-      },
-    })}\n`, 'utf8');
-  };
-  await writeRuntimeDaemon({
-    daemonPid: incumbentDaemonPid,
-    daemonProcessFingerprint: incumbentProcessFingerprint,
-    daemonDistFingerprint: 'aaaaaaaaaaaaaaaa',
-  });
-
-  let daemonObservations = 0;
-  try {
-    await waitForBackgroundStackReadiness({
-      stackName: 'source-restart-generation-admission',
-      scriptPath: 'dev.mjs',
-      args: ['--restart'],
-      env: {},
-      runtimeStatePath,
-      internalServerUrl: 'http://127.0.0.1:1',
-      timeoutMs: 1_000,
-      waitForServerReadyImpl: async () => {},
-      isDaemonPreparationActiveImpl: () => ({ active: false, ownerId: null }),
-      checkDaemonStateImpl: async () => {
-        daemonObservations += 1;
-        if (daemonObservations === 1) {
-          return {
-            status: 'running',
-            pid: incumbentDaemonPid,
-            processInstanceFingerprint: incumbentProcessFingerprint,
-            distClosureFingerprint: 'aaaaaaaaaaaaaaaa',
-          };
-        }
-        await writeRuntimeDaemon({
-          daemonPid: replacementDaemonPid,
-          daemonProcessFingerprint: replacementProcessFingerprint,
-          daemonDistFingerprint: 'aaaaaaaaaaaaaaaa',
-        });
-        return {
-          status: 'running',
-          pid: replacementDaemonPid,
-          processInstanceFingerprint: replacementProcessFingerprint,
-          distClosureFingerprint: 'aaaaaaaaaaaaaaaa',
-        };
-      },
-      isRunnerAlive: () => true,
-      sourceDaemonLaunchAttempt: {
+for (const daemonDistFingerprint of [null, 'aaaaaaaaaaaaaaaa']) {
+  test('source background restart readiness rejects the incumbent and accepts the replacement ' + (daemonDistFingerprint ? 'with' : 'without') + ' a build fingerprint', async () => {
+    const temp = await withTempDir();
+    const runtimeStatePath = join(temp.dir, 'stack.runtime.json');
+    const cliHomeDir = join(temp.dir, 'cli');
+    const env = { HAPPIER_STACK_CLI_HOME_DIR: cliHomeDir };
+    const credentialPath = resolveStackCredentialPaths({
+      cliHomeDir, serverUrl: 'http://127.0.0.1:1', env,
+    }).serverScopedPath;
+    await mkdir(dirname(credentialPath), { recursive: true });
+    // This flow tests the presence gate; authenticated daemon IPC is the OS boundary below.
+    await writeFile(credentialPath, 'fixture-credential', 'utf8');
+    const launchOwnerPid = 4101;
+    const launchOwnerStartedAt = '2026-07-27T08:00:00.000Z';
+    const launchOwnerFingerprint = 'owner-launch-incarnation';
+    const incumbentDaemonPid = 4102;
+    const incumbentProcessFingerprint = 'daemon-incumbent-incarnation';
+    const replacementDaemonPid = 4103;
+    const replacementProcessFingerprint = 'daemon-replacement-incarnation';
+    const writeRuntimeDaemon = async ({
+      daemonPid,
+      daemonProcessFingerprint,
+      daemonDistFingerprint,
+    }) => {
+      await writeFile(runtimeStatePath, `${JSON.stringify({
         ownerPid: launchOwnerPid,
-        ownerStartedAt: launchOwnerStartedAt,
-        incumbentDaemonPid,
-        incumbentDaemonProcessInstanceFingerprint: incumbentProcessFingerprint,
-      },
+        startedAt: launchOwnerStartedAt,
+        processes: { daemonPid },
+        daemon: { distClosureFingerprint: daemonDistFingerprint },
+        processInstances: {
+          owner: { pid: launchOwnerPid, fingerprint: launchOwnerFingerprint },
+          processes: {
+            daemonPid: { pid: daemonPid, fingerprint: daemonProcessFingerprint },
+          },
+        },
+      })}\n`, 'utf8');
+    };
+    await writeRuntimeDaemon({
+      daemonPid: incumbentDaemonPid,
+      daemonProcessFingerprint: incumbentProcessFingerprint,
+      daemonDistFingerprint: daemonDistFingerprint,
     });
 
-    assert.equal(daemonObservations, 2);
-  } finally {
-    await temp.cleanup();
-  }
-});
+    let daemonObservations = 0;
+    try {
+      const readiness = {
+        stackName: 'source-restart-generation-admission',
+        scriptPath: 'dev.mjs',
+        args: ['--restart'],
+        env,
+        runtimeStatePath,
+        internalServerUrl: 'http://127.0.0.1:1',
+        timeoutMs: 1_000,
+        waitForServerReadyImpl: async () => {},
+        isDaemonPreparationActiveImpl: () => ({ active: false, ownerId: null }),
+        checkDaemonStateImpl: async () => {
+          daemonObservations += 1;
+          if (daemonObservations === 1) {
+            return {
+              status: 'running',
+              pid: incumbentDaemonPid,
+              processInstanceFingerprint: incumbentProcessFingerprint,
+              distClosureFingerprint: daemonDistFingerprint,
+            };
+          }
+          await writeRuntimeDaemon({
+            daemonPid: replacementDaemonPid,
+            daemonProcessFingerprint: replacementProcessFingerprint,
+            daemonDistFingerprint: daemonDistFingerprint,
+          });
+          return {
+            status: 'running',
+            pid: replacementDaemonPid,
+            processInstanceFingerprint: replacementProcessFingerprint,
+            distClosureFingerprint: daemonDistFingerprint,
+          };
+        },
+        isRunnerAlive: () => true,
+        sourceDaemonLaunchAttempt: {
+          ownerPid: launchOwnerPid,
+          ownerStartedAt: launchOwnerStartedAt,
+          incumbentDaemonPid,
+          incumbentDaemonProcessInstanceFingerprint: incumbentProcessFingerprint,
+        },
+      };
+      await waitForBackgroundStackReadiness(readiness);
+
+      assert.equal(daemonObservations, 2);
+      await assert.rejects(waitForBackgroundStackReadiness({
+        ...readiness, timeoutMs: 30,
+        sourceDaemonLaunchAttempt: { ...readiness.sourceDaemonLaunchAttempt, ownerPid: launchOwnerPid + 1 },
+      }), { code: 'ESTACKREADINESSPENDING' }, 'a different launch owner cannot satisfy readiness');
+      await assert.rejects(waitForBackgroundStackReadiness({
+        ...readiness, timeoutMs: 30, expectedDaemonDistClosureFingerprint: 'bbbbbbbbbbbbbbbb',
+      }), { code: 'ESTACKREADINESSPENDING' }, 'an explicitly expected build still has to match');
+    } finally {
+      await temp.cleanup();
+    }
+  });
+}
 
 test('background readiness gives daemon publication a full bounded budget after slow server health', async () => {
   const temp = await withTempDir();

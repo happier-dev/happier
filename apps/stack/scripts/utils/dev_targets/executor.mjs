@@ -204,12 +204,11 @@ export async function runDevTargetDependencyBootstrap(
     flush = false,
     silent,
     onLine,
+    signal,
     env = process.env,
   },
   { runCommand = runDevTargetCommand } = {},
 ) {
-  let ownershipRefused = false;
-  let ownershipDetail = '';
   const result = await runCommand({
     target,
     stackBaseDir,
@@ -226,23 +225,13 @@ export async function runDevTargetDependencyBootstrap(
     },
     dependencyAdmission: 'skip',
     provenance: 'skip',
-    onLine: event => {
-      if (event.stream === 'stderr') {
-        if (event.line.includes('HAPPIER_DEPENDENCY_METRO_RESTART_REQUIRED')) ownershipRefused = true;
-        if (event.line.startsWith('Error: Expo') || event.line.startsWith('Error: Cannot stop verified Expo')) ownershipDetail = event.line;
-      }
-      onLine?.(event);
-    },
+    onLine,
+    signal,
     syncAlreadyVerified,
     ...(flush ? { flush: true } : {}),
     ...(silent !== undefined ? { silent } : {}),
     env,
   });
-  if (result?.code !== 0 && ownershipRefused) {
-    const error = new Error(ownershipDetail || 'Stop the owning Stack once on this target, verify its recorded Expo process has exited, then start again.');
-    error.code = 'HAPPIER_DEPENDENCY_METRO_RESTART_REQUIRED';
-    return { ...result, error };
-  }
   return result;
 }
 
@@ -322,6 +311,9 @@ export async function runDevTargetCommand(
     cwd: resolve(sourceDir, cwd), repoRoot: sourceDir, env: { ...env, ...environment },
   });
   if (commandPolicy.placement === 'primary-only') {
+    if (commandPolicy.generator === '1') {
+      throw new Error('[dev-targets] tracked-source writer must execute on the authoritative primary checkout');
+    }
     throw new Error('[dev-targets] Git/index/worktree commands must execute on the authoritative primary checkout');
   }
   // Runtime-state observations do not consume a fresh source snapshot. Keep
@@ -420,7 +412,7 @@ export async function runDevTargetCommand(
       onLine?.({ stream, line });
       if (stream === 'stderr') {
         diagnosticReason ??= classifyDevTargetSshDiagnostic(line);
-        if ([`HSTACK_ADMISSION_BUSY:${executionId}`, `HSTACK_ADMISSION_DISK:${executionId}`].includes(line)) admissionDeclined = true;
+        if ([`HSTACK_ADMISSION_BUSY:${executionId}`, `HSTACK_ADMISSION_DISK:${executionId}`, `HSTACK_ADMISSION_CAPACITY:${executionId}`].includes(line)) admissionDeclined = true;
       }
     } });
     const result = await child.completion;
@@ -450,6 +442,7 @@ export async function runDevTargetCommand(
               }),
               env,
             });
+            if (cancelResult?.err) process.stderr.write(cancelResult.err);
             if (!cancelResult?.ok) {
               const detail = String(cancelResult?.err ?? '').trim()
                 || cancelResult?.error?.message

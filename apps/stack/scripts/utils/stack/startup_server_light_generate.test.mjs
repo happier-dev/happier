@@ -77,6 +77,7 @@ test('ensureServerLightSchemaReady builds source server internal workspace depen
       "const path = require('node:path');",
       'const args = process.argv.slice(2);',
       "if (args.includes('--version')) { console.log('12.14.0'); process.exit(0); }",
+      "if (args[0] === 'install') { fs.mkdirSync('node_modules', { recursive: true }); fs.writeFileSync(path.join('node_modules', '.modules.yaml'), 'layoutVersion: 5\\nnodeLinker: hoisted\\n'); process.exit(0); }",
       `if (args[0] === 'run' && args[1] === '--silent' && args[2] === 'build' && process.cwd().endsWith(path.join('packages', 'cli-common'))) {`,
       "  const out = process.env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR || path.join(process.cwd(), 'dist');",
       '  fs.mkdirSync(out, { recursive: true });',

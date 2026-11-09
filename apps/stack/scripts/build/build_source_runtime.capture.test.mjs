@@ -1,0 +1,208 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { access, mkdir, readFile, stat, symlink, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import fs from 'node:fs';
+import { createRequire, syncBuiltinESMExports } from 'node:module';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { promisify } from 'node:util';
+import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
+import { installSourceAdmissionFixture } from '../testkit/core/source_runtime_fixture.mjs';
+import { sourceBuildNodeArgs } from '../utils/proc/runSourceBuildCommand.mjs';
+import { buildSourceRuntimeBundle, captureSourceRuntimeSharedInputs, captureSourceWebBuildInputs, setBundleReadOnly } from './build_source_runtime.mjs';
+
+test('source capture includes new undeclared workspace imports and excludes unrelated and ignored sources', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-source-untracked-import-', registerCleanup: false });
+  t.after(async () => { await setBundleReadOnly(fixture.root, false); await fixture.cleanup(); });
+  const repoDir = fixture.path('repo');
+  await mkdir(repoDir);
+  await writeFile(join(repoDir, 'package.json'), JSON.stringify({ workspaces: ['apps/*', 'packages/*'] }));
+  await promisify(execFile)('git', ['init', '--quiet', repoDir]);
+  for (const [directory, name] of [
+    ['apps/server', '@happier-dev/server'],
+    ['packages/added', '@happier-dev/added'],
+    ['packages/transitive', '@happier-dev/transitive'],
+    ['packages/unrelated', '@happier-dev/unrelated'],
+  ]) {
+    await mkdir(join(repoDir, directory, 'src'), { recursive: true });
+    await writeFile(join(repoDir, directory, 'package.json'), JSON.stringify({ name, type: 'module',
+      exports: { '.': { 'happier-source': './src/index.ts', default: './dist/index.js' } } }));
+  }
+  const server = join(repoDir, 'apps/server');
+  await mkdir(join(server, 'sources'));
+  await mkdir(join(server, 'scripts'));
+  await mkdir(join(server, 'node_modules'));
+  await writeFile(join(server, 'tsconfig.json'), '{}');
+  await writeFile(join(server, 'scripts/migrate.sqlite.deploy.ts'), 'export async function runSqliteMigrationDeploy() {}');
+  await symlink(dirname(createRequire(import.meta.url).resolve('esbuild/package.json')), join(server, 'node_modules/esbuild'),
+    process.platform === 'win32' ? 'junction' : 'dir');
+  await writeFile(join(server, 'sources/main.light.ts'), 'export { marker } from "@happier-dev/added";');
+  const added = 'packages/added/src/index.ts';
+  await writeFile(join(repoDir, added), 'export { marker } from "@happier-dev/transitive";', { mode: 0o600 });
+  await writeFile(join(repoDir, 'packages/transitive/src/index.ts'), 'export const marker = "new-source";');
+  await writeFile(join(repoDir, 'packages/unrelated/src/index.ts'), 'export const unrelated = true;');
+  await writeFile(join(repoDir, 'packages/added/src/ignored.test.ts'), 'import "@happier-dev/unrelated";');
+  const status = await promisify(execFile)('git', ['-C', repoDir, 'status', '--porcelain', '--untracked-files=all', '--', added]);
+  assert.match(status.stdout, /^\?\? packages\/added\/src\/index\.ts/m);
+  const sharedSourceInputs = await captureSourceRuntimeSharedInputs({ repoDir, outputDir: fixture.path('shared') });
+  for (const shared of [undefined, sharedSourceInputs]) {
+    const captured = await captureSourceWebBuildInputs({ repoDir, component: 'server',
+      outputDir: fixture.path(shared ? 'shared-consumer' : 'standalone'), sharedSourceInputs: shared });
+    assert.ok(captured.files.includes(added), 'new untracked imports must be admitted before the consumed-inputs loader runs');
+    assert.equal(captured.files.filter(path => path === added).length, 1);
+    assert.equal(captured.files.includes('packages/unrelated/src/index.ts'), false);
+    assert.equal(captured.files.includes('packages/added/src/ignored.test.ts'), false);
+    assert.equal(await readFile(join(captured.repoDir, added), 'utf8'), 'export { marker } from "@happier-dev/transitive";');
+  }
+  const native = process.platform === 'linux' ? await installSourceAdmissionFixture(fixture.root) : null;
+  const built = await (native?.build ?? buildSourceRuntimeBundle)({ repoDir, outputDir: fixture.path('runtime'),
+    component: 'server', serverComponent: 'happier-server-light', dbProvider: 'sqlite', sharedSourceInputs,
+    env: native?.env ?? process.env });
+  assert.equal((await import(pathToFileURL(built.entrypoint))).marker, 'new-source');
+});
+
+test('server source capture retains matching default and generated provider clients after live regeneration', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-source-provider-capture-', registerCleanup: false });
+  t.after(async () => { await setBundleReadOnly(fixture.root, false); await fixture.cleanup(); });
+  const repoDir = fixture.path('repo');
+  const server = join(repoDir, 'apps/server');
+  for (const directory of ['sources', 'scripts', 'node_modules', 'generated/sqlite-client']) {
+    await mkdir(join(server, directory), { recursive: true });
+  }
+  await writeFile(join(repoDir, 'package.json'), JSON.stringify({ workspaces: ['apps/*'] }));
+  await writeFile(join(server, 'package.json'), JSON.stringify({ name: '@happier-dev/server', type: 'module' }));
+  await writeFile(join(server, 'tsconfig.json'), '{}');
+  await writeFile(join(server, 'scripts/migrate.sqlite.deploy.ts'), 'export async function runSqliteMigrationDeploy() {}');
+  await symlink(dirname(createRequire(import.meta.url).resolve('esbuild/package.json')), join(server, 'node_modules/esbuild'),
+    process.platform === 'win32' ? 'junction' : 'dir');
+  // Generated third-party artifacts are the boundary: keep their real CommonJS
+  // package lookup and runtime file lifetimes, without recreating Prisma logic.
+  const wrapper = join(repoDir, 'node_modules/@prisma/client');
+  const generated = join(repoDir, 'node_modules/.prisma/client');
+  await mkdir(wrapper, { recursive: true });
+  await mkdir(generated, { recursive: true });
+  await writeFile(join(wrapper, 'package.json'), JSON.stringify({ name: '@prisma/client', main: './index.cjs' }));
+  await writeFile(join(wrapper, 'index.cjs'), 'module.exports = require(".prisma/client/index.cjs");');
+  const sqlite = join(server, 'generated/sqlite-client/index.js');
+  await writeFile(join(server, 'generated/sqlite-client/package.json'), JSON.stringify({ type: 'commonjs' }));
+  const engineBytes = new Uint8Array([0, 255, 128, 0, 10]);
+  await writeFile(join(server, 'generated/sqlite-client/engine.bin'), engineBytes, { mode: 0o755 });
+  const engineExecuteBits = (await stat(join(server, 'generated/sqlite-client/engine.bin'))).mode & 0o111;
+  const source = join(server, 'sources/main.light.ts');
+  await writeFile(join(generated, 'index.cjs'), 'exports.schemaMarker = "captured";');
+  await writeFile(sqlite, 'exports.schemaMarker = "captured";');
+  await writeFile(source, `import { createRequire } from 'node:module';
+    export const sourceMarker = 'captured';
+    export const defaultMarker = createRequire(import.meta.url)('@prisma/client').schemaMarker;
+    export async function sqliteMarker() { return (await import('../generated/sqlite-client/index.js')).schemaMarker; }
+  `);
+  const sharedSourceInputs = await captureSourceRuntimeSharedInputs({ repoDir, outputDir: fixture.path('shared') });
+  await writeFile(join(generated, 'index.cjs'), 'exports.schemaMarker = "regenerated";');
+  await writeFile(sqlite, 'exports.schemaMarker = "regenerated";');
+  await writeFile(source, 'export const sourceMarker = "regenerated";');
+  const native = process.platform === 'linux' ? await installSourceAdmissionFixture(fixture.root) : null;
+  const built = await (native?.build ?? buildSourceRuntimeBundle)({ repoDir, outputDir: fixture.path('output'),
+    component: 'server', sharedSourceInputs, env: native?.env ?? process.env });
+  const loaded = await import(pathToFileURL(built.entrypoint));
+  assert.equal(loaded.sourceMarker, 'captured');
+  assert.equal(loaded.defaultMarker, loaded.sourceMarker);
+  assert.equal(await loaded.sqliteMarker(), loaded.sourceMarker);
+  assert.deepEqual([...await readFile(join(built.runtimeDir, 'generated/sqlite-client/engine.bin'))], [...engineBytes]);
+  if (process.platform !== 'win32') {
+    assert.equal((await stat(join(built.runtimeDir, 'generated/sqlite-client/engine.bin'))).mode & 0o111, engineExecuteBits);
+  }
+  await writeFile(join(generated, 'index.cjs'), 'exports.schemaMarker = "next-regeneration";');
+  await writeFile(sqlite, 'exports.schemaMarker = "next-regeneration";');
+  await promisify(execFile)(process.execPath, ['--input-type=module', '--eval', `
+    import assert from 'node:assert/strict';
+    const loaded = await import(${JSON.stringify(pathToFileURL(built.entrypoint).href)});
+    assert.equal(loaded.defaultMarker, loaded.sourceMarker);
+    assert.equal(await loaded.sqliteMarker(), loaded.sourceMarker);
+  `]);
+});
+
+test('shared source capture bundles component imports from the same capture before a new Protocol file', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-source-shared-membership-' });
+  const repoDir = fixture.path('repo');
+  await mkdir(repoDir);
+  await writeFile(join(repoDir, 'package.json'), JSON.stringify({ workspaces: ['apps/*', 'packages/*'] }));
+  for (const [directory, name, dependencies] of [
+    ['apps/cli', '@happier-dev/cli', { '@happier-dev/plugin-sdk': 'workspace:*' }],
+    ['apps/server', '@happier-dev/server', { '@happier-dev/plugin-sdk': 'workspace:*' }],
+    ['packages/plugin-sdk', '@happier-dev/plugin-sdk', { '@happier-dev/protocol': 'workspace:*' }],
+    ['packages/protocol', '@happier-dev/protocol', {}],
+  ]) {
+    await mkdir(join(repoDir, directory, 'src'), { recursive: true });
+    await writeFile(join(repoDir, directory, 'package.json'), JSON.stringify({ name, type: 'module', dependencies }));
+  }
+  await mkdir(join(repoDir, 'apps/server/sources'));
+  for (const entry of ['apps/cli/src/index.ts', 'apps/server/sources/main.light.ts']) {
+    await writeFile(join(repoDir, entry), 'export { version } from "../../../packages/plugin-sdk/src/bridge";');
+  }
+  await writeFile(join(repoDir, 'packages/protocol/src/shared.ts'), 'export const version = "shared-capture";');
+  const bridge = join(repoDir, 'packages/plugin-sdk/src/bridge.ts');
+  await writeFile(bridge, 'export { version } from "../../protocol/src/shared";');
+  const sharedSourceInputs = await captureSourceRuntimeSharedInputs({ repoDir, outputDir: fixture.path('shared') });
+  // The later consumer capture models a producer that waited for admission.
+  await writeFile(join(repoDir, 'packages/protocol/src/added.ts'), 'export const version = "later-capture";');
+  await writeFile(bridge, 'export { version } from "../../protocol/src/added";');
+  const esbuild = createRequire(import.meta.url)('esbuild');
+  t.after(() => esbuild.stop());
+  for (const component of ['server', 'daemon']) {
+    const captured = await captureSourceWebBuildInputs({ repoDir, component,
+      outputDir: fixture.path(component), sharedSourceInputs });
+    const entry = component === 'daemon' ? 'apps/cli/src/index.ts' : 'apps/server/sources/main.light.ts';
+    const output = fixture.path(`${component}.mjs`);
+    await esbuild.build({ entryPoints: [join(captured.repoDir, entry)], outfile: output,
+      bundle: true, platform: 'node', format: 'esm', logLevel: 'silent' });
+    assert.equal((await import(pathToFileURL(output))).version, 'shared-capture');
+    assert.equal(captured.files.includes('packages/protocol/src/added.ts'), false);
+  }
+  const fresh = await captureSourceRuntimeSharedInputs({ repoDir, outputDir: fixture.path('next-shared') });
+  const next = await captureSourceWebBuildInputs({ repoDir, component: 'daemon', outputDir: fixture.path('next'),
+    sharedSourceInputs: fresh });
+  assert.equal(await readFile(join(next.repoDir, 'packages/protocol/src/added.ts'), 'utf8'),
+    'export const version = "later-capture";');
+});
+
+test('daemon source capture derives complete manifests through an alias while the published set is absent', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-source-capture-alias-' });
+  const parent = fixture.path('physical');
+  await mkdir(parent);
+  const alias = fixture.path('alias');
+  await symlink(parent, alias, process.platform === 'win32' ? 'junction' : 'dir');
+  // macOS /var/folders aliases /private/var/folders. Exercise the real capture
+  // and generator through that filesystem relationship on every platform.
+  const repoDir = fileURLToPath(new URL('../../../../', import.meta.url));
+  const publishedSet = resolve(repoDir, 'apps/cli/assets/bundled-plugin-manifests');
+  const readdirSync = fs.readdirSync;
+  // A remote mirror can expose no published files during a rename transition.
+  // Model that OS listing boundary; keep inventory, capture and derivation real.
+  t.mock.method(fs, 'readdirSync', (path, ...args) => resolve(String(path)) === publishedSet
+    ? [] : readdirSync(path, ...args));
+  syncBuiltinESMExports();
+  let captured;
+  try {
+    captured = await captureSourceWebBuildInputs({ repoDir,
+      outputDir: join(alias, 'workspace'), component: 'daemon' });
+  } finally {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  }
+  assert.equal(captured.files.some(path => path.startsWith('apps/cli/assets/bundled-plugin-manifests/')), false);
+  const output = fixture.path('projections');
+  await promisify(execFile)(process.execPath, sourceBuildNodeArgs({
+    repoDir: captured.repoDir,
+    scriptPath: join(captured.repoDir, 'apps/cli/scripts/build-owned/generateBundledPluginEntries.ts'),
+    args: ['--daemon-projections', '--daemon-output-root', output],
+  }), { cwd: captured.repoDir });
+  const locatorPath = join(output, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts');
+  await access(locatorPath);
+  const { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS: locators } = await import(pathToFileURL(locatorPath));
+  assert.ok(locators.length > 0);
+  for (const locator of locators) {
+    const manifest = JSON.parse(await readFile(join(output, 'apps/cli', locator.manifestRelativePath), 'utf8'));
+    assert.equal(manifest.id, locator.pluginId);
+  }
+});

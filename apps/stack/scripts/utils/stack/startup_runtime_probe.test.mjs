@@ -101,6 +101,12 @@ test('runtime PGlite probing is provider-driven for the full preset', async () =
       packageName: '@electric-sql/pglite-socket',
       source: "export class PGLiteSocketServer { async start() {} getServerConn() { return '127.0.0.1:55432'; } async stop() {} }\n",
     });
+    await mkdir(join(serverDir, 'sources', 'storage'), { recursive: true });
+    await writeFile(
+      join(serverDir, 'sources', 'storage', 'pgliteFramedSocketServer.mjs'),
+      "export class FramedPgliteSocketServer { async start() {} getServerConn() { return '127.0.0.1:55432'; } async stop() {} }\n",
+      'utf-8',
+    );
     await writeProbePackage({
       serverDir,
       packageName: '@prisma/client',
@@ -120,7 +126,7 @@ test('runtime PGlite probing is provider-driven for the full preset', async () =
   }
 });
 
-test('best-effort account count reuses the existing runtime probe without dependency preparation', async () => {
+test('admitted and migration-disabled account counts reuse the runtime probe without dependency preparation', async () => {
   const root = await mkdtemp(join(tmpdir(), 'stack-startup-best-effort-runtime-probe-'));
   const serverDir = join(root, 'server');
   const generatedDir = join(serverDir, 'generated', 'sqlite-client');
@@ -150,21 +156,24 @@ test('best-effort account count reuses the existing runtime probe without depend
       'utf-8',
     );
 
-    const result = await getAccountCountForServerComponent({
-      serverComponentName: 'happier-server-light',
-      serverDir,
-      env: {
-        HAPPIER_SERVER_LIGHT_DATA_DIR: dataDir,
-        DATABASE_URL: `file:${join(dataDir, 'happier-server-light.sqlite')}`,
-        // If the best-effort path starts dependency preparation, this fixture has no
-        // package manifest or package-manager binary and the probe cannot succeed.
-        PATH: '',
-      },
-      bestEffort: true,
-    });
+    for (const bestEffort of [true, false]) {
+      const result = await getAccountCountForServerComponent({
+        serverComponentName: 'happier-server-light',
+        serverDir,
+        env: {
+          HAPPIER_SERVER_LIGHT_DATA_DIR: dataDir,
+          DATABASE_URL: `file:${join(dataDir, 'happier-server-light.sqlite')}`,
+          // If the best-effort path starts dependency preparation, this fixture has no
+          // package manifest or package-manager binary and the probe cannot succeed.
+          PATH: '',
+          RUN_MIGRATIONS: bestEffort ? undefined : '0',
+        },
+        bestEffort,
+      });
 
-    assert.deepEqual(result, { ok: true, accountCount: 4 });
-    assert.equal(existsSync(join(serverDir, 'node_modules')), false);
+      assert.deepEqual(result, { ok: true, accountCount: 4 });
+      assert.equal(existsSync(join(serverDir, 'node_modules')), false);
+    }
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -184,7 +193,7 @@ test('probeExistingAccountCountForServerComponent uses the bounded server-light 
       [
         'export class PrismaClient {',
         '  constructor() {',
-        '    if (!process.env.DATABASE_URL.includes("socket_timeout=1&connection_limit=4")) {',
+        '    if (!process.env.DATABASE_URL.includes("socket_timeout=1&connection_limit=1")) {',
         '      throw new Error(`unexpected DATABASE_URL: ${process.env.DATABASE_URL}`);',
         '    }',
         '    this.account = { count: async () => 3 };',

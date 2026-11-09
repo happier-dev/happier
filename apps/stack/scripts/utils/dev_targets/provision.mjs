@@ -631,6 +631,11 @@ echo '[dev-targets] fresh key login verified; automatic rollback canceled'`));
     }
   }
   if (toolchain) {
+    // System packages are prepared above as root. User units belong to the
+    // final SSH account and its home, including after --create-user.
+    await runInteractive({ command: 'ssh', args: configuredSshArgs({ configPath: prepared.sshConfigFile,
+      sshAlias: prepared.ssh, remoteCommand: prependRemotePath(prepared,
+        `bash -c ${posixQuote(toolchainSource)} -- --profile=resources`), dedicated: true }), env });
     await runInteractive({ command: 'ssh', args: configuredSshArgs({ configPath: prepared.sshConfigFile,
       sshAlias: prepared.ssh, remoteCommand: prependRemotePath(prepared,
         `node --input-type=module -e ${posixQuote(rustPreparationSource)}`), dedicated: true }), env });

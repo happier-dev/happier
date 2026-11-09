@@ -62,7 +62,8 @@ test('dev-target doctor checks Mutagen and each target through passwordless SSH'
   const encodedPowerShell = calls[2].args.at(-1).split(' ').at(-1);
   const decodedPowerShell = Buffer.from(encodedPowerShell, 'base64').toString('utf16le');
   assert.match(decodedPowerShell, /Get-Command node/);
-  assert.match(decodedPowerShell, /Get-Command corepack/);
+  assert.match(decodedPowerShell, /Get-Command npm/);
+  assert.match(decodedPowerShell, /Get-Command rg/);
 });
 
 test('dev-target doctor reports the observed runtime target independently of repository synchronization', async () => {

@@ -1,14 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, rm, writeFile, chmod, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import net from 'node:net';
 
-import { ensureDevExpoServer } from './expo_dev.mjs';
-import { getExpoStatePaths, writePidState } from '../expo/expo.mjs';
+import { ensureDevExpoServer, resolveMetroConfigFingerprint } from './expo_dev.mjs';
+import { withDependencyRefresh } from '../proc/dependency_refresh.mjs';
+import { getExpoStatePaths, looksLikeExpoMetro, writePidState } from '../expo/expo.mjs';
 import { spawnDetachedInlineNodeTestProcess, spawnDetachedTestProcess } from '../../testkit/core/spawn_test_process.mjs';
+import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
+import { writeFakeBin } from '../../testkit/core/fake_bin_harness.mjs';
+import { sanitizeStackTestRunnerEnv } from '../test/test_env.mjs';
+import { killProcessTree } from '../proc/proc.mjs';
+import { once } from 'node:events';
+import { delimiter } from 'node:path';
 
 function listenEphemeralPort() {
   return new Promise((resolve, reject) => {
@@ -28,6 +34,84 @@ function listenEphemeralPort() {
     });
   });
 }
+
+test('recorded Expo ownership survives a self-restart and replaces the current child on its stable pin', { timeout: 15000 }, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-expo-recorded-owner-' });
+  const uiDir = fixture.path('ui');
+  const children = [];
+  let owner, replacement, stopping = false;
+  t.after(async () => {
+    stopping = true;
+    await owner?.close?.();
+    await replacement?.close?.();
+    for (const child of children) await killProcessTree(child, 'SIGTERM');
+    await Promise.all(children.map(child => child.completion));
+  });
+  await mkdir(join(uiDir, 'node_modules/.bin'), { recursive: true });
+  await writeFile(join(uiDir, 'package.json'), '{"name":"recorded-expo-owner"}');
+  const listenerPidPath = fixture.path('listener.pid');
+  const executable = join(uiDir, 'node_modules/.bin/expo');
+  await writeFile(executable, `#!${process.execPath}
+const fs = require('node:fs');
+const server = require('node:http').createServer((req, res) => res.end('packager-status:running'));
+server.listen(Number(process.argv[process.argv.indexOf('--port') + 1]), '127.0.0.1',
+  () => fs.writeFileSync(${JSON.stringify(listenerPidPath)}, String(process.pid)));
+process.on('SIGTERM', () => {
+  fs.rmSync(${JSON.stringify(listenerPidPath)}, { force: true });
+  server.close(() => process.exit(0));
+});
+`);
+  await chmod(executable, 0o755);
+  const port = await listenEphemeralPort();
+  // Model an OS socket table that cannot expose listener PIDs. Replacement
+  // must retire the recorded child before attempting admission, not bypass it.
+  const { binDir } = writeFakeBin({ root: fixture.root, name: 'ss', content: `#!${process.execPath}
+const fs = require('node:fs');
+try {
+  process.kill(Number(fs.readFileSync(${JSON.stringify(listenerPidPath)}, 'utf8')), 0);
+  console.log('LISTEN 0 128 127.0.0.1:${port} 0.0.0.0:*');
+} catch {}
+` });
+  const envPath = fixture.path('stack.env');
+  await writeFile(envPath, `HAPPIER_STACK_EXPO_DEV_PORT=${port}\n`);
+  const baseEnv = { ...sanitizeStackTestRunnerEnv(process.env, { isolatedStackRoot: fixture.root }),
+    PATH: [binDir, process.env.PATH].join(delimiter),
+    HAPPIER_STACK_SKIP_REFRESH_DEPS: '1', HAPPIER_STACK_EXPO_DEV_PORT: String(port),
+    HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY: 'stable', HAPPIER_STACK_EXPO_RESTART_BASE_DELAY_MS: '10',
+    HAPPIER_STACK_EXPO_RESTART_MAX_DELAY_MS: '10',
+    // A stack command can be invoked from a coding session. The new child is infrastructure.
+    HAPPIER_STACK_PROCESS_KIND: 'session', HAPPIER_STACK_STACK: 'inherited-session-stack',
+    HAPPIER_STACK_ENV_FILE: fixture.path('inherited.env') };
+  const options = { startUi: true, uiDir, autostart: { baseDir: fixture.root }, baseEnv,
+    stackMode: true, stackName: 'recorded-owner', envPath, children, quiet: true,
+    runtimeStatePath: fixture.path('runtime.json'), isShuttingDown: () => stopping,
+    spawnOptions: { silent: true } };
+  owner = await ensureDevExpoServer(options);
+  const waitFor = async predicate => {
+    const deadline = Date.now() + 5000;
+    while (!await predicate()) {
+      assert.ok(Date.now() < deadline, 'fixture did not reach its process state');
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+  };
+  await waitFor(() => looksLikeExpoMetro({ port, statusOnly: true }));
+  await killProcessTree(owner.proc, 'SIGTERM');
+  await waitFor(() => children.length === 2 && looksLikeExpoMetro({ port, statusOnly: true }));
+  const statePath = getExpoStatePaths({ baseDir: fixture.root, kind: 'expo-dev', projectDir: uiDir }).statePath;
+  await waitFor(async () => JSON.parse(await readFile(statePath, 'utf8')).pid === children[1].pid);
+  const recorded = JSON.parse(await readFile(statePath, 'utf8'));
+  assert.equal(recorded.pid, children[1].pid);
+  assert.ok(recorded.processInstanceFingerprint);
+  await owner.close();
+  replacement = await ensureDevExpoServer({ ...options, restart: true,
+    baseEnv: { ...baseEnv, HAPPIER_STACK_EXPO_RESTART_MAX_ATTEMPTS: '0' } });
+  await waitFor(() => looksLikeExpoMetro({ port, statusOnly: true }));
+  assert.equal(replacement.port, port);
+  assert.equal(children.length, 3, 'one self-restart and one requested replacement');
+  assert.notEqual(children[1].exitCode ?? children[1].signalCode, null, 'replace the recorded successor, not the original pid');
+  assert.equal(JSON.parse(await readFile(statePath, 'utf8')).pid, replacement.pid);
+  assert.equal(await readFile(envPath, 'utf8'), `HAPPIER_STACK_EXPO_DEV_PORT=${port}\n`);
+});
 
 function killProcessTreeByPid(pid) {
   const n = Number(pid);
@@ -134,6 +218,42 @@ async function spawnOwnedMetroLikeExpoProcess({ port, projectDir, expoHomeDir, s
   });
   return child;
 }
+
+test('disabled Expo recovery visibly settles inconclusive reload admission without another port probe',
+  { timeout: 10000, skip: process.platform !== 'linux' }, async t => {
+    const fixture = await createTempFixture(t, { prefix: 'hstack-expo-terminal-reload-' });
+    const children = [];
+    t.after(async () => { for (const child of children) await killProcessTree(child, 'SIGTERM'); });
+    const uiDir = fixture.path('ui');
+    await mkdir(join(uiDir, 'node_modules/.bin'), { recursive: true });
+    await writeFile(join(uiDir, 'package.json'), '{"name":"terminal-expo-reload"}');
+    await writeFile(join(uiDir, 'node_modules/.bin/expo'), `#!${process.execPath}\nsetInterval(() => {}, 1000);\n`);
+    await chmod(join(uiDir, 'node_modules/.bin/expo'), 0o755);
+    const { server, port } = await listenMetroStatusServer();
+    t.after(async () => await new Promise(resolve => server.close(resolve)));
+    const probes = fixture.path('probes');
+    const { binDir } = writeFakeBin({ root: fixture.root, name: 'ss', content: `#!${process.execPath}
+require('node:fs').appendFileSync(${JSON.stringify(probes)}, 'probe\\n');
+console.log('LISTEN 0 128 127.0.0.1:${port} 0.0.0.0:*');
+` });
+    let output = '';
+    t.mock.method(process.stderr, 'write', chunk => { output += String(chunk); return true; });
+    await assert.rejects(ensureDevExpoServer({ startUi: true, uiDir,
+      autostart: { baseDir: fixture.root }, children, stackMode: true, stackName: 'terminal-owner',
+      envPath: '', restart: true,
+      baseEnv: { ...sanitizeStackTestRunnerEnv(process.env, { isolatedStackRoot: fixture.root }),
+        PATH: [binDir, process.env.PATH].join(delimiter), HAPPIER_STACK_SKIP_REFRESH_DEPS: '1',
+        HAPPIER_STACK_EXPO_SUPERVISE_RESTARTS: '0', HAPPIER_STACK_EXPO_DEV_PORT: String(port),
+        HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY: 'stable' },
+    }), error => error.code === 'EEXPOPORTINCONCLUSIVE'
+      && error.observation.reason === 'listener-process-identity-unavailable');
+    assert.match(output, /EEXPOPORTINCONCLUSIVE/);
+    assert.match(output, /supervision_disabled/);
+    assert.equal(children.length, 0);
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.equal((await readFile(probes, 'utf8')).trim().split('\n').length, 1,
+      'a terminal identity failure cannot poll the occupied stable pin');
+  });
 
 test('ensureDevExpoServer does not reserve prior metro port when restart cannot kill previous pid but the port is free', async () => {
   const tmp = await mkdtemp(join(tmpdir(), 'hstack-expo-reserve-port-'));
@@ -498,6 +618,21 @@ test('ensureDevExpoServer adopts a running Expo process that loaded the current 
     const priorPort = await listenEphemeralPort();
     const stackName = 'qa-agent-current-metro-config';
     const envPath = join(tmp, 'stack.env');
+    const baseEnv = {
+      ...process.env,
+      HAPPIER_STACK_EXPO_RESTART_MAX_ATTEMPTS: '0',
+      HAPPIER_STACK_SKIP_REFRESH_DEPS: '1',
+      HAPPIER_STACK_EXPO_DEV_PORT: String(priorPort),
+      HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY: 'ephemeral',
+      HAPPIER_STACK_MOBILE_SCHEME: 'happier-dev',
+      HAPPIER_STACK_STACK: stackName,
+      HAPPIER_STACK_ENV_FILE: envPath,
+    };
+    await mkdir(join(uiDir, 'node_modules'), { recursive: true });
+    await withDependencyRefresh({ installDir: uiDir,
+      // This fixture publishes its own empty dependency tree. Runner opt-outs
+      // must not suppress that producer before the Metro fingerprint is saved.
+      env: { ...baseEnv, HAPPIER_STACK_SKIP_REFRESH_DEPS: '0', HAPPIER_STACK_DISABLE_REFRESH_DEPS: '0' } }, async () => {});
     const previousExpo = await spawnOwnedMetroLikeExpoProcess({
       port: priorPort,
       projectDir,
@@ -516,7 +651,7 @@ test('ensureDevExpoServer adopts a running Expo process that loaded the current 
       devClientEnabled: true,
       host: 'lan',
       apiServerUrl: 'http://192.168.1.20:3014',
-      metroConfigFingerprint: `sha256:${createHash('sha256').update(metroConfig).digest('hex')}`,
+      metroConfigFingerprint: await resolveMetroConfigFingerprint({ projectDir, env: baseEnv }),
     });
 
     const result = await ensureDevExpoServer({
@@ -524,16 +659,7 @@ test('ensureDevExpoServer adopts a running Expo process that loaded the current 
       startMobile: true,
       uiDir,
       autostart: { baseDir: tmp },
-      baseEnv: {
-        ...process.env,
-        HAPPIER_STACK_EXPO_RESTART_MAX_ATTEMPTS: '0',
-        HAPPIER_STACK_SKIP_REFRESH_DEPS: '1',
-        HAPPIER_STACK_EXPO_DEV_PORT: String(priorPort),
-        HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY: 'ephemeral',
-        HAPPIER_STACK_MOBILE_SCHEME: 'happier-dev',
-        HAPPIER_STACK_STACK: stackName,
-        HAPPIER_STACK_ENV_FILE: envPath,
-      },
+      baseEnv,
       apiServerUrl: 'http://192.168.1.20:3014',
       restart: false,
       stackMode: true,
@@ -984,3 +1110,87 @@ test('stable-port Expo cleanup refuses a same-pid successor recorded with predec
     await rm(tmp, { recursive: true, force: true });
   }
 });
+
+test('dependency reload retries refused stale ownership and inconclusive identity until the pinned Expo port is free',
+  { timeout: 15000, skip: process.platform !== 'linux' }, async t => {
+    const fixture = await createTempFixture(t, { prefix: 'hstack-expo-refused-reload-', registerCleanup: false });
+    const uiDir = fixture.path('ui');
+    const children = [];
+    let holder, startup, result;
+    let shuttingDown = false;
+    t.after(async () => {
+      shuttingDown = true;
+      await killProcessTree(holder, 'SIGTERM');
+      await startup?.catch(() => {});
+      await result?.close?.();
+      for (const child of children) await killProcessTree(child, 'SIGTERM');
+      await Promise.all(children.map(child => child.completion));
+      await fixture.cleanup();
+    });
+    const port = await listenEphemeralPort();
+    const stackName = 'qa-expo-refused-reload';
+    const envPath = fixture.path('stack.env');
+    const paths = getExpoStatePaths({ baseDir: fixture.root, kind: 'expo-dev', projectDir: uiDir });
+    await mkdir(join(uiDir, 'node_modules/.bin'), { recursive: true });
+    await writeFile(join(uiDir, 'package.json'), '{"name":"refused-reload-fixture"}');
+    const executable = join(uiDir, 'node_modules/.bin/expo');
+    await writeFile(executable, `#!${process.execPath}
+require('node:http').createServer((req, res) => res.end('packager-status:running'))
+  .listen(Number(process.argv[process.argv.indexOf('--port') + 1]), '127.0.0.1');
+`);
+    await chmod(executable, 0o755);
+    holder = await spawnOwnedMetroLikeExpoProcess({ port, projectDir: uiDir,
+      expoHomeDir: paths.expoHomeDir, stackName, envPath });
+    await writePidState(paths.statePath, { pid: holder.pid, port, uiDir, projectDir: uiDir,
+      webEnabled: true, devClientEnabled: false, apiServerUrl: 'http://127.0.0.1:1' });
+    const state = JSON.parse(await readFile(paths.statePath, 'utf8'));
+    await writeFile(paths.statePath, JSON.stringify({ ...state,
+      processInstanceFingerprint: 'linux-proc:recorded-before-reboot' }));
+    await writeFile(envPath, `HAPPIER_STACK_EXPO_DEV_PORT=${port}\n`);
+    const observationRepaired = fixture.path('observation-repaired');
+    // Substitute only the OS socket-discovery executable: its real parser,
+    // ownership/fingerprint checks, port binding, retry owner and children run.
+    const { binDir } = writeFakeBin({ root: fixture.root, name: 'ss', content: `#!${process.execPath}
+if (!require('node:fs').existsSync(${JSON.stringify(observationRepaired)}))
+  console.log('LISTEN 0 128 127.0.0.1:${port} 0.0.0.0:*');
+` });
+    let output = '', outcome = 'pending', startupError;
+    t.mock.method(console, 'warn', line => { output += String(line); });
+    t.mock.method(process.stderr, 'write', chunk => { output += String(chunk); return true; });
+    const env = { ...sanitizeStackTestRunnerEnv(process.env, { isolatedStackRoot: fixture.root }),
+      PATH: [binDir, process.env.PATH].join(delimiter),
+      HAPPIER_STACK_SKIP_REFRESH_DEPS: '1', HAPPIER_STACK_DISABLE_REFRESH_DEPS: '1',
+      HAPPIER_STACK_EXPO_DEV_PORT: String(port), HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY: 'stable',
+      HAPPIER_STACK_EXPO_RESTART_BASE_DELAY_MS: '100', HAPPIER_STACK_EXPO_RESTART_MAX_DELAY_MS: '100' };
+    startup = ensureDevExpoServer({ startUi: true, uiDir, autostart: { baseDir: fixture.root },
+      baseEnv: env, apiServerUrl: 'http://127.0.0.1:1', restart: true, stackMode: true,
+      stackName, envPath, children, isShuttingDown: () => shuttingDown, spawnOptions: { silent: true } });
+    void startup.then(value => { result = value; outcome = 'started'; }, error => { startupError = error; outcome = 'failed'; });
+    const waitFor = async predicate => {
+      const deadline = Date.now() + 10000;
+      while (Date.now() < deadline) {
+        if (await predicate()) return;
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      assert.fail('refused-reload fixture did not reach its next lifecycle boundary');
+    };
+    await waitFor(() => outcome === 'failed' || output.includes('attempt 2'));
+    if (startupError) {
+      assert.equal(startupError.code, 'EEXPOPORTINCONCLUSIVE');
+      assert.equal(startupError.observation.reason, 'listener-process-identity-unavailable');
+    }
+    assert.equal(outcome, 'pending', 'a refused dependency reload must retry without another input change');
+    assert.match(output, /listener-process-identity-unavailable/);
+    assert.equal(isPidAliveForTest(holder.pid), true, 'unverified incumbents must not be signalled');
+    assert.equal(children.length, 0, 'no duplicate may bypass an inconclusive pinned port');
+    const holderClosed = once(holder, 'close');
+    await killProcessTree(holder, 'SIGTERM');
+    await holderClosed;
+    await writeFile(observationRepaired, 'available');
+    result = await startup;
+    assert.equal(result.port, port, 'the replacement must keep the configured pin');
+    await waitFor(() => fetch(`http://127.0.0.1:${port}/status`).then(response => response.ok).catch(() => false));
+    assert.equal(children.length, 1);
+    assert.equal(output.split('dev Expo restarted (auto)').length - 1, 1);
+    assert.equal(await readFile(envPath, 'utf8'), `HAPPIER_STACK_EXPO_DEV_PORT=${port}\n`);
+  });

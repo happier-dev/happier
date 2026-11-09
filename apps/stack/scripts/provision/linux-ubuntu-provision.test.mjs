@@ -601,3 +601,34 @@ test('linux provision (installer profile) does not touch node/npm', async () => 
   const npmOut = await readIfExists(npmLog);
   assert.equal(npmOut.trim(), '', 'expected no npm calls in installer profile');
 });
+
+
+test('resource-only provisioning installs the existing policy in the worker home without host setup', async t => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-user-resources-' });
+  const home = join(root, 'worker-home');
+  await mkdir(home);
+  const { binDir } = writeFakeBin({ root, name: 'apt-get', content: '#!/bin/sh\nexit 79\n' });
+  const reload = join(root, 'manager-reload');
+  writeFakeBin({ root, name: 'systemctl', content: `#!/bin/sh\nprintf '%s\\n' "$*" > '${reload}'\n` });
+  const result = spawnSync('bash', [join(__dirname, 'linux-ubuntu-provision.sh'), '--profile=resources'], {
+    env: { ...process.env, HOME: home, PATH: `${binDir}:${process.env.PATH}`, DBUS_SESSION_BUS_ADDRESS: '' },
+    encoding: 'utf8',
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.equal((await readFile(reload, 'utf8')).trim(), '--user daemon-reload',
+    'noninteractive SSH can reach a user manager without an explicit bus variable');
+  const directory = join(home, '.config/systemd/user');
+  const jobs = await readFile(join(directory, 'happier-jobs.slice'), 'utf8');
+  const critical = await readFile(join(directory, 'happier-critical.slice'), 'utf8');
+  assert.match(jobs, /^CPUWeight=50$/mu);
+  assert.match(jobs, /^IOWeight=50$/mu);
+  assert.match(jobs, /^MemoryHigh=80%$/mu);
+  assert.match(critical, /^MemoryLow=4G$/mu);
+  assert.doesNotMatch(jobs + critical, /^(?:MemoryMax|TasksMax|OOM\w*)=/mu);
+  const repeated = spawnSync('bash', [join(__dirname, 'linux-ubuntu-provision.sh'), '--profile=resources'], {
+    env: { ...process.env, HOME: home, PATH: `${binDir}:${process.env.PATH}`, DBUS_SESSION_BUS_ADDRESS: '' },
+    encoding: 'utf8',
+  });
+  assert.equal(repeated.status, 0, repeated.stderr);
+  assert.equal(await readFile(join(directory, 'happier-jobs.slice'), 'utf8'), jobs);
+});

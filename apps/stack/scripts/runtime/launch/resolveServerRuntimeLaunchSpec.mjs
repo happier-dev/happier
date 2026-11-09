@@ -1,3 +1,4 @@
+import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { resolveRuntimeManifestEntrypoint } from '../shared/runtime_manifest.mjs';
@@ -47,10 +48,21 @@ function resolveAdmittedServerComponent({ serverComponent, snapshot }) {
   return admittedServerComponent;
 }
 
-export function resolveServerRuntimeLaunchSpec({ serverComponent, dbProvider, snapshot, sourceRuntimeLaunch, migrationsEnabled = true }) {
+export function resolveServerRuntimeLaunchSpec({ serverComponent, dbProvider, snapshot, sourceRuntimeLaunch, migrationsEnabled = true,
+  env = {}, stackBaseDir }) {
+  const runtimeArgs = [];
+  if (env.HAPPIER_STACK_SERVER_CPU_PROF === '1') {
+    if (!sourceRuntimeLaunch || !stackBaseDir) {
+      throw new Error('[runtime] server CPU profiling requires a source-runtime launch and its Stack state root');
+    }
+    const profileDir = join(stackBaseDir, 'logs', 'server-cpu-prof');
+    mkdirSync(profileDir, { recursive: true });
+    console.log(`[local] server: CPU profile output directory: ${profileDir}`);
+    runtimeArgs.push('--cpu-prof', `--cpu-prof-dir=${profileDir}`, '--cpu-prof-interval=10000', '--disable-sigusr1');
+  }
   if (sourceRuntimeLaunch) {
     return { ...sourceRuntimeLaunch, command: process.execPath,
-      args: [sourceRuntimeLaunch.entrypoint, ...(sourceRuntimeLaunch.args ?? [])],
+      args: [...runtimeArgs, sourceRuntimeLaunch.entrypoint, ...(sourceRuntimeLaunch.args ?? [])],
       migration: migrationsEnabled && !sourceRuntimeLaunch.lastGreen
         ? sourceRuntimeLaunch.migration ?? { mode: 'in-process' } : { mode: 'disabled' } };
   }

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readFile, realpath, rm, writeFile } from 'node:fs/promises';
@@ -11,20 +12,11 @@ import {
   waitForHealth,
 } from './testkit/runtime_snapshot_start_testkit.mjs';
 import { checkDaemonStatePingAware } from './daemon.mjs';
+import { isPidAlive } from './utils/proc/pids.mjs';
 
 function stackRootDirFromMeta(metaUrl) {
   const scriptsDir = dirname(fileURLToPath(metaUrl));
   return dirname(scriptsDir);
-}
-
-function isPidAlive(pid) {
-  if (!Number.isFinite(pid) || pid <= 1) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 async function waitFor(condition, { timeoutMs = 10_000, intervalMs = 100, label = 'condition' } = {}) {
@@ -95,13 +87,17 @@ function terminateExecutorProcessGroup(child) {
   }
 }
 
-test('background start returns before readiness and survives its invoking executor termination', { timeout: 45_000 }, async (t) => {
+for (const pinServerPort of [true, false]) test(`background start waits for readiness and survives its invoking executor termination (${pinServerPort ? 'pinned' : 'allocated'})`, { timeout: 90_000 }, async (t) => {
   const rootDir = stackRootDirFromMeta(import.meta.url);
   const fixture = await createStartableRuntimeSnapshotFixture(t, {
     stackName: 'runtime-detached-owner',
     serverReadyDelayMs: 4_000,
+    listenerDiscoveryMode: 'delayed-group-proof',
   });
-  const executorResultPath = join(fixture.stackDir, 'executor-result.json');
+  if (!pinServerPort) {
+    const envPath = join(fixture.stackDir, 'env');
+    await writeFile(envPath, (await readFile(envPath, 'utf8')).replace(/^HAPPIER_STACK_SERVER_PORT=.*\n/m, ''));
+  }
   const executorPath = join(fixture.root, 'background-start-executor.mjs');
   const startArgs = [
     join(rootDir, 'bin', 'hstack.mjs'),
@@ -121,54 +117,108 @@ test('background start returns before readiness and survives its invoking execut
     HAPPIER_STACK_STACK: fixture.stackName,
     HAPPIER_STACK_ENV_FILE: join(fixture.stackDir, 'env'),
     HAPPIER_TEST_BACKGROUND_START_ARGS: JSON.stringify(startArgs),
-    HAPPIER_TEST_BACKGROUND_START_RESULT: executorResultPath,
+    ...fixture.listenerDiscoveryEnv,
   };
   await writeFile(executorPath, `
 import { spawnSync } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
 
-const startedAt = Date.now();
 const result = spawnSync(process.execPath, JSON.parse(process.env.HAPPIER_TEST_BACKGROUND_START_ARGS), {
   cwd: ${JSON.stringify(rootDir)},
   env: process.env,
   stdio: 'ignore',
 });
-writeFileSync(process.env.HAPPIER_TEST_BACKGROUND_START_RESULT, JSON.stringify({
+process.send({
   status: result.status,
   signal: result.signal,
-  elapsedMs: Date.now() - startedAt,
-}) + '\\n');
+});
 setInterval(() => {}, 1_000);
 `, 'utf8');
 
   const executor = spawn(process.execPath, [executorPath], {
     cwd: rootDir,
     env,
-    stdio: 'ignore',
+    stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
     detached: true,
     windowsHide: true,
   });
 
   try {
-    await waitFor(
-      async () => await readFile(executorResultPath, 'utf8').then(() => true, () => false),
-      { timeoutMs: 2_000, intervalMs: 25, label: 'prompt background command return' },
-    );
-    const executorResult = JSON.parse(await readFile(executorResultPath, 'utf8'));
+    const [executorResult] = await once(executor, 'message', { signal: t.signal });
     assert.equal(executorResult.status, 0, JSON.stringify(executorResult));
-    assert.ok(
-      executorResult.elapsedMs < 2_000,
-      `background command waited ${executorResult.elapsedMs}ms for a server delayed by 4000ms`,
-    );
+    const publishedRuntime = JSON.parse(await readFile(join(fixture.stackDir, 'stack.runtime.json'), 'utf8'));
+    const baseUrl = new URL(fixture.baseUrl);
+    baseUrl.port = String(publishedRuntime.ports.server);
+    assert.ok(Number(publishedRuntime.processes?.serverWrapperPid) > 1,
+      'normal background readiness must publish its owned server before a caller can stop it');
+    const health = await fetch(new URL('/health', baseUrl));
+    assert.equal(health.status, 200, 'background command must return with a ready server');
 
     terminateExecutorProcessGroup(executor);
-    await waitForHealth(fixture.baseUrl, { timeoutMs: 15_000 });
+    await once(executor, 'exit', { signal: t.signal });
+    await waitForHealth(String(baseUrl).replace(/\/$/, ''), { timeoutMs: 15_000 });
 
     const runtimeState = JSON.parse(await readFile(join(fixture.stackDir, 'stack.runtime.json'), 'utf8'));
     assert.ok(Number(runtimeState.ownerPid) > 1, `missing background owner: ${JSON.stringify(runtimeState)}`);
     assert.ok(isPidAlive(Number(runtimeState.ownerPid)), `background owner ${runtimeState.ownerPid} exited with its executor`);
+    const stopped = await runNode([join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'stop', fixture.stackName, '--yes'], {
+      cwd: rootDir,
+      env,
+    });
+    assert.equal(stopped.code, 0, 'explicit stop must succeed after the starter exits');
+    await waitFor(() => !isPidAlive(Number(runtimeState.ownerPid)), { label: 'explicit stop of detached runner' });
   } finally {
     terminateExecutorProcessGroup(executor);
+    await runNode([join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'stop', fixture.stackName, '--yes'], {
+      cwd: rootDir,
+      env,
+    });
+  }
+});
+
+for (const pinServerPort of [true, false]) test(`Ctrl-C during background start cancels the runner before returning (${pinServerPort ? 'pinned' : 'allocated'})`, {
+  skip: process.platform === 'win32' ? 'POSIX terminal process-group signal; Windows console requires native QA' : false,
+  timeout: 90_000,
+}, async (t) => {
+  const rootDir = stackRootDirFromMeta(import.meta.url);
+  const fixture = await createStartableRuntimeSnapshotFixture(t, {
+    stackName: 'runtime-cancel-start',
+    serverReadyDelayMs: 30_000,
+  });
+  if (!pinServerPort) {
+    const envPath = join(fixture.stackDir, 'env');
+    await writeFile(envPath, (await readFile(envPath, 'utf8')).replace(/^HAPPIER_STACK_SERVER_PORT=.*\n/m, ''));
+  }
+  const env = {
+    ...process.env,
+    HAPPIER_STACK_STORAGE_DIR: fixture.storageDir,
+    HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
+    HAPPIER_STACK_STACK: fixture.stackName,
+    HAPPIER_STACK_ENV_FILE: join(fixture.stackDir, 'env'),
+  };
+  const starter = spawn(process.execPath, [
+    // Exercise the dispatched CLI itself so its exit also proves readiness
+    // observation stopped, rather than only the outer launcher exiting.
+    join(rootDir, 'scripts', 'stack.mjs'), 'start', fixture.stackName,
+    '--background', '--runtime', '--no-daemon', '--no-ui', '--no-browser',
+  ], { cwd: rootDir, env, detached: true, stdio: 'ignore' });
+  const starterExit = once(starter, 'exit', { signal: t.signal });
+  try {
+    // The server records its environment before its artificial readiness delay, so this
+    // observes a live runner while the real start command is still waiting.
+    await waitFor(async () => readFile(fixture.serverEnvCapturePath, 'utf8').then(() => true, () => false), {
+      timeoutMs: 60_000,
+      label: 'server launch before background readiness',
+    });
+    const runtime = JSON.parse(await readFile(join(fixture.stackDir, 'stack.runtime.json'), 'utf8'));
+    assert.ok(isPidAlive(Number(runtime.ownerPid)));
+    assert.equal(starter.exitCode, null);
+    process.kill(-starter.pid, 'SIGINT');
+    await starterExit;
+    await waitFor(() => !isPidAlive(Number(runtime.ownerPid)), {
+      label: 'Ctrl-C cancellation of detached runner',
+    });
+  } finally {
+    terminateExecutorProcessGroup(starter);
     await runNode([join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'stop', fixture.stackName, '--yes'], {
       cwd: rootDir,
       env,
@@ -216,8 +266,8 @@ test('hstack stack start --runtime --background launches the active runtime snap
       join(fixture.stackDir, 'runtime', 'current', 'server', 'prisma', 'sqlite', 'migrations'),
     );
     assert.equal(
-      serverRuntimeEnv.DATABASE_URL,
-      `${pathToFileURL(join(fixture.stackDir, 'server-light', 'happier-server-light.sqlite')).href}?socket_timeout=30&connection_limit=4`,
+      new URL(serverRuntimeEnv.DATABASE_URL).href,
+      `${pathToFileURL(join(fixture.stackDir, 'server-light', 'happier-server-light.sqlite')).href}?socket_timeout=30&connection_limit=1`,
     );
     assert.equal(serverRuntimeEnv.HAPPIER_SERVER_LIGHT_DATA_DIR, join(fixture.stackDir, 'server-light'));
 

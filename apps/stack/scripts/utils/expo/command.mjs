@@ -1,11 +1,11 @@
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { readdirSync, realpathSync } from 'node:fs';
+import { readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
 import { ensureDepsInstalled, ensureWorkspacePackagesBuiltForComponent, hasUsableWorkspaceLastGreen, prepareWorkspaceComponentStartup, resolveDependencyInstallRoot } from '../proc/pm.mjs';
-import { inspectDependencyRefresh, withDependencyConsumption } from '../proc/dependency_refresh.mjs';
+import { waitForDependencyRefresh } from '../proc/dependency_refresh.mjs';
 import { resolveWorkspaceToolBinDirs } from '../proc/workspace_tool_bins.mjs';
 import { run } from '../proc/proc.mjs';
 import { killProcessTree, spawnProc } from '../proc/proc.mjs';
@@ -18,6 +18,7 @@ export { applyExpoExportMaxWorkersArgs } from './exportWorkers.mjs';
 import { repairExpoYarnPackageBinShims } from './expoPackageBinShims.mjs';
 import { ensureReactNativeLibsodiumNativeBuild } from './libsodiumNativeBuild.mjs';
 import { reapHistoricalTempRoots } from '../dev_targets/historical_temp_roots.mjs';
+import { observePidLiveness } from '../proc/pids.mjs';
 import {
   ensureReactNativeSkiaAndroidBinaries,
   ensureReactNativeSkiaIosBinaries,
@@ -25,7 +26,6 @@ import {
 } from './skiaPrebuiltBinaries.mjs';
 
 const CANONICAL_UI_PREFLIGHT_ERROR_CODE = 'HAPPIER_EXPO_CANONICAL_UI_PREFLIGHT_FAILED';
-
 const activePreparationRoots = new Set();
 
 export function reapExpoPreparationRoots({ tmpDir, dryRun = false }) {
@@ -87,6 +87,25 @@ async function loadCanonicalUiPreflight(projectDir) {
     module: await import(pathToFileURL(canonicalUiPreflightPath).href),
     path: canonicalUiPreflightPath,
   };
+}
+
+export async function reapExpoPluginUiArtifacts({ projectDir, inventoryPath, statePath, dryRun = false }) {
+  const canonical = await loadCanonicalUiPreflight(projectDir);
+  if (!inventoryPath || !canonical?.module.reapBundledPluginUiArtifactStore) return null;
+  return canonical.module.reapBundledPluginUiArtifactStore({
+    artifactStoreDir: join(dirname(inventoryPath), 'artifacts'),
+    inventoryPaths: [inventoryPath],
+    dryRun,
+    retainCandidate: () => {
+      try {
+        const state = JSON.parse(readFileSync(statePath, 'utf8'));
+        const pid = Number(state?.pid);
+        return !Number.isSafeInteger(pid) || pid <= 1 || observePidLiveness(pid).status !== 'dead';
+      } catch {
+        return true;
+      }
+    },
+  });
 }
 
 export async function hasUsableExpoWorkspaceLastGreen({ projectDir, env = process.env }) {
@@ -240,6 +259,7 @@ export async function expoExec({
   });
   effectiveEnv.EXPO_UNSTABLE_WEB_MODAL = '1';
   const effectiveArgs = applyExpoExportMaxWorkersArgs(args, effectiveEnv);
+  await waitForDependencyRefresh({ installDir: resolveDependencyInstallRoot(runnerDir), env });
   await run(expoBin, effectiveArgs, { cwd, env: effectiveEnv, stdio: quiet ? 'ignore' : 'inherit' });
 }
 
@@ -253,6 +273,7 @@ export async function expoSpawn({
   quiet = false,
   workspacePrepared = false,
   onSpawned = null,
+  signal,
   options,
 }) {
   const runnerDir = dir;
@@ -262,9 +283,8 @@ export async function expoSpawn({
   const developmentStart = args?.[0] === 'start';
   if (developmentStart) env.HAPPIER_STACK_DEV_AUTO_REFRESH_DEPS = '1';
   await withExpoPreparationEnv(env, async (preparationEnv) => {
-    // Managed development already prepared dependencies before taking read
-    // custody. It must not upgrade that custody to a writer while spawning.
-    // Other commands still prepare mandatory component outputs here.
+    // Managed development already prepared dependencies. Other commands
+    // still prepare mandatory component outputs here.
     if (!workspacePrepared || !developmentStart) {
       await ensureDepsInstalled(runnerDir, ensureDepsLabel, {
         quiet,
@@ -290,48 +310,36 @@ export async function expoSpawn({
     }
   });
   const installDir = resolveDependencyInstallRoot(runnerDir);
-  return await withDependencyConsumption({ installDir, env }, async () => {
-    const readiness = await inspectDependencyRefresh({
-      installDir, componentDir: runnerDir,
-    });
-    // Development serves installed bytes while source/manifest inputs move.
-    // Missing imports fail their bundle; they do not withdraw Metro availability.
-    if (!developmentStart && coerceHappyMonorepoRootFromPath(runnerDir) && !readiness.admitted) {
-      const error = new Error('[expo] dependencies are not ready; complete dependency refresh before starting Metro');
-      error.code = 'HAPPIER_EXPO_DEPENDENCIES_NOT_READY';
-      throw error;
+  await waitForDependencyRefresh({ installDir, env, signal });
+  await withExpoPreparationEnv(env, async (preparationEnv) => {
+    if (!developmentStart) await repairExpoYarnPackageBinShims({ runnerDir, projectDir: workspaceDepsDir });
+    if (isIosRunCommand(args)) {
+      await ensureReactNativeSkiaIosBinaries({ runnerDir, projectDir: workspaceDepsDir, env: preparationEnv, quiet });
+      await ensureReactNativeLibsodiumNativeBuild({ runnerDir, projectDir: workspaceDepsDir, env: preparationEnv, quiet });
     }
-    await withExpoPreparationEnv(env, async (preparationEnv) => {
-      if (!developmentStart) await repairExpoYarnPackageBinShims({ runnerDir, projectDir: workspaceDepsDir });
-      if (isIosRunCommand(args)) {
-        await ensureReactNativeSkiaIosBinaries({ runnerDir, projectDir: workspaceDepsDir, env: preparationEnv, quiet });
-        await ensureReactNativeLibsodiumNativeBuild({ runnerDir, projectDir: workspaceDepsDir, env: preparationEnv, quiet });
-      }
-      if (isAndroidRunCommand(args)) {
-        await ensureReactNativeSkiaAndroidBinaries({
-          runnerDir,
-          projectDir: workspaceDepsDir,
-          architectures: resolveReactNativeSkiaAndroidArchitecturesFromEnv(preparationEnv),
-          env: preparationEnv,
-          quiet,
-        });
-      }
-    });
-    const expoBin = await resolveExpoBin(runnerDir);
-    const effectiveEnv = applyExpoNodeHeapEnv(env, {
-      envKey: 'HAPPIER_STACK_EXPO_MAX_OLD_SPACE_SIZE_MB',
-    });
-    effectiveEnv.EXPO_UNSTABLE_WEB_MODAL = '1';
-    const effectiveArgs = applyExpoExportMaxWorkersArgs(args, effectiveEnv);
-    const proc = spawnProc(label, expoBin, effectiveArgs, effectiveEnv, { cwd, ...(options ?? {}) });
-    try {
-      // Publish the canonical PID before releasing the same lock installers
-      // acquire, so an install can never miss a newly launched managed reader.
-      await onSpawned?.(proc, { dependencyReady: readiness.admitted });
-      return proc;
-    } catch (error) {
-      await killProcessTree(proc, 'SIGTERM');
-      throw error;
+    if (isAndroidRunCommand(args)) {
+      await ensureReactNativeSkiaAndroidBinaries({
+        runnerDir,
+        projectDir: workspaceDepsDir,
+        architectures: resolveReactNativeSkiaAndroidArchitecturesFromEnv(preparationEnv),
+        env: preparationEnv,
+        quiet,
+      });
     }
   });
+  const expoBin = await resolveExpoBin(runnerDir);
+  const effectiveEnv = applyExpoNodeHeapEnv(env, {
+    envKey: 'HAPPIER_STACK_EXPO_MAX_OLD_SPACE_SIZE_MB',
+  });
+  effectiveEnv.EXPO_UNSTABLE_WEB_MODAL = '1';
+  const effectiveArgs = applyExpoExportMaxWorkersArgs(args, effectiveEnv);
+  signal?.throwIfAborted();
+  const proc = spawnProc(label, expoBin, effectiveArgs, effectiveEnv, { cwd, ...(options ?? {}) });
+  try {
+    await onSpawned?.(proc);
+    return proc;
+  } catch (error) {
+    await killProcessTree(proc, 'SIGTERM');
+    throw error;
+  }
 }

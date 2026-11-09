@@ -59,6 +59,7 @@ export function sanitizeStackTestRunnerEnv(env = {}, { isolatedStackRoot = '', r
   // Test subprocesses must stay on the checkout that owns the test lane. Without this,
   // hstack can follow the user's persisted CLI-root pointer and execute another checkout.
   cleanEnv.HAPPIER_STACK_CLI_ROOT_DISABLE = '1';
+  cleanEnv.HAPPIER_IROH_RELAY_POLICY = 'disabled';
 
   const root = String(isolatedStackRoot ?? '').trim() || inheritedIsolatedStackRoot;
   if (root) {

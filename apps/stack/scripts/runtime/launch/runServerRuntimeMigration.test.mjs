@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
 
 import { spawnRuntimeServerAfterMigration } from './runServerRuntimeMigration.mjs';
 import { resolveServerRuntimeLaunchSpec } from './resolveServerRuntimeLaunchSpec.mjs';
@@ -181,6 +183,61 @@ test('migration terminal failures are typed and never spawn the normal server', 
     assert.equal(serverSpawnCount, 0, name);
     assert.deepEqual(children, [], name);
   }
+});
+
+test('a failed deploy carries the migration named by the canonical deploy output', async t => {
+  const { spec } = await fixture(t);
+  const failedMigration = '20260102000000_pending';
+  await assert.rejects(spawnRuntimeServerAfterMigration({ serverLaunchSpec: spec, env: {}, children: [],
+    spawnProcImpl: (_label, _command, _args, _env, options) => {
+      options.onLine?.({ stream: 'stderr', line: `[sqlite-migrations] migrationName=${failedMigration} failed: invalid SQL` });
+      return { completion: Promise.resolve({ code: 1, signal: null }) };
+    },
+  }), error => error.code === 'ERUNTIMESERVERMIGRATIONFAILED'
+    && error.failedMigration === failedMigration && error.message.includes(failedMigration));
+});
+
+test('a successful migration followed by setup failure never labels that migration failed', async t => {
+  const { spec, serverDir } = await fixture(t);
+  await mkdir(join(serverDir, 'scripts'));
+  const command = join(serverDir, 'scripts/migrate.mjs');
+  await writeFile(command, `
+    console.log('Applying migration \`20260102000000_succeeded\`');
+    console.log('applied migration 20260102000000_succeeded');
+    console.error('Schema generation failed after successful migration execution');
+    process.exitCode = 1;
+  `);
+  await assert.rejects(spawnRuntimeServerAfterMigration({
+    serverLaunchSpec: { ...spec, migration: { mode: 'external', command, cwd: serverDir } },
+    env: {}, children: [],
+  }), error => error.code === 'ERUNTIMESERVERMIGRATIONFAILED' && error.failedMigration === null);
+});
+
+test('the real Prisma deploy failure diagnostic names its failed SQL migration', async t => {
+  const { spec, serverDir } = await fixture(t);
+  const requireServer = createRequire(new URL('../../../../server/package.json', import.meta.url));
+  const prismaCli = requireServer.resolve('prisma/build/index.js');
+  const failedMigration = '20260102000000_invalid';
+  const migrationsDir = join(serverDir, 'migrations');
+  await mkdir(join(migrationsDir, failedMigration), { recursive: true });
+  await writeFile(join(migrationsDir, failedMigration, 'migration.sql'), 'THIS IS INVALID SQL;\n');
+  await writeFile(join(migrationsDir, 'migration_lock.toml'), 'provider = "sqlite"\n');
+  const schema = join(serverDir, 'schema.prisma');
+  await writeFile(schema, 'datasource db {\n provider = "sqlite"\n url = env("PRISMA_MIGRATION_FIXTURE_URL")\n}\n'
+    + 'model Probe {\n id String @id\n}\n');
+  await mkdir(join(serverDir, 'scripts'));
+  const command = join(serverDir, 'scripts/migrate.mjs');
+  await writeFile(command, `import {spawnSync} from 'node:child_process';
+    const child = spawnSync(process.execPath, ${JSON.stringify([prismaCli, 'migrate', 'deploy', '--schema', schema])},
+      {env:process.env,stdio:'inherit'});
+    process.exitCode = child.status ?? 1;`);
+  await assert.rejects(spawnRuntimeServerAfterMigration({
+    serverLaunchSpec: { ...spec, migration: { mode: 'external', command, cwd: serverDir } },
+    env: { ...process.env, HAPPIER_STACK_SHARED_DB_SOURCE_STACK: '', HAPPIER_STACK_SHARED_DB_SOURCE_ENV_FILE: '',
+      PRISMA_MIGRATION_FIXTURE_URL: pathToFileURL(join(serverDir, 'probe.sqlite')).href },
+    children: [],
+    spawnProcImpl: (label, executable, args, env, options) => spawnProc(label, executable, args, env, { ...options, silent: true }),
+  }), error => error.code === 'ERUNTIMESERVERMIGRATIONFAILED' && error.failedMigration === failedMigration);
 });
 
 test('startup cancellation fences normal server spawn before and after migration completion', async (t) => {

@@ -1,6 +1,9 @@
 import { join } from 'node:path';
 import { run } from '../utils/proc/proc.mjs';
 import { withStackEnv } from './stack_environment.mjs';
+import { resolveRemoteStackAuthPlacement, runRemoteStackCommand } from './remote_stack_operation.mjs';
+import { buildRemoteStackOperationCommand, usesRetainedRemoteStackState } from '../utils/dev_targets/remote_commands.mjs';
+import { buildAuthSafeStackStartSpec } from '../utils/auth/buildAuthSafeStackStartSpec.mjs';
 
 export async function cmdService({ rootDir, stackName, svcCmd, args = [] }) {
   await withStackEnv({
@@ -78,7 +81,25 @@ export async function cmdAuth({ rootDir, stackName, args }) {
   const forwarded = args[0] === '--' ? args.slice(1) : args;
   await withStackEnv({
     stackName,
-    fn: async ({ env }) => {
+    fn: async ({ env, runtimeState }) => {
+      const placed = await resolveRemoteStackAuthPlacement({ stackName, env, runtimeState, argv: forwarded });
+      if (placed && usesRetainedRemoteStackState(placed.runtimeMode)) {
+        const startIfNeeded = forwarded.includes('--start-if-needed')
+          && !forwarded.some(arg => ['--print', '--help', '-h'].includes(arg));
+        if (startIfNeeded) {
+          // Placement belongs to the controller. The native login owns its
+          // retained auth home, which may be on a different host to the server.
+          // Keep that host's connection provisioned; auth-flow admission already
+          // defers its daemon until native sign-in is available.
+          const start = buildAuthSafeStackStartSpec({ rootDir, stackName,
+            shouldUseRuntimeStart: true, runtimeMode: placed.runtimeMode, startDaemon: true, baseEnv: env });
+          await run(...start.args, { cwd: rootDir, env: start.env });
+        }
+        const remoteCommand = buildRemoteStackOperationCommand(placed.target, { stackName,
+          runtimeMode: placed.runtimeMode, operation: 'auth',
+          passthrough: startIfNeeded ? forwarded.filter(arg => arg !== '--start-if-needed') : forwarded });
+        process.exit(await runRemoteStackCommand({ target: placed.target, stackName, remoteCommand, env }));
+      }
       await run(process.execPath, [join(rootDir, 'scripts', 'auth.mjs'), ...forwarded], { cwd: rootDir, env });
     },
   });

@@ -6,8 +6,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { resolvePnpmCommandInvocation } from '../../../../../scripts/workspaces/execPnpmCommand.mjs';
 import { run } from '../proc/proc.mjs';
+import { readJsonIfExists } from '../fs/json.mjs';
 import { resolveRemoteValidationPreparationEnv } from './validation_env.mjs';
-import { adoptDependencyInstallation, assertDependenciesReady, inspectDependencyRefresh, isDependencyRefreshDisabled, withDependencyConsumption, withDependencyRefresh } from '../proc/dependency_refresh.mjs';
+import { adoptDependencyInstallation, assertDependenciesReady, isDependencyRefreshDisabled, withDependencyRefresh } from '../proc/dependency_refresh.mjs';
 import { ensureUiPostinstallOutputs } from '../proc/ui_postinstall.mjs';
 import { resolvePackageManagerCachePaths } from '../proc/package_manager_cache.mjs';
 import { isYarnWorkspace } from '../proc/workspace_package_manifests.mjs';
@@ -113,24 +114,17 @@ export async function bootstrapRemoteDependencies({
   env = resolveRemoteValidationPreparationEnv(env, validationKind, defaultBuildMode);
   if (executionPlacement === 'remote') env = { ...env, HAPPIER_DEV_TARGET_EXECUTION: '1' };
   const componentDir = join(repoDir, 'apps', 'stack');
+  if (isYarnWorkspace(await readJsonIfExists(join(repoDir, 'package.json')))) {
+    // Programmatic validation preserves the predecessor's installed-tree owner.
+    // Remote CLI bootstrap delegates installation to that checkout's entrypoint.
+    await assertDependenciesReady({ installDir: repoDir, componentDir, env, signal });
+    return { refreshed: false, reason: 'up-to-date' };
+  }
   const componentPath = posix.normalize(String(componentRelativeDir).replaceAll('\\', '/'));
   const sourceToolsOnly = toolsOnly || validationKind === 'source-test' || validationKind === 'typecheck';
-  // Only an affirmative worker placement permits dependency mutation.
-  if (executionPlacement !== 'remote') {
-    await assertDependenciesReady({ installDir: repoDir, componentDir, env });
-    if (!sourceToolsOnly && /^apps\/stack(?:\/|$)/u.test(componentPath)) {
-      const { ensureWorkspacePackagesBuiltForComponent } = await loadDependencyOwner();
-      await ensureWorkspacePackagesBuiltForComponent(componentDir, { env });
-    }
-    return;
-  }
   let refreshed = false;
   const installAndPrepare = async ({ env: installEnv = env } = {}) => {
     await installInitialDependenciesImpl({ repoDir, env: installEnv });
-    if (String(installEnv.HAPPIER_DEV_TARGET_EXECUTION ?? '').trim() === '1' && !isYarnWorkspace(repoDir)) {
-      const { ensureServerGeneratedProviderOutputs } = await import('../proc/pm.mjs');
-      await ensureServerGeneratedProviderOutputs(join(repoDir, 'apps', 'server'), repoDir, { env: installEnv });
-    }
     refreshed = true;
   };
   // Every role reads the same installed tree. Complete the canonical UI
@@ -142,14 +136,10 @@ export async function bootstrapRemoteDependencies({
     await ensureServerGeneratedProviderOutputs(join(repoDir, 'apps', 'server'), repoDir, { env: readyEnv });
   };
   if (sourceToolsOnly) {
-    // Warm validation is a reader. Queuing a writer for every readiness check
-    // withdraws admission repeatedly and starves finite consumers behind work
-    // that never installs anything. Recheck under the existing shared custody;
-    // release it before requesting an actual installation or output repair.
+    // A warm starter verifies the completed install without retaining a lease.
+    // Every host refreshes mismatched inputs through the same writer owner.
     try {
-      await withDependencyConsumption({ installDir: repoDir, env, signal }, async readEnv => {
-        await assertDependenciesReady({ installDir: repoDir, componentDir, env: readEnv });
-      });
+      await assertDependenciesReady({ installDir: repoDir, componentDir, env, signal });
       return { refreshed: false, reason: 'up-to-date' };
     } catch (error) {
       if (!['HAPPIER_DEPENDENCIES_NEED_REFRESH', 'HAPPIER_DEPENDENCY_REFRESH_FAILED'].includes(error?.code)
@@ -161,8 +151,7 @@ export async function bootstrapRemoteDependencies({
     // The readiness verifier and postinstall tools resolve source directly;
     // retain patched dependency preparation without publishing workspace dist.
     return await withDependencyRefreshImpl(
-      { installDir: repoDir, componentDir, env, onDependenciesReady,
-        waitForPendingStart: true, signal },
+      { installDir: repoDir, componentDir, env, onDependenciesReady, signal },
       installAndPrepare,
     );
   }

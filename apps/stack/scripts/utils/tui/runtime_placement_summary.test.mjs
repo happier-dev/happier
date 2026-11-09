@@ -128,3 +128,18 @@ test('remote Expo links and QR stay pending until the target reports Metro readi
   ]);
   assert.equal(shouldPresentRuntimeServiceEndpoint({ placement: { expo: 'local' } }, 'expo'), true);
 });
+
+for (const service of ['server', 'expo', 'daemon']) {
+  test(`runtime placement keeps a running ${service} unavailable while its tunnel retries`, () => {
+    const state = { services: { [service]: true }, serviceStatus: { [service]: 'running' },
+      status: 'retrying', phase: 'tunnel', forwardPid: null };
+    const runtime = { placement: { [service]: 'remote' }, remoteTargets: { remote: state } };
+    assert.deepEqual(resolveRuntimeRemoteServiceObservation(runtime, service), {
+      target: 'remote', running: false, status: 'retrying',
+    });
+    assert.equal(shouldPresentRuntimeServiceEndpoint(runtime, service), false);
+    state.status = 'running'; state.phase = null; state.forwardPid = 42;
+    assert.equal(resolveRuntimeRemoteServiceObservation(runtime, service).running, true);
+    assert.equal(shouldPresentRuntimeServiceEndpoint(runtime, service), true);
+  });
+}

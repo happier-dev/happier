@@ -112,16 +112,25 @@ export async function resolveStackRuntimeLaunchContext({ argv = [], env = proces
       ? await readActiveStackRuntimeStateFile(join(stackBaseDir, 'stack.runtime.json'), { stackName }) : null;
   }
   const runtimeMode = resolveStackRuntimeMode({ argv, env, activeRuntimeState });
+  // Stop consumes retained process custody; it must remain reachable when a
+  // replacement launch cannot be admitted or prepared.
+  if (purpose === 'stop') return { stackName, stackBaseDir, runtimeMode, snapshot: null };
   if (runtimeMode.mode === 'source-snapshot') {
     // Replacement preparation must not consume the incumbent dependency graph.
     if (purpose === 'deployment' || purpose === 'restart') return { stackName, stackBaseDir, runtimeMode, snapshot: null };
     const statePath = join(stackBaseDir, 'stack.runtime.json');
     const recorded = activeRuntimeState ?? await readStackRuntimeStateFile(statePath);
+    const remoteDaemon = recorded?.remoteTargets?.[recorded?.placement?.daemon]?.services?.daemon === true;
+    if (purpose === 'cli' && remoteDaemon) {
+      // This host has no loaded daemon graph to pin. Resolve its checkout CLI
+      // through the existing source entrypoint owner; the retained graph and
+      // its dependency publication belong to the execution target.
+      return { stackName, stackBaseDir, runtimeMode: { mode: 'source', source: 'active-runtime' }, snapshot: null };
+    }
     let sourceRuntimeLaunch = recorded?.sourceRuntimeLaunch;
     if (!sourceRuntimeLaunch?.entrypoint || !await pathExists(sourceRuntimeLaunch.entrypoint)) {
       // A remote daemon's loaded graph belongs to its target. Controller CLI
       // commands acquire credentials locally; the supervisor seeds that target.
-      const remoteDaemon = recorded?.remoteTargets?.[recorded?.placement?.daemon]?.services?.daemon === true;
       if (activeRuntimeState?.sourceRuntimeIdentities?.daemon?.loaded && !remoteDaemon) {
         throw new Error('[happier] loaded source CLI is unavailable; restore the recorded source runtime before using this stack.');
       }

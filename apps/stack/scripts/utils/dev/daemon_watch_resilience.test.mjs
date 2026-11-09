@@ -14,6 +14,7 @@ import {
 import { createDevServerReloadDescriptors } from './server.mjs';
 import { resolveCliRuntimeLaunchSpec } from '../../runtime/launch/resolveCliRuntimeLaunchSpec.mjs';
 import { readHappyCliRuntimeInputFreshness } from '../proc/cli_runtime_inputs.mjs';
+import { startDevReloadCoordinator } from './devReloadCoordinator.mjs';
 
 test('CLI reload descriptors own source inputs and exclude generated refresh outputs', async (t) => {
   const lexicalRoot = await mkdtemp(join(tmpdir(), 'hs-daemon-cli-inputs-'));
@@ -85,7 +86,7 @@ test('CLI reload descriptors own source inputs and exclude generated refresh out
     await writeFile(path, '{}\n', 'utf-8');
   }
   await writeFile(join(root, 'pnpm-lock.yaml'), '# workspace build input\n', 'utf-8');
-  await writeFile(join(root, 'pnpm-workspace.yaml'), 'packages: []\n', 'utf-8');
+  await writeFile(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "apps/*"\n  - "packages/*"\n  - "packages/plugins/*"\n', 'utf-8');
   await mkdir(join(cliDir, 'dist'), { recursive: true });
   await writeFile(join(cliDir, 'dist', 'index.mjs'), 'export {};\n', 'utf-8');
 
@@ -202,6 +203,62 @@ test('workspace preparation executor coalesces concurrent publications and permi
   assert.equal(calls, 2);
 });
 
+for (const localDaemon of [false, true]) {
+test(`workspace consumers retain a failed preparation until the watcher starts the next build (${localDaemon ? 'local and remote daemons' : 'remote daemon'})`, async t => {
+  const root = await mkdtemp(join(tmpdir(), 'hstack-workspace-preparation-events-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const inputPath = join(root, 'source.mjs');
+  await writeFile(inputPath, 'export const revision = 1;');
+  let publications = 0;
+  const failure = new Error('generated workspace inputs did not compile');
+  const executor = createHappyCliWorkspacePreparationExecutor({ repoRoot: '/repo', cliDir: '/repo/apps/cli' }, {
+    // This adapter runs the workspace publication in its separate OS process.
+    syncSharedDepsForSourceDevImpl: async () => {
+      publications++;
+      if (publications === 1) throw failure;
+      return { synced: true };
+    },
+  });
+  let localBuilds = 0;
+  const reloadExecutor = localDaemon ? createHappyCliReloadExecutor({
+    startDaemon: true, cliHomeDir: '/fixture/local-cli', workspacePreparation: executor,
+  }, {
+    prepareDevDaemonSourceRuntimeImpl: async () => { localBuilds++; return sourceGeneration('current-source'); },
+    startLocalDaemonWithAuthImpl: async () => {},
+    pingDaemonImpl: async () => ({ ok: true }),
+    logger: { log() {}, warn() {} },
+  }) : executor;
+  let sourceWatcher;
+  const coordinator = startDevReloadCoordinator({
+    descriptors: [{ id: 'daemon:source', target: 'daemon', paths: [inputPath] }],
+    executors: [reloadExecutor], logger: { log() {}, warn() {}, error() {} },
+  }, { watchDebouncedImpl(options) { sourceWatcher = options; return { close() {} }; } });
+  t.after(() => coordinator.close());
+  await coordinator.requestReload('daemon');
+  assert.equal(publications, 1, 'the registered daemon watcher owns remote workspace publication');
+  const prepare = executor.prepare?.bind(executor) ?? executor.build.bind(executor);
+  await assert.rejects(prepare(), error => error === failure);
+  await assert.rejects(prepare(), error => error === failure);
+  assert.equal(publications, 1, 'a later target observes the failed build rather than starting another one');
+  const cancellation = new AbortController();
+  const nextBuild = executor.waitForBuild({ signal: cancellation.signal });
+  await writeFile(inputPath, 'export const revision = 2;');
+  const changed = { eventType: 'change', watchPath: inputPath, filename: 'source.mjs' };
+  const publication = sourceWatcher.onChange(changed);
+  await nextBuild;
+  assert.deepEqual(await prepare(), { synced: true });
+  await publication;
+  assert.equal(publications, 2);
+  await sourceWatcher.onChange(changed);
+  assert.equal(publications, 2, 'an unchanged source observation cannot publish another build');
+  assert.equal(localBuilds, localDaemon ? 1 : 0, 'only a successful workspace publication admits the local daemon build');
+  const canceled = executor.waitForBuild({ signal: cancellation.signal });
+  cancellation.abort();
+  await assert.rejects(canceled, { name: 'AbortError' });
+  assert.equal(publications, 2, 'canceling a source consumer cannot start more work');
+});
+}
+
 const quietLogger = { log() {}, warn() {}, error() {} };
 const sourceGeneration = (identity) => ({
   launch: { entrypoint: `/bundles/${identity}/index.mjs`, cliDir: `/bundles/${identity}/cli`, env: {} },
@@ -228,7 +285,7 @@ test('dev daemon source generation is the Stack source-runtime daemon bundle, re
   assert.deepEqual(retained, { launch: { entrypoint: '/b/index.mjs', cliDir: '/b/cli', env: { A: '1' } }, identity: 'gen-1' });
   assert.deepEqual(current, retained);
   // The real launch owner (the consumer of startLocalDaemonWithAuth's sourceRuntimeLaunchUpdate) accepts the produced launch.
-  const consumed = resolveCliRuntimeLaunchSpec({ sourceRuntimeLaunch: current.launch });
+  const consumed = await resolveCliRuntimeLaunchSpec({ sourceRuntimeLaunch: current.launch });
   assert.equal(consumed.entrypoint, '/b/index.mjs');
   assert.equal(consumed.cliDir, '/b/cli');
   assert.deepEqual(requests.map((r) => [r.component, r.repoDir, r.stackBaseDir, r.reuseSelected, r.waitForSourceChanges]), [

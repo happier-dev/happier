@@ -6,14 +6,15 @@ import { fileURLToPath } from 'node:url';
 import { getRepoDir, resolveStackEnvPath } from '../paths/paths.mjs';
 import { readJsonIfExists, writeJsonAtomic } from '../fs/json.mjs';
 import { isPidAlive, observePidLiveness } from '../proc/pids.mjs';
-import { isPidOwnedByStack } from '../proc/ownership.mjs';
+import { isPidOwnedByStack, isRecordedStackProcessRetired } from '../proc/ownership.mjs';
 import { resolveStackOwnedListenPid, STACK_LISTENER_OBSERVATION_TIMEOUT_MS } from '../server/listener_ownership.mjs';
 import { withJsonOwnerFileLock } from '../proc/jsonOwnerFileLock.mjs';
 import { normalizeStackRuntimeOwnerStartedAt } from './runtime_owner_incarnation.mjs';
+import { readStackPortAllocations } from './runtime_ports.mjs';
 import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
-import { resolveDependencyInstallRoot, withDependencyConsumption } from '../proc/dependency_refresh.mjs';
+import { resolveDependencyInstallRoot, waitForDependencyRefresh } from '../proc/dependency_refresh.mjs';
 import { readEnvValueFromFile } from '../env/read.mjs';
-import { getStackRuntimeProcessEntries, normalizeProcessInstanceRecord,
+import { getStackRuntimeProcessEntries, getStackRuntimeProcessInstanceFingerprint, normalizeProcessInstanceRecord,
   normalizeRuntimePid, readStackRuntimeProcessMembership } from './runtime_processes.mjs';
 export { getStackRuntimeProcessEntries, getStackRuntimeProcessInstanceFingerprint, hasLiveStackRuntimeProcesses } from './runtime_processes.mjs';
 
@@ -152,6 +153,8 @@ async function withStackRuntimeStateMutationLock(statePath, fn) {
 
 async function writeStackRuntimeStateFileUnlocked(statePath, state) {
   const reconciled = reconcileStackRuntimeProcessInstances(state);
+  const portAllocations = readStackPortAllocations(reconciled);
+  if (portAllocations) reconciled.portAllocations = portAllocations;
   await writeJsonAtomic(statePath, reconciled);
   return reconciled;
 }
@@ -323,7 +326,7 @@ export function resolveStackRuntimeProcessTrustContext({ stackName = '', envPath
 
 export async function isStackRuntimeProcessTrusted(
   pid,
-  { key = '', stackName = '', envPath = '', cliHomeDir = '' } = {},
+  { key = '', stackName = '', envPath = '', cliHomeDir = '', processInstanceFingerprint = null, recordedStartedAt = null } = {},
   {
     isPidAliveImpl = isPidAlive,
     observePidLivenessImpl,
@@ -335,7 +338,8 @@ export async function isStackRuntimeProcessTrusted(
   const n = Number(pid);
   if (!Number.isFinite(n) || n <= 1) return false;
   const liveness = await observeRuntimePidLiveness(n, { observePidLivenessImpl, isPidAliveImpl });
-  if (liveness.status === 'dead') return false;
+  if (isRecordedStackProcessRetired(n, { processInstanceFingerprint, recordedStartedAt,
+    isPidProvablyAbsentImpl: () => liveness.status === 'dead' })) return false;
   if (liveness.status === 'inconclusive') {
     if (!throwOnInconclusive) return false;
     const error = new Error(`[stack] recorded ${key || 'process'} liveness is inconclusive (pid=${n}, reason=${liveness.reason})`);
@@ -367,10 +371,11 @@ export async function isStackRuntimeProcessTrusted(
 }
 
 export async function hasTrustedStackRuntimeProcesses(runtimeState, context = {}, options = {}) {
-  for (const { key, pid } of getStackRuntimeProcessEntries(runtimeState)) {
+  for (const { key, pid, processInstanceFingerprint } of getStackRuntimeProcessEntries(runtimeState)) {
     if (options.preserveDaemon === true && (key === 'daemonPid' || key === 'daemonPids')) continue;
     // eslint-disable-next-line no-await-in-loop
-    if (await isStackRuntimeProcessTrusted(pid, { ...context, key }, options)) {
+    if (await isStackRuntimeProcessTrusted(pid, { ...context, key, processInstanceFingerprint,
+      recordedStartedAt: runtimeState?.startedAt }, options)) {
       return true;
     }
   }
@@ -382,7 +387,10 @@ export async function hasTrustedStackRuntimeProcesses(runtimeState, context = {}
 // state-file identity after an unowned/stale runtime has exited.
 export async function hasTrustedStackRuntimeLifecycle(runtimeState, context = {}, options = {}) {
   const ownerPid = normalizeRuntimePid(runtimeState?.ownerPid);
-  if (ownerPid && await isStackRuntimeProcessTrusted(ownerPid, { ...context, key: 'ownerPid' }, options)) {
+  if (ownerPid && await isStackRuntimeProcessTrusted(ownerPid, { ...context, key: 'ownerPid',
+    processInstanceFingerprint: getStackRuntimeProcessInstanceFingerprint(runtimeState, 'ownerPid', ownerPid),
+    recordedStartedAt: runtimeState?.startedAt,
+  }, options)) {
     return true;
   }
   return await hasTrustedStackRuntimeProcesses(runtimeState, context, options);
@@ -523,13 +531,12 @@ async function assertNoDifferentLiveRuntimeOwner(existing, { stackName, ownerPid
   }
 }
 
-async function withStackRuntimeDependencyConsumption(statePath, options, consume) {
+async function waitForStackRuntimeDependencies(statePath, options) {
   const env = options.env ?? process.env;
   const configuredRepoDir = await readEnvValueFromFile(join(dirname(statePath), 'env'), 'HAPPIER_STACK_REPO_DIR');
   const repoDir = getRepoDir(fileURLToPath(new URL('../../../../../', import.meta.url)),
     configuredRepoDir ? { ...env, HAPPIER_STACK_REPO_DIR: configuredRepoDir } : env);
-  return await withDependencyConsumption({ installDir: resolveDependencyInstallRoot(repoDir), env },
-    custodyEnv => consume({ ...options, env: custodyEnv }));
+  await waitForDependencyRefresh({ installDir: resolveDependencyInstallRoot(repoDir), env, signal: options.signal });
 }
 
 async function recordStackRuntimeStartUnlocked(
@@ -537,11 +544,11 @@ async function recordStackRuntimeStartUnlocked(
   input = {},
   options = {},
 ) {
-  return await withStackRuntimeDependencyConsumption(statePath, options,
-    custodyOptions => recordStackRuntimeStartUnderDependencyCustody(statePath, input, custodyOptions));
+  await waitForStackRuntimeDependencies(statePath, options);
+  return await recordStackRuntimeStartAfterDependencyReadiness(statePath, input, options);
 }
 
-async function recordStackRuntimeStartUnderDependencyCustody(
+async function recordStackRuntimeStartAfterDependencyReadiness(
   statePath,
   { stackName, script, ephemeral, ownerPid, ports, adoptedSourceRoles = [], ...rest } = {},
   options = {},
@@ -562,14 +569,25 @@ async function recordStackRuntimeStartUnderDependencyCustody(
     reconciledExistingProcesses,
     isPlainObject(restProcesses) ? restProcesses : {},
   );
-  // A canonical start publication is a new lifecycle incarnation even when the OS reused the PID.
   const existingStartedAt = normalizeStackRuntimeOwnerStartedAt(existing.startedAt);
+  // The outer launcher claims the runner before it initializes. That same
+  // process must keep the claim's identity so its caller can clean up a failure.
+  const recordedOwner = normalizeProcessInstanceRecord(existing.processInstances?.owner, ownerPid);
+  const continuingOwner = options.continueOwner === true
+    && ownerPid === process.pid
+    && Number(existing.ownerPid) === process.pid
+    && existing.stackName === stackName
+    && existingStartedAt
+    && recordedOwner?.fingerprint === readProcessInstanceFingerprintSync(process.pid);
+  // Explicit starts still create a new incarnation, including when a PID is reused.
   const existingStartedAtMs = existingStartedAt ? Date.parse(existingStartedAt) : Number.NaN;
   const nextStartedAtMs = Number.isFinite(existingStartedAtMs)
     ? Math.max(wallClockMs, existingStartedAtMs + 1)
     : wallClockMs;
   const nextStartedAt = new Date(nextStartedAtMs);
-  const startedAt = Number.isFinite(nextStartedAt.getTime()) ? nextStartedAt.toISOString() : now;
+  const startedAt = continuingOwner
+    ? existingStartedAt
+    : Number.isFinite(nextStartedAt.getTime()) ? nextStartedAt.toISOString() : now;
   const next = deepMerge(existing, {
     version: 1,
     stackName,
@@ -657,17 +675,18 @@ export async function withStackRuntimeStartClaim(
     const existing = (await readStackRuntimeStateFile(statePath)) ?? {};
     await assertNoDifferentLiveRuntimeOwner(existing, { stackName, ownerPid: null }, options);
     let committed = false;
-    return await withStackRuntimeDependencyConsumption(statePath, options, custodyOptions => fn({
+    await waitForStackRuntimeDependencies(statePath, options);
+    return await fn({
       existing,
       recordStart: async (input) => {
         if (committed) {
           throw new Error('[stack] lifecycle owner claim was already committed');
         }
-        const next = await recordStackRuntimeStartUnlocked(statePath, input, custodyOptions);
+        const next = await recordStackRuntimeStartUnlocked(statePath, input, options);
         committed = true;
         return next;
       },
-    }));
+    });
   });
 }
 
@@ -863,13 +882,16 @@ async function recordStackRuntimeStopRequestUnlocked(
 ) {
   const existing = await readStackRuntimeStateFile(statePath);
   const requiredOwnerPid = expectedOwnerPid == null ? null : normalizeRuntimePid(expectedOwnerPid);
-  const requiredOwnerStartedAt = expectedOwnerPid == null
+  // An orphan can retain recorded children after its owner PID is cleared.
+  // Its incarnation still fences cleanup against a replacement publication.
+  const requiresOwnerMatch = expectedOwnerPid != null || expectedOwnerStartedAt != null;
+  const requiredOwnerStartedAt = !requiresOwnerMatch
     ? null
     : normalizeStackRuntimeOwnerStartedAt(expectedOwnerStartedAt);
   if (expectedOwnerPid != null && !requiredOwnerPid) {
     return { runtimeState: existing, expected: null, authorized: false, reason: 'invalid_expected_owner' };
   }
-  if (requiredOwnerPid && !requiredOwnerStartedAt) {
+  if (requiresOwnerMatch && !requiredOwnerStartedAt) {
     return {
       runtimeState: existing,
       expected: null,
@@ -882,11 +904,11 @@ async function recordStackRuntimeStopRequestUnlocked(
     return {
       runtimeState: null,
       expected: null,
-      ...(requiredOwnerPid ? { authorized: false, reason: 'runtime_state_missing' } : {}),
+      ...(requiresOwnerMatch ? { authorized: false, reason: 'runtime_state_missing' } : {}),
     };
   }
   const currentOwnerPid = normalizeRuntimePid(existing.ownerPid);
-  if (requiredOwnerPid && currentOwnerPid !== requiredOwnerPid) {
+  if (requiresOwnerMatch && currentOwnerPid !== requiredOwnerPid) {
     return {
       runtimeState: existing,
       expected: null,
@@ -897,7 +919,7 @@ async function recordStackRuntimeStopRequestUnlocked(
     };
   }
   const currentOwnerStartedAt = normalizeStackRuntimeOwnerStartedAt(existing.startedAt);
-  if (requiredOwnerPid && !currentOwnerStartedAt) {
+  if (requiresOwnerMatch && !currentOwnerStartedAt) {
     const missingCurrentOwnerStartedAt = existing.startedAt == null || existing.startedAt === '';
     return {
       runtimeState: existing,
@@ -912,7 +934,7 @@ async function recordStackRuntimeStopRequestUnlocked(
       currentOwnerStartedAt: null,
     };
   }
-  if (requiredOwnerPid && currentOwnerStartedAt !== requiredOwnerStartedAt) {
+  if (requiresOwnerMatch && currentOwnerStartedAt !== requiredOwnerStartedAt) {
     return {
       runtimeState: existing,
       expected: null,
@@ -1073,15 +1095,17 @@ async function finalizeStackRuntimeStopUnlocked(statePath, {
     return { finalized: false, reason: 'remote_cleanup_incomplete', runtimeState: current };
   }
   const remoteTargets = Object.fromEntries(pendingRemoteTargets.map(([name, state]) => [name, { ...state, forwardPid: null }]));
+  const portAllocations = readStackPortAllocations(current);
   if (preserveDaemon) {
     const daemonPid = normalizeRuntimePid(current?.processes?.daemonPid);
     const daemonPids = Array.from(new Set((Array.isArray(current?.processes?.daemonPids) ? current.processes.daemonPids : []).map(normalizeRuntimePid).filter(Boolean)));
     if (daemonPid && !daemonPids.includes(daemonPid)) daemonPids.push(daemonPid);
-    const remoteDaemonPreserved = pendingRemoteTargets.some(([, state]) => state.services?.daemon === true
-      && (state.serviceStatus?.daemon ?? state.status) !== 'stopped');
+    const preservedTargets = Object.fromEntries(Object.entries({ ...current.remoteTargets, ...remoteTargets })
+      .map(([name, state]) => [name, { ...state, forwardPid: null }]));
+    // Preservation keeps daemon command custody even when native shutdown
+    // observes no live daemon. A later start must use that same remote Stack.
+    const remoteDaemonPreserved = Object.values(preservedTargets).some(state => state.services?.daemon === true);
     if (daemonPids.length > 0 || remoteDaemonPreserved) {
-      const preservedTargets = Object.fromEntries(Object.entries({ ...current.remoteTargets, ...remoteTargets })
-        .map(([name, state]) => [name, { ...state, forwardPid: null }]));
       const next = { ...current, ownerPid: null,
         processes: daemonPids.length > 0 ? { daemonPid: daemonPid ?? daemonPids.at(-1), daemonPids } : {},
         remoteTargets: preservedTargets, stopRequest: null, updatedAt: new Date().toISOString() };
@@ -1094,9 +1118,16 @@ async function finalizeStackRuntimeStopUnlocked(statePath, {
     // target custody needed by explicit stop or the next native prior-retirement
     // step; stale placement/ports must not advertise a running local Stack.
     const next = { version: current.version ?? 1, stackName: current.stackName, ownerPid: null,
+      ...(portAllocations ? { portAllocations } : {}),
       processes: {}, remoteTargets, stopRequest: null, updatedAt: new Date().toISOString() };
     await writeStackRuntimeStateFileUnlocked(statePath, next);
     return { finalized: true, reason: 'remote_retirement_pending', runtimeState: next };
+  }
+  if (portAllocations) {
+    const next = { version: current.version ?? 1, stackName: current.stackName, ownerPid: null,
+      portAllocations, processes: {}, stopRequest: null, updatedAt: new Date().toISOString() };
+    await writeStackRuntimeStateFileUnlocked(statePath, next);
+    return { finalized: true, reason: 'ports_retained', runtimeState: next };
   }
   try { if (existsSync(statePath)) await unlink(statePath); } catch { /* ignore */ }
   return { finalized: true, reason: 'deleted', runtimeState: null };

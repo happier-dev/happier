@@ -83,7 +83,7 @@ async function createHoistedRuntimePackFixture({
     workspaces: ['apps/*', 'packages/*'],
   }));
   await writeFile(join(monorepoRoot, 'pnpm-lock.yaml'), '# lock');
-  await writeFile(join(monorepoRoot, 'pnpm-workspace.yaml'), 'packages: []\n');
+  await writeFile(join(monorepoRoot, 'pnpm-workspace.yaml'), 'packages:\n  - apps/*\n  - packages/*\n');
   await writeFile(
     join(monorepoRoot, 'apps', 'cli', 'package.json'),
     JSON.stringify({ name: '@happier-dev/cli' }),
@@ -1766,7 +1766,7 @@ test('createPackSandbox copies every internal workspace required by the packed p
       workspaces: ['apps/*', 'packages/*', 'packages/plugins/*'],
     }));
     await writeFile(join(root, 'pnpm-lock.yaml'), '# lock');
-    await writeFile(join(root, 'pnpm-workspace.yaml'), 'packages: []\n');
+    await writeFile(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - apps/*\n  - packages/*\n  - packages/plugins/*\n');
     for (const [appDir, packageName] of [
       ['ui', '@happier-dev/app'],
       ['server', '@happier-dev/server'],

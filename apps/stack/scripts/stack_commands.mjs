@@ -1,5 +1,7 @@
 import './utils/env/env.mjs';
 import { reportStackCommandFailure } from './stack/command_failure.mjs';
+import { emitSourceReloadRefusal, formatSourceReloadRefusal } from './runtime/shared/source_reload_refusal.mjs';
+import { formatSourceRuntimeSourceTimes } from './runtime/shared/source_bundle_record.mjs';
 import { chmod, copyFile, mkdir, readFile, readdir, rename } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
@@ -47,6 +49,7 @@ import {
 import { cmdAuth, cmdRuntime, cmdService, cmdSrv, cmdTailscale, cmdWt } from './stack/delegated_script_commands.mjs';
 import { printDelegatedStackHelpIfAvailable } from './stack/stack_delegated_help.mjs';
 import { resolveRequestedRepoCheckoutDir } from './stack/repo_checkout_resolution.mjs';
+import { formatSharedDatabaseCoWriterLines } from './stack/shared_database_cowriters.mjs';
 import { resolveTransientRepoOverrides } from './stack/transient_repo_overrides.mjs';
 import { hasExplicitStackRuntimeModeArg } from './runtime/shared/runtime_mode.mjs';
 import { DEFAULT_QA_TARGET_NAMES } from './utils/dev_targets/service_placement.mjs';
@@ -1827,6 +1830,7 @@ async function cmdInfo({ rootDir, argv }) {
   console.log(`- env: ${out.envPath}`);
   console.log(`- runtime: ${out.runtimeStatePath}`);
   console.log(`- server: ${out.serverComponent}`);
+  for (const line of formatSharedDatabaseCoWriterLines(out.sharedDatabase)) console.log(line);
   for (const [component, packages] of Object.entries(out.runtime?.sourceWorkspaceStalePackages ?? {})) {
     for (const stale of packages ?? []) {
       console.log(`- source-dev last-green (${component}): ${stale.packageName} built ${stale.lastGreenBuiltAt}\n${stale.diagnosticSummary}`);
@@ -1850,6 +1854,9 @@ async function cmdInfo({ rootDir, argv }) {
   if (out.runtime?.components?.daemon?.status === 'stopped-by-owner') {
     console.log('- daemon stopped by owner');
   }
+  if (out.runtime?.components?.daemon?.status === 'sign-in-required') {
+    console.log('- daemon: sign-in required');
+  }
   if (out.runtime?.sourcePreparation) {
     const { phase, component, targets } = out.runtime.sourcePreparation;
     console.log(`- source preparation: ${phase}${component ? ` (${component})` : ''}`);
@@ -1859,9 +1866,12 @@ async function cmdInfo({ rootDir, argv }) {
   }
   if (out.runtime?.sourceReload) {
     const reload = out.runtime.sourceReload;
-    console.log(`- source reload: ${reload.status}${reload.message ? `\n${reload.message}` : ''}`);
+    if (reload.status) console.log(`- source reload: ${reload.status}${reload.sourceTimes ? ` ${formatSourceRuntimeSourceTimes(reload.sourceTimes)}` : ''}${formatSourceReloadRefusal(reload)}${reload.message ? `\n${reload.message}` : ''}`);
     if (reload.logPath) console.log(`- reload log: ${reload.logPath}`);
   }
+  const loadedSourceTimes = Object.fromEntries(Object.entries(out.runtime?.sourceRuntimeIdentities ?? {})
+    .filter(([, identity]) => identity.loaded).map(([component, identity]) => [component, identity.sourceTime ?? null]));
+  if (Object.keys(loadedSourceTimes).length) console.log(`- loaded source: ${formatSourceRuntimeSourceTimes(loadedSourceTimes)}`);
   if (typeof out.runtime?.health?.status === 'string' && out.runtime.health.status) {
     const issues = Array.isArray(out.runtime.health.issues) ? out.runtime.health.issues : [];
     const issueSuffix = issues.length > 0 ? ` (${issues.join(',')})` : '';
@@ -2732,4 +2742,8 @@ async function main() {
   console.log(`[stack] unknown command: ${cmd}`);
 }
 
-main().catch(reportStackCommandFailure);
+main().catch((err) => {
+  emitSourceReloadRefusal(err);
+  const message = err instanceof Error ? err.message : String(err);
+  reportStackCommandFailure(err, message.replaceAll('\n', ' ') + formatSourceReloadRefusal(err));
+});

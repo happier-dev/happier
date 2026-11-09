@@ -2,6 +2,7 @@ import { loadDevTargetsConfig } from '../utils/dev_targets/config.mjs';
 import { resolveDevTargetSshConfigFile } from '../utils/dev_targets/mutagen_runtime.mjs';
 import { buildRemoteRuntimeSnapshotProbeCommand } from '../utils/dev_targets/remote_commands.mjs';
 import { runDevTargetControlProcess } from '../utils/dev_targets/sync_project.mjs';
+import { projectStackDatabaseIdentity } from './stack_database_identity.mjs';
 
 /** A request-scoped observation, never another persisted runtime identity. */
 export async function observeRemoteSourceRuntime({ stackName, baseDir, runtimeState, env },
@@ -51,7 +52,8 @@ export async function observeRemoteSourceRuntime({ stackName, baseDir, runtimeSt
     remoteTargets[name] = { ...previous, serviceStatus, sourceRuntimeIdentities,
       ...(services.daemon ? { managedCli: observed?.managedCli ?? null } : {}),
       ...(services.daemon ? { daemonEntry: observed?.daemonEntry ?? null } : {}),
-      ...(services.daemon ? { daemonParticipants: observed?.daemonParticipants ?? null } : {}) };
+      ...(services.daemon ? { daemonParticipants: observed?.daemonParticipants ?? null } : {}),
+      ...(services.server ? { database: observed?.database ? projectStackDatabaseIdentity(observed.database) : null } : {}) };
   }));
   return { ...runtimeState, remoteTargets };
 }

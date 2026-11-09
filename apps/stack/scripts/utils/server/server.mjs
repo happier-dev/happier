@@ -38,15 +38,17 @@ export function getServerComponentName({ kv, env = process.env } = {}) {
   return raw;
 }
 
-export async function fetchHappierHealth(baseUrl, { signal, timeoutMs = STACK_LISTENER_OBSERVATION_TIMEOUT_MS } = {}) {
+async function fetchServerObservation(baseUrl, {
+  signal, timeoutMs = STACK_LISTENER_OBSERVATION_TIMEOUT_MS, path = '/health', headers,
+} = {}) {
   const ctl = new AbortController();
   const abortForCaller = () => ctl.abort(signal?.reason);
   if (signal?.aborted) abortForCaller();
   else signal?.addEventListener('abort', abortForCaller, { once: true });
   const t = setTimeout(() => ctl.abort(), timeoutMs);
   try {
-    const url = baseUrl.replace(/\/+$/, '') + '/health';
-    const res = await fetch(url, { method: 'GET', signal: ctl.signal });
+    const url = baseUrl.replace(/\/+$/, '') + path;
+    const res = await fetch(url, { method: 'GET', signal: ctl.signal, ...(headers ? { headers, redirect: 'manual' } : {}) });
     const text = await res.text();
     let json = null;
     try {
@@ -67,6 +69,10 @@ export async function fetchHappierHealth(baseUrl, { signal, timeoutMs = STACK_LI
     clearTimeout(t);
     signal?.removeEventListener('abort', abortForCaller);
   }
+}
+
+export async function fetchHappierHealth(baseUrl, options = {}) {
+  return await fetchServerObservation(baseUrl, options);
 }
 
 export async function isHappierServerRunning(baseUrl) {
@@ -96,12 +102,12 @@ function formatServerReadyEarlyExit(url, code, signal) {
     : `Server process exited before becoming ready at ${url}`;
 }
 
-export function resolveServerReadyTimeoutMs({ serverComponentName = '', env = process.env } = {}) {
+export function resolveServerReadyTimeoutMs({ serverComponentName = '', env = process.env, defaultTimeoutMs = 600_000 } = {}) {
   const configured = Number.parseInt(String(env?.HAPPIER_STACK_SERVER_READY_TIMEOUT_MS ?? '').trim(), 10);
   if (Number.isFinite(configured) && configured >= 1_000) {
     return configured;
   }
-  return 600_000;
+  return defaultTimeoutMs;
 }
 
 export function resolveServerMigrationTimeoutMs({ env = process.env } = {}) {
@@ -185,12 +191,15 @@ export function createServerReadinessDeadline({
   };
 }
 
+/** @returns {Promise<{ status: 'ready' | 'sign-in-required' }>} */
 export async function waitForServerReady(url, {
   timeoutMs = 60_000,
   intervalMs = 300,
   signal = null,
   childProcess = null,
   startupDeadline = null,
+  env = null,
+  cliHomeDir = null,
   continueWhileChildAlive = process.env.HAPPIER_STACK_TUI === '1',
   onTimeoutCheckpoint = ({ phase }) => {
     console.warn(`[stack] server ${phase} is still in progress at ${url}; continuing to wait (TUI is attended)`);
@@ -210,6 +219,11 @@ export async function waitForServerReady(url, {
       throw signal.reason ?? new Error(`Server readiness cancelled at ${url}`);
     }
   };
+  throwIfAborted();
+  // Metadata and listener-only commands do not consume authenticated Home
+  // readiness. Load its Protocol graph only at the startup readiness boundary.
+  const { resolveHomeDescriptorReadiness, readHomeDescriptorReadinessContext } = await import('./home_descriptor_readiness.mjs');
+  const home = readHomeDescriptorReadinessContext({ env, cliHomeDir, serverUrl: url });
 
   if (childProcess && typeof childProcess.once === 'function') {
     if (childProcess.exitCode !== null && childProcess.exitCode !== undefined) {
@@ -232,26 +246,33 @@ export async function waitForServerReady(url, {
         onTimeoutCheckpoint?.({ phase: deadline.getPhase(), timeoutMs, url });
         deadline.extendCurrentPhase();
       }
-      // Runtime-backed stacks and modern server builds expose readiness on /health even when
-      // the root route serves the app shell instead of the legacy welcome page.
-      // Prefer that contract, but keep the older root-page probe as a fallback for source/dev flows.
+      // Signed-in Homes wait for descriptor publication. Missing or refused
+      // client sign-in settles separately from server availability.
       // eslint-disable-next-line no-await-in-loop
-      const health = await fetchHappierHealth(url, {
+      const health = await fetchServerObservation(url, {
         signal,
         timeoutMs: Math.min(STACK_LISTENER_OBSERVATION_TIMEOUT_MS, Math.max(1, deadline.getDeadlineMs() - Date.now())),
+        ...(home?.headers ? { path: '/v1/features/authenticated', headers: home.headers } : {}),
       });
       throwIfAborted();
-      if (health.ready) {
-        return;
-      }
-      try {
-        const res = await fetch(url, { method: 'GET', signal });
-        const text = await res.text();
-        if (res.ok && text.includes('Welcome to Happier Server!')) {
-          return;
+      const readiness = home ? resolveHomeDescriptorReadiness(health, home)
+        : { status: health.ready ? 'ready' : 'pending' };
+      if (readiness.status !== 'pending') {
+        if (readiness.status === 'sign-in-required') {
+          console.warn('[stack] server ready; CLI sign-in-required');
         }
-      } catch {
-        // ignore
+        return readiness;
+      }
+      if (!home) {
+        try {
+          const res = await fetch(url, { method: 'GET', signal });
+          const text = await res.text();
+          if (res.ok && text.includes('Welcome to Happier Server!')) {
+            return { status: 'ready' };
+          }
+        } catch {
+          // ignore
+        }
       }
       try {
         await delay(intervalMs, undefined, signal ? { signal } : undefined);

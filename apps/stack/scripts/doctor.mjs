@@ -1,4 +1,5 @@
 import './utils/env/env.mjs';
+import { inspectStackRelay } from './utils/server/infra/iroh/runtime.mjs';
 import { parseArgs } from './utils/cli/args.mjs';
 import { pathExists } from './utils/fs/fs.mjs';
 import { runCapture, runCaptureResult } from './utils/proc/proc.mjs';
@@ -186,6 +187,8 @@ async function main() {
   assertServerComponentDirMatches({ rootDir, serverComponentName, serverDir });
 
   const report = {
+    // Optional transport health must not turn an ordinary HTTPS Home unhealthy.
+    irohRelay: await inspectStackRelay({ env: process.env, runtimeState, repoDir: rootDir, stackBaseDir }),
     paths: {
       rootDir,
       homeDir,

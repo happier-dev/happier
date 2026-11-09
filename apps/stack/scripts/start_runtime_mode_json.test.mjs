@@ -15,6 +15,7 @@ import { selectActiveProducerRuntimeSnapshot } from './build/activate_runtime_sn
 import { killDetachedProcessGroup } from './testkit/core/spawn_daemon_like_process.mjs';
 import { writeStubCliDistBuildManifest } from './testkit/core/stub_happier_cli_files.mjs';
 import { buildStubHappierServerSetSource } from './testkit/core/stub_happier_cli_server_set.mjs';
+import { waitForProcessExit } from './testkit/stack_stop_sweeps_testkit.mjs';
 
 test('shared QA start composes a local daemon snapshot independently of its Darwin server and command pool', async (t) => {
   const rootDir = stackRootDirFromMeta(import.meta.url);
@@ -349,11 +350,11 @@ if (args[0] === 'daemon' && args[1] === 'stop') {
   let output = '';
   child.stderr.on('data', chunk => { output += String(chunk); });
   child.stdout.on('data', chunk => { output += String(chunk); });
-  await new Promise((resolve, reject) => {
+  const admittedDaemonPid = await new Promise((resolve, reject) => {
     let ready = false;
     const inspect = async () => {
       const state = await readFile(join(fixture.stackDir, 'stack.runtime.json'), 'utf8').then(JSON.parse, () => null);
-      if (state?.processes?.daemonPid) { ready = true; resolve(); }
+      if (state?.processes?.daemonPid) { ready = true; resolve(Number(state.processes.daemonPid)); }
     };
     const watcher = watch(fixture.stackDir, (_event, file) => {
       if (file === 'stack.runtime.json') void inspect();
@@ -365,9 +366,12 @@ if (args[0] === 'daemon' && args[1] === 'stop') {
     }));
     void inspect();
   });
+  assert.ok(Number.isInteger(admittedDaemonPid) && admittedDaemonPid > 1, 'expected a real admitted daemon PID');
+  assert.equal(admittedDaemonPid, Number(await readFile(join(cliHome, '.fixture-daemon.pid'), 'utf8')));
   assert.equal(await Promise.race([exited.then(() => 'exited'), delay(1000).then(() => 'alive')]), 'alive', output);
   child.kill('SIGTERM');
   assert.deepEqual(await exited, { code: 0, signal: null });
+  await waitForProcessExit({ pid: admittedDaemonPid, label: 'admitted custody daemon' });
 });
 }
 

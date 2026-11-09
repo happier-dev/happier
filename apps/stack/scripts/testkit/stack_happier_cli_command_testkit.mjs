@@ -2,7 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { ensureMinimalMonorepoLayout } from './core/minimal_monorepo_layout.mjs';
-import { writeStubCliDistBuildManifest, writeStubHappierCliFiles } from './core/stub_happier_cli_files.mjs';
+import { prepareStubHappierCliDependencies, writeStubCliDistBuildManifest, writeStubHappierCliFiles } from './core/stub_happier_cli_files.mjs';
 import { createTempFixture } from './core/temp_fixture.mjs';
 import { allocateAvailableLocalhostPort } from './core/ephemeral_port.mjs';
 import { readHappyCliRuntimeInputFreshness } from '../utils/proc/cli_runtime_inputs.mjs';
@@ -36,6 +36,16 @@ export async function createStackHappierCliCommandFixture(
     distIndexScript,
     binHappierScript,
     distBuildManifest: false,
+  });
+  const dependencyEnv = await prepareStubHappierCliDependencies(monoRoot, {
+    cliDir,
+    env: {
+      ...sanitizeStackTestRunnerEnv(process.env),
+      HAPPIER_STACK_REPO_DIR: monoRoot,
+      HAPPIER_STACK_HOME_DIR: homeDir,
+      HAPPIER_STACK_STORAGE_DIR: storageDir,
+      HAPPIER_DEV_TARGET_EXECUTION: '1',
+    },
   });
   // These command fixtures exercise lifecycle behavior with a current CLI publication.
   // A manifest without its real input fingerprint only exercises degraded-build fallback.
@@ -81,6 +91,7 @@ export async function createStackHappierCliCommandFixture(
     writeStackEnv,
     baseEnv: {
       ...sanitizeStackTestRunnerEnv(process.env),
+      ...dependencyEnv,
       HAPPIER_STACK_HOME_DIR: homeDir,
       HAPPIER_STACK_STORAGE_DIR: storageDir,
       HAPPIER_STACK_WORKSPACE_DIR: workspaceDir,

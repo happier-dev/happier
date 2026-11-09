@@ -5,6 +5,7 @@ import { resolveStackCredentialPaths } from './credentials_paths.mjs';
 import { decodeJwtPayloadUnsafe } from './decode_jwt_payload_unsafe.mjs';
 import { STACK_LISTENER_OBSERVATION_TIMEOUT_MS } from '../server/listener_ownership.mjs';
 
+export default
 function readAuthTokenFromCredentialPath(path) {
   const p = String(path ?? '').trim();
   if (!p || !existsSync(p)) return null;

@@ -163,7 +163,7 @@ export async function readDaemonControlState({
   const pid = Number(state?.pid);
   const controlToken = String(state?.controlToken ?? '').trim();
   if (!Number.isFinite(httpPort) || httpPort <= 0) {
-    return { ok: false, reason: 'missing_http_port', statePath };
+    return { ok: false, reason: 'missing_http_port', statePath, recordedStartedAt: state?.startedAt, pid };
   }
   if (!Number.isFinite(pid) || pid <= 1) {
     return { ok: false, reason: 'missing_pid', statePath };
@@ -194,6 +194,7 @@ export async function readDaemonControlState({
         ok: false,
         reason: 'daemon_not_owned',
         statePath,
+        recordedStartedAt: state?.startedAt,
         pid,
         ownershipReason: ownership?.reason ?? 'not_owned',
       };
@@ -258,7 +259,7 @@ async function proveWindowsDaemonControlState({
       timeoutMs,
     });
   } catch {
-    return { ok: false, reason: 'ping_failed', pid: controlState.pid };
+    return { ok: false, reason: 'ping_failed', pid: controlState.pid, recordedStartedAt: controlState.state?.startedAt };
   }
 
   const processInstanceFingerprintAfter = String(
@@ -348,7 +349,7 @@ export async function pingDaemon({
         : null,
     };
   } catch {
-    return { ok: false, reason: 'ping_failed', pid: controlState.pid };
+    return { ok: false, reason: 'ping_failed', pid: controlState.pid, recordedStartedAt: controlState.state?.startedAt };
   }
 }
 

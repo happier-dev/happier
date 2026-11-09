@@ -8,7 +8,7 @@ import { createServer } from 'node:net';
 import { once } from 'node:events';
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import { spawnDetachedInlineNodeTestProcess } from '../../testkit/core/spawn_test_process.mjs';
-import { completeInterruptedStackStopBeforeStart, stopStackWithEnv as stopStackWithEnvImpl } from './stop.mjs';
+import { completeInterruptedStackStopBeforeStart, createStackRuntimeCleanupIncompleteError, stopStackWithEnv as stopStackWithEnvImpl } from './stop.mjs';
 import { captureDevTargetSyncFixture } from '../../testkit/core/dev_target_sync.mjs';
 import { runCaptureResult } from '../proc/proc.mjs';
 import { withDependencyConsumption, withDependencyRefresh, withDependencyRefreshLock } from '../proc/dependency_refresh.mjs';
@@ -59,6 +59,7 @@ async function fixture(t, { inheritedTargets = false, targetName = 'linux1' } = 
     env,
     json: true, noDocker: true, autoSweep: false } };
 }
+
 
 for (const dependencyState of ['failed', 'locked']) test(`browser retirement ignores ${dependencyState} dependencies and reclaims only owned processes`, { skip: process.platform === 'win32' }, async t => {
   const f = await fixture(t);
@@ -385,6 +386,28 @@ test('ambiguous SSH loss and reachable retirement failure do not permit local fi
     assert.equal(stopped.finalization.reason, 'remote_cleanup_incomplete');
     assert.ok((await readStackRuntimeStateFile(f.statePath)).stopRequest);
   }
+});
+
+test('remote Session cleanup refusal survives parent Stop and preserves its recovery', async t => {
+  const f = await fixture(t);
+  const daemonSessionsStopped = { ok: false, skipped: false, reason: 'session_cleanup_incomplete',
+    stoppedSessionIds: [], sessionResults: [
+      { sessionId: 'remote-session', result: { status: 'incomplete', reason: 'runner_exit_timeout' } },
+    ] };
+  const stopped = await stopStackWithEnv(f.input, { runCaptureResultImpl: async (_command, args) => ({
+    ok: false, exitCode: 1, out: String(args.at(-1)).includes('stack stop') ? JSON.stringify({ ok: false, stopped: {
+      stackName: f.input.stackName, daemonSessionsStopped,
+      errors: [{ step: 'daemon-sessions', sessionId: 'remote-session', reason: 'runner_exit_timeout',
+        error: 'Session remote-session cleanup incomplete: runner_exit_timeout' }],
+      finalization: { finalized: false, reason: 'session_cleanup_incomplete' },
+    } }) : '',
+  }) });
+  assert.equal(stopped.finalization.reason, 'remote_cleanup_incomplete');
+  assert.deepEqual(stopped.daemonSessionsStopped, daemonSessionsStopped);
+  assert.match(stopped.errors[0].error, /remote-session.*runner_exit_timeout/);
+  const error = createStackRuntimeCleanupIncompleteError(stopped);
+  assert.match(error.recovery, /--preserve-daemon/);
+  assert.match(error.recovery, /stack daemon test-remote stop --json/);
 });
 
 test('recorded remote runtime already gone after interrupted stop is verified retired despite unknown exit status', async t => {

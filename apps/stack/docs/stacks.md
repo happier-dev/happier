@@ -123,6 +123,29 @@ A failed fresh server/daemon forward can select another candidate through the
 existing target retry; retained routes stay fixed. Expo has no separate
 port-collision reallocation path.
 
+In 0.3 development, a stack remembers its automatically chosen controller port
+and each server host's chosen private port in `stack.runtime.json`, including
+after Stop. Startup reuses a remembered port when free, after the stack's own
+teardown completes. A foreign listener is left running; an automatically chosen
+port moves to a free alternative and `stack info --json` reports the previous
+and current ports with reason `previous-port-occupied` under
+`runtime.portAllocations.controller` and `runtime.portAllocations.servers.<target>`.
+Explicit port pins and auxiliary infrastructure ports still fail closed when occupied.
+A remembered allocation alone is not a running service or a verified endpoint.
+
+In 0.3 development, a requested local server that fails during startup makes the
+dev runner exit with a failure before starting the daemon. Restore unavailable
+database or object-storage dependencies, then start the stack again. Startup
+does not classify a generic server or migration exit as a transient dependency
+failure and retry it automatically. Stop and restart can retire a daemon that
+never published its HTTP control port; it has no daemon-held Sessions to clean.
+
+QA must read the current controller URL from `urls.internalServerUrl` in
+`hstack stack info <stack> --json` before a run, including after a restart.
+Use that published URL rather than a remembered port, the remote host's private
+service port, or an inferred localhost alias. A stopped stack has no live
+controller URL. The stack's owner performs restarts and confirms readiness.
+
 ### Source stack reload (0.3 development)
 
 Source CLI and daemon launches use their retained runtime's installed dependency
@@ -143,6 +166,23 @@ the serving process has started; an old `Web Bundled` log line cannot satisfy
 this check. Stacks with UI disabled skip the browser step. Borrowed Expo is
 verified without restarting its producer.
 
+The repository dev coordinator prepares rolling server and daemon products on
+source changes. For fast adoption of a completed prebuild, add
+`--source-after=<ISO timestamp of the fix>` to the source reload command:
+
+```bash
+hstack stack start exp1 --runtime=source --restart --verify --source-after=2026-11-09T12:00:00.000Z
+```
+
+The explicit fix time replaces the default request-start boundary. A compatible
+prebuild captured at or after that fix can be reused without compiling again.
+A plain reload requires captures at or after its request time. Preparation still
+checks the replacement and the existing restart owner performs cutover. Startup
+and verification still run after fast adoption.
+App-only screen edits are served by borrowed Expo/Metro; refresh the app or
+browser to replay them. A full reload still applies its runtime capture boundary,
+even when the edited screen is outside the server and daemon inputs.
+
 Every verdict includes elapsed milliseconds. `NOT_READY` identifies the failing
 check and its evidence; `READY` includes the component identities. Verification
 also requires an available, identified managed CLI after reload. When its
@@ -157,6 +197,8 @@ pending readiness, unavailable browser pool, or failed render returns
 in control. Re-run after resolving the reported prerequisite. `--verify`
 cannot be combined with the existing `--json` dry-run option.
 
+For a server-only CPU profile in 0.3 development, run `hstack stack start <stack> --runtime=source --restart --server-cpu-prof`. Local and remote source servers receive `--cpu-prof --cpu-prof-interval=10000 --disable-sigusr1`; startup prints the serving host's output directory, `<stack-state-root>/logs/server-cpu-prof`. On POSIX, finish the capture with a normal `hstack stack stop <stack>` or the next normal restart: after shutdown hooks complete, the server exits normally so Node writes the `.cpuprofile`. Forced termination, including SIGKILL and Windows tree termination, does not guarantee a profile. This opt-in is not saved in the Stack env or runtime selection; pass it again for a later start. Daemon and CLI processes do not receive the Node flags. Native runtime snapshots do not support this switch.
+
 `hstack stack start exp1 --runtime=source --ui=export --restart` prepares the
 replacement server, daemon and web export while the incumbent keeps serving.
 The source selection owner checks the daemon command loader, boots the server
@@ -169,6 +211,32 @@ its startup imports in an isolated process with database credentials removed,
 then returns before database initialization. A module-load failure refuses the
 replacement. This verifies imports, not PostgreSQL migrations or connectivity.
 
+When a module load or bundle fails, the existing refusal reports
+`firstFailingModule`, `entryGraph` and `component`. A compiler or runtime probe's
+module location takes precedence. If it has no location, preparation reuses that
+component's `check:entry-loads` graph once after the failure. Successful reloads
+do not run this additional diagnostic. The fields survive remote preparation
+and appear in the one-line refusal, startup/reload log and
+`stack info --json` under `runtime.sourceReload`.
+The refusal retains the original failure code, including a loader code such as
+`ERR_MODULE_NOT_FOUND` behind a preparation process's numeric exit status.
+Later dependency drift does not replace a failed preparation's cause.
+
+Before activating an SQLite or PostgreSQL server replacement, reload runs the
+canonical migration deploy against that stack's own database. An explicit
+reload performs this preflight even when ordinary-start migrations are disabled.
+A deploy failure retains the incumbent and reports its refusal code and
+`failedMigration` when the migration executor identifies the failed SQL. A
+connection or setup failure is reported without guessing a failed migration.
+
+A shared-database consumer only reads the source database's migration ledger.
+Every pending migration appears in `missingMigrations`, alongside `sourceStack`
+and code `ESHAREDDBMIGRATIONSMISSING`; unavailable ledger evidence reports
+`ESHAREDDBMIGRATIONSTATUSUNAVAILABLE`. Ask the named source stack's owner to
+deploy, then retry the consumer reload. A QA stack never deploys or repairs the
+shared development database. PGlite keeps its existing exclusive migration path
+after the incumbent releases the data-directory lock.
+
 Only successful checks permit selection and the existing restart owner's
 cutover. Startup then reuses the checked bundles and export. Failed or cancelled
 preparation preserves the loaded runtime; build/smoke failures preserve its
@@ -176,16 +244,27 @@ selection too. `stack info` reports `runtime.sourceReload`, including the failur
 and its `run.reload.*.log` path. Selection and loaded process identity remain
 separate facts.
 
+A successful source daemon start or Session-preserving restart clears a retained
+daemon reload refusal after the loaded identity is confirmed. It preserves a
+refusal for another component and any refusal whose selected daemon generation
+has not loaded.
+
 Finite web exports capture authored inputs and share installed dependencies.
 Metro includes the real installed module roots, including workspace-local
 dependencies mounted into the capture. A failed export counts as source drift
 only when input bytes changed during that attempt; an unchanged-input failure
 returns its diagnostic instead of waiting for source edits.
 
-A remote source worker failure retries through this preparation path against
-the synchronized current source. Readiness must come from the successor runtime
-owner, even when it uses the same bundle. Transport-only SSH or tunnel loss
-retains the existing loaded source selection for recovery.
+A remote runtime failure retries through this preparation path against the
+synchronized current source. Readiness must come from the successor runtime
+owner, even when it uses the same bundle. Remote workers launch the existing
+background Stack owner and observe its runtime-state and log publications;
+an SSH disconnect cannot terminate that owner. Transport-only SSH or tunnel
+loss uses the existing reconnect path, verifies health and selected/loaded
+identity, and reattaches without startup, retirement or source capture. If the
+runtime is gone after SSH loss, recovery restarts its recorded source selection
+with `--reuse-source-runtime`. Explicit Stop still retires the recorded owner,
+and the owner-death watchdog still sweeps a runtime whose owner actually dies.
 
 A source start superseded by a newer start is terminal for the older controller.
 It closes its own SSH workers, forwards and owner-death watchdog without retiring
@@ -215,14 +294,18 @@ endpoints and incomplete synchronization cycles also remain blocking.
 Write live or repeatedly rewritten captures to `.project/tmp/**`, a scratch
 directory, or a Mutagen-ignored suffix under `plans/` (for example `.ndjson`,
 `.jsonl`, `.png`, `.webm`, `.log`, `.trace` or `.har`). The existing ignore policy
-also excludes `browser-diagnostics.json` under `plans/`. Status and dispatch
+also excludes `browser-diagnostics.json` and directories named `logs`,
+`timelines`, `captures` or `tmp` anywhere under `.project/plans/`, regardless
+of file extension. The source allowlist retains `.project/plans/`,
+`.project/tasks/`, `.project/scripts/` and root `.project/*.md`; worker inputs
+such as typecheck baselines, migration ledgers, briefs and lane configs remain
+synchronized outside those excluded artifact directories. Status and dispatch
 share one readiness policy. A missing staged file makes Mutagen schedule a
 fresh cycle itself; the POSIX dispatch barrier continues these known transient
 cycles until clean and remains cancellable. Candidate probes observe this
-recoverable state without flushing unselected mirrors. Stopping the writer can
-restore readiness without a reset. If a source problem persists,
-`hstack dev-targets sync <target>` owns the explicit fresh scan and still requires
-a clean result.
+recoverable state without flushing unselected mirrors. Stopping the writer can therefore
+restore readiness without a reset. If a source problem persists, `hstack dev-targets sync <target>` owns
+the explicit fresh scan and still requires a clean result.
 
 Use `local` placement for services on the controller. A separate mirror on the
 same host must remain outside the authoritative checkout: the synchronization
@@ -278,6 +361,11 @@ node ./apps/stack/scripts/repo_local.mjs dev-targets browser start qa1 --stack=e
 The browser selector compares current unreserved memory among those configured hosts for each browser lifetime. It writes no Machine pin and fails closed if no pool host is usable. When the browser setting is absent or empty, it retains the existing daemon-pool/default selection. Keep the foreground browser handle and interrupt it after QA to retire its browser, profile, and forwards. In 0.3 development, acquisition also requires a CDP WebSocket command response through the returned forward. A silent endpoint is retired after the default 30-second CDP attach window and replaced once before a handle is returned. Failed retirement stops acquisition; it never allocates a replacement beside an unconfirmed old browser. Loss of a managed browser's control channel also closes its browser and removes its owned temporary profile.
 
 Browser IPC identities are bounded independently of the displayed lane name, so long lane names fit the macOS and Linux Unix socket limits. Launch and cleanup use the same internal identity. If both fail, the launch error remains primary and retains the cleanup error as its cause.
+
+Host identity and memory observations run independently of heavyweight admission,
+dependency preparation, and workspace synchronization. The exact read-only probes
+use the executor's canonical observation policy; ordinary commands and browser
+startup retain their source-readiness checks.
 
 ## Edit a stack (interactive)
 
@@ -435,6 +523,12 @@ To add/update environment variables in a stack env file from the CLI:
 hstack stack env <stack> set KEY=VALUE [KEY2=VALUE2...]
 ```
 
+In current development source, placed Stack starts project this stack env file's explicit entries, including secrets, without printing values. Inherited shell/global entries are excluded; target placement, identity, storage and ports are preserved. The controller file is authoritative for operator settings: deleting an entry, including deleting every entry, removes its worker projection at the next placed Stack start/restart. Arbitrary target-only hand edits are removed too. Tool-generated auth-seed policy, runtime selection and managed-infrastructure settings (including database and object-storage credentials) remain worker-local; the retained names are defined beside the projection in `scripts/utils/dev_targets/remote_commands.mjs`. Explicit projected values still update those defaults. Daemon-only commands retain the existing env.
+
+SQLite `DATABASE_URL=file:...` values belong to the host that owns the retained database and are not projected from the controller. The target keeps its existing local database URL. Network database URLs, including PostgreSQL URLs, remain explicit operator settings and are projected.
+
+Known input-file settings (including `NODE_EXTRA_CA_CERTS`, scoped Git CA paths and `HAPPIER_MANAGED_NODE_BIN`) and `NODE_PATH` directories must be readable on the target; relative paths use its repository directory. Missing paths yield `remote_stack_env_path_unavailable` and stop lifecycle retries. A missing `HAPPIER_MANAGED_NODE_BIN` error names its configured target path and tells you to remove or correct the override in the controller stack env before starting again; it does not fall back to another runtime. Other file-setting failures name only the variable, keeping its value private. Provision files on the target and configure their target paths here; files are not copied.
+
 To remove keys:
 
 ```bash
@@ -448,6 +542,73 @@ hstack stack env <stack> get KEY
 hstack stack env <stack> list
 hstack stack env <stack> path
 ```
+
+In 0.3 development, `hstack stack info <stack> --json` includes `database` with
+`provider`, `sharedSource`, `sourceStack`, `filesBackend`, and `basis`. A provider
+with basis `loaded-source-bundle` or `loaded-runtime-snapshot` comes from the
+observed loaded server's metadata. Shared-source selection and file storage
+remain configured facts, identified separately by `sourceStackBasis` and
+`filesBackendBasis` when the provider is loaded.
+Stopped stacks report `configured` identity through the runtime's shared-source
+resolver on the server host. Missing metadata or an unreachable authority reports
+`unavailable` and a null provider; it does not attest the raw consumer setting.
+
+For shared-database consumers, `stack env <stack> list` keeps the saved provider
+line and adds an adjacent note naming the source stack and its configured
+effective provider. These identity projections never include database connection
+strings or source-stack private environment values.
+
+In 0.3 development, `stack info` also shows a `sharedDatabase` section for a
+shared-database consumer or a source with configured consumers. It names the
+`sourceStack`, this stack's `role` (`source` or `consumer`), and the other
+running server `coWriters`. Each row includes `stackName`, `role`, `host`,
+`loadedSourceIdentity` (or `loadedSnapshotId` for a native runtime),
+`startedAt`, `sourceTime`, and `staleCoWriter`.
+
+The section has basis `local-stack-state`: it reads the existing local stack
+inventory and recorded remote service observations, without probing peer
+servers or querying the database. Remote rows therefore reflect the last
+locally recorded observation. `host` is the recorded server target, or the
+local hostname; `startedAt` is the recorded runtime start time.
+`sourceTime` comes from the matching immutable source-bundle record's
+`sourceCapture.capturedAt`, or a native snapshot manifest's `createdAt`. Remote source
+times travel with the target's existing runtime identity observation; a
+controller's completion record never supplies a remote runtime's time. A pending
+selection is never substituted for the loaded identity. `staleCoWriter` is
+`true` only when a different loaded identity has an earlier known source time;
+it is `false` for identical identities or a known equal/newer source time,
+and `null` when the comparison cannot be established from local metadata.
+These are informational observations and do not gate or restart a stack.
+An own-database stack with no configured consumers has no such section.
+
+In 0.3 development, successful source reload preparation prints one `PREPARED`
+line with UTC `sourceTime` values and captured `inputIdentity` values for the prepared server, daemon and exported UI
+on that host. This confirms replacement preparation and selection; retirement and
+runtime startup can still be pending. Use `stack info` to confirm healthy running
+components and matching selected/loaded identities before replaying work.
+The existing `source-runtime/reload.json` record retains those per-component
+values as `sourceTimes` and `sourceCaptures`. `stack info` shows the reload result and the currently
+loaded components' times; JSON includes each available time under
+`runtime.sourceRuntimeIdentities.<component>.sourceTime`. Split runtimes keep
+their own times. The capture time is recorded when the authored input copy finishes,
+before compilation; reuse preserves that original time and identity. Later source
+edits belong to the next reload and do not invalidate the captured build. Installed
+dependencies remain shared and retain their dependency-publication checks. Older
+completion records without capture metadata show an unknown capture time.
+Retained remote observations produced by older tooling can still carry completion
+times until the existing runtime observation is refreshed.
+
+In 0.3 development, a shared-database consumer (SQLite or PostgreSQL) checks its
+server's provider-specific migration catalog against the source database's completed,
+non-rolled-back Prisma ledger before launching the server, including source reloads.
+Missing migrations refuse startup with `ESHAREDDBMIGRATIONSMISSING`, the source stack
+and missing names. The source stack's owner deploys them, or the migration author
+reconciles retained development data under the repository's Compatibility rules;
+the consumer never applies or repairs migrations. A source database ahead of the
+consumer is accepted. Unavailable ledger/catalog access refuses with
+`ESHAREDDBMIGRATIONSTATUSUNAVAILABLE`. This admission compares migration names,
+not checksums or physical schema. Own-database stacks keep their existing migration
+lifecycle. `stack info` remains an identity projection and does not query the ledger.
 
 Notes:
 
@@ -465,6 +626,8 @@ hstack env set OPENAI_API_KEY=sk-...
 ## Daemon auth + “no machine” on first run
 
 In source development, the TUI keeps the server and Expo available while daemon credentials are missing, so its `a` login action can complete. The daemon waits for authentication before starting; the development runner checks again after credentials are created.
+
+In 0.3 development, a remote source-snapshot or controlled daemon keeps its sign-in in the target's retained Stack home across controller restarts. A controller credential can seed that home, but its absence does not require another sign-in when the target is already authenticated. When authentication is missing, `stack info` reports `sign-in required`; sign in on the daemon host with `hstack stack happier <stack> --runtime -- auth login`. Readiness resumes without restarting the healthy services.
 
 In 0.3 development, daemon readiness checkpoints continue while the start wrapper or daemon remains live, including before it writes its state file. Shutdown cancels and joins the owned start wrapper. A failed `hstack stack daemon <stack> start` or `restart` exits nonzero; a returned startup failure produces `ok: false` with its reason in JSON mode. The long-running TUI can remain available after the attempt fails.
 

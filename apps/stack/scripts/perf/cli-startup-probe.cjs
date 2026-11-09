@@ -53,7 +53,7 @@ if (process.env.CLISTART_PHASE_SPANS === '1') {
     'applyServerSelectionFromArgs', 'createAccountSecurityActionRuntime',
     'createCliActionExecutorFromCredentials', 'createCliActionExecutor', 'createCliActionExecutorHarness',
     'createActionSettingsProvider', 'fetchServerFeaturesSnapshot', 'ensureCliActionPolicySettings',
-    'refreshTerminalPresentUserPolicy'].map(name => ({ name, pattern: new RegExp(
+  ].map(name => ({ name, pattern: new RegExp(
       `(?:^|[\\n;}])[\\t ]*(?:export[\\t ]+)?(?:async[\\t ]+)?function[\\t ]+${name}\\s*\\(`,
     ) }));
   instrumentPhaseSource = (url, result) => {

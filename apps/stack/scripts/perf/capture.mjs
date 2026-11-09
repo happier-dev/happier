@@ -3,10 +3,10 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
 import { createGzip } from 'node:zlib';
 import { join } from 'node:path';
-import { SourceMap } from 'node:module';
 import { connectPage } from './cdp.mjs';
-import { frameKey, networkRouteClass, normalizeProfileSamples, requestFingerprint, safeUrl, socketFrameClassification, summarizeNetwork, summarizeProfile } from './analysis.mjs';
+import { networkRouteClass, normalizeProfileSamples, requestFingerprint, safeUrl, socketFrameClassification, summarizeNetwork, summarizeProfile } from './analysis.mjs';
 import { summarizeHeapProfile, summarizeMainThreadTrace, summarizeJsThreadLagSampler } from './profiling.mjs';
+import { symbolicateFrames } from './source-maps.mjs';
 
 const TRACE_CATEGORIES = ['devtools.timeline', 'disabled-by-default-devtools.timeline', 'v8.execute', 'blink.user_timing', 'disabled-by-default-v8.cpu_profiler'];
 const frameProjection = frame => ({ functionName: frame.functionName, scriptId: frame.scriptId,
@@ -321,7 +321,9 @@ export async function startCapture(options) {
     kind: /timeout|timed out/i.test(error.message) ? 'timeout' : /closed|disconnect|socket/i.test(error.message) ? 'transport-closed' : 'protocol-or-evaluation' });
   const step = async (name, operation) => { phase = name; return await operation(); };
   const at = (timestamp, request) => timestamp * 1000 + request.clockOffsetMs;
-  cdp.on('Debugger.scriptParsed', event => scripts.set(event.scriptId, { url: event.url, sourceMapURL: event.sourceMapURL }));
+  cdp.on('Debugger.scriptParsed', event => scripts.set(event.scriptId, {
+    url: event.url, sourceMapURL: event.sourceMapURL, hash: event.hash, length: event.length,
+  }));
   cdp.on('Network.requestWillBeSent', event => {
     const socketIdentity = socketConnections.request(event);
     // Both clocks are sampled together by Chromium, not by a queued renderer
@@ -575,33 +577,11 @@ export async function startCapture(options) {
         // This callback is outside the capture bracket/profile, not a wait for
         // new work or a synthetic extension of the measured interval.
         if (onWindowEnd) await available('finish.window-evidence', () => onWindowEnd({ startMs, endMs }));
-        const symbols = new Map(), sourceMaps = new Map(), mapFailures = [], mapResponses = [];
-        // Attribution happens after capture, so reading maps does not inflate
-        // journey network or CPU counts. No Metro-only symbolication dependency.
+        // Decode only the map bytes CDP tied to each loaded script. Mutable
+        // external map URLs cannot establish pairing and remain unmapped.
         const heapFrames = [], pendingHeap = heap?.profile?.head ? [heap.profile.head] : [];
         while (pendingHeap.length) { const node = pendingHeap.pop(); heapFrames.push(node.callFrame); pendingHeap.push(...node.children ?? []); }
-        for (const frame of [...(profile?.nodes ?? []).map(node => node.callFrame), ...heapFrames]) {
-          const script = scripts.get(frame.scriptId);
-          if (!script?.sourceMapURL) continue;
-          if (!sourceMaps.has(frame.scriptId)) {
-            try {
-              const mapUrl = script.sourceMapURL.startsWith('data:') ? new URL(script.sourceMapURL) : new URL(script.sourceMapURL, script.url);
-              let json;
-              if (mapUrl.protocol === 'data:') json = JSON.parse(Buffer.from(mapUrl.href.split(',')[1], 'base64').toString());
-              else {
-                if (mapUrl.origin !== new URL(script.url).origin) throw new Error('cross-origin map omitted');
-                const response = await fetch(mapUrl, { credentials: 'omit', signal: options.signal });
-                if (!response.ok) throw new Error('map unavailable');
-                json = await response.json();
-                mapResponses.push({ script: safeUrl(script.url), map: safeUrl(mapUrl.href), status: response.status });
-              }
-              sourceMaps.set(frame.scriptId, new SourceMap(json));
-            } catch { sourceMaps.set(frame.scriptId, null); mapFailures.push({ scriptId: frame.scriptId, url: safeUrl(script.url) }); }
-          }
-          const mapped = sourceMaps.get(frame.scriptId)?.findEntry(frame.lineNumber, frame.columnNumber);
-          if (mapped?.originalSource) symbols.set(frameKey(frame), { source: mapped.originalSource.split(/[?#]/)[0],
-            name: mapped.name ?? frame.functionName, line: mapped.originalLine, column: mapped.originalColumn });
-        }
+        const { symbols, attribution } = symbolicateFrames([...(profile?.nodes ?? []).map(node => node.callFrame), ...heapFrames], scripts);
         for (const node of profile?.nodes ?? []) node.callFrame.url = safeUrl(node.callFrame.url);
         for (const frame of heapFrames) frame.url = safeUrl(frame.url);
         // Keys above use original URLs; transfer mappings after URL redaction.
@@ -641,8 +621,7 @@ export async function startCapture(options) {
           socketTimeline: { source: 'CDP physical WebSocket lifecycle and Engine.IO/Socket.IO frame kinds; physical connects alone do not establish a logical root reconnect',
             events: [...lifecycle, ...windowSockets].sort((a, b) => a.atMs - b.atMs) }, telemetry,
           react: probeData, authState: { begin: beginAuthState, end: endAuthState }, observedUi: { url: safeUrl(pageUrl), scripts: [...new Set([...scripts.values()].map(script => safeUrl(script.url)).filter(Boolean))] },
-          attribution: { sourceMaps: [...sourceMaps.values()].filter(Boolean).length, attemptedSourceMaps: sourceMaps.size,
-            mappedFrames: symbols.size, mapResponses, mapFailures },
+          attribution,
           clock: { basis: 'Native Network.requestWillBeSent wallTime/timestamp pairs; request-local conversion, preceding pair (first pair for earlier sockets)',
             rendererRoundTripUsed: false, controllerWindowClock: options.profiling ? 'In-page performance mark timeOrigin + startTime; trace uses the same marks, no controller-receipt calibration' : 'Date.now', nativePairs: [...nativePairs], unmappedRequests, unmappedSocketFrames,
             ...(unmappedSocketFrames ? { unmappedSocketRecords: mappedSockets.filter(row => row.atMs === null) } : {}) },

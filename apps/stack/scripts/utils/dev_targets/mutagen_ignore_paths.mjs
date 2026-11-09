@@ -39,12 +39,10 @@ export const DEV_TARGET_MUTAGEN_IGNORE_PATHS = [
   // root and Mutagen cannot represent it. The real brand package beside this
   // redundant link remains synchronized normally.
   'packages/brand/brand',
-  // Installed executable artifacts are built on each replica from its ignored
-  // `dist` trees. Keep those outputs local, but replicate the tracked cold
-  // manifests: the canonical generator checks every present plugin.json.
-  // Ignore children rather than the parent so the manifest exception is reachable.
-  'packages/plugins/*/.happier-plugin/*',
-  '!packages/plugins/*/.happier-plugin/plugin.json',
+  // Package artifacts, including plugin.json, are materialized on each replica
+  // from controller-owned CLI declaration assets. Ignore the directory itself:
+  // a worker-created root must not conflict with its absence on the controller.
+  'packages/plugins/*/.happier-plugin',
   // Public-workflow QA scaffolds also emit their cold manifest on the worker.
   // Source replication must not delete it between daemon and UI compilation.
   'packages/plugin-sdk/fixtures/qa-plugin-authoring/created/qa-*/.happier-plugin',

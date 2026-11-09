@@ -76,6 +76,8 @@ test('manager family help stays outside executable catalogs', { skip: !optedIn }
     managerRoots = JSON.parse(stdout);
     assert.ok(Array.isArray(managerRoots) && managerRoots.length > 0, 'the canonical descriptors publish manager roots');
   } finally { metadataHome.cleanup(); }
+  console.info('family-startup-coverage', JSON.stringify({ roots: managerRoots.length,
+    referenceRoots: managerRoots.filter(root => !rootsWithoutReferenceHelp.has(root)).length }));
   for (const root of managerRoots) {
     await t.test(`keeps ${root} family help out of executable catalogs`, { timeout: 30_000 }, async current => {
       const home = isolateHome();

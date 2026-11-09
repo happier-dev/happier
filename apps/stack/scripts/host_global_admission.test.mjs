@@ -429,6 +429,313 @@ test('in-process priority permits authenticated publication-holder continuation 
   } finally { continueWriter(); await Promise.allSettled([holder, older]); }
 });
 
+test('priority cleanup reconciles concurrent reclaimers against the current anchor', async t => {
+  const fs = (await import('node:fs')).default;
+  const { syncBuiltinESMExports } = await import('node:module');
+  const { createWorkspaceBundleLockPriorityScope, observeWorkspaceBundleLockPriority } =
+    await import('../../../packages/cli-common/workspaceBundleLock.mjs');
+  for (const outcome of ['removed', 'replaced']) await t.test(outcome, async t => {
+    const fixture = await createTempFixture(t, { prefix: 'workspace-priority-reclaim-race-' });
+    const lockPath = fixture.path('publication.lock');
+    const scope = createWorkspaceBundleLockPriorityScope({ resources: [{ path: lockPath }] });
+    scope.activate();
+    const baseline = observeWorkspaceBundleLockPriority(lockPath);
+    const anchor = fixture.path((await readdir(fixture.root)).find(name => name.includes('.priority-scope-')));
+    const liveRaw = fs.readFileSync(anchor, 'utf8');
+    const deadRaw = JSON.stringify({ ...JSON.parse(liveRaw), pid: 2147483647 });
+    fs.writeFileSync(anchor, deadRaw);
+    const nativeRename = fs.renameSync, nativeUnlink = fs.unlinkSync;
+    let peerSnapshot, raced = false, deletions = 0;
+    // Re-enter the real reader at the OS rename boundary after the first
+    // reader has selected its snapshot. Neither domain policy is stubbed.
+    fs.renameSync = (from, to) => {
+      if (from === anchor && !raced) {
+        raced = true;
+        peerSnapshot = observeWorkspaceBundleLockPriority(lockPath);
+        if (outcome === 'replaced') fs.writeFileSync(anchor, liveRaw);
+      }
+      return nativeRename(from, to);
+    };
+    fs.unlinkSync = path => {
+      const staleAnchor = String(path).startsWith(`${anchor}.reclaim-`)
+        && fs.readFileSync(path, 'utf8') === deadRaw;
+      const result = nativeUnlink(path);
+      if (staleAnchor) deletions++;
+      return result;
+    };
+    syncBuiltinESMExports();
+    try {
+      assert.equal(observeWorkspaceBundleLockPriority(lockPath), outcome === 'replaced' ? baseline : '[]');
+      assert.equal(peerSnapshot, '[]', 'the competing reader completed reclamation');
+      assert.equal(raced, true);
+      assert.equal(deletions, 1, 'the same stale anchor is deleted exactly once');
+      if (outcome === 'replaced') assert.equal(fs.readFileSync(anchor, 'utf8'), liveRaw);
+    } finally {
+      fs.renameSync = nativeRename;
+      fs.unlinkSync = nativeUnlink;
+      syncBuiltinESMExports();
+      scope.dispose();
+    }
+  });
+});
+
+test('priority cleanup suspends after a reclaimer already removed its index', async t => {
+  const fs = (await import('node:fs')).default;
+  const { syncBuiltinESMExports } = await import('node:module');
+  const { createWorkspaceBundleLockPriorityScope, observeWorkspaceBundleLockPriority } =
+    await import('../../../packages/cli-common/workspaceBundleLock.mjs');
+  const fixture = await createTempFixture(t, { prefix: 'workspace-priority-index-race-' });
+  const first = fixture.path('first.lock'), second = fixture.path('second.lock');
+  const scope = createWorkspaceBundleLockPriorityScope({ resources: [{ path: first }, { path: second }] });
+  scope.activate();
+  const anchor = fixture.path((await readdir(fixture.root)).find(name => name.includes('.priority-scope-')));
+  const nativeUnlink = fs.unlinkSync;
+  let raced = false;
+  fs.unlinkSync = path => {
+    const result = nativeUnlink(path);
+    if (String(path).startsWith(`${anchor}.reclaim-`) && !raced) {
+      raced = true;
+      assert.equal(fs.existsSync(anchor), false, 'anchor withdrawal precedes index retirement');
+      const options = { isRunningPidImpl: () => false };
+      observeWorkspaceBundleLockPriority(first, options);
+      observeWorkspaceBundleLockPriority(second, options);
+      assert.deepEqual(fs.readdirSync(fixture.root), [], 'the peer retired both indexes');
+    }
+    return result;
+  };
+  syncBuiltinESMExports();
+  try {
+    assert.doesNotThrow(() => scope.suspend());
+    assert.equal(raced, true);
+    assert.deepEqual(await readdir(fixture.root), []);
+    scope.activate();
+    assert.notEqual(observeWorkspaceBundleLockPriority(first), '[]', 'the suspended owner can activate again');
+  } finally {
+    fs.unlinkSync = nativeUnlink;
+    syncBuiltinESMExports();
+    scope.dispose();
+  }
+});
+
+test('priority cleanup preserves replacement records while withdrawing its own scope', async t => {
+  const fs = (await import('node:fs')).default;
+  const { createWorkspaceBundleLockPriorityScope } = await import('../../../packages/cli-common/workspaceBundleLock.mjs');
+  for (const kind of ['scope', 'waiter']) await t.test(kind, async t => {
+    const fixture = await createTempFixture(t, { prefix: 'workspace-priority-withdraw-race-' });
+    const lockPath = fixture.path('publication.lock');
+    const scope = createWorkspaceBundleLockPriorityScope({ resources: [{ path: lockPath }] });
+    const successor = createWorkspaceBundleLockPriorityScope({ resources: [{ path: lockPath }] });
+    scope.activate();
+    const path = fixture.path((await readdir(fixture.root)).find(name => name.includes(`.priority-${kind}-`)));
+    successor.activate();
+    const successorPath = fixture.path((await readdir(fixture.root)).find(name =>
+      name.includes(`.priority-${kind}-`) && fixture.path(name) !== path));
+    const successorRaw = fs.readFileSync(successorPath, 'utf8');
+    fs.writeFileSync(path, successorRaw);
+    try {
+      assert.doesNotThrow(() => scope.suspend());
+      assert.equal(fs.readFileSync(path, 'utf8'), successorRaw, 'a different owner is never deleted');
+      scope.dispose();
+    } finally {
+      fs.unlinkSync(path);
+      scope.dispose();
+      successor.dispose();
+    }
+  });
+});
+
+test('priority cleanup finishes when a peer restores the identical quarantined anchor', async t => {
+  const fs = (await import('node:fs')).default;
+  const { syncBuiltinESMExports } = await import('node:module');
+  const { createWorkspaceBundleLockPriorityScope, observeWorkspaceBundleLockPriority } =
+    await import('../../../packages/cli-common/workspaceBundleLock.mjs');
+  for (const lifecycle of ['withdrawal', 'dead-owner']) await t.test(lifecycle, async t => {
+    const fixture = await createTempFixture(t, { prefix: 'workspace-priority-restored-anchor-' });
+    const lockPath = fixture.path('publication.lock');
+    const scope = createWorkspaceBundleLockPriorityScope({ resources: [{ path: lockPath }] });
+    scope.activate();
+    const anchor = fixture.path((await readdir(fixture.root)).find(name => name.includes('.priority-scope-')));
+    if (lifecycle === 'dead-owner') {
+      const owner = JSON.parse(fs.readFileSync(anchor, 'utf8'));
+      fs.writeFileSync(anchor, JSON.stringify({ ...owner, pid: 2147483647 }));
+    }
+    const nativeRead = fs.readFileSync, nativeRename = fs.renameSync, nativeUnlink = fs.unlinkSync;
+    let restored = false, deletions = 0;
+    fs.readFileSync = (path, ...args) => {
+      if (String(path).startsWith(`${anchor}.reclaim-`) && !restored) {
+        restored = true;
+        // A peer recovery restores the same inode before the original reclaimer
+        // validates it. This is a lost quarantine, not a filesystem refusal.
+        nativeRename(path, anchor);
+      }
+      return nativeRead(path, ...args);
+    };
+    fs.unlinkSync = path => {
+      const result = nativeUnlink(path);
+      if (String(path).startsWith(`${anchor}.reclaim-`)) deletions++;
+      return result;
+    };
+    syncBuiltinESMExports();
+    try {
+      if (lifecycle === 'withdrawal') assert.doesNotThrow(() => scope.suspend());
+      else assert.equal(observeWorkspaceBundleLockPriority(lockPath), '[]');
+      assert.equal(restored, true);
+      assert.equal(deletions, 1, 'the restored anchor is reclaimed exactly once');
+      assert.equal(fs.existsSync(anchor), false);
+    } finally {
+      fs.readFileSync = nativeRead;
+      fs.unlinkSync = nativeUnlink;
+      syncBuiltinESMExports();
+      scope.dispose();
+    }
+    assert.deepEqual(await readdir(fixture.root), []);
+  });
+});
+
+test('priority cleanup still refuses a genuinely failed removal of its unchanged record', async t => {
+  const fs = (await import('node:fs')).default;
+  const { syncBuiltinESMExports } = await import('node:module');
+  const { createWorkspaceBundleLockPriorityScope } = await import('../../../packages/cli-common/workspaceBundleLock.mjs');
+  for (const kind of ['scope', 'waiter']) await t.test(kind, async t => {
+    const fixture = await createTempFixture(t, { prefix: 'workspace-priority-cleanup-failure-' });
+    const lockPath = fixture.path('publication.lock');
+    const scope = createWorkspaceBundleLockPriorityScope({ resources: [{ path: lockPath }] });
+    scope.activate();
+    const path = fixture.path((await readdir(fixture.root)).find(name => name.includes(`.priority-${kind}-`)));
+    const raw = fs.readFileSync(path, 'utf8');
+    const nativeRead = fs.readFileSync;
+    let failed = false;
+    fs.readFileSync = (target, ...args) => {
+      if (String(target).startsWith(`${path}.reclaim-`) && !failed) {
+        failed = true;
+        throw Object.assign(new Error('fixture read denied'), { code: 'EACCES' });
+      }
+      return nativeRead(target, ...args);
+    };
+    syncBuiltinESMExports();
+    try {
+      // Continuation brief requires the originating filesystem cause rather
+      // than a generic pending error; refusal and owner preservation still hold.
+      assert.throws(() => scope.suspend(), error => {
+        assert.equal(error.code, 'EWORKSPACEBUNDLELOCKCLEANUP');
+        assert.equal(error.operation, 'read-quarantine');
+        assert.equal(error.path, path);
+        assert.equal(error.cause?.code, 'EACCES');
+        return true;
+      });
+      assert.equal(failed, true);
+      assert.equal(fs.readFileSync(path, 'utf8'), raw);
+      if (kind === 'scope') assert.equal(fs.readdirSync(fixture.root).length, 2,
+        'a failed anchor withdrawal leaves its index intact');
+    } finally {
+      fs.readFileSync = nativeRead;
+      syncBuiltinESMExports();
+      scope.dispose();
+    }
+    assert.deepEqual(await readdir(fixture.root), []);
+  });
+});
+
+test('priority cleanup settles a concurrent multi-package batch when peer readers restore withdrawing anchors', { timeout: 30_000 }, async t => {
+  const fs = (await import('node:fs')).default;
+  const { syncBuiltinESMExports } = await import('node:module');
+  const { withWorkspaceBuildResources } = await import('./utils/proc/workspace_build_admission.mjs');
+  const { observeWorkspaceBundleLockPriority } = await import('../../../packages/cli-common/workspaceBundleLock.mjs');
+  const fixture = await createTempFixture(t, { prefix: 'workspace-priority-multi-package-' });
+  let clock = Date.now();
+  t.mock.method(Date, 'now', () => ++clock);
+  const paths = ['brand', 'protocol', 'release-runtime'].map(name => fixture.path(`${name}.lock`));
+  const groups = [[paths[0], paths[1]], [paths[1], paths[2]], [paths[2], paths[0]]];
+  const nativeUnlink = fs.unlinkSync, nativeRead = fs.readFileSync;
+  const restored = new Set();
+  const published = [];
+  let indexesRetired = 0;
+  fs.unlinkSync = path => {
+    const target = String(path);
+    if (target.includes('.priority-scope-') && target.includes('.reclaim-')) {
+      const anchor = target.slice(0, target.indexOf('.reclaim-'));
+      if (!restored.has(anchor)) {
+        restored.add(anchor);
+        assert.equal(fs.existsSync(anchor), false);
+        // Schedule competing readers after comparison but before unlink. Real
+        // retained-snapshot recovery links the live anchor back into place.
+        for (const lockPath of paths) observeWorkspaceBundleLockPriority(lockPath);
+        assert.equal(fs.existsSync(anchor), true, 'a peer restored the still-live owner');
+      }
+    } else if (target.includes('.priority-waiter-') && target.includes('.reclaim-')) {
+      const index = JSON.parse(nativeRead(path, 'utf8'));
+      const anchor = `${index.priorityAnchorLockPath}.priority-scope-${index.priorityScopeId}`;
+      assert.equal(fs.existsSync(anchor), false, 'anchor withdrawal precedes every index retirement');
+      indexesRetired++;
+    }
+    return nativeUnlink(path);
+  };
+  syncBuiltinESMExports();
+  const cancellation = new AbortController();
+  const attempts = groups.map((group, index) => withWorkspaceBuildResources({
+    locks: group.map(path => ({ path })), signal: cancellation.signal,
+  }, () => { published.push(index); }));
+  try {
+    await Promise.all(attempts);
+    assert.deepEqual(published, [0, 1, 2], 'all overlapping package groups retain their admission order');
+    assert.equal(restored.size, groups.length, 'each concurrent scope experiences the real recovery race');
+    assert.equal(indexesRetired, groups.reduce((total, group) => total + group.length, 0));
+    assert.deepEqual(await readdir(fixture.root), [], 'the whole batch retires its anchors, indexes and leases');
+  } finally {
+    fs.unlinkSync = nativeUnlink;
+    syncBuiltinESMExports();
+    cancellation.abort(new Error('multi-package fixture finished'));
+    await Promise.allSettled(attempts);
+  }
+});
+
+test('priority cleanup identifies denied rename and quarantine unlink without retiring indexes', async t => {
+  const fs = (await import('node:fs')).default;
+  const { syncBuiltinESMExports } = await import('node:module');
+  const { createWorkspaceBundleLockPriorityScope } = await import('../../../packages/cli-common/workspaceBundleLock.mjs');
+  for (const operation of ['rename', 'unlink-quarantine']) await t.test(operation, async t => {
+    const fixture = await createTempFixture(t, { prefix: 'workspace-priority-denied-cleanup-' });
+    const lockPath = fixture.path('publication.lock');
+    const scope = createWorkspaceBundleLockPriorityScope({ resources: [{ path: lockPath }] });
+    scope.activate();
+    const names = await readdir(fixture.root);
+    const anchor = fixture.path(names.find(name => name.includes('.priority-scope-')));
+    const index = fixture.path(names.find(name => name.includes('.priority-waiter-')));
+    const nativeRename = fs.renameSync, nativeUnlink = fs.unlinkSync;
+    const denied = Object.assign(new Error('fixture cleanup denied'), { code: 'EACCES', path: anchor });
+    fs.renameSync = (from, to) => {
+      if (operation === 'rename' && from === anchor) throw denied;
+      return nativeRename(from, to);
+    };
+    fs.unlinkSync = path => {
+      if (operation === 'unlink-quarantine' && String(path).startsWith(`${anchor}.reclaim-`)) throw denied;
+      return nativeUnlink(path);
+    };
+    syncBuiltinESMExports();
+    try {
+      assert.throws(() => scope.suspend(), error => {
+        if (operation === 'rename') {
+          assert.equal(error, denied, 'native rename errors retain their errno and identity');
+          return true;
+        }
+        assert.equal(error.code, 'EWORKSPACEBUNDLELOCKCLEANUP');
+        assert.equal(error.operation, operation);
+        assert.equal(error.path, anchor);
+        assert.equal(error.cause, denied);
+        return true;
+      });
+      assert.equal(fs.existsSync(index), true, 'indexes remain until anchor retirement succeeds');
+      assert.equal(fs.readdirSync(fixture.root).length, 2, 'the refused record remains recoverable');
+    } finally {
+      fs.renameSync = nativeRename;
+      fs.unlinkSync = nativeUnlink;
+      syncBuiltinESMExports();
+      scope.dispose();
+    }
+    assert.deepEqual(await readdir(fixture.root), [], 'normal owner cleanup resumes after the refusal');
+  });
+});
+
 test('in-process priority activation is whole-group and suspension retains age without fencing fresh publishers', async t => {
   const { createWorkspaceBundleLockPriorityScope, isWorkspaceBundleLockPriorityChange, observeWorkspaceBundleLockPriority, withWorkspaceBundleLockSync } =
     await import('../../../packages/cli-common/workspaceBundleLock.mjs');

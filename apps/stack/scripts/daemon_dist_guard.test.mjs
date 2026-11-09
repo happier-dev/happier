@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
+import { createRequire } from 'node:module';
 
 import {
   DEFAULT_STACK_DAEMON_START_VERIFY_TIMEOUT_MS,
@@ -26,6 +27,7 @@ import {
 import { writeCliDistBuildManifest } from './utils/cli/cliDistIntegrity.mjs';
 import { recordStackRuntimeStart, recordStackRuntimeUpdate, readStackRuntimeStateFile } from './utils/stack/runtime_state.mjs';
 import {
+  prepareStubHappierCliDependencies,
   writeStubCliDistBuildManifest,
   writeStubHappierCliFiles,
 } from './testkit/core/stub_happier_cli_files.mjs';
@@ -35,8 +37,8 @@ import { resolveCliDistBuildLockPath, withCliDistBuildLock } from './utils/proc/
 import { withPatchedProcessEnv } from './testkit/core/env_scope.mjs';
 import { installWorkspaceAdmissionProcessFixture } from './testkit/core/native_admission_fixture.mjs';
 import { spawnTestProcess } from './testkit/core/spawn_test_process.mjs';
-import { writeFakeBin } from './testkit/core/fake_bin_harness.mjs';
-import { withDependencyRefresh } from './utils/proc/dependency_refresh.mjs';
+import { installSourceAdmissionFixture, installSourcePreparationInputs } from './testkit/core/source_runtime_fixture.mjs';
+import { isAlive, waitForProcessExit } from './testkit/stack_stop_sweeps_testkit.mjs';
 
 const CLI_DIST_BUILD_MANIFEST_MODULE_URL = new URL(
   '../../../packages/cli-common/cliDistBuildManifest.cjs',
@@ -95,6 +97,8 @@ test('daemon state and retirement reject a real unreaped departed process', { sk
       await new Promise(resolve => setTimeout(resolve, 5));
     }
     assert.doesNotThrow(() => process.kill(pid, 0), 'the OS still exposes the departed process');
+    assert.equal(isAlive(pid), false, 'the fixture observer accepts a departed process before its parent reaps it');
+    await waitForProcessExit({ pid, timeoutMs: 2_000, intervalMs: 25, label: 'departed child fixture' });
     const env = buildDaemonDistGuardEnv({ HAPPIER_SERVER_URL: '', HAPPIER_WEBAPP_URL: '' });
     const { statePath } = resolvePreferredStackDaemonStatePaths({ cliHomeDir: root, env });
     await mkdir(dirname(statePath), { recursive: true });
@@ -166,47 +170,44 @@ async function writeHappyMonorepoMarkers(rootDir) {
 }
 
 async function prepareCurrentSourceCliFixture(rootDir, cliDir) {
-  const { packageManager } = JSON.parse(await readFile(new URL('../../../package.json', import.meta.url), 'utf8'));
-  const version = /^pnpm@([^+]+)/u.exec(packageManager)[1];
-  await writeFile(join(rootDir, 'package.json'), JSON.stringify({ private: true, packageManager }) + '\n', 'utf-8');
-  await writeFile(join(rootDir, 'pnpm-lock.yaml'), [
-    "lockfileVersion: '9.0'",
-    'settings:',
-    '  autoInstallPeers: true',
-    '  excludeLinksFromLockfile: false',
-    'importers:',
-    '  .: {}',
-    '  apps/cli: {}',
-    '  apps/server: {}',
-    '  apps/ui: {}',
-    '',
-  ].join('\n'), 'utf-8');
-  await writeFile(join(rootDir, 'pnpm-workspace.yaml'), 'packages:\n  - "apps/*"\n');
-  // Only the installer executable is simulated. The real refresh owner records
-  // readiness before the dist manifest captures these fixture inputs.
-  const pm = writeFakeBin({ root: rootDir, name: 'pnpm', content: `#!/usr/bin/env node
-const { mkdirSync, writeFileSync } = require('node:fs');
-const { join } = require('node:path');
-if (process.argv[2] === '--version') { console.log(${JSON.stringify(version)}); process.exit(0); }
-if (process.argv[2] !== 'install') process.exit(97);
-mkdirSync(join(process.cwd(), 'node_modules'), { recursive: true });
-writeFileSync(join(process.cwd(), 'node_modules/.modules.yaml'), ${JSON.stringify(`packageManager: pnpm@${version}\nlayoutVersion: 5\nnodeLinker: hoisted\n`)});
-` });
-  const dependencyEnv = { npm_execpath: pm.binPath };
-  await withDependencyRefresh({
-    installDir: rootDir,
-    componentDir: cliDir,
-    env: buildDaemonDistGuardEnv({ ...dependencyEnv,
+  const dependencyEnv = await prepareStubHappierCliDependencies(rootDir, {
+    cliDir,
+    env: buildDaemonDistGuardEnv({
       HAPPIER_STACK_REPO_DIR: rootDir,
       HAPPIER_STACK_HOME_DIR: join(rootDir, '.stack-home'),
       HAPPIER_STACK_STORAGE_DIR: join(rootDir, '.stacks'),
       HAPPIER_DEV_TARGET_EXECUTION: '1',
     }),
-  }, ({ env }) => {
-    execFileSync(pm.binPath, ['install', '--frozen-lockfile'], { cwd: rootDir, env, stdio: 'pipe' });
   });
   writeStubCliDistBuildManifest(cliDir);
   return dependencyEnv;
+}
+
+async function prepareSelectedSourceCliFixture(rootDir, cliDir, stackBaseDir, { observeLazyGeneration = false } = {}) {
+  await mkdir(join(cliDir, 'src'), { recursive: true });
+  await mkdir(join(cliDir, 'node_modules'), { recursive: true });
+  const manifest = JSON.parse(await readFile(join(cliDir, 'package.json'), 'utf8'));
+  await writeFile(join(cliDir, 'package.json'), JSON.stringify({ ...manifest, name: '@happier-dev/cli', type: 'module', exports: {} }));
+  await writeFile(join(cliDir, 'tsconfig.json'), '{}');
+  const mutableSource = await readFile(join(cliDir, 'dist/index.mjs'), 'utf8');
+  const source = observeLazyGeneration ? mutableSource.replace(
+    'await startFakePingAwareDaemon(state).ready;',
+    "event((await import('./startGeneration')).generation); await startFakePingAwareDaemon(state).ready;",
+  ) : mutableSource;
+  await writeFile(join(cliDir, 'src/index.ts'), source);
+  await writeFile(join(cliDir, 'src/startGeneration.ts'), "export const generation = 'immutable-a';");
+  await symlink(dirname(createRequire(import.meta.url).resolve('esbuild/package.json')), join(cliDir, 'node_modules/esbuild'),
+    process.platform === 'win32' ? 'junction' : 'dir');
+  await installSourcePreparationInputs(rootDir, 'daemon');
+  const dependencyEnv = await prepareStubHappierCliDependencies(rootDir, { cliDir, env: buildDaemonDistGuardEnv({
+    HAPPIER_STACK_REPO_DIR: rootDir, HAPPIER_STACK_HOME_DIR: join(rootDir, '.stack-home'),
+    HAPPIER_DEV_TARGET_EXECUTION: '1',
+  }) });
+  const nativeRoot = join(rootDir, 'source-admission');
+  await mkdir(nativeRoot);
+  const native = await installSourceAdmissionFixture(nativeRoot);
+  return await native.build({ repoDir: rootDir, stackBaseDir, component: 'daemon', env: { ...native.env, ...dependencyEnv },
+    waitForSourceChanges: false });
 }
 
 test('source admission exposes an unchanged runnable prior dist as degraded when the current build fails', async (t) => {
@@ -414,225 +415,13 @@ test('source daemon admission reuses an exact watcher-admitted dist without a se
   assert.match(mismatched.reason, /^admitted_dist_mismatch:/);
 });
 
-test('source daemon final launch rejects an admitted fingerprint replaced under the lifecycle lock', async (t) => {
-  const fixtureRoot = await mkdtemp(join(tmpdir(), 'hstack-source-final-admission-race-'));
-  t.after(async () => rm(fixtureRoot, { recursive: true, force: true }));
-  const daemonModuleUrl = new URL('./daemon.mjs', import.meta.url).href;
-  const cliDistBuildManifestModuleUrl = CLI_DIST_BUILD_MANIFEST_MODULE_URL;
-  const cliDistBuildLockModuleUrl = new URL('./utils/proc/cliDistBuildLock.mjs', import.meta.url).href;
-  const script = `
-import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import { syncBuiltinESMExports } from 'node:module';
-import { dirname, join } from 'node:path';
-
-const cliDistBuildManifestModule = await import(${JSON.stringify(cliDistBuildManifestModuleUrl)});
-const cliDistBuildManifest = cliDistBuildManifestModule.default ?? cliDistBuildManifestModule;
-const { resolveCliDistBuildLockPath, withCliDistBuildLock } = await import(${JSON.stringify(cliDistBuildLockModuleUrl)});
-
-const root = ${JSON.stringify(fixtureRoot)};
-const repoDir = join(root, 'repo');
-const cliDir = join(repoDir, 'apps', 'cli');
-const cliBin = join(cliDir, 'bin', 'happier.mjs');
-const distEntrypoint = join(cliDir, 'dist', 'index.mjs');
-const cliHomeDir = join(root, 'home');
-const spawnMarker = join(root, 'spawned.txt');
-const replacementDir = join(root, 'replacement');
-const sourceA = 'import { appendFileSync } from "node:fs"; appendFileSync(process.env.SPAWN_MARKER, process.argv.join(" ") + "\\\\n");';
-const sourceB = sourceA + '\\n// replacement generation';
-
-fs.mkdirSync(dirname(cliBin), { recursive: true });
-fs.mkdirSync(dirname(distEntrypoint), { recursive: true });
-fs.mkdirSync(replacementDir, { recursive: true });
-fs.writeFileSync(cliBin, '#!/usr/bin/env node\\n', 'utf-8');
-fs.writeFileSync(distEntrypoint, sourceA, 'utf-8');
-const admittedFingerprint = cliDistBuildManifest.writeCliDistBuildManifest(distEntrypoint, {
-  outputDir: dirname(distEntrypoint),
-}).manifest.fingerprint;
-const replacementEntrypoint = join(replacementDir, 'index.mjs');
-fs.writeFileSync(replacementEntrypoint, sourceB, 'utf-8');
-cliDistBuildManifest.writeCliDistBuildManifest(replacementEntrypoint, {
-  outputDir: replacementDir,
-});
-
-let replacedUnderLifecycleLock = false;
-const originalExistsSync = fs.existsSync;
-const originalReaddirSync = fs.readdirSync;
-fs.existsSync = function patchedExistsSync(path) {
-  const result = originalExistsSync.call(this, path);
-  const locksDir = join(cliHomeDir, 'locks');
-  const lockFiles = originalExistsSync.call(fs, locksDir)
-    ? originalReaddirSync.call(fs, locksDir).filter((name) => name.startsWith('stack-daemon-orchestration-'))
-    : [];
-  if (!replacedUnderLifecycleLock && lockFiles.length === 1) {
-    fs.renameSync(dirname(distEntrypoint), join(cliDir, '.admitted-dist'));
-    fs.renameSync(replacementDir, dirname(distEntrypoint));
-    replacedUnderLifecycleLock = true;
-  }
-  return result;
-};
-syncBuiltinESMExports();
-
-const { startLocalDaemonWithAuth } = await import(${JSON.stringify(daemonModuleUrl)});
-let failure = null;
-try {
-  await startLocalDaemonWithAuth({
-    cliBin,
-    cliHomeDir,
-    internalServerUrl: 'http://127.0.0.1:43123',
-    publicServerUrl: 'http://localhost:43123',
-    isShuttingDown: () => false,
-    env: {
-      ...process.env,
-      HAPPIER_STACK_REPO_DIR: repoDir,
-      HAPPIER_STACK_STACK: 'dev',
-      HAPPIER_STACK_AUTO_AUTH_SEED: '0',
-      HAPPIER_STACK_MIGRATE_CREDENTIALS: '0',
-      HAPPIER_STACK_CREDENTIAL_VALIDATE_TIMEOUT_MS: '1',
-      HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '100',
-      HAPPIER_STACK_DAEMON_START_VERIFY_POLL_MS: '10',
-      HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS: '0',
-      SPAWN_MARKER: spawnMarker,
-    },
-    stackName: 'dev',
-    admittedDistClosureFingerprint: admittedFingerprint,
-  });
-} catch (error) {
-  failure = error;
-}
-
-assert.equal(replacedUnderLifecycleLock, true);
-assert.equal(failure?.code, 'ECLIDISTSTALECOLDSTART');
-assert.equal(fs.existsSync(spawnMarker), false, 'no daemon stop/start command may spawn after final admission fails');
-const remainingLifecycleLocks = fs.existsSync(join(cliHomeDir, 'locks'))
-  ? fs.readdirSync(join(cliHomeDir, 'locks')).filter((name) => name.startsWith('stack-daemon-orchestration-'))
-  : [];
-assert.deepEqual(remainingLifecycleLocks, [], 'typed admission failure must release the existing lifecycle lock');
-`;
-
-  const result = spawnSync(process.execPath, ['--input-type=module', '--eval', script], {
-    encoding: 'utf-8',
-    // Match the neighboring source-workspace admission child: importing the real
-    // Stack/CLI boundary can exceed 15 seconds on a busy development machine.
-    timeout: 30_000,
-  });
-  assert.equal(result.status, 0, result.stderr || result.stdout);
-});
-
-test('source daemon final launch rejects a workspace runtime identity changed during daemon stop', async (t) => {
-  const fixtureRoot = await mkdtemp(join(tmpdir(), 'hstack-source-final-workspace-runtime-race-'));
-  t.after(async () => rm(fixtureRoot, { recursive: true, force: true }));
-  const daemonModuleUrl = new URL('./daemon.mjs', import.meta.url).href;
-  const cliDistBuildManifestModuleUrl = CLI_DIST_BUILD_MANIFEST_MODULE_URL;
-  const script = `
-import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import { dirname, join } from 'node:path';
-
-const cliDistBuildManifestModule = await import(${JSON.stringify(cliDistBuildManifestModuleUrl)});
-const cliDistBuildManifest = cliDistBuildManifestModule.default ?? cliDistBuildManifestModule;
-const { readCliNodeWorkspaceRuntimeIdentity } = await import('@happier-dev/cli-common/componentArtifacts/copyCliNodeRuntimePayload');
-
-const root = ${JSON.stringify(fixtureRoot)};
-const repoDir = join(root, 'repo');
-const cliDir = join(repoDir, 'apps', 'cli');
-const cliBin = join(cliDir, 'bin', 'happier.mjs');
-const distEntrypoint = join(cliDir, 'dist', 'index.mjs');
-const cliHomeDir = join(root, 'home');
-const daemonStopMarker = join(root, 'daemon-stop.txt');
-const daemonStartMarker = join(root, 'daemon-start.txt');
-const runtimePackageDir = join(cliDir, 'node_modules', '@happier-dev', 'protocol');
-const runtimePackagePath = join(runtimePackageDir, 'package.json');
-const source = [
-  'import { appendFileSync, writeFileSync } from "node:fs";',
-  'const action = process.argv.at(-1);',
-  'if (action === "stop") {',
-  '  writeFileSync(process.env.WORKSPACE_RUNTIME_PACKAGE_PATH, JSON.stringify({ name: "@happier-dev/protocol", version: "2.0.0" }) + "\\\\n", "utf-8");',
-  '  appendFileSync(process.env.DAEMON_STOP_MARKER, "stop\\\\n");',
-  '} else if (action === "start") {',
-  '  appendFileSync(process.env.DAEMON_START_MARKER, "start\\\\n");',
-  '}',
-].join('\\n');
-
-fs.mkdirSync(join(repoDir, 'apps', 'ui'), { recursive: true });
-fs.mkdirSync(join(repoDir, 'apps', 'server'), { recursive: true });
-fs.mkdirSync(join(repoDir, 'packages', 'protocol'), { recursive: true });
-fs.mkdirSync(dirname(cliBin), { recursive: true });
-fs.mkdirSync(dirname(distEntrypoint), { recursive: true });
-fs.mkdirSync(runtimePackageDir, { recursive: true });
-fs.writeFileSync(join(repoDir, 'apps', 'ui', 'package.json'), '{}\\n', 'utf-8');
-fs.writeFileSync(join(repoDir, 'apps', 'server', 'package.json'), '{}\\n', 'utf-8');
-fs.writeFileSync(join(repoDir, 'packages', 'protocol', 'package.json'), JSON.stringify({ name: '@happier-dev/protocol' }) + '\\n', 'utf-8');
-fs.writeFileSync(join(cliDir, 'package.json'), JSON.stringify({
-  name: '@happier-dev/cli',
-  bundledDependencies: ['@happier-dev/protocol'],
-}) + '\\n', 'utf-8');
-fs.writeFileSync(join(runtimePackageDir, 'package.json'), JSON.stringify({
-  name: '@happier-dev/protocol',
-  version: '1.0.0',
-}) + '\\n', 'utf-8');
-fs.writeFileSync(cliBin, '#!/usr/bin/env node\\n', 'utf-8');
-fs.writeFileSync(distEntrypoint, source, 'utf-8');
-const workspaceRuntimeIdentity = readCliNodeWorkspaceRuntimeIdentity({ repoRoot: repoDir }).fingerprint;
-const admittedFingerprint = cliDistBuildManifest.writeCliDistBuildManifest(distEntrypoint, {
-  outputDir: dirname(distEntrypoint),
-  workspaceRuntimeIdentity,
-  workspaceRuntimePackages: ['@happier-dev/protocol'],
-}).manifest.fingerprint;
-
-const { startLocalDaemonWithAuth } = await import(${JSON.stringify(daemonModuleUrl)});
-let failure = null;
-try {
-  await startLocalDaemonWithAuth({
-    cliBin,
-    cliHomeDir,
-    internalServerUrl: 'http://127.0.0.1:43123',
-    publicServerUrl: 'http://localhost:43123',
-    isShuttingDown: () => false,
-    env: {
-      ...process.env,
-      HAPPIER_STACK_REPO_DIR: repoDir,
-      HAPPIER_STACK_STACK: 'dev',
-      HAPPIER_STACK_AUTO_AUTH_SEED: '0',
-      HAPPIER_STACK_MIGRATE_CREDENTIALS: '0',
-      HAPPIER_STACK_CREDENTIAL_VALIDATE_TIMEOUT_MS: '1',
-      HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '100',
-      HAPPIER_STACK_DAEMON_START_VERIFY_POLL_MS: '10',
-      HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS: '0',
-      HAPPIER_STACK_TUI: '0',
-      WORKSPACE_RUNTIME_PACKAGE_PATH: runtimePackagePath,
-      DAEMON_STOP_MARKER: daemonStopMarker,
-      DAEMON_START_MARKER: daemonStartMarker,
-    },
-    stackName: 'dev',
-    admittedDistClosureFingerprint: admittedFingerprint,
-  });
-} catch (error) {
-  failure = error;
-}
-
-assert.equal(fs.existsSync(daemonStopMarker), true, 'the awaited daemon stop must mutate the workspace runtime payload');
-assert.equal(fs.existsSync(daemonStartMarker), false, 'no daemon start command may spawn after the workspace runtime changes during stop');
-assert.equal(failure?.code, 'ECLIDISTSTALECOLDSTART');
-const remainingLifecycleLocks = fs.existsSync(join(cliHomeDir, 'locks'))
-  ? fs.readdirSync(join(cliHomeDir, 'locks')).filter((name) => name.startsWith('stack-daemon-orchestration-'))
-  : [];
-assert.deepEqual(remainingLifecycleLocks, [], 'typed admission failure must release the existing lifecycle lock');
-`;
-
-  const result = spawnSync(process.execPath, ['--input-type=module', '--eval', script], {
-    encoding: 'utf-8',
-    timeout: 30_000,
-  });
-  assert.equal(result.status, 0, result.stderr || result.stdout);
-});
-
-test('source daemon holds publication through profile and start but releases it during stop', async (t) => {
+test('source daemon releases publication before immutable start-to-stable verification', { skip: process.platform !== 'linux' }, async (t) => {
   withPatchedProcessEnv(t, { HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED: undefined });
   const tmp = await mkdtemp(join(tmpdir(), 'hstack-source-daemon-start-publication-lease-'));
   const { internalServerUrl, publicServerUrl } = await reserveLoopbackServerUrls();
   const cliDir = join(tmp, 'apps', 'cli');
   const cliHomeDir = join(tmp, 'stack', 'cli');
+  const runtimeStatePath = join(tmp, 'stack', 'stack.runtime.json');
   const eventsPath = join(tmp, 'daemon-events.log');
   const cliBin = await writeDelayedStopStubHappyCli({
     cliDir,
@@ -650,6 +439,7 @@ test('source daemon holds publication through profile and start but releases it 
   try {
     await writeHappyMonorepoMarkers(tmp);
     const dependencyEnv = await prepareCurrentSourceCliFixture(tmp, cliDir);
+    const immutable = await prepareSelectedSourceCliFixture(tmp, cliDir, dirname(runtimeStatePath), { observeLazyGeneration: true });
     await mkdir(cliHomeDir, { recursive: true });
     await writeFile(join(cliHomeDir, 'access.key'), 'dummy\n', 'utf-8');
     await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf-8');
@@ -693,6 +483,7 @@ test('source daemon holds publication through profile and start but releases it 
       cliHomeDir,
       internalServerUrl,
       publicServerUrl,
+      runtimeStatePath,
       isShuttingDown: () => shouldShutdown,
       forceRestart: true,
       env,
@@ -719,8 +510,8 @@ test('source daemon holds publication through profile and start but releases it 
       { lockPath, timeoutMs: 10_000, pollIntervalMs: 5 },
     );
     await new Promise((resolve) => setTimeout(resolve, 75));
-    assert.equal(profilePublisherEntered, false,
-      'a competing publisher must not remove the runner while profile reconciliation uses it');
+    assert.equal(profilePublisherEntered, true,
+      'immutable profile reconciliation does not retain workspace publication custody');
     await waitForEvent('stop');
     await profilePublisherPromise;
     assert.equal(profilePublisherEntered, true, 'profile completion releases publication before daemon stop');
@@ -744,18 +535,27 @@ test('source daemon holds publication through profile and start but releases it 
     startPublisherPromise = withCliDistBuildLock(
       async () => {
         startPublisherEntered = true;
+        await rename(join(cliDir, 'dist'), join(cliDir, 'retired-dist'));
+        await writeFile(join(cliDir, 'src/startGeneration.ts'), "export const generation = 'moving-b';");
       },
       { lockPath, timeoutMs: 10_000, pollIntervalMs: 5 },
     );
     await new Promise((resolve) => setTimeout(resolve, 75));
     assert.equal(
       startPublisherEntered,
-      false,
-      'a competing CLI publisher must remain outside the final start-to-stable critical section',
+      true,
+      'an immutable starting daemon must not retain workspace publication custody',
     );
     await startPromise;
     await startPublisherPromise;
-    assert.equal(startPublisherEntered, true, 'the publisher may proceed only after daemon startup releases the lease');
+    assert.equal(startPublisherEntered, true, 'the publisher proceeds while immutable daemon startup remains pending');
+    const selected = await readStackRuntimeStateFile(runtimeStatePath);
+    assert.equal(selected.sourceRuntimeLaunch.entrypoint, immutable.entrypoint);
+    assert.equal(selected.sourceRuntimeLaunch.env.PATH?.split(':')[0], join(cliHomeDir, 'source-runtime', 'bin'),
+      'the retained launch must deliver source command exposure to a self-restarting incumbent');
+    assert.equal(selected.sourceRuntimeIdentities.daemon.loaded, immutable.identity);
+    assert.match(await readFile(eventsPath, 'utf8'), /(^|\n)immutable-a(\n|$)/,
+      'a lazy startup import consumes the prepared generation after mutable publication retires');
   } finally {
     shouldShutdown = true;
     await startPromise?.catch(() => {});
@@ -773,11 +573,15 @@ test('source daemon holds publication through profile and start but releases it 
       }),
       stackName: 'dev',
     }).catch(() => {});
+    const { setBundleReadOnly } = await import('./build/build_source_runtime.mjs');
+    await setBundleReadOnly(join(tmp, 'source-bundles'), false).catch(error => {
+      if (error.code !== 'ENOENT') throw error;
+    });
     await rm(tmp, { recursive: true, force: true });
   }
 });
 
-test('ordinary source restart derives its daemon closure inside the final publication lease', async (t) => {
+test('ordinary source restart retains the prepared immutable launch across mutable publication', { skip: process.platform !== 'linux' }, async (t) => {
   const tmp = await mkdtemp(join(tmpdir(), 'hstack-source-daemon-final-publication-'));
   const { internalServerUrl, publicServerUrl } = await reserveLoopbackServerUrls();
   const cliDir = join(tmp, 'apps', 'cli');
@@ -796,6 +600,7 @@ test('ordinary source restart derives its daemon closure inside the final public
   try {
     await writeHappyMonorepoMarkers(tmp);
     const dependencyEnv = await prepareCurrentSourceCliFixture(tmp, cliDir);
+    const immutable = await prepareSelectedSourceCliFixture(tmp, cliDir, dirname(runtimeStatePath));
     await mkdir(cliHomeDir, { recursive: true });
     await writeFile(join(cliHomeDir, 'access.key'), 'dummy\n', 'utf-8');
     await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf-8');
@@ -867,10 +672,10 @@ test('ordinary source restart derives its daemon closure inside the final public
 
     await restart;
     assert.deepEqual(JSON.parse(await readFile(closureEnvMarker, 'utf-8')), {
-      distEntrypoint: mutableEntrypoint,
-      subprocessEntrypoint: null,
-      preferTsx: null,
-      fingerprint: finalFingerprint,
+      distEntrypoint: null,
+      subprocessEntrypoint: immutable.entrypoint,
+      preferTsx: '0',
+      fingerprint: null,
     });
   } finally {
     await restart?.catch(() => {});
@@ -885,6 +690,10 @@ test('ordinary source restart derives its daemon closure inside the final public
       }),
       stackName: 'dev',
     }).catch(() => {});
+    const { setBundleReadOnly } = await import('./build/build_source_runtime.mjs');
+    await setBundleReadOnly(join(tmp, 'source-bundles'), false).catch(error => {
+      if (error.code !== 'ENOENT') throw error;
+    });
     await rm(tmp, { recursive: true, force: true });
   }
 });
@@ -1493,7 +1302,7 @@ test('pid-only false-ready fixture publishes daemon command identity and cleans 
     assert.match(command, /daemon start/);
 
     execFileSync(process.execPath, [cliEntrypoint, 'daemon', 'stop'], { env, stdio: 'ignore' });
-    assert.equal(await waitForProcessExit(fixturePid), true, `expected fixture daemon pid ${fixturePid} to exit`);
+    await waitForProcessExit({ pid: fixturePid, timeoutMs: 2_000, intervalMs: 25, label: 'fixture daemon' });
     fixturePid = null;
   } finally {
     if (fixturePid) {
@@ -1820,19 +1629,6 @@ async function readDaemonPid(statePath) {
   return Number(JSON.parse(await readFile(statePath, 'utf-8')).pid);
 }
 
-async function waitForProcessExit(pid, timeoutMs = 2_000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      process.kill(pid, 0);
-    } catch {
-      return true;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-  return false;
-}
-
 async function spawnReplacementDaemonForTest({ statePath, env, previousPid }) {
   const child = spawn(process.execPath, ['-e', FAKE_PING_AWARE_DAEMON_CHILD_SCRIPT, statePath], {
     detached: true,
@@ -1868,6 +1664,8 @@ async function assertRunnablePriorSourceDaemonAdmission(t, sourceProvenanceEnv) 
   await mkdir(join(cliDir, 'node_modules'), { recursive: true });
   await writeFile(join(cliDir, 'node_modules', '.modules.yaml'), 'packageManager: pnpm@12.14.0\nlayoutVersion: 5\nnodeLinker: hoisted\n', 'utf-8');
 
+  const runtimeStatePath = join(tmp, 'stack', 'stack.runtime.json');
+
   const cliHomeDir = join(tmp, 'stack', 'cli');
   const statePath = join(cliHomeDir, 'daemon.state.json');
   await mkdir(cliHomeDir, { recursive: true });
@@ -1887,17 +1685,22 @@ async function assertRunnablePriorSourceDaemonAdmission(t, sourceProvenanceEnv) 
       cliBin,
       internalServerUrl,
       cliHomeDir,
+      runtimeStatePath,
       env: sourceEnv,
       stackName: 'dev',
     }).catch(() => {});
+    const { setBundleReadOnly } = await import('./build/build_source_runtime.mjs');
+    await setBundleReadOnly(join(tmp, 'source-bundles'), false).catch(error => { if (error.code !== 'ENOENT') throw error; });
     await rm(tmp, { recursive: true, force: true });
   });
 
+  await prepareSelectedSourceCliFixture(tmp, cliDir, dirname(runtimeStatePath));
   await startLocalDaemonWithAuth({
     cliBin,
     cliHomeDir,
     internalServerUrl,
     publicServerUrl,
+    runtimeStatePath,
     isShuttingDown: () => false,
     forceRestart: false,
     env: sourceEnv,
@@ -1911,6 +1714,7 @@ async function assertRunnablePriorSourceDaemonAdmission(t, sourceProvenanceEnv) 
     cliHomeDir,
     internalServerUrl,
     publicServerUrl,
+    runtimeStatePath,
     isShuttingDown: () => false,
     forceRestart: false,
     env: sourceEnv,
@@ -1920,15 +1724,15 @@ async function assertRunnablePriorSourceDaemonAdmission(t, sourceProvenanceEnv) 
   assert.equal(await readDaemonPid(statePath), livePid);
 }
 
-test('source daemon admission cold-starts runnable prior dist and preserves the exact live daemon', async (t) => {
+test('source daemon admission freezes source and preserves the exact live daemon', { skip: process.platform !== 'linux' }, async (t) => {
   await assertRunnablePriorSourceDaemonAdmission(t, (tmp) => ({ HAPPIER_STACK_REPO_DIR: tmp }));
 });
 
-test('CLI-root-only source daemon admission cold-starts runnable prior dist and preserves the exact live daemon', async (t) => {
+test('CLI-root-only source daemon admission freezes source and preserves the exact live daemon', { skip: process.platform !== 'linux' }, async (t) => {
   await assertRunnablePriorSourceDaemonAdmission(t, (tmp) => ({ HAPPIER_STACK_CLI_ROOT_DIR: tmp }));
 });
 
-test('source daemon cold start uses an unchanged runnable prior dist when the current build fails', async (t) => {
+test('source daemon startup uses its immutable generation without invoking a failing shared-dist publisher', { skip: process.platform !== 'linux' }, async (t) => {
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-build-failed-fallback-'));
   const { internalServerUrl, publicServerUrl } = await reserveLoopbackServerUrls();
   const cliDir = join(tmp, 'apps', 'cli');
@@ -1964,6 +1768,7 @@ test('source daemon cold start uses an unchanged runnable prior dist when the cu
   await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf-8');
   const priorDistSource = await readFile(join(cliDir, 'dist', 'index.mjs'), 'utf-8');
   const priorDistManifest = await readFile(join(cliDir, 'dist', '.build-manifest.json'), 'utf-8');
+  const runtimeStatePath = join(tmp, 'stack', 'stack.runtime.json');
   const { env } = await installWorkspaceAdmissionProcessFixture(t, tmp, {
     env: buildDaemonDistGuardEnv({
       HAPPIER_STACK_REPO_DIR: tmp,
@@ -1980,60 +1785,45 @@ test('source daemon cold start uses an unchanged runnable prior dist when the cu
       npm_node_execpath: '',
     }),
   });
-  const warnings = [];
-  const originalWarn = console.warn;
   t.after(async () => {
-    await stopLocalDaemon({ cliBin, internalServerUrl, cliHomeDir, env, stackName: 'dev' }).catch(() => {});
+    await stopLocalDaemon({ cliBin, internalServerUrl, cliHomeDir, runtimeStatePath, env, stackName: 'dev' }).catch(() => {});
+    const { setBundleReadOnly } = await import('./build/build_source_runtime.mjs');
+    await setBundleReadOnly(join(tmp, 'source-bundles'), false).catch(error => { if (error.code !== 'ENOENT') throw error; });
     await rm(tmp, { recursive: true, force: true });
   });
-  console.warn = (...args) => warnings.push(args.map(String).join(' '));
-  try {
+  const immutable = await prepareSelectedSourceCliFixture(tmp, cliDir, dirname(runtimeStatePath));
     await startLocalDaemonWithAuth({
       cliBin,
       cliHomeDir,
       internalServerUrl,
       publicServerUrl,
+      runtimeStatePath,
       isShuttingDown: () => false,
       forceRestart: true,
       env,
       stackName: 'dev',
       cliIdentity: 'default',
     });
-  } finally {
-    console.warn = originalWarn;
-  }
 
   assert.equal((await checkDaemonStatePingAware(cliHomeDir, { serverUrl: internalServerUrl, env })).status, 'running');
-  assert.match(
-    warnings.join('\n'),
-    /WARNING: happier-cli current build failed .*starting the daemon from the last usable dist.*Source changes are not active/s,
-  );
+  assert.equal((await readStackRuntimeStateFile(runtimeStatePath)).sourceRuntimeIdentities.daemon.loaded, immutable.identity);
   const livePid = await readDaemonPid(join(cliHomeDir, 'daemon.state.json'));
-  const preserveWarnings = [];
-  console.warn = (...args) => preserveWarnings.push(args.map(String).join(' '));
-  try {
     await startLocalDaemonWithAuth({
       cliBin,
       cliHomeDir,
       internalServerUrl,
       publicServerUrl,
+      runtimeStatePath,
       isShuttingDown: () => false,
-      forceRestart: true,
+      forceRestart: false,
       env,
       stackName: 'dev',
       cliIdentity: 'default',
     });
-  } finally {
-    console.warn = originalWarn;
-  }
   assert.equal(await readDaemonPid(join(cliHomeDir, 'daemon.state.json')), livePid);
-  assert.match(
-    preserveWarnings.join('\n'),
-    /WARNING: happier-cli current build failed .*preserving the healthy daemon already running from the last usable dist/s,
-  );
   assert.equal(await readFile(join(cliDir, 'dist', 'index.mjs'), 'utf-8'), priorDistSource);
   assert.equal(await readFile(join(cliDir, 'dist', '.build-manifest.json'), 'utf-8'), priorDistManifest);
-  assert.equal(await readFile(buildFailurePath, 'utf8'), '47\n', 'fallback must follow the intended package-manager failure');
+  assert.equal(existsSync(buildFailurePath), false, 'immutable startup and adoption never invoke the shared-dist publisher');
 });
 
 test('CLI-root-only source dist admission consumes the current build result', async (t) => {
@@ -2102,7 +1892,7 @@ test('startLocalDaemonWithAuth requires daemon control ping before accepting run
       fixturePid ??= await readDaemonPid(join(cliHomeDir, 'daemon.state.json')).catch(() => null);
       await stopLocalDaemon({ cliBin, internalServerUrl, cliHomeDir, env });
       if (fixturePid) {
-        assert.equal(await waitForProcessExit(fixturePid), true, `expected fixture daemon pid ${fixturePid} to exit`);
+        await waitForProcessExit({ pid: fixturePid, timeoutMs: 2_000, intervalMs: 25, label: 'fixture daemon' });
         fixturePid = null;
       }
     };
@@ -2211,7 +2001,7 @@ test('startLocalDaemonWithAuth does not require a second CLI build when dist/ind
       cliHomeDir,
       env,
     });
-    assert.equal(await waitForProcessExit(fixturePid), true, `expected fixture daemon pid ${fixturePid} to exit`);
+    await waitForProcessExit({ pid: fixturePid, timeoutMs: 2_000, intervalMs: 25, label: 'fixture daemon' });
     fixturePid = null;
   } finally {
     if (fixturePid) {
@@ -2221,7 +2011,7 @@ test('startLocalDaemonWithAuth does not require a second CLI build when dist/ind
   }
 });
 
-test('startLocalDaemonWithAuth waits for a concurrent cli dist build to finish before starting', async (t) => {
+test('source daemon starts its immutable generation despite an incomplete shared-dist publication', { skip: process.platform !== 'linux' }, async (t) => {
   // This temporary publisher and caller model independent, uncharged work,
   // not a lock-only waiter inside the public runner's charged envelope.
   withPatchedProcessEnv(t, { HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED: undefined });
@@ -2235,16 +2025,11 @@ test('startLocalDaemonWithAuth waits for a concurrent cli dist build to finish b
     const cliDir = join(tmp, 'apps', 'cli');
     const cliBin = await writeStubHappyCli({ cliDir });
     const distScript = await readFile(join(cliDir, 'dist', 'index.mjs'), 'utf-8');
+    await writeHappyMonorepoMarkers(tmp);
+    await prepareCurrentSourceCliFixture(tmp, cliDir);
+    const runtimeStatePath = join(tmp, 'stack', 'stack.runtime.json');
+    const immutable = await prepareSelectedSourceCliFixture(tmp, cliDir, dirname(runtimeStatePath));
     await rm(join(cliDir, 'dist'), { recursive: true, force: true });
-    await mkdir(join(tmp, 'apps', 'ui'), { recursive: true });
-    await mkdir(join(tmp, 'apps', 'server'), { recursive: true });
-    await writeFile(join(tmp, 'apps', 'ui', 'package.json'), '{}\n', 'utf-8');
-    await writeFile(join(tmp, 'apps', 'server', 'package.json'), '{}\n', 'utf-8');
-    await mkdir(join(cliDir, 'node_modules'), { recursive: true });
-    await writeFile(join(cliDir, 'node_modules', '.modules.yaml'), 'packageManager: pnpm@12.14.0\nlayoutVersion: 5\nnodeLinker: hoisted\n', 'utf-8');
-    await writeFile(join(cliDir, 'pnpm-lock.yaml'), '# yarn\n', 'utf-8');
-    await writeFile(join(cliDir, 'pnpm-workspace.yaml'), 'packages:\n');
-    await writeFile(join(tmp, 'package.json'), '{}\n', 'utf-8');
 
     const cliHomeDir = join(tmp, 'stack', 'cli');
     await mkdir(cliHomeDir, { recursive: true });
@@ -2278,6 +2063,7 @@ test('startLocalDaemonWithAuth waits for a concurrent cli dist build to finish b
     startPromise = startLocalDaemonWithAuth({
       cliBin,
       cliHomeDir,
+      runtimeStatePath,
       internalServerUrl,
       publicServerUrl,
       isShuttingDown: () => shouldShutdown,
@@ -2287,9 +2073,10 @@ test('startLocalDaemonWithAuth waits for a concurrent cli dist build to finish b
       cliIdentity: 'default',
     });
     await Promise.all([publisherPromise, startPromise]);
+    assert.equal((await readStackRuntimeStateFile(runtimeStatePath)).sourceRuntimeIdentities.daemon.loaded, immutable.identity);
 
     fixturePid = await readDaemonPid(join(cliHomeDir, 'daemon.state.json'));
-    assert.ok(fixturePid > 1, 'expected the daemon to start from the completed publication');
+    assert.ok(fixturePid > 1, 'expected the daemon to start from its prepared immutable generation');
     assert.equal(existsSync(lockPath), false, 'startup must release its final publication lease');
 
     await stopLocalDaemon({
@@ -2298,7 +2085,7 @@ test('startLocalDaemonWithAuth waits for a concurrent cli dist build to finish b
       cliHomeDir,
       env,
     });
-    assert.equal(await waitForProcessExit(fixturePid), true, `expected fixture daemon pid ${fixturePid} to exit`);
+    await waitForProcessExit({ pid: fixturePid, timeoutMs: 2_000, intervalMs: 25, label: 'fixture daemon' });
     fixturePid = null;
   } finally {
     shouldShutdown = true;
@@ -2310,8 +2097,10 @@ test('startLocalDaemonWithAuth waits for a concurrent cli dist build to finish b
     }
     if (fixturePid) {
       try { process.kill(fixturePid, 'SIGKILL'); } catch {}
-      await waitForProcessExit(fixturePid);
+      await waitForProcessExit({ pid: fixturePid, timeoutMs: 2_000, intervalMs: 25, label: 'fixture daemon cleanup' }).catch(() => {});
     }
+    const { setBundleReadOnly } = await import('./build/build_source_runtime.mjs');
+    await setBundleReadOnly(join(tmp, 'source-bundles'), false).catch(error => { if (error.code !== 'ENOENT') throw error; });
     await rm(tmp, { recursive: true, force: true });
   }
 });
@@ -2514,7 +2303,7 @@ test('resolveGuardedLocalCliDistSelection canonicalizes stale symlinked dist to 
   }
 });
 
-test('startLocalDaemonWithAuth waits on the active checkout lock for stale symlinked dist', async t => {
+test('source daemon with stale symlinked dist loads the active immutable generation while publication is busy', { skip: process.platform !== 'linux' }, async t => {
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-stale-symlink-lock-'));
   let lockHolder = null;
   let fixturePid = null;
@@ -2527,11 +2316,12 @@ test('startLocalDaemonWithAuth waits on the active checkout lock for stale symli
     const activeCliDir = join(activeRoot, 'apps', 'cli');
     const staleCliDir = join(staleRoot, 'apps', 'cli');
     await writeStubHappyCli({ cliDir: activeCliDir });
-    const activeDistScript = await readFile(join(activeCliDir, 'dist', 'index.mjs'), 'utf-8');
     const staleCliBin = await writeStubHappyCli({ cliDir: staleCliDir });
     await rm(join(staleCliDir, 'dist'), { recursive: true, force: true });
     await symlink(join(activeCliDir, 'dist'), join(staleCliDir, 'dist'), 'dir');
     const dependencyEnv = await prepareCurrentSourceCliFixture(activeRoot, activeCliDir);
+    const runtimeStatePath = join(tmp, 'stack', 'stack.runtime.json');
+    const immutable = await prepareSelectedSourceCliFixture(activeRoot, activeCliDir, dirname(runtimeStatePath));
     const { env } = await installWorkspaceAdmissionProcessFixture(t, tmp, {
       env: buildDaemonDistGuardEnv({
         ...dependencyEnv,
@@ -2555,16 +2345,6 @@ test('startLocalDaemonWithAuth waits on the active checkout lock for stale symli
       'utf-8',
     );
 
-    setTimeout(async () => {
-      try {
-        await writeFile(join(activeCliDir, 'dist', 'index.mjs'), activeDistScript, 'utf-8');
-        writeStubCliDistBuildManifest(activeCliDir);
-        await rm(activeLockPath, { force: true });
-      } catch {
-        // Best-effort: the test assertions below surface any failure.
-      }
-    }, 100);
-
     const cliHomeDir = join(tmp, 'stack', 'cli');
     await mkdir(cliHomeDir, { recursive: true });
     await writeFile(join(cliHomeDir, 'access.key'), 'dummy\n', 'utf-8');
@@ -2576,6 +2356,7 @@ test('startLocalDaemonWithAuth waits on the active checkout lock for stale symli
         cliHomeDir,
         internalServerUrl,
         publicServerUrl,
+        runtimeStatePath,
         isShuttingDown: () => false,
         forceRestart: true,
         env,
@@ -2590,18 +2371,21 @@ test('startLocalDaemonWithAuth waits on the active checkout lock for stale symli
     ]);
 
     const daemonState = JSON.parse(await readFile(join(cliHomeDir, 'daemon.state.json'), 'utf-8'));
-    assert.ok(Number(daemonState.pid) > 1, 'expected daemon to write daemon state after active dist recovered');
+    assert.ok(Number(daemonState.pid) > 1, 'the immutable daemon starts while shared dist remains unavailable');
+    assert.equal(JSON.parse(await readFile(activeLockPath, 'utf8')).pid, lockHolder.pid);
+    assert.equal((await readStackRuntimeStateFile(runtimeStatePath)).sourceRuntimeIdentities.daemon.loaded, immutable.identity);
     fixturePid = Number(daemonState.pid);
 
     await stopLocalDaemon({
       cliBin: staleCliBin,
       internalServerUrl,
       cliHomeDir,
+      runtimeStatePath,
       env,
       stackName: 'dev',
       cliIdentity: 'default',
     });
-    assert.equal(await waitForProcessExit(fixturePid), true, `expected fixture daemon pid ${fixturePid} to exit`);
+    await waitForProcessExit({ pid: fixturePid, timeoutMs: 2_000, intervalMs: 25, label: 'fixture daemon' });
     fixturePid = null;
   } finally {
     if (fixturePid) {
@@ -2610,6 +2394,8 @@ test('startLocalDaemonWithAuth waits on the active checkout lock for stale symli
     if (lockHolder && lockHolder.exitCode == null) {
       lockHolder.kill('SIGTERM');
     }
+    const { setBundleReadOnly } = await import('./build/build_source_runtime.mjs');
+    await setBundleReadOnly(join(tmp, 'source-bundles'), false).catch(error => { if (error.code !== 'ENOENT') throw error; });
     await rm(tmp, { recursive: true, force: true });
   }
 });
@@ -2967,7 +2753,7 @@ test('startLocalDaemonWithAuth prefers guarded source dist/index.mjs over packag
   }
 });
 
-test('startLocalDaemonWithAuth repoints stale fixture cliBin to the active checkout dist', async t => {
+test('source daemon repoints a stale cliBin to the active immutable source launch without a publication lease', { skip: process.platform !== 'linux' }, async t => {
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-active-checkout-repoint-'));
   try {
     const { internalServerUrl, publicServerUrl } = await reserveLoopbackServerUrls();
@@ -2982,6 +2768,9 @@ test('startLocalDaemonWithAuth repoints stale fixture cliBin to the active check
     await tagStubCliDistLaunchSource({ cliDir: activeCliDir, tag: 'active' });
     await tagStubCliDistLaunchSource({ cliDir: staleCliDir, tag: 'stale' });
     const dependencyEnv = await prepareCurrentSourceCliFixture(activeRoot, activeCliDir);
+
+    const runtimeStatePath = join(tmp, 'stack', 'stack.runtime.json');
+    const immutable = await prepareSelectedSourceCliFixture(activeRoot, activeCliDir, dirname(runtimeStatePath));
 
     const cliHomeDir = join(tmp, 'stack', 'cli');
     const markerPath = join(tmp, 'daemon-launch-source.txt');
@@ -3006,6 +2795,7 @@ test('startLocalDaemonWithAuth repoints stale fixture cliBin to the active check
         cliHomeDir,
         internalServerUrl,
         publicServerUrl,
+        runtimeStatePath,
         isShuttingDown: () => false,
         forceRestart: true,
         env,
@@ -3014,21 +2804,20 @@ test('startLocalDaemonWithAuth repoints stale fixture cliBin to the active check
       });
 
       assert.equal(await readFile(markerPath, 'utf-8'), 'active\n');
-      const inheritedLease = JSON.parse(await readFile(lockMarkerPath, 'utf-8'));
-      assert.equal(
-        inheritedLease.path,
-        resolveCliDistBuildLockPath(await realpath(activeRoot)),
-      );
-      assert.match(String(inheritedLease.token ?? ''), /^[a-f0-9-]{36}$/i);
+      assert.equal(await readFile(lockMarkerPath, 'utf-8'), '');
+      assert.equal((await readStackRuntimeStateFile(runtimeStatePath)).sourceRuntimeIdentities.daemon.loaded, immutable.identity);
     } finally {
       await stopLocalDaemon({
         cliBin: staleCliBin,
         internalServerUrl,
         cliHomeDir,
+        runtimeStatePath,
         env,
       });
     }
   } finally {
+    const { setBundleReadOnly } = await import('./build/build_source_runtime.mjs');
+    await setBundleReadOnly(join(tmp, 'source-bundles'), false).catch(error => { if (error.code !== 'ENOENT') throw error; });
     await rm(tmp, { recursive: true, force: true });
   }
 });
@@ -3086,7 +2875,7 @@ test('startLocalDaemonWithAuth rejects symlinked active dist outside the active 
   }
 });
 
-test('stopLocalDaemon uses active checkout dist when stale cliBin dist is missing', async t => {
+test('stopLocalDaemon uses the active immutable launch when stale cliBin dist is missing', { skip: process.platform !== 'linux' }, async t => {
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-active-stop-repoint-'));
   let daemonPid = null;
   try {
@@ -3101,6 +2890,9 @@ test('stopLocalDaemon uses active checkout dist when stale cliBin dist is missin
     const staleCliBin = await writeStubHappyCli({ cliDir: staleCliDir });
     await rm(join(staleCliDir, 'dist'), { recursive: true, force: true });
     const dependencyEnv = await prepareCurrentSourceCliFixture(activeRoot, activeCliDir);
+
+    const runtimeStatePath = join(tmp, 'stack', 'stack.runtime.json');
+    await prepareSelectedSourceCliFixture(activeRoot, activeCliDir, dirname(runtimeStatePath));
 
     const cliHomeDir = join(tmp, 'stack', 'cli');
     const eventsPath = join(tmp, 'daemon-events.log');
@@ -3121,6 +2913,7 @@ test('stopLocalDaemon uses active checkout dist when stale cliBin dist is missin
     await startLocalDaemonWithAuth({
       cliBin: staleCliBin,
       cliHomeDir,
+      runtimeStatePath,
       internalServerUrl,
       publicServerUrl,
       isShuttingDown: () => false,
@@ -3137,6 +2930,7 @@ test('stopLocalDaemon uses active checkout dist when stale cliBin dist is missin
       cliBin: staleCliBin,
       internalServerUrl,
       cliHomeDir,
+      runtimeStatePath,
       env,
     });
 
@@ -3148,6 +2942,8 @@ test('stopLocalDaemon uses active checkout dist when stale cliBin dist is missin
         process.kill(daemonPid, 'SIGTERM');
       } catch {}
     }
+    const { setBundleReadOnly } = await import('./build/build_source_runtime.mjs');
+    await setBundleReadOnly(join(tmp, 'source-bundles'), false).catch(error => { if (error.code !== 'ENOENT') throw error; });
     await rm(tmp, { recursive: true, force: true });
   }
 });
@@ -3309,6 +3105,10 @@ for (const { matchingLaunch, nativeLauncher } of [
       const otherLaunch = !matchingLaunch
         ? await writeRuntimeSnapshotHappyCliJsCommand({ snapshotDir: join(tmp, 'other-bundle') })
         : null;
+      // A stale caller may carry a native launcher, but the source producer
+      // retains emitted JavaScript, never that launcher's shell wrapper.
+      const selectedEntrypoint = otherLaunch?.cliCommand
+        ?? (nativeLauncher ? join(dirname(cliBin), 'runtime-cli.mjs') : cliCommand);
       const startsPath = join(tmp, 'launch-starts');
       if (otherLaunch) {
         for (const [command, identity] of [[cliCommand, 'stale'], [otherLaunch.cliCommand, 'selected']]) {
@@ -3320,8 +3120,8 @@ ${source}`);
       }
       await recordStackRuntimeStart(runtimeStatePath, { stackName: 'source-attestation', ownerPid: process.pid,
         sourceRuntimeIdentities: { daemon: { selected: 'prepared-source', loaded: null } },
-        sourceRuntimeLaunch: { entrypoint: matchingLaunch ? cliCommand : otherLaunch.cliCommand,
-          cliDir: dirname(matchingLaunch ? cliCommand : otherLaunch.cliCommand), env: {} } });
+        sourceRuntimeLaunch: { entrypoint: selectedEntrypoint,
+          cliDir: dirname(selectedEntrypoint), env: {} } });
       const result = await startLocalDaemonWithAuth({ cliBin, cliCommand, cliHomeDir, internalServerUrl, publicServerUrl,
         runtimeStatePath, env, stackName: 'source-attestation', isShuttingDown: () => false });
       assert.equal(result.started, true);
@@ -3458,7 +3258,7 @@ test('startLocalDaemonWithAuth ordinary runtime adoption replaces closure A with
     const adoptedStart = await start(secondManifest.fingerprint);
     assert.equal(await readDaemonPid(statePath), secondPid, 'matching admitted closure must remain adopted');
 
-    const daemonBaseEnv = getDaemonEnv({
+    const daemonBaseEnv = await getDaemonEnv({
       baseEnv: env,
       cliHomeDir,
       internalServerUrl,
@@ -3807,7 +3607,7 @@ test('cancelled Stack restart preserves a concurrently published successor lock 
       HAPPIER_STACK_CREDENTIAL_VALIDATE_TIMEOUT_MS: '1',
       PATH: `${binDir}:${process.env.PATH ?? ''}`,
     });
-    const daemonEnv = getDaemonEnv({
+    const daemonEnv = await getDaemonEnv({
       baseEnv,
       cliHomeDir,
       internalServerUrl,

@@ -2,12 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { access, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { access, readFile, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
-import { installNativeAdmissionFixture } from '../../testkit/core/native_admission_fixture.mjs';
+import { buildNativeAdmissionFixtureEnv, installNativeAdmissionFixture } from '../../testkit/core/native_admission_fixture.mjs';
+import { writeFakeBin } from '../../testkit/core/fake_bin_harness.mjs';
+import { resolveHeavyweightMemoryFloorKiB } from '../dev_targets/remote_commands.mjs';
 
-import { buildNodeTestArgs, runNodeTestFiles } from './test_process.mjs';
+import { buildNodeTestArgs, runNodeTestFiles, runStackTestFiles } from './test_process.mjs';
 
 test('buildNodeTestArgs preserves native node --test file execution for unit lanes', () => {
   assert.deepEqual(buildNodeTestArgs(['/tmp/a.test.mjs', '/tmp/b.test.mjs']), [
@@ -36,6 +38,47 @@ test('managed native test execution preserves the test runner result', async t =
   assert.equal(result.code, 1);
 });
 
+test('Stack suite admission covers a nested source bundle when no capacity remains for enlargement', { skip: process.platform !== 'linux' }, async t => {
+  const fixture = await createTempFixture(t);
+  const { launcher } = await installNativeAdmissionFixture({ root: fixture.root });
+  const memory = fixture.path('memory');
+  const floor = resolveHeavyweightMemoryFloorKiB('source-bundle');
+  await writeFile(memory, `${floor} ${floor}\n`);
+  writeFakeBin({ root: fixture.root, name: 'awk', content: `#!/bin/sh
+case "$*" in
+  */proc/meminfo*) /usr/bin/awk '{print $1, $2}' "$FIXTURE_MEMORY" ;;
+  *) exec /usr/bin/awk "$@" ;;
+esac
+` });
+  writeFakeBin({ root: fixture.root, name: 'systemctl', content: '#!/bin/sh\nexit 1\n' });
+  const file = fixture.path('nested.test.mjs');
+  const observed = fixture.path('result.json');
+  await writeFile(file, `
+    import test from 'node:test';
+    import { spawnSync } from 'node:child_process';
+    import { writeFileSync } from 'node:fs';
+    test('nested source build', () => {
+      // Model a peer consuming the remaining physical memory after this
+      // suite was admitted. Already-covered work must still proceed.
+      writeFileSync(${JSON.stringify(memory)}, '0 ${floor}\\n');
+      const nested = spawnSync('/bin/sh', [${JSON.stringify(launcher)},
+        '--heavyweight-admission', '--class=source-bundle', '--machine=worker', '--',
+        process.execPath, '-e', ''], { encoding: 'utf8' });
+      writeFileSync(${JSON.stringify(observed)}, JSON.stringify({ status: nested.status, stderr: nested.stderr }));
+    });
+  `);
+  const result = await runStackTestFiles([file], {
+    admission: { launcherPath: launcher },
+    env: { ...buildNativeAdmissionFixtureEnv(), NODE_TEST_CONTEXT: undefined,
+      PATH: `${fixture.path('bin')}:${dirname(process.execPath)}:${process.env.PATH}`,
+      FIXTURE_MEMORY: memory },
+    stdio: 'ignore',
+  });
+  assert.equal(result.code, 0);
+  const nested = JSON.parse(await readFile(observed, 'utf8'));
+  assert.equal(nested.status, 0, nested.stderr);
+});
+
 test('managed native test execution admits the finite payload after coordinator preparation', { skip: process.platform !== 'linux' }, async t => {
   const fixture = await createTempFixture(t);
   const admission = await installNativeAdmissionFixture({ root: fixture.root });
@@ -44,8 +87,7 @@ test('managed native test execution admits the finite payload after coordinator 
   const result = await runNodeTestFiles([file], {
     env: { ...process.env, CI: '1', NODE_TEST_CONTEXT: undefined,
       HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN: '', HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED: '',
-      HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: '', HAPPIER_WORKSPACE_DIST_BUILD_LOCK_LEASES: '[]',
-      HAPPIER_BUILD_DEPENDENCY_CUSTODY: '' },
+      HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: '', HAPPIER_WORKSPACE_DIST_BUILD_LOCK_LEASES: '[]' },
     admission: { launcherPath: admission.launcher, admissionClass: 'validation' },
     serial: true, stdio: 'ignore',
   });
@@ -81,7 +123,7 @@ for (const admitted of [false, true]) test(`managed ${admitted ? 'admitted ' : '
   `], { env: { ...process.env, NODE_TEST_CONTEXT: undefined,
     ...(admitted ? { HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN: '',
       HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED: '', HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: '',
-      HAPPIER_WORKSPACE_DIST_BUILD_LOCK_LEASES: '[]', HAPPIER_BUILD_DEPENDENCY_CUSTODY: '' } : {}) },
+      HAPPIER_WORKSPACE_DIST_BUILD_LOCK_LEASES: '[]' } : {}) },
     stdio: ['ignore', 'pipe', 'pipe'] });
   t.after(() => controller.kill('SIGKILL'));
   let output = '', error = '';

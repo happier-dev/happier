@@ -73,8 +73,30 @@ export function createHappyCliWorkspacePreparationExecutor({
   syncSharedDepsForSourceDevImpl = syncSharedDepsForSourceDev,
 } = {}) {
   let inFlightBuild = null;
+  let latestBuild = null;
+  const buildWaiters = new Set();
   return {
     target: 'daemon',
+    prepare() {
+      return latestBuild ?? this.build();
+    },
+    waitForBuild({ signal } = {}) {
+      signal?.throwIfAborted();
+      return new Promise((resolve, reject) => {
+        const cleanup = () => {
+          buildWaiters.delete(onBuild);
+          signal?.removeEventListener('abort', onAbort);
+        };
+        const onAbort = () => { cleanup(); reject(signal.reason); };
+        const onBuild = build => {
+          buildWaiters.delete(onBuild);
+          build.then(value => { cleanup(); resolve(value); }, error => { cleanup(); reject(error); });
+        };
+        signal?.addEventListener('abort', onAbort, { once: true });
+        if (inFlightBuild) onBuild(inFlightBuild);
+        else buildWaiters.add(onBuild);
+      });
+    },
     build() {
       if (inFlightBuild) return inFlightBuild;
       const build = Promise.resolve().then(async () => (
@@ -88,6 +110,8 @@ export function createHappyCliWorkspacePreparationExecutor({
         if (inFlightBuild === settledBuild) inFlightBuild = null;
       });
       inFlightBuild = settledBuild;
+      latestBuild = settledBuild;
+      for (const onBuild of buildWaiters) onBuild(settledBuild);
       return settledBuild;
     },
     async restart() {
@@ -284,6 +308,7 @@ export function createHappyCliReloadExecutor({
   stackName = null,
   cliIdentity = 'default',
   sourceRuntimeOptions,
+  workspacePreparation = null,
 }, {
   prepareDevDaemonSourceRuntimeImpl = prepareDevDaemonSourceRuntime,
   startLocalDaemonWithAuthImpl = startLocalDaemonWithAuth,
@@ -319,6 +344,7 @@ export function createHappyCliReloadExecutor({
     async build() {
       if (!startDaemon) return { skipped: true, reason: 'daemon-disabled' };
       successor = null;
+      await workspacePreparation?.build();
       logger.log('[local] watch: happier-cli changed → preparing the daemon source generation...');
       successor = await prepareDevDaemonSourceRuntimeImpl({ sourceRuntimeOptions, env });
       const ping = await pingDaemonImpl({

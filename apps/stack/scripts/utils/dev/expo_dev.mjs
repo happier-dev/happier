@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
-import { mkdir, readFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
   ensureExpoIsolationEnv,
@@ -9,8 +9,6 @@ import {
   resolveExpoTmpDir,
   wantsExpoClearCache,
   writePidState,
-  waitForExpoMetroRunning,
-  resolveMetroWaitIntervalMsFromEnv,
 } from '../expo/expo.mjs';
 import { selectExpoDevMetroPort } from '../expo/metro_ports.mjs';
 import { ensureEnvFileUpdated } from '../env/env_file.mjs';
@@ -21,12 +19,13 @@ import {
   recordStackRuntimeUpdate,
 } from '../stack/runtime_state.mjs';
 import { killProcessGroupOwnedByStack, listPidsWithEnvNeedle } from '../proc/ownership.mjs';
-import { isDependencyRefreshMutationActive, resolveDependencyInstallRoot, withDependencyConsumption } from '../proc/dependency_refresh.mjs';
+import { readDependencyPublicationState, resolveDependencyInstallRoot, waitForDependencyRefresh } from '../proc/dependency_refresh.mjs';
 import {
   ensureExpoWorkspacePrepared,
   expoSpawn,
   hasUsableExpoWorkspaceLastGreen,
   resolveExpoBin,
+  reapExpoPluginUiArtifacts,
   withExpoPreparationEnv,
 } from '../expo/command.mjs';
 import { pathExists } from '../fs/fs.mjs';
@@ -37,6 +36,7 @@ import { resolveMobileReachableServerUrl } from '../server/mobile_api_url.mjs';
 import { getTailscaleStatus } from '../tailscale/ip.mjs';
 import { isTcpPortFree } from '../net/ports.mjs';
 import { resolveExpoTailscaleEnabled, startExpoTailscaleForwarder } from './expo_dev_tailscale.mjs';
+import { reapHistoricalTempRoots } from '../dev_targets/historical_temp_roots.mjs';
 import {
   computeExpoRestartDelayMs,
   createExpoCrashOutputTracker,
@@ -101,21 +101,54 @@ function normalizeApiServerUrl(raw) {
   return String(raw ?? '').trim().replace(/\/+$/, '');
 }
 
-export async function resolveMetroConfigFingerprint({ projectDir } = {}) {
-  const configPath = join(String(projectDir ?? '').trim(), 'metro.config.js');
-  try {
-    const contents = await readFile(configPath);
-    return `sha256:${createHash('sha256').update(contents).digest('hex')}`;
-  } catch (error) {
-    if (error?.code === 'ENOENT') {
-      return 'missing';
+export async function resolveMetroConfigFingerprint({ projectDir, env = process.env } = {}) {
+  const installDir = resolveDependencyInstallRoot(projectDir);
+  const inputs = [];
+  for (const [name, file] of [
+    ['metro', join(String(projectDir ?? '').trim(), 'metro.config.js')],
+    ['babel', join(String(projectDir ?? '').trim(), 'babel.config.js')],
+    ['store', join(String(projectDir ?? '').trim(), 'scripts', 'metroCache.cjs')],
+    ['dependencies', join(installDir, 'pnpm-lock.yaml')],
+  ]) {
+    try {
+      inputs.push([name, createHash('sha256').update(await readFile(file)).digest('hex')]);
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
     }
-    throw error;
   }
+  const { completedExpoGeneration: completedGeneration } = await readDependencyPublicationState({
+    installDir, env,
+  });
+  if (!inputs.length && completedGeneration === null) return 'missing';
+  const transformEnv = ['HAPPIER_UI_WORKLETS_BUNDLE_MODE', 'HAPPIER_UI_METRO_CACHE_VERSION_BUST', 'NODE_ENV', 'BABEL_ENV']
+    .map(name => [name, String(env[name] ?? '')]);
+  return `sha256:${createHash('sha256').update(JSON.stringify({ inputs, completedGeneration, transformEnv })).digest('hex')}`;
 }
 
-export async function inspectExpoMetroConfigState({ projectDir, state } = {}) {
-  const currentFingerprint = await resolveMetroConfigFingerprint({ projectDir });
+export function resolveExpoMetroCacheRoot({ tmpDir, currentFingerprint }) {
+  if (!/^sha256:[a-f0-9]{64}$/.test(String(currentFingerprint))) return null;
+  return join(tmpDir, 'metro-cache-generations', currentFingerprint.replace(':', '-'));
+}
+
+export async function reapExpoMetroCacheGenerations({ tmpDir, currentFingerprint, procRoot = '/proc', dryRun = false }) {
+  const cacheRoot = resolveExpoMetroCacheRoot({ tmpDir, currentFingerprint });
+  // The canonical reaper requires Linux process-reference evidence. Other
+  // platforms retain generations rather than infer that no process uses them.
+  if (!cacheRoot || process.platform !== 'linux') return null;
+  const parent = dirname(cacheRoot);
+  let names;
+  try { names = await readdir(parent); }
+  catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+  return reapHistoricalTempRoots(parent, procRoot, {
+    candidateNames: names.filter(name => /^sha256-[a-f0-9]{64}$/.test(name) && join(parent, name) !== cacheRoot),
+    minimumAgeMs: 0,
+    dryRun,
+    retainCandidate: directory => directory === cacheRoot,
+  });
+}
+
+export async function inspectExpoMetroConfigState({ projectDir, state, env = process.env } = {}) {
+  const currentFingerprint = await resolveMetroConfigFingerprint({ projectDir, env });
   const recordedFingerprint = String(state?.metroConfigFingerprint ?? '').trim();
   return Object.freeze({
     current: recordedFingerprint === currentFingerprint,
@@ -272,7 +305,39 @@ export async function ensureDevExpoServer({
     expoTailscaleIp,
     expoPublicHost: expoTailscaleIp,
   });
+  if (stackMode) {
+    // The caller owns this infrastructure child. A coding session's inherited
+    // bindings must not relabel Expo or another stack as its lifecycle owner.
+    env.HAPPIER_STACK_PROCESS_KIND = 'expo';
+    if (String(stackName ?? '').trim()) env.HAPPIER_STACK_STACK = String(stackName).trim();
+    if (String(envPath ?? '').trim()) env.HAPPIER_STACK_ENV_FILE = String(envPath).trim();
+  }
   env.HAPPIER_STACK_DEV_AUTO_REFRESH_DEPS = '1';
+  const restartPolicy = resolveExpoRestartPolicy({ env, stackMode });
+  let initialAttempt = 0;
+  const retryStartup = async (start) => {
+    for (;;) {
+      if (isShuttingDown?.() === true) throw new DOMException('Expo startup cancelled', 'AbortError');
+      try {
+        return await start();
+      } catch (error) {
+        if (isShuttingDown?.() === true || !restartPolicy.enabled || restartPolicy.maxAttempts <= 0
+          || error?.name === 'AbortError' || error?.retryable === false) {
+          if (!quiet && isShuttingDown?.() !== true && error?.name !== 'AbortError') {
+            const recovery = !restartPolicy.enabled ? 'supervision_disabled'
+              : restartPolicy.maxAttempts <= 0 ? 'restart_attempts_disabled' : 'non_retryable';
+            process.stderr.write(`[expo] Expo startup stopped (code=${error?.code ?? 'unknown'}, reason=${error?.observation?.reason ?? 'startup_failed'}, recovery=${recovery}); no automatic retry. Owner action or changed inputs required.\n`);
+          }
+          throw error;
+        }
+        initialAttempt++;
+        const delayMs = computeExpoRestartDelayMs({ attempt: initialAttempt, policy: restartPolicy });
+        if (!quiet) process.stderr.write(`[expo] Expo startup failed (${error instanceof Error ? error.message : String(error)}); retrying in ${Math.ceil(delayMs / 1000)}s (attempt ${initialAttempt}).\n`);
+        await delay(delayMs);
+        if (isShuttingDown?.() === true) throw error;
+      }
+    }
+  };
 
   // Mobile config is needed for `--scheme` and for the app's environment.
   let scheme = '';
@@ -292,21 +357,21 @@ export async function ensureDevExpoServer({
   const tmpDir = resolveExpoTmpDir({ env, defaultTmpDir: paths.tmpDir, kind: 'expo-dev', projectDir });
   await ensureExpoIsolationEnv({ env, stateDir: paths.stateDir, expoHomeDir: paths.expoHomeDir, tmpDir });
   env.HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY = join(paths.stateDir, 'plugin-ui', 'inventory.js');
-  // Refresh may replace an owned incumbent. Prepare before observing its PID
-  // and before acquiring spawn read custody, so both observations stay valid.
-  await ensureDepsInstalled(uiDir, 'happier-ui', { env, quiet, waitForPendingStart: true });
+  await retryStartup(() => ensureDepsInstalled(uiDir, 'happier-ui', { env, quiet }));
   const running = await isStateProcessRunning(paths.statePath);
   const alreadyRunning = Boolean(running.running);
   let metroConfigInspection = null;
-  try {
-    metroConfigInspection = await inspectExpoMetroConfigState({ projectDir, state: running.state });
-  } catch (error) {
-    if (!quiet) {
-      const detail = error instanceof Error ? error.message : String(error);
-      // A config-inspection failure must not make the rest of the Stack unavailable.
-      console.warn(`[local] expo: unable to inspect metro.config.js; preserving the current Expo lifecycle.\n${detail}`);
+  const refreshMetroConfigInspection = async () => {
+    try {
+      metroConfigInspection = await inspectExpoMetroConfigState({ projectDir, state: running.state, env });
+    } catch (error) {
+      if (!quiet) {
+        const detail = error instanceof Error ? error.message : String(error);
+        // A config-inspection failure must not make the rest of the Stack unavailable.
+        console.warn(`[local] expo: unable to inspect metro.config.js; preserving the current Expo lifecycle.\n${detail}`);
+      }
     }
-  }
+  };
 
   const prepareWorkspace = async () => {
     await withExpoPreparationEnv(env, async (preparationEnv) => {
@@ -317,38 +382,22 @@ export async function ensureDevExpoServer({
     readLastGreen: async () => alreadyRunning || await hasUsableWorkspaceLastGreen({ projectDir, env }) ? { lastGreen: true } : null,
     prepare: prepareWorkspace,
   });
-  const restartPolicy = resolveExpoRestartPolicy({ env, stackMode });
   if (restartPolicy.enabled && restartPolicy.maxAttempts > 0) {
     env.HAPPIER_STACK_EXPO_HEAP_GUARD = '1';
     env.NODE_OPTIONS = `${env.NODE_OPTIONS ?? ''} --import=${JSON.stringify(new URL('./expo_heap_guard_preload.mjs', import.meta.url).href)}`.trim();
   }
-  let preparationAttempt = 0;
-  for (;; preparationAttempt++) {
-    try {
-      await prepareWorkspaceForAvailability();
-      break;
-    } catch (error) {
-      const failure = error?.code === 'HAPPIER_EXPO_CANONICAL_UI_PREFLIGHT_FAILED' ? error.cause : error;
-      // A dependency install can briefly unlink the compiler or an imported
-      // package file. Cold preparation belongs to this same Expo lifecycle;
-      // it must keep retrying while installed tooling is being repaired.
-      const missingWorkspaceFile = ['ENOENT', 'ENOTDIR', 'ERR_MODULE_NOT_FOUND'].includes(failure?.code)
-        && /(?:^|[\\/])node_modules[\\/]/.test(String(failure.path ?? failure.message ?? ''));
-      if (!missingWorkspaceFile || !restartPolicy.enabled || restartPolicy.maxAttempts <= 0
-        || isShuttingDown?.() === true) throw error;
-      const nextAttempt = preparationAttempt + 1;
-      const delayMs = computeExpoRestartDelayMs({ attempt: nextAttempt, policy: restartPolicy });
-      if (!quiet) process.stderr.write(`[expo] Workspace preparation file is missing; retrying in ${Math.ceil(delayMs / 1000)}s (attempt ${nextAttempt}).\n`);
-      await delay(delayMs);
-      if (isShuttingDown?.() === true) throw error;
-    }
-  }
+  // Cold preparation and dependency repair belong to this same launch owner.
+  // A failed attempt must not abandon Expo until another source edit arrives.
+  await retryStartup(prepareWorkspaceForAvailability);
 
-  // Acquire read custody before stopping an incumbent, and retain it until
-  // the replacement is spawned and published. Preparation and failed-spawn
-  // backoff stay outside custody so installers can repair missing tooling.
-  const startUnderDependencyCustody = async (env, initialAttempt) => {
+  // Starters wait for an installer already writing the tree. Running Metro
+  // never holds custody or delays a subsequent installer.
+  const startPreparedExpo = async (env, initialAttempt) => {
+    await waitForDependencyRefresh({ installDir: resolveDependencyInstallRoot(uiDir), env });
     if (isShuttingDown?.() === true) throw new DOMException('Expo startup cancelled', 'AbortError');
+    // Preparation and an installer already in progress may publish a new
+    // dependency generation. Select cache lifetime from the admitted inputs.
+    await refreshMetroConfigInspection();
     let desiredApiServerUrl = normalizeApiServerUrl(env.EXPO_PUBLIC_HAPPIER_SERVER_URL || apiServerUrl);
     const cliHomeDir = (baseEnv?.HAPPIER_STACK_CLI_HOME_DIR ?? '').toString().trim();
     const stablePortMode =
@@ -473,7 +522,7 @@ export async function ensureDevExpoServer({
     }
     if (shouldRestartForMetroConfigMismatch && !quiet) {
       // eslint-disable-next-line no-console
-      console.log('[local] expo: restarting because metro.config.js changed since the running process was started.');
+      console.log('[local] expo: restarting because Metro configuration or installed dependencies changed since the running process was started.');
     }
     if (shouldRestartForTailscaleMismatch && !quiet) {
       // eslint-disable-next-line no-console
@@ -517,14 +566,17 @@ export async function ensureDevExpoServer({
           label: 'expo',
           json: true,
           processInstanceFingerprint: await readRecordedExpoProcessInstanceFingerprint(prevPid),
+          recordedStartedAt: running.state?.startedAt,
         });
         if (!res.killed) {
           const portInUse =
             Number.isFinite(prevPort) && prevPort > 0 ? !(await isTcpPortFree(prevPort, { host: '127.0.0.1' })) : false;
           // eslint-disable-next-line no-console
           console.warn(
-            `[local] expo: not stopping existing Expo pid=${prevPid} because it does not look stack-owned.\n` +
-              `[local] expo: continuing by starting a new Expo process on a free port.`
+            `[local] expo: previous Expo pid=${prevPid} stop did not complete (reason=${res.reason ?? 'unknown'}, signal=${res.signal ?? 'none'}).\n` +
+              (stablePortMode
+                ? `[local] expo: stable port ${prevPort} remains pinned; replacement requires conclusive availability.`
+                : `[local] expo: replacement requires an available port.`)
           );
           if (portInUse && !stablePortMode) {
             reservedMetroPorts.add(prevPort);
@@ -558,6 +610,7 @@ export async function ensureDevExpoServer({
             signal: 'SIGTERM',
             graceMs: 800,
             processInstanceFingerprint: await readRecordedExpoProcessInstanceFingerprint(pid),
+            recordedStartedAt: Number(running.state?.pid) === Number(pid) ? running.state?.startedAt : null,
           });
         }
       },
@@ -624,6 +677,8 @@ export async function ensureDevExpoServer({
     if (normalizedSpawnOptions.teeFile) {
       await mkdir(dirname(normalizedSpawnOptions.teeFile), { recursive: true });
     }
+    const diagnosticDir = join(autostart.baseDir, 'logs');
+    await mkdir(diagnosticDir, { recursive: true });
     const stdio = normalizedSpawnOptions.stdio;
     if (Array.isArray(stdio) && stdio[1] === 'ignore' && stdio[2] === 'ignore') {
       delete normalizedSpawnOptions.stdio;
@@ -702,10 +757,13 @@ export async function ensureDevExpoServer({
 
     let closed = false;
     let restartTimer = null;
-    const healthObservers = new Set();
+    let restartOperation = null;
+    let spawnedBefore = false;
+    const restartAbort = new AbortController();
     const stopping = () => closed || isShuttingDown?.() === true;
     const scheduleRestart = (restartAttempt) => {
       if (stopping()) return;
+      clearTimeout(restartTimer);
       const delayMs = computeExpoRestartDelayMs({ attempt: restartAttempt, policy: restartPolicy });
       restartTimer = setTimeout(() => {
         restartTimer = null;
@@ -718,11 +776,15 @@ export async function ensureDevExpoServer({
       if (stopping()) {
         return;
       }
-      void spawnTrackedExpo({ restartAttempt }).catch((error) => {
+      const operation = spawnTrackedExpo({ restartAttempt }).catch((error) => {
         scheduleRetryAfterSpawnFailure({
           failedAttempt: restartAttempt,
           error,
         });
+      });
+      restartOperation = operation;
+      void operation.then(() => {
+        if (restartOperation === operation) restartOperation = null;
       });
     }
 
@@ -739,27 +801,35 @@ export async function ensureDevExpoServer({
     }
 
     const spawnTrackedExpo = async ({ restartAttempt = 0 } = {}) => {
+      // Supervisor restarts share this admission with initial startup, so a
+      // dependency/configuration transition also retires its old cache root.
+      await waitForDependencyRefresh({ installDir: resolveDependencyInstallRoot(uiDir), env, signal: restartAbort.signal });
+      if (stopping()) throw new DOMException('Expo startup cancelled', 'AbortError');
+      await reapExpoPluginUiArtifacts({ projectDir,
+        inventoryPath: env.HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY, statePath: paths.statePath });
+      await refreshMetroConfigInspection();
+      const metroCacheRoot = resolveExpoMetroCacheRoot({
+        tmpDir,
+        currentFingerprint: metroConfigInspection?.currentFingerprint,
+      });
+      if (metroCacheRoot) {
+        env.HAPPIER_UI_METRO_CACHE_ROOT = metroCacheRoot;
+        env.HAPPIER_UI_METRO_CACHE_IDENTITY = metroConfigInspection.currentFingerprint;
+        await mkdir(metroCacheRoot, { recursive: true });
+        await reapExpoMetroCacheGenerations({ tmpDir, currentFingerprint: metroConfigInspection.currentFingerprint });
+      }
       const outputTracker = createExpoCrashOutputTracker();
-      let admissionPublished = false;
       let supervisedProc = null;
       let quietHeapRecycle = false;
       const attachSupervision = (proc) => {
         supervisedProc = proc;
         const runStartedAtMs = Date.now();
-        const healthAbort = new AbortController();
-        healthObservers.add(healthAbort);
-        proc.once('exit', (code, signal) => {
-          healthAbort.abort();
-          healthObservers.delete(healthAbort);
+        const onExit = (code, signal) => {
           const runEndedAtMs = Date.now();
-          // Capture before clearing runtime metadata: a quick repair may release
-          // its lock during that asynchronous write. Windows tree termination
-          // need not report a POSIX signal on the child-process exit event.
-          // Before PID publication, this is still our own spawn admission lock;
-          // an early child failure must consume the ordinary crash budget.
-          const dependencyTransition = admissionPublished
-            && isDependencyRefreshMutationActive({ installDir: resolveDependencyInstallRoot(uiDir), env });
           void (async () => {
+            // The process boundary closes only after its pipes and tee settle.
+            // Never overlap a replacement with a child still being retired.
+            await proc.completion;
             await clearRuntimeIfCurrent(proc.pid);
             if (stopping()) {
               return;
@@ -773,54 +843,39 @@ export async function ensureDevExpoServer({
               runEndedAtMs - runStartedAtMs >= restartPolicy.stabilityWindowMs
                 ? 0
                 : restartAttempt;
-            // An installer-requested replacement is not a crash attempt. Its
-            // startup still consumes the existing failure budget if admission
-            // fails, and user shutdown remains authoritative above.
-            const nextAttempt = dependencyTransition || quietHeapRecycle ? 0 : attemptBeforeExit + 1;
+            const nextAttempt = quietHeapRecycle ? 0 : attemptBeforeExit + 1;
             const delayMs = computeExpoRestartDelayMs({ attempt: nextAttempt, policy: restartPolicy });
             writeSupervisorLine(
               quietHeapRecycle
                 ? `Metro quiet heap recycle completed; restarting in ${Math.ceil(delayMs / 1000)}s.`
-                : dependencyTransition
-                ? `Expo stopped for dependency refresh; restarting after dependency admission in ${Math.ceil(delayMs / 1000)}s.`
                 : `Expo exited unexpectedly (${describeExpoTermination({ code, signal, outputTracker })}); restarting in ${Math.ceil(delayMs / 1000)}s (attempt ${nextAttempt}).`
             );
             scheduleRestart(nextAttempt);
           })();
-        });
-        if (restartPolicy.enabled && restartPolicy.maxAttempts > 0) {
-          void (async () => {
-            while (!stopping() && !healthAbort.signal.aborted) {
-              // Use Metro's existing readiness budget for startup and loss of
-              // responsiveness. A bundle error is not a failed /status probe.
-              const health = await waitForExpoMetroRunning({ port: metroPort, env,
-                signal: healthAbort.signal, continueOnTimeout: false });
-              if (stopping() || healthAbort.signal.aborted) return;
-              if (!health.ok) {
-                writeSupervisorLine(`Metro stopped answering (${health.reason}); replacing owned pid=${proc.pid}.`);
-                await killProcessTree(proc, 'SIGTERM');
-                return;
-              }
-              await delay(resolveMetroWaitIntervalMsFromEnv(env), undefined, { signal: healthAbort.signal, ref: false });
-            }
-          })().catch(error => {
-            if (!healthAbort.signal.aborted) writeSupervisorLine(`Metro health observation failed: ${error.message}`);
-          });
-        }
+        };
+        if (proc.exitCode !== null || proc.signalCode !== null) onExit(proc.exitCode, proc.signalCode);
+        else proc.once('exit', onExit);
+        // A busy Metro may stop answering HTTP while bundling. Its exit is
+        // the crash fact; a readiness timeout does not authorize termination.
       };
       const proc = await expoSpawn({
         label: 'expo',
         dir: uiDir,
         projectDir,
         args,
-        env,
+        // Capture the failing isolate without raising the configured heap
+        // limit. Keep these options on Metro, not workspace preparation tools.
+        env: {
+          ...env,
+          NODE_OPTIONS: `${env.NODE_OPTIONS ?? ''} --heapsnapshot-near-heap-limit=1 --diagnostic-dir=${JSON.stringify(diagnosticDir)}`.trim(),
+        },
+        signal: restartAbort.signal,
         workspacePrepared: true,
         onSpawned: async (proc, readiness) => {
           await requireSpawnedProcess(proc);
-          attachSupervision(proc);
+          supervisedProc = proc;
           children.push(proc);
           await writeExpoState(proc, readiness);
-          admissionPublished = true;
         },
         options: {
           ...normalizedSpawnOptions,
@@ -837,8 +892,16 @@ export async function ensureDevExpoServer({
           },
         },
         quiet,
+      }).catch(async error => {
+        // expoSpawn retires a child whose publication failed. Its caller owns
+        // this retry; attaching an exit retry too would create two supervisors.
+        await supervisedProc?.completion;
+        throw error;
       });
       await requireSpawnedProcess(proc);
+      attachSupervision(proc);
+      if (restartAttempt > 0 || spawnedBefore) process.stderr.write('[expo] dev Expo restarted (auto)\n');
+      spawnedBefore = true;
       return proc;
     };
 
@@ -856,25 +919,13 @@ export async function ensureDevExpoServer({
       close: async () => {
         closed = true;
         clearTimeout(restartTimer);
-        for (const observer of healthObservers) observer.abort();
-        healthObservers.clear();
+        restartAbort.abort();
+        // Replacement must observe the last child this owner published,
+        // including a retry already admitted when close was requested.
+        await restartOperation;
       },
     };
   };
 
-  let initialAttempt = preparationAttempt;
-  for (;;) {
-    try {
-      return await withDependencyConsumption({ installDir: resolveDependencyInstallRoot(uiDir), env },
-        custodyEnv => startUnderDependencyCustody(custodyEnv, initialAttempt));
-    } catch (error) {
-      if (isShuttingDown?.() === true || !restartPolicy.enabled || restartPolicy.maxAttempts <= 0
-        || !['ENOENT', 'ENOTDIR', 'ERR_MODULE_NOT_FOUND'].includes(error?.code)) throw error;
-      initialAttempt++;
-      const delayMs = computeExpoRestartDelayMs({ attempt: initialAttempt, policy: restartPolicy });
-      if (!quiet) process.stderr.write(`[expo] Initial Metro spawn failed (${error.message}); installed tooling can be repaired, retrying in ${Math.ceil(delayMs / 1000)}s (attempt ${initialAttempt}).\n`);
-      await delay(delayMs);
-      if (isShuttingDown?.() === true) throw error;
-    }
-  }
+  return await retryStartup(() => startPreparedExpo(env, initialAttempt));
 }

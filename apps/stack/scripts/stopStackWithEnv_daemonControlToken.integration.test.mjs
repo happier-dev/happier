@@ -7,6 +7,7 @@ import { join } from 'node:path';
 
 import { stopStackWithEnv } from './utils/stack/stop.mjs';
 import { stopObservedStackForRestart } from './stack/run_script_with_stack_env.mjs';
+import { retireStackDevTarget } from './utils/dev_targets/retirement.mjs';
 import { resolvePreferredStackDaemonStatePaths } from './utils/auth/credentials_paths.mjs';
 import { applyStackDaemonLifecycleScopeEnv } from './utils/auth/stable_scope_id.mjs';
 import { spawnOwnedSleep, waitForProcessAlive } from './testkit/stack_stop_sweeps_testkit.mjs';
@@ -160,6 +161,21 @@ test(`explicit child stop handles ${stopResult.status} before signaling the life
 
   assert.equal(res.daemonSessionsStopped?.skipped, false);
   assert.equal(ownerSignaled, stopResult.status === 'stopped');
+  if (stopResult.status === 'incomplete') {
+    // Feed the real native Stop result into its remote retirement reader.
+    // Only SSH is substituted; cleanup, finalization and refusal stay real.
+    const target = { name: 'fixture', platform: 'posix', ssh: 'fixture-ssh', repoDir: '/remote/repo', cliHomeDir: '/remote/home' };
+    await assert.rejects(retireStackDevTarget({ target, options: { stackName: 'test-stack' } }, {
+      runProcess: async ({ args }) => String(args.at(-1)).includes('stack stop')
+        ? { code: 1, out: JSON.stringify({ ok: res.finalization?.finalized !== false, stopped: res }) }
+        : { code: 1 },
+    }), error => {
+      assert.equal(error.code, 'EDEVTARGETRETIREMENTREFUSED');
+      assert.equal(error.cause?.code, res.finalization.reason);
+      assert.equal(error.retryable, false);
+      return true;
+    });
+  }
   assert.deepEqual(res.daemonSessionsStopped?.stoppedSessionIds, []);
   if (stopResult.status === 'incomplete') {
     assert.equal(res.finalization?.finalized, false);

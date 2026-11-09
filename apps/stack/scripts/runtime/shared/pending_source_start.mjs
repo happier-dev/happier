@@ -1,18 +1,17 @@
 import { randomUUID } from 'node:crypto';
 import { watch } from 'node:fs';
 import { mkdir, unlink } from 'node:fs/promises';
-import { basename, join } from 'node:path';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createFileChangeObserver, DEFAULT_FILE_CHANGE_CATCH_UP_MS } from '../../../../../packages/cli-common/fileChangeObserver.mjs';
 
 import { readJsonIfExists, writeJsonAtomic } from '../../utils/fs/json.mjs';
-import { readJsonOwnerLockRaw, withJsonOwnerFileLock } from '../../utils/proc/jsonOwnerFileLock.mjs';
-import { createWorkspaceBuildWaitNotifier } from '../../utils/proc/workspaceBuildWaitNotifier.mjs';
+import { withJsonOwnerFileLock } from '../../utils/proc/jsonOwnerFileLock.mjs';
 import { isPidAlive, observePidLiveness } from '../../utils/proc/pids.mjs';
 import { resolveDependencyInstallRoot, waitForDependencyRefreshWriter } from '../../utils/proc/dependency_refresh.mjs';
 import { getRepoDir } from '../../utils/paths/paths.mjs';
 
-const preparationPhases = new Set(['preparing', 'queued', 'building', 'prepared', 'checking']);
+const pendingPreparationPhases = new Set(['preparing', 'queued', 'building', 'prepared', 'checking']);
+const preparationPhases = new Set([...pendingPreparationPhases, 'failed']);
 const phaseEventPrefix = 'HSTACK_SOURCE_PREPARATION_PHASE=';
 export const SOURCE_START_SUPERSEDED_MARKER = 'HSTACK_SOURCE_START_SUPERSEDED';
 
@@ -44,34 +43,19 @@ export async function readPendingSourcePreparation({ stackBaseDir }) {
   const current = await readJsonIfExists(join(stackBaseDir, 'source-runtime/start.pending.json'));
   const phase = readSourcePreparationPhase(current);
   if (!phase || !isPidAlive(current.pid)) return null;
-  const targets = Object.fromEntries(Object.entries(current.targets ?? {})
-    .map(([target, value]) => [target, readSourcePreparationPhase(value)]).filter(([, value]) => value));
-  return { ...phase, ...(Object.keys(targets).length ? { targets } : {}) };
-}
-
-/** Await existing readiness/failure cleanup without blocking the dependency
- * readers that this already-pending start still needs in order to finish. */
-export async function waitForPendingSourcePreparation({ stackBaseDir, env = process.env, signal }) {
-  const directory = join(stackBaseDir, 'source-runtime');
-  const markerPath = join(directory, 'start.pending.json');
-  const readSnapshot = () => readJsonOwnerLockRaw(markerPath);
-  const observer = createFileChangeObserver([directory], {
-    isRelevant: (_directory, filename) => filename == null || String(filename) === 'start.pending.json',
-  });
-  const onWait = createWorkspaceBuildWaitNotifier({ env,
-    label: `Stack ${basename(stackBaseDir)} readiness before dependency refresh` });
-  const startedAt = Date.now();
-  try {
-    for (;;) {
-      signal?.throwIfAborted();
-      const snapshot = observer.capture(readSnapshot);
-      if (!await readPendingSourcePreparation({ stackBaseDir })) return;
-      onWait({ waitedMs: Date.now() - startedAt });
-      await observer.wait({ snapshot, readSnapshot, signal, maxWaitMs: DEFAULT_FILE_CHANGE_CATCH_UP_MS });
-    }
-  } finally {
-    observer.close();
-  }
+  const targetPhases = Object.entries(current.targets ?? {})
+    .map(([target, value]) => [target, readSourcePreparationPhase(value)]).filter(([, value]) => value);
+  const targets = Object.fromEntries(targetPhases.filter(([, value]) => pendingPreparationPhases.has(value.phase)));
+  // A controller's component-free initial phase is an aggregate once workers
+  // report. Failed workers retain their request/watcher, not active work.
+  const localPending = pendingPreparationPhases.has(phase.phase)
+    && (phase.phase !== 'preparing' || phase.component != null || targetPhases.length === 0);
+  const participating = [...targetPhases.map(([, value]) => value),
+    ...(localPending || phase.phase === 'failed' ? [phase] : [])];
+  if (participating.some(value => value.phase === 'failed')
+    && !participating.some(value => pendingPreparationPhases.has(value.phase) && value.phase !== 'prepared')) return null;
+  if (!localPending && Object.keys(targets).length === 0) return null;
+  return { ...(localPending ? phase : { phase: 'preparing' }), ...(Object.keys(targets).length ? { targets } : {}) };
 }
 
 /** The admitted producer updates only its caller's existing pending request. */
@@ -83,9 +67,20 @@ export async function updatePendingSourcePreparationPhase({ stackBaseDir, reques
     signal?.throwIfAborted();
     const current = await readJsonIfExists(markerPath);
     if (current?.requestId !== requestId) throw supersededError();
-    await writeJsonAtomic(markerPath, target
-      ? { ...current, targets: { ...current.targets, [target]: preparation } }
-      : { ...current, component: null, ...preparation });
+    if (target) {
+      await writeJsonAtomic(markerPath, { ...current, targets: { ...current.targets, [target]: preparation } });
+    } else if (component) {
+      // Parallel producers share this request. Completed immutable output is
+      // not ongoing work when a sibling is waiting on failed source inputs.
+      const components = { ...current.components, [component]: preparation };
+      const phases = Object.values(components).map(readSourcePreparationPhase).filter(Boolean);
+      const active = phases.filter(value => value.phase !== 'prepared' && value.phase !== 'failed');
+      const aggregate = active.find(value => value.component === component) ?? active.at(-1)
+        ?? phases.find(value => value.phase === 'failed') ?? preparation;
+      await writeJsonAtomic(markerPath, { ...current, components, component: null, ...aggregate });
+    } else {
+      await writeJsonAtomic(markerPath, { ...current, components: {}, component: null, ...preparation });
+    }
   }, { lockPath: `${markerPath}.lock`, signal });
 }
 

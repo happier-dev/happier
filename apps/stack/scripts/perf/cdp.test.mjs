@@ -42,11 +42,13 @@ test('the existing audit CDP transport delivers unsolicited events alongside req
   assert.equal((await client.disconnected)?.reason, 'closed', 'stream finalization must be able to settle on transport loss');
 });
 
-test('capture composes CDP events, safe network records, telemetry and mapped CPU output through the public collector', async t => {
+test('capture composes CDP events and retains original or visibly unproven attribution when a served map changes', async t => {
   const fixture = await createTempFixture(t, { prefix: 'happier-perf-profile-' });
   let ownedSocket;
+  let servedMap = { version: 3, sources: ['src/Original.ts'], names: ['originalOwner'], mappings: 'AAAAA' };
   const server = createServer((request, response) => {
     response.setHeader('content-type', 'application/json');
+    if (request.url === '/bundle.map') return response.end(JSON.stringify(servedMap));
     response.end(JSON.stringify([{ id: 'owned', type: 'page', webSocketDebuggerUrl: `ws://127.0.0.1:${server.address().port}/page` }]));
   });
   t.after(() => { ownedSocket?.destroy(); server.close(); });
@@ -81,7 +83,8 @@ test('capture composes CDP events, safe network records, telemetry and mapped CP
         let result = {};
         if (message.method === 'Debugger.setAsyncCallStackDepth') asyncDepthCommands.push(message.params.maxDepth);
         if (message.method === 'Tracing.start') traceCategories = message.params.traceConfig.includedCategories;
-        if (message.method === 'HeapProfiler.stopSampling') result.profile = { head: { callFrame: { scriptId: '1', url: 'http://app.test/bundle.js?key=never-save', functionName: 'a', lineNumber: 0, columnNumber: 0 }, selfSize: 2048, children: [] } };
+        if (message.method === 'HeapProfiler.stopSampling') result.profile = { head: { callFrame: { scriptId: '1', url: 'http://app.test/bundle.js?key=never-save', functionName: 'a', lineNumber: 0, columnNumber: 0 }, selfSize: 2048,
+          children: [{ callFrame: { scriptId: '2', url: `http://127.0.0.1:${server.address().port}/bundle.js`, functionName: 'externalOwner', lineNumber: 0, columnNumber: 0 }, selfSize: 1024, children: [] }] } };
         if (message.method === 'Tracing.end') {
           send({ method: 'Tracing.dataCollected', params: { value: [
             { name: 'happier-perf:start', ph: 'I', pid: 1, tid: 2, ts: 10000000, cat: 'blink.user_timing' },
@@ -93,7 +96,10 @@ test('capture composes CDP events, safe network records, telemetry and mapped CP
         }
         if (message.method === 'Debugger.getStackTrace') result.stackTrace = { description: 'never-save description',
           callFrames: [{ functionName: 'asyncOwner', url: 'http://app.test/issuer.js?token=never-save', lineNumber: 4, columnNumber: 2 }] };
-        if (message.method === 'Debugger.enable') send({ method: 'Debugger.scriptParsed', params: { scriptId: '1', url: 'http://app.test/bundle.js', sourceMapURL: map } });
+        if (message.method === 'Debugger.enable') {
+          send({ method: 'Debugger.scriptParsed', params: { scriptId: '1', url: 'http://app.test/bundle.js', sourceMapURL: map, hash: createHash('sha256').update('original inline script').digest('hex'), length: 22 } });
+          send({ method: 'Debugger.scriptParsed', params: { scriptId: '2', url: `http://127.0.0.1:${server.address().port}/bundle.js`, sourceMapURL: '/bundle.map', hash: createHash('sha256').update('original external script').digest('hex'), length: 24 } });
+        }
         if (message.method === 'Page.addScriptToEvaluateOnNewDocument') result.identifier = 'probe';
         if (message.method === 'Performance.getMetrics') result.metrics = [{ name: 'Timestamp', value: 10 }];
         // OS/CDP boundary simulation: the renderer clock is sampled 15.827s
@@ -209,7 +215,13 @@ test('capture composes CDP events, safe network records, telemetry and mapped CP
           send({ method: 'Network.dataReceived', params: { requestId: 'late', timestamp: 1010, dataLength: 91, encodedDataLength: 40 } });
           send({ method: 'Network.loadingFinished', params: { requestId: 'late', timestamp: 1010, encodedDataLength: 50 } });
           result.profile = { startTime: 10000000, endTime: 10100000,
-          nodes: [{ id: 1, callFrame: { scriptId: '1', url: 'http://app.test/bundle.js', functionName: 'a', lineNumber: 0, columnNumber: 0 } }], samples: [1], timeDeltas: [100000] };
+          nodes: [{ id: 1, callFrame: { scriptId: '1', url: 'http://app.test/bundle.js', functionName: 'a', lineNumber: 0, columnNumber: 0 } },
+            { id: 2, callFrame: { scriptId: '2', url: `http://127.0.0.1:${server.address().port}/bundle.js`, functionName: 'externalOwner', lineNumber: 0, columnNumber: 0 } }], samples: [1, 2], timeDeltas: [80000, 20000] };
+          // Reloaded script: identical URL, different id and embedded map. Old
+          // profile frames must keep script 1's inline bytes, not this new map.
+          send({ method: 'Debugger.scriptParsed', params: { scriptId: '3', url: 'http://app.test/bundle.js',
+            sourceMapURL: 'data:application/json;base64,' + Buffer.from(JSON.stringify({ version: 3, sources: ['src/NewerInline.ts'], names: ['newerInlineOwner'], mappings: 'AAAAA' })).toString('base64'),
+            hash: createHash('sha256').update('newer inline script').digest('hex'), length: 19 } });
         }
         send({ id: message.id, result });
       }
@@ -218,8 +230,16 @@ test('capture composes CDP events, safe network records, telemetry and mapped CP
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const capture = await startCapture({ cdp: `http://127.0.0.1:${server.address().port}`, cache: 'warm', captureMode: 'counts', profiling: true, outputDir: fixture.root });
   try {
+    assert.equal((await (await fetch(`http://127.0.0.1:${server.address().port}/bundle.map`)).json()).sources[0], 'src/Original.ts');
     await capture.begin();
-    const result = await capture.finish();
+    const result = await capture.finish({ onWindowEnd() {
+      // The server advances after profiling but before map symbolication.
+      servedMap = { version: 3, sources: ['src/WrongFile.ts'], names: ['wrongOwner'], mappings: 'AAAAA' };
+    } });
+    assert.equal((await (await fetch(`http://127.0.0.1:${server.address().port}/bundle.map`)).json()).sources[0], 'src/WrongFile.ts');
+    assert.ok(!result.cpu.functions.some(row => row.source === 'src/WrongFile.ts'), 'a newer map at the same URL must never attribute an old CPU frame');
+    assert.ok(result.cpu.functions.some(row => row.name === 'externalOwner' && row.mapped === false));
+    assert.ok(result.attribution.mapFailures.some(row => row.scriptId === '2' && row.reason === 'external-map-pairing-unproven'));
     assert.deepEqual(result.sockets.slice(-2).map(row => row.bytes), [4, 2], 'all non-text CDP payloads use base64, including control messages');
     assert.equal(result.network.requests, 9);
     assert.equal(result.socketConnections.length, 6);
@@ -301,8 +321,9 @@ test('capture composes CDP events, safe network records, telemetry and mapped CP
     assert.equal(result.profiling.trace.dataLossOccurred, false);
     assert.equal(result.profiling.trace.summary.mainThreadBusyMs, 10);
     assert.equal(result.profiling.trace.summary.styleLayoutPaintMs, 1);
-    assert.equal(result.profiling.heap.summary.sampledBytes, 2048);
+    assert.equal(result.profiling.heap.summary.sampledBytes, 3072);
     assert.ok(result.profiling.heap.summary.functions.some(row => row.source === 'src/Owner.ts'));
+    assert.ok(!result.profiling.heap.summary.functions.some(row => row.source === 'src/WrongFile.ts'), 'allocation frames use the same pairing decision as CPU frames');
     const savedTrace = JSON.parse(gunzipSync(await readFile(fixture.path('trace.json.gz'))));
     assert.ok(savedTrace.traceEvents.some(event => event.name === 'Layout'));
     assert.ok(!JSON.stringify(savedTrace).includes('never-save'));

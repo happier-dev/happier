@@ -236,7 +236,7 @@ function collectParsedIosAppTargetIdentityValues(project) {
 
 function repairParsedIosAppExtensionTargetIdentity(
   project,
-  { appBundleId, appProductName, priorAppBundleIds = new Set(), priorAppProductNames = new Set(), targetName = 'ExpoWidgetsTarget' } = {}
+  { appBundleId, appProductName, priorAppProductNames = new Set(), targetName = 'ExpoWidgetsTarget' } = {}
 ) {
   const objects = project?.hash?.project?.objects;
   if (!objects || !appBundleId) {
@@ -245,7 +245,6 @@ function repairParsedIosAppExtensionTargetIdentity(
 
   let changed = false;
   const defaultExtensionBundleId = `"${appBundleId}.${targetName}"`;
-  const suspiciousBundleIds = new Set([appBundleId, ...priorAppBundleIds].filter(Boolean));
   const suspiciousProductNames = new Set([appProductName, ...priorAppProductNames].filter(Boolean));
   for (const target of Object.values(objects.PBXNativeTarget ?? {})) {
     if (!target || typeof target !== 'object') continue;
@@ -253,7 +252,9 @@ function repairParsedIosAppExtensionTargetIdentity(
     if (objectName(target) !== targetName) continue;
 
     for (const buildSettings of targetBuildSettings(objects, target)) {
-      if (suspiciousBundleIds.has(unquoteXcodeValue(buildSettings.PRODUCT_BUNDLE_IDENTIFIER))) {
+      const extensionBundleId = unquoteXcodeValue(buildSettings.PRODUCT_BUNDLE_IDENTIFIER);
+      // iOS only embeds an extension whose bundle id is prefixed with the parent app's.
+      if (!extensionBundleId.startsWith(`${appBundleId}.`)) {
         changed = setBuildSetting(buildSettings, 'PRODUCT_BUNDLE_IDENTIFIER', defaultExtensionBundleId) || changed;
       }
       if (suspiciousProductNames.has(unquoteXcodeValue(buildSettings.PRODUCT_NAME))) {

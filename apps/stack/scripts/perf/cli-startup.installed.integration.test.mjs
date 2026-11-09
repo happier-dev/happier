@@ -104,6 +104,9 @@ async function measureInstalledHelp(pluginCount, command = 'help', signal) {
     )).reduce((sum, fn) => sum + (fn.ranges[0]?.count ?? 0), 0);
     const fullValidationOwners = paths.filter(path => /plugins[/\\](?:manifest[/\\](?:ingest|v2)|store[/\\]registry[/\\](?:generationStore|currentState))\.[cm]?[jt]s(?:\?|$)/u.test(path));
     const bodyReads = trace.events.filter(event => event.kind === 'readFile:start').map(event => event.path);
+    console.info('admitted-listing-cost', JSON.stringify({
+      command, pluginCount, evaluatedScripts: evaluated.length, validationCalls, fullValidationCalls, bodyReads: bodyReads.length,
+    }));
     return { helpText: stdout, evaluatedScriptCount: evaluated.length, validationCalls, fullValidationCalls, fullValidationOwners, bodyReads };
   } finally { home.cleanup(); }
 }

@@ -99,21 +99,120 @@ Details (secure context, phone instructions, automation knobs): `[docs/remote-ac
 ## Development (worktrees, stacks, contributor workflows)
 
 In 0.3 development source, `hstack dev` automatically refreshes stale dependencies
-at startup and when dependency inputs change in watch mode. Refresh briefly stops
-only that Stack's Expo process. Pending source starts refuse refresh with
-`HAPPIER_DEPENDENCY_STACK_START_IN_PROGRESS` through service readiness; retry
-after the start completes. Worker source tests and typechecks wait for a foreign
-start's readiness or failure cleanup, then recheck freshness. This wait releases
-dependency custody so the start can finish; a start never waits for itself.
-Running Stack runners and retained server/daemon
-processes keep running and do not block refresh. A successful refresh prints
-their Stack names and records `stacksNeedingRestart` in dependency readiness;
-restart listed Stacks at their owner's next boundary. Another Stack's Expo
-still blocks refresh. `HAPPIER_STACK_SKIP_REFRESH_DEPS=1`
-and `HAPPIER_STACK_DISABLE_REFRESH_DEPS=1` suppress refresh of an existing tree.
-Service mode still requires explicit refresh permission. Local validation checks
-dependency readiness without installing; worker mirrors keep their explicit
-remote bootstrap.
+at startup and when install inputs change in watch mode. Local validation and
+worker bootstrap use the same dependency owner. Refresh runs
+`pnpm install --frozen-lockfile` in place under an exclusive writer-only lock,
+then repairs mandatory UI postinstall outputs. Worker installs also prepare
+Prisma clients for every role; local flows prepare them when the consuming
+component needs them. Starting commands wait
+for an install already running; running jobs and pending starts do not delay a
+writer. A job that imports during installation can fail loudly and need a rerun.
+
+A successful refresh prints running Stack names and records
+`stacksNeedingRestart` in dependency readiness; restart listed Stacks at their
+owner's next boundary. Development Expo restarts through its own reload owner
+after successful dependency writes, including same-identity output repairs or
+forced installs. Failed attempts do not trigger that restart. Refresh neither
+refuses installation because of another Stack's Expo nor kills that process.
+
+An install failure reports the pnpm cause and leaves the readiness marker
+unchanged. Frozen validation errors for inconsistent lockfile importers or patch
+configuration preserve the existing tree; later linking or lifecycle failures
+may already have changed files. Correct the cause and rerun preparation. The
+refresh owner never deletes or renames `node_modules`.
+
+`HAPPIER_STACK_SKIP_REFRESH_DEPS=1` and
+`HAPPIER_STACK_DISABLE_REFRESH_DEPS=1` suppress identity-triggered refresh of an
+existing tree. They do not disable component-output repair, which can reinstall
+dependencies after a postinstall failure. Source-test and typecheck preparation
+still require ready dependencies and fail if they are stale.
+
+In 0.3 development source, AUTO retries another worker when flagged preparation
+finds stale or unadmitted dependencies before the payload starts. A worker with
+an active canonical refresh remains eligible for the existing wait when no ready
+peer can run the command. Explicit pins stay on their worker. If the pool cannot
+provide ready dependencies, the command reports `HAPPIER_DEPENDENCIES_NEED_REFRESH`;
+retry through the owning dependency preparation entry point. Reselection does
+not refresh worker installations.
+
+AUTO reports each excluded candidate with
+`HSTACK_PLACEMENT_EXCLUDED target=<name> reason=<code> class=<class>` in current
+0.3 development source. This includes targets outside the configured command
+pool and workers excluded by command, synchronization, admission, disk or memory
+checks, including cached refusals. A healthy worker that loses the load ranking
+remains eligible and is not reported as excluded. Live same-project typecheck
+placement remains advisory; completed checks leave no placement preference.
+
+In 0.3 development source, noninteractive commands from the shared primary
+checkout on a Linux controller coalesce before worker selection. Later calls
+with the same checkout, working directory, command arguments and command-policy
+environment share one queued follower while a run is active. It starts
+after the current run completes and performs normal source and dependency
+admission then, so later callers receive a fresh execution's result. Callers
+sharing a follower receive stdout/stderr from the beginning and the same exit
+status. This applies to ordinary commands and whole-package typechecks alike.
+Cancelling a caller detaches it; the last caller cancels that shared dispatch.
+Completed results are not cached. Explicit environment options participate in
+identity without appearing in diagnostic identifiers. Sibling-checkout,
+interactive and runtime-control commands keep their existing lifetimes;
+native macOS and Windows dispatch behavior is unchanged.
+
+Commands that synchronize source require `mutagen` on the controller's PATH.
+Current 0.3 development reports a missing controller executable with exit 127
+before probing or publishing a worker placement. Restoring that PATH allows the
+same healthy worker observations to be used; a controller setup failure does
+not mark the workers unavailable.
+
+For commands declaring Bun as a compiler tool, POSIX worker preflight checks the
+PATH Bun (or the explicitly invoked Bun executable) against the requested
+checkout's `apps/stack/scripts/provision/.bun-version`. Missing or mismatched
+compilers report `reason=bun-pin` before bootstrap or payload dispatch; AUTO
+selects an eligible peer, while an explicit target reports the refusal. Ordinary
+Bun commands and checkouts without that pin do not acquire this compile check.
+On existing Ubuntu workers, run the canonical provisioner with `--profile=bun`
+to reconcile only the pinned compiler; elevated installation requires the host
+owner's privileges.
+
+Worker prerequisites, requested runtime capabilities and host load share one
+SSH observation in current 0.3 development. AUTO calls with the same command
+requirements reuse a completed observation for the existing load-probe TTL;
+explicit targets and eligible pinned-compiler requests observe afresh. Admission,
+synchronization and pre-session SSH refusals retain their separate configured
+unavailable-probe TTL. Older positive cache records without prerequisite identity
+refresh through this owner.
+
+Daemon runtime builds also check the module-selected Go
+installation's `GOROOT` for readable, nonempty regular `LICENSE` and `PATENTS`
+files before placement. Missing or incomplete evidence reports
+`reason=go-toolchain`; an explicit remote target refuses before its payload.
+Go evidence is checked afresh so a repaired installation can rejoin selection.
+The probe runs in `packages/plugins/cliproxyapi/managed-runtime`, matching the
+notices owner rather than inspecting a potentially different repo-root Go.
+Web/server-only builds add no Go requirement. Ordinary commands and package-wide
+`--required-tools=go` prerequisites retain the executable check only; they do not
+require runtime notice evidence. Custom runtime builders must use the canonical
+component-aware runtime placement entry. The build's notices owner still validates the
+binary's exact Go version and third-party notice contents.
+
+AUTO candidate connects use seven seconds per each of the existing two SSH
+connection attempts, derived from the canonical 15-second probe-sharing window.
+This placement-only allowance does not follow longer configured cache reuse.
+Exact-target observations, dispatch and cancellation use the worker's configured
+SSH connect and keepalive budgets.
+
+In current 0.3 development, AUTO ranks CPU load and live controller dispatches
+per probed core, including when it reuses a cached load sample. Linux controllers
+serialize choosing a worker with publishing its existing active dispatch record,
+then release that decision lock before synchronization or worker admission.
+Zero memory headroom stays behind positive headroom within the same placement
+priority without a large numeric penalty hiding recent dispatches.
+
+In current 0.3 development, Linux tool concurrency hints share cores among
+native admitted jobs; queued requests do not consume that share. Authenticated
+descendants reuse their containing job's share. Darwin retains its existing
+dispatch-reservation share. Explicit worker flags and environment budgets keep
+their existing precedence; see [test worker budgets](../../docs/testing.md#test-worker-budgets)
+for the formula and Vitest policy.
 
 In current 0.3 development, one Linux host broker admits fitting requests from
 oldest to newest, using the command policy's measured memory floors. Waiting
@@ -157,13 +256,6 @@ Windows retains its existing standalone process adapter; neither native platform
 uses the Linux broker.
 
 If you want to **develop Happier** (worktrees, multiple stacks, upstream PR workflows), you can install hstack for development with:
-
-In current 0.3 development, AUTO ranks CPU load and live controller dispatches
-per probed core, including when it reuses a cached load sample. Linux controllers
-serialize choosing a worker with publishing its existing active dispatch record,
-then release that decision lock before synchronization or worker admission.
-Zero memory headroom stays behind positive headroom within the same placement
-priority without a large numeric penalty hiding recent dispatches.
 
 ### Setup (guided)
 
@@ -567,17 +659,3 @@ Or (recommended) persist it via init:
 ```bash
 hstack init --cli-root-dir=/path/to/your/happier-dev-checkout
 ```
-
-In 0.3 development source, noninteractive commands from the shared primary
-checkout on a Linux controller coalesce before worker selection. Later calls
-with the same checkout, working directory, command arguments and command-policy
-environment share one queued follower while a run is active. It starts
-after the current run completes and performs normal source and dependency
-admission then, so later callers receive a fresh execution's result. Callers
-sharing a follower receive stdout/stderr from the beginning and the same exit
-status. This applies to ordinary commands and whole-package typechecks alike.
-Cancelling a caller detaches it; the last caller cancels that shared dispatch.
-Completed results are not cached. Explicit environment options participate in
-identity without appearing in diagnostic identifiers. Sibling-checkout,
-interactive and runtime-control commands keep their existing lifetimes;
-native macOS and Windows dispatch behavior is unchanged.

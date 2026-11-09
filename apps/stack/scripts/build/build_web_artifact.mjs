@@ -5,7 +5,7 @@ import { cp, mkdir, readdir, rename, rm } from 'node:fs/promises';
 
 import { buildIntoTempThenReplace } from '../utils/fs/atomic_dir_swap.mjs';
 import { ensureDepsInstalled, requireDir } from '../utils/proc/pm.mjs';
-import { withBuildInputDependencies } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
+import { assertBuildInputDependencies, buildInputDependencyIdentityMatches, readBuildInputDependencies, readTerminalBuildFailure, serializeTerminalBuildFailure, withBuildInputDependencies, withSingleTrailingBuildPass } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
 import { getComponentDir } from '../utils/paths/paths.mjs';
 import { getDefaultAutostartPaths } from '../utils/paths/paths.mjs';
 import { ensureExpoIsolationEnv, getExpoStatePaths, resolveExpoTmpDir, wantsExpoClearCache } from '../utils/expo/expo.mjs';
@@ -199,23 +199,28 @@ export async function buildWebArtifact({
   expoExecImpl = runPreparedWebExport,
 }) {
   void forceRebuild;
+  const uiDir = getComponentDir(rootDir, 'happier-ui', env);
+  const repoDir = join(uiDir, '../..');
+  const dependencyPublication = await readBuildInputDependencies({ sourceDir: repoDir, env });
   const existing = await readReusableArtifactManifest({ artifactDir, artifactFingerprint });
-  if (existing) {
+  if (existing && buildInputDependencyIdentityMatches(existing.dependencyPublication, dependencyPublication)) {
+    await assertBuildInputDependencies({ sourceDir: repoDir, env, state: dependencyPublication });
     return { artifactDir, manifest: existing };
   }
 
-  const uiDir = getComponentDir(rootDir, 'happier-ui', env);
   await requireDir('happier-ui', uiDir);
   await ensureWebUiDependencies({ uiDir, env, ensureDepsInstalledImpl });
 
-  await buildIntoTempThenReplace(artifactDir, async (tmpArtifactDir) => {
+  await withSingleTrailingBuildPass({ run: () => buildIntoTempThenReplace(artifactDir, async (tmpArtifactDir) => {
     const payloadDir = artifactPayloadDir(tmpArtifactDir);
     const repoDir = join(uiDir, '../..');
-    const entrypoint = expoExecImpl === runPreparedWebExport
+    const built = expoExecImpl === runPreparedWebExport
       ? JSON.parse(await runSourceBuildCommand({ repoDir, scriptPath: fileURLToPath(import.meta.url),
         args: [JSON.stringify({ uiDir, payloadDir, artifactFingerprint })], env,
         admissionClass: SOURCE_WEB_EXPORT_ADMISSION_CLASS, captureStderr: true }))
       : await consumeWebArtifactInputs({ uiDir, payloadDir, artifactFingerprint, env, expoExecImpl });
+    const failure = readTerminalBuildFailure(built);
+    if (failure) throw failure;
 
     await writeArtifactManifest({
       artifactDir: tmpArtifactDir,
@@ -229,10 +234,12 @@ export async function buildWebArtifact({
         source: sourceMetadata,
         ...(stalePackages.length ? { stalePackages } : {}),
         payloadDir: 'payload',
-        entrypoint,
+        entrypoint: built.entrypoint,
+        dependencyPublication: built.dependencyPublication,
       },
     });
-  });
+    await assertBuildInputDependencies({ sourceDir: repoDir, env, state: built.dependencyPublication });
+  }) });
 
   const manifest = await readArtifactManifest({ artifactDir });
   return { artifactDir, manifest };
@@ -246,20 +253,27 @@ async function consumeWebArtifactInputs({ uiDir, payloadDir, artifactFingerprint
     projectDir: uiDir,
     stateFileName: 'ui.export.runtime.state.json',
   });
-  return await withBuildInputDependencies({ sourceDir: repoDir, env }, env =>
+  return await withBuildInputDependencies({ sourceDir: repoDir, env }, (env, publication) =>
     withSourceWebUiInputs({ repoDir, baseDir: paths.stateDir, env, stdoutStream: process.stderr }, async ({ inventoryPath, uiProjectDir }) => {
       const exportEnv = buildStackWebExportEnv({ baseEnv: {
         ...env, HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY: inventoryPath,
       } });
       const tmpDir = resolveExpoTmpDir({ env: exportEnv, defaultTmpDir: paths.tmpDir, kind: 'ui-export-runtime-artifact', projectDir: uiDir });
       await ensureExpoIsolationEnv({ env: exportEnv, stateDir: paths.stateDir, expoHomeDir: paths.expoHomeDir, tmpDir });
-      return await exportWebPayloadToArtifactPayloadDir({ uiDir: uiProjectDir, repoDir, payloadDir, env: exportEnv, artifactFingerprint, expoExecImpl });
+      const entrypoint = await exportWebPayloadToArtifactPayloadDir({ uiDir: uiProjectDir, repoDir, payloadDir, env: exportEnv, artifactFingerprint, expoExecImpl });
+      return { entrypoint, dependencyPublication: publication.state };
     }));
 }
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   const options = JSON.parse(process.argv[2]);
   console.log = (...values) => console.error(...values);
-  const entrypoint = await consumeWebArtifactInputs({ ...options, env: process.env });
-  process.stdout.write(JSON.stringify(entrypoint));
+  try {
+    const built = await consumeWebArtifactInputs({ ...options, env: process.env });
+    process.stdout.write(JSON.stringify(built));
+  } catch (error) {
+    const failure = serializeTerminalBuildFailure(error, { includeRetryableDrift: true });
+    if (!failure) throw error;
+    process.stdout.write(JSON.stringify(failure));
+  }
 }

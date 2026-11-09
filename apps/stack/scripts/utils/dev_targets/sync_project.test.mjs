@@ -849,7 +849,7 @@ test('QA consumers borrow a stale producer project without changing its membersh
   const projectFile = projectFor(root);
   await mkdir(dirname(projectFile), { recursive: true });
   const project = renderMutagenProject({ sourceDir: DEV_TARGET_SYNC_EXECUTOR_REPO, targets: [target], ownerId: INDEPENDENT_DEV_TARGET_SYNC_OWNER });
-  const staleProject = project.replace('        - "!packages/plugins/*/.happier-plugin/plugin.json"\n', '');
+  const staleProject = project.replace('        - "packages/plugins/*/.happier-plugin"\n', '');
   await writeFile(projectFile, staleProject);
   const calls = [];
   const result = await ensureDevTargetSyncProject({ stackBaseDir: join(root, 'agent-qa'), sourceDir: DEV_TARGET_SYNC_EXECUTOR_REPO,
@@ -874,7 +874,7 @@ test('sync-service release waits for stale independent reconciliation before cha
     ownerId: INDEPENDENT_DEV_TARGET_SYNC_OWNER,
   });
   const staleProject = desiredProject.replace(
-    '        - "!packages/plugins/*/.happier-plugin/plugin.json"\n',
+    '        - "packages/plugins/*/.happier-plugin"\n',
     '',
   );
   assert.notEqual(staleProject, desiredProject);

@@ -18,8 +18,40 @@ import { resolveLatestComponentArtifact } from './resolve_latest_component_artif
 import { pruneComponentArtifacts } from './runtime_retention.mjs';
 import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
 import { prepareFiniteSourceWebFixture } from '../testkit/core/source_web_fixture.mjs';
+import { markDependencyMutation, readDependencyPublicationState, withDependencyRefresh, withDependencyRefreshLock } from '../utils/proc/dependency_refresh.mjs';
+import { withBuildInputDependencies } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
 
-test('web reuse requires a non-empty entrypoint and its local referenced assets', async (t) => {
+test('web postinstall announces its actual dependency write before the package-manager subprocess runs', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-web-postinstall-publication-' });
+  const env = { ...process.env, npm_execpath: '', HAPPIER_STACK_HOME_DIR: fixture.root,
+    HAPPIER_STACK_SKIP_REFRESH_DEPS: '0', HAPPIER_STACK_DISABLE_REFRESH_DEPS: '0' };
+  mkdirSync(fixture.path('node_modules'));
+  writeFileSync(fixture.path('package.json'), JSON.stringify({ private: true, name: '@happier-dev/app',
+    scripts: { 'postinstall:real': 'node postinstall.mjs' } }));
+  const statePath = fixture.path('observed.json');
+  const outputPath = fixture.path('node_modules', 'web-prepared.js');
+  writeFileSync(fixture.path('postinstall.mjs'), `
+    import { mkdir, writeFile } from 'node:fs/promises';
+    import { readDependencyPublicationState } from ${JSON.stringify(new URL('../utils/proc/dependency_refresh.mjs', import.meta.url).href)};
+    const state = await readDependencyPublicationState({ installDir: process.cwd() });
+    await writeFile(${JSON.stringify(statePath)}, JSON.stringify(state));
+    await writeFile(${JSON.stringify(outputPath)}, 'changed by the real postinstall process');
+    await mkdir('node_modules/react-native-enriched-markdown/lib/module/web', { recursive: true });
+    await writeFile('node_modules/react-native-enriched-markdown/lib/module/web/streamingReveal.js', 'complete');
+  `);
+  await withDependencyRefresh({ installDir: fixture.root, env }, async () => {});
+  const before = await readDependencyPublicationState({ installDir: fixture.root, env });
+  await assert.rejects(withBuildInputDependencies({ sourceDir: fixture.root, env }, async () => {
+    await ensureWebUiDependencies({ uiDir: fixture.root, env });
+    return 'unsafe-web-artifact';
+  }), { code: 'BUILD_INPUTS_CHANGED' });
+  const during = JSON.parse(readFileSync(statePath, 'utf8'));
+  assert.equal(during.writerActive, true, 'the child process observes a marked dependency mutation');
+  assert.notEqual(during.generation, before.generation);
+  assert.equal(readFileSync(outputPath, 'utf8'), 'changed by the real postinstall process');
+});
+
+test('web reuse accepts fixed-layout metadata without payloadDir and requires a complete payload', async (t) => {
   const root = createTempDir('stack-web-reuse-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   // A missing fixture payload must not rebuild the operator's configured UI.
@@ -34,7 +66,8 @@ test('web reuse requires a non-empty entrypoint and its local referenced assets'
   mkdirSync(payloadDir, { recursive: true });
   writeFileSync(join(artifactDir, 'manifest.json'), JSON.stringify({
     version: 1, component: 'web', artifactFingerprint: 'web',
-    sourceFingerprint: 'source', payloadDir: 'payload', entrypoint: 'index.html',
+    sourceFingerprint: 'source', entrypoint: 'index.html',
+    dependencyPublication: await readDependencyPublicationState({ installDir: process.env.HAPPIER_STACK_REPO_DIR }),
   }));
   const html = '<script src="/chunk.js?v=1&amp;x=2"></script><link rel="stylesheet" href="./style.css"><a href="/sessions">sessions</a><img src="https://example.com/icon.png">';
   writeFileSync(join(payloadDir, 'index.html'), html);
@@ -143,6 +176,13 @@ test('web publication refreshes authored inputs at a stable captured Metro root 
   assert.deepEqual(readdirSync(join(root, 'artifacts', 'web')), ['target-web'], 'private source inputs must not remain after publication');
   assert.deepEqual(readdirSync(join(root, 'artifacts')), ['web']);
   assert.equal(existsSync(captureRoots[0]), false, 'captured source is retired after Metro consumes it');
+  await withDependencyRefreshLock({ installDir: repoDir, env: buildOptions.env }, async () => {
+    await markDependencyMutation({ installDir: repoDir, env: buildOptions.env, output: 'ui-postinstall' });
+  });
+  const reused = await buildWebArtifact(buildOptions);
+  assert.equal(reused.artifactDir, result.artifactDir);
+  assert.equal(captureRoots.length, 1,
+    'a completed artifact does not span a later writer; unchanged marker identity preserves its cache hit');
   expectedUiSource = 'export const admissionInput = "changed-ui-input";';
   expectedPluginValue = 'changed-plugin-input';
   expectedPayload = 'browser payload changed';

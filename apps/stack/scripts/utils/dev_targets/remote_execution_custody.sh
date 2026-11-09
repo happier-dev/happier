@@ -12,9 +12,11 @@ control_stdin=${HAPPIER_REMOTE_EXEC_CONTROL_STDIN-0}
 unset HAPPIER_REMOTE_EXEC_LIFELINE
 . "${BASH_SOURCE[0]%/*}/../proc/native_process_identity.sh"
 . "${BASH_SOURCE[0]%/*}/../proc/native_process_priority.sh" || exit 1
+. "${BASH_SOURCE[0]%/*}/native_execution_signals.sh" || exit 1
 mode=$1
 pid_file=$2
 execution_id=$3
+initiating_execution_id=$execution_id
 shift 3
 
 exec_worker_payload() {
@@ -24,13 +26,6 @@ exec_worker_payload() {
     Linux) exec_in_jobs_slice "$@" ;;
     *) exec "$@" ;;
   esac
-}
-
-collect_descendants() {
-  for child in $(ps -eo pid=,ppid= | awk -v parent="$1" '$2 == parent {print $1}'); do
-    collect_descendants "$child"
-  done
-  printf '%s\n' "$1"
 }
 
 group_identities() {
@@ -52,15 +47,22 @@ group_has_current_member() {
   return 1
 }
 
+signal_member() {
+  native_execution_signal "$execution_id" "$initiating_execution_id" "$@"
+  return "$native_signal_result"
+}
+
 finish_group_cancellation() {
   if group_has_current_member "$1" "$2"; then
-    kill -KILL -- "-$1" 2>/dev/null || true
+    signal_member "$3" KILL pgid "$1" "$2"
   elif kill -0 -- "-$1" 2>/dev/null; then
     printf '[preferred-execution] cancellation incomplete for remote process group %s of %s: original process identity unavailable; skipping delayed KILL\n' "$1" "$execution_id" >&2
+    return 1
   fi
 }
 
 cancel_record() {
+  local reason=${1:-custody_cancel}
   [ -f "$pid_file" ] || return 0
   pid=$(sed -n '1p' "$pid_file")
   case "$pid" in ''|*[!0-9]*) return 0 ;; esac
@@ -80,14 +82,14 @@ cancel_record() {
       group_id=$(ps -p "$group" -o pgid= 2>/dev/null | tr -d ' ')
       if [ "$group_parent" = "$pid" ] && [ "$group_id" = "$group" ]; then
         members=$(group_identities "$group")
-        kill -TERM -- "-$group" 2>/dev/null || true
+        signal_member "$reason" TERM pgid "$group" "$members"
         sleep 2
         current_command=$(ps -p "$pid" -o command= 2>/dev/null || true)
         if heavyweight_process_is_current "$pid" "$root_token"; then
           case "$current_command" in
             *"$execution_id"*)
-              finish_group_cancellation "$group" "$members"
-              kill -TERM "$pid" 2>/dev/null || true
+              finish_group_cancellation "$group" "$members" "$reason" || return $?
+              signal_member "$reason" TERM pid "$pid" "$pid:$root_token"
               ;;
           esac
         fi
@@ -108,16 +110,16 @@ cancel_record() {
       continue
     fi
     identities="$identities $child:$token"
-    heavyweight_process_is_current "$child" "$token" && kill -TERM "$child" 2>/dev/null || true
+    heavyweight_process_is_current "$child" "$token" && signal_member "$reason" TERM pid "$child" "$child:$token"
   done
   sleep 2
   for identity in $identities; do
     child=${identity%%:*}; token=${identity#*:}
-    heavyweight_process_is_current "$child" "$token" && kill -KILL "$child" 2>/dev/null || true
+    heavyweight_process_is_current "$child" "$token" && signal_member "$reason" KILL pid "$child" "$child:$token"
   done
   if heavyweight_process_is_current "$pid" "$root_token"; then
     current_command=$(ps -p "$pid" -o command= 2>/dev/null || true)
-    case "$current_command" in *"$execution_id"*) kill -TERM "$pid" 2>/dev/null || true ;; esac
+    case "$current_command" in *"$execution_id"*) signal_member "$reason" TERM pid "$pid" "$pid:$root_token" ;; esac
   fi
   rm -f -- "$pid_file"
 }
@@ -164,7 +166,7 @@ reap_test_temp_roots() {
     printf '%s\n' "$snapshot" | awk -v group="$owner_group" '$2 == group && $3 !~ /^Z/ {found=1} END {exit !found}' && continue
     heavyweight_process_is_current "$owner_pid" "$owner_token" && continue
     printf '[preferred-execution] removing abandoned test temporary root %s\n' "$directory" >&2
-    rm -rf -- "$directory"
+    rm -rf -- "$directory" 2>/dev/null || node "${BASH_SOURCE[0]%/*}/historical_temp_roots.mjs" --remove-owned-temp-root "$directory"
   done
 }
 
@@ -191,7 +193,11 @@ if [ "$mode" = test-temp-users ]; then
   exit 0
 fi
 
-if [ "$mode" = cancel ]; then cancel_record; exit 0; fi
+if [ "$mode" = cancel ]; then
+  initiating_execution_id=${2:-$execution_id}
+  cancel_record "${1:-custody_cancel}"
+  exit $?
+fi
 # The existing execution record lives beneath the configured worker CLI home.
 # Use that disk-backed owner for default scratch, not RAM-backed /tmp quotas.
 # Explicit TMPDIR remains caller-owned; never relocate an active scratch tree.
@@ -222,40 +228,43 @@ for pid_file in "${requested_pid_file%/*}"/native-*.pid; do
   parent=$(ps -p "$pid" -o ppid= 2>/dev/null | tr -d ' ')
   if [ "$parent" = 1 ]; then
     printf '[preferred-execution] reaping orphaned remote execution %s\n' "$execution_id" >&2
-    cancel_record
+    cancel_record reaper_orphan
   elif [ -z "$parent" ]; then
     rm -f -- "$pid_file"
   fi
 done
 pid_file=$requested_pid_file
 execution_id=$requested_execution_id
+HAPPIER_REMOTE_EXECUTION_ID=$execution_id
+export HAPPIER_REMOTE_EXECUTION_ID
 mkdir -p -- "${pid_file%/*}"
 printf '%s\n' "$$" > "$pid_file"
 remote_child_pid=
 lifetime_pid=
+lifetime_token=
+termination_reason=completed
 control_pipe=
 cleanup() {
   rm -f -- "$pid_file"
   [ -z "$control_pipe" ] || { exec 4>&-; rm -f -- "$control_pipe"; }
-  [ -z "$lifetime_pid" ] || kill -TERM "$lifetime_pid" 2>/dev/null || true
+  if [ -n "$lifetime_pid" ] && heavyweight_process_is_current "$lifetime_pid" "$lifetime_token"; then
+    signal_member "$termination_reason" TERM pid "$lifetime_pid" "$lifetime_pid:$lifetime_token"
+  fi
   [ -z "$lifetime_pid" ] || wait "$lifetime_pid" 2>/dev/null || true
   if [ -n "$command_temp" ]; then
-    # Positive producer custody: all payload descendants inherit TMPDIR. Like
-    # test-root teardown, unknown live bindings or a live group retain it.
-    local snapshot binding
+    # Producer custody owns lifetime. Detached descendants can drop TMPDIR;
+    # the canonical reaper also checks cwd, descriptors, mappings and inodes.
+    local snapshot
     case "$command_temp_token" in ''|*[!0-9]*) return ;; esac
     case "$command_temp" in *$'\n'*|*$'\r'*) return ;; esac
     snapshot=$(ps -eo pid=,pgid=,stat=,uid=) || return
-    read_test_temp_root_users "$snapshot" || return
-    while IFS= read -r binding; do
-      case "$binding" in "$command_temp"|"$command_temp"/*) return ;; esac
-    done <<< "$test_temp_root_users"
     printf '%s\n' "$snapshot" | awk -v group="$command_temp_group" '$2 == group && $3 !~ /^Z/ {found=1} END {exit !found}' && return
     [ -d "$command_temp" ] && [ ! -L "$command_temp" ] && [ -O "$command_temp" ] || return
-    rm -rf -- "$command_temp"
+    TMPDIR= HAPPIER_TEST_TEMP_ROOTS= node "${BASH_SOURCE[0]%/*}/historical_temp_roots.mjs" --reap-command-temp-root "$command_temp" <<< "$snapshot"
   fi
 }
 terminate_command() {
+  local reason=${1:-completed}
   [ -n "$remote_child_pid" ] || return 0
   if [ "${HAPPIER_STACK_PROCESS_KIND-}" = browser ] && [ "$control_stdin" = 1 ]; then
     # Browser close owns detached Chromium and may outlive the generic group
@@ -274,17 +283,18 @@ terminate_command() {
   fi
   local members
   members=$(group_identities "$remote_child_pid")
+  kill -0 -- "-$remote_child_pid" 2>/dev/null || return 0
   # Job control establishes a group for the command and all its descendants.
-  kill -TERM -- "-$remote_child_pid" 2>/dev/null || true
+  signal_member "$reason" TERM pgid "$remote_child_pid" "$members"
   for ((attempt=0; attempt<20; attempt++)); do
     kill -0 -- "-$remote_child_pid" 2>/dev/null || return 0
     sleep 0.1
   done
   # The command leader may already have exited. An original member's positive
   # start identity plus its current PGID prevents signaling a recycled group.
-  finish_group_cancellation "$remote_child_pid" "$members"
+  finish_group_cancellation "$remote_child_pid" "$members" "$reason"
 }
-cancel() { trap '' HUP INT TERM; terminate_command; exit 130; }
+cancel() { trap '' HUP INT TERM; termination_reason=signal; terminate_command "$termination_reason"; exit 130; }
 trap cleanup EXIT
 trap cancel HUP INT TERM
 if [ -n "$command_temp_parent" ]; then
@@ -312,7 +322,8 @@ else
 fi
 remote_child_pid=$!
 command_temp_group=$remote_child_pid
-printf '%s\n%s\n%s\n' "$$" "$remote_child_pid" "$(heavyweight_process_token "$$")" > "$pid_file"
+wrapper_token=$(heavyweight_process_token "$$")
+printf '%s\n%s\n%s\n' "$$" "$remote_child_pid" "$wrapper_token" > "$pid_file"
 if [ "$lifetime_stdin" = 1 ]; then
   (
     [ -z "$control_pipe" ] || exec 4>&-
@@ -324,11 +335,12 @@ if [ "$lifetime_stdin" = 1 ]; then
     # Leader exit can make the wrapper's wait finish during TERM. Once EOF is
     # observed, cleanup must not interrupt the final KILL of stubborn children.
     trap '' HUP INT TERM
-    kill -TERM "$$" 2>/dev/null || true
-    terminate_command
+    signal_member lifeline_eof TERM pid "$$" "$$:$wrapper_token"
+    terminate_command lifeline_eof
     rm -f -- "$pid_file"
   ) <&3 &
   lifetime_pid=$!
+  lifetime_token=$(heavyweight_process_token "$lifetime_pid")
   exec 3<&-
 fi
 if [ -t 0 ]; then fg %1; else wait "$remote_child_pid"; fi

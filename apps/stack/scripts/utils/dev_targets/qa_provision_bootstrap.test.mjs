@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createHash } from 'node:crypto';
 import { cp, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import { writeFakeBin } from '../../testkit/core/fake_bin_harness.mjs';
@@ -17,6 +17,14 @@ test('QA setup admits a fresh worker dependency graph before loading its entrypo
   for (const relative of ['apps/stack/scripts/utils', 'apps/stack/scripts/provision', 'scripts/workspaces', 'scripts/ci']) {
     await cp(join(source, relative), join(worker, relative), { recursive: true,
       filter: path => !path.endsWith('.test.mjs') });
+  }
+  for (const relative of [
+    'apps/cli/scripts/build-owned/bundledPluginMembership.ts',
+    'apps/cli/scripts/buildPublication.mjs',
+    'apps/stack/scripts/build/sourceWebExportArgs.mjs',
+  ]) {
+    await mkdir(dirname(join(worker, relative)), { recursive: true });
+    await cp(join(source, relative), join(worker, relative));
   }
   const common = join(worker, 'packages/cli-common');
   await mkdir(common, { recursive: true });
@@ -88,6 +96,7 @@ else {
   const target = { name: 'qa-cold', platform: 'posix', ssh: 'fixture-qa-cold', repoDir: worker,
     cliHomeDir: join(root, 'worker-home'), remotePath: [binDir, join(process.execPath, '..')] };
   const env = { ...process.env, PATH: `${binDir}:${process.env.PATH}`, npm_execpath: '', NODE_PATH: '', NODE_OPTIONS: '',
+    HAPPIER_STACK_SKIP_REFRESH_DEPS: '', HAPPIER_STACK_DISABLE_REFRESH_DEPS: '',
     HAPPIER_STACK_HOME_DIR: join(root, 'stack-home'), HAPPIER_STACK_STACKS_DIR: join(root, 'stacks'),
     QA_INSTALLS: installs, QA_COMMANDS: commands, QA_BOOTSTRAP_FAILURE: bootstrapFailure };
   await assert.rejects(stat(join(worker, 'node_modules')), { code: 'ENOENT' });

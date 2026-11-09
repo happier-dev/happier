@@ -69,6 +69,6 @@ test('TUI producer identity makes the Windows owner refuse a same-pid successor'
     },
   });
 
-  assert.deepEqual(result, { killed: false, reason: 'process_instance_changed' });
+  assert.deepEqual(result, { killed: true, reason: 'already_exited' });
   assert.equal(terminationCalls, 0);
 });

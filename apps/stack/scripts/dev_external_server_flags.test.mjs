@@ -63,7 +63,7 @@ test('dev --server-url uses remote server mode', async () => {
 test('external-server startup sanitizes parent preflight authority before descendant orchestration', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const source = await readFile(join(scriptsDir, 'dev.mjs'), 'utf8');
-  const orchestrationEnvBoundary = source.indexOf('const baseEnv = { ...process.env };');
+  const orchestrationEnvBoundary = source.search(/(?:const|let) baseEnv = \{ \.\.\.process\.env \};/);
   const runtimeStartBoundary = source.indexOf('await recordStackRuntimeStart');
   const watchdogBoundary = source.indexOf('spawnStackOwnerDeathWatchdog({');
   const optionalServerBoundary = source.indexOf('let serverEnv = baseEnv;');

@@ -55,8 +55,9 @@ identity. The existing dev reload coordinator keeps the producer current on
 eligible execution hosts, with nl3 first. A plain source reload records one
 request-start time and requires each requested server and daemon capture at or
 after that time. The coordinator forwards the same boundary to every execution
-host and any explicit UI export. `--source-after=<ISO timestamp>` can require a
-later capture to include a later fix; it cannot weaken the default boundary.
+host and any explicit UI export. For fast adoption, `--source-after=<ISO timestamp>`
+uses that fix time instead of request-start time, so an already-finished rolling
+prebuild captured at or after the fix can be reused without compiling again.
 `--allow-older-source` explicitly permits older completed compatible captures,
 while still honoring an explicit `--source-after` value. General source starts
 and other non-reload adoption keep their newest-completed default. Check the

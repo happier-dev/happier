@@ -53,6 +53,7 @@ export async function createStackArchiveFixture(
 
   return {
     stackName,
+    repoDir,
     storageDir,
     workspaceDir,
     worktreeDir,

@@ -3,16 +3,52 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { watch } from 'node:fs';
+import childProcess from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
+import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import cliDistBuildManifest from './cliDistBuildManifestLoader.mjs';
 
 import {
-  DEFAULT_CLI_DIST_RUNTIME_IMPORT_TIMEOUT_MS,
   probeCliDistRuntimeImport,
   readCliDistBuildManifest,
   readCliDistClosureFingerprint,
   resolveCliDistEntrypointFromBin,
   writeCliDistBuildManifest,
 } from './cliDistIntegrity.mjs';
+
+test('CLI runtime probes suppress creation of a Windows console at the process boundary', async (t) => {
+  const fixture = await createTempFixture(t, { prefix: 'hidden-runtime-probe-' });
+  const entry = fixture.path('entry.mjs');
+  await writeFile(entry, 'export const ready = true;\n');
+  const originalSpawn = childProcess.spawn;
+  t.mock.method(childProcess, 'spawn', (command, args, options) => {
+    assert.equal(options.windowsHide, true);
+    return originalSpawn(command, args, options);
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+  await probeCliDistRuntimeImport(entry);
+});
+
+test('fresh entry loads identify the first failing module and accept a healthy graph', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'entry-load-contract-' });
+  const entry = fixture.path('entry.mjs');
+  const leaf = fixture.path('leaf.mjs');
+  await writeFile(entry, "import './leaf.mjs';\n");
+  await writeFile(leaf, 'export const before = after; export const after = 1;\n');
+  await assert.rejects(probeCliDistRuntimeImport(entry), error => {
+    assert.equal(error.firstFailingModule, leaf);
+    assert.equal(error.loadError.name, 'ReferenceError');
+    assert.match(error.loadError.message, /before initialization/);
+    return true;
+  });
+  await writeFile(leaf, 'export const after = 1; export const before = after;\n');
+  await probeCliDistRuntimeImport(entry);
+});
 
 test('dependency extraction scales below quadratic for a large emitted import table', () => {
   const measure = (count) => {
@@ -38,8 +74,35 @@ test('dependency extraction scales below quadratic for a large emitted import ta
   assert.ok(large / small < 5 ** 1.5, `CPU scaling ${large}/${small} = ${large / small}`);
 });
 
-test('runtime import probe default budget covers source daemon startup verification', () => {
-  assert.equal(DEFAULT_CLI_DIST_RUNTIME_IMPORT_TIMEOUT_MS, 120_000);
+test('installed runtime import probes keep their default deadline even with caller cancellation', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'installed-probe-deadline-' });
+  const entrypoint = fixture.path('entry.mjs');
+  const started = fixture.path('started');
+  await writeFile(entrypoint, `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(started)}, 'yes'); setInterval(() => {}, 1000);`);
+  const controller = new AbortController();
+  let onStarted;
+  const entered = new Promise(resolve => { onStarted = resolve; });
+  const observer = watch(fixture.root, (_event, name) => { if (name === 'started') onStarted(); });
+  const scheduled = [];
+  const setTimeout = globalThis.setTimeout;
+  // The clock is the external boundary: exercise the real spawned loader and
+  // advance its existing deadline without spending two minutes in the test.
+  t.mock.method(globalThis, 'setTimeout', (callback, delay, ...args) => {
+    scheduled.push({ callback: () => callback(...args), delay });
+    return setTimeout(callback, delay, ...args);
+  });
+  const loading = probeCliDistRuntimeImport(entrypoint, { signal: controller.signal });
+  void loading.catch(() => {});
+  try {
+    await Promise.race([entered, loading.then(() => { throw new Error('loader exited before its deadline'); })]);
+    assert.deepEqual(scheduled.map(timer => timer.delay), [120_000]);
+    scheduled[0].callback();
+    await assert.rejects(loading, error => error.loadError?.code === 'import_timeout');
+  } finally {
+    observer.close();
+    controller.abort(new Error('probe fixture finished'));
+    await loading.catch(() => {});
+  }
 });
 
 async function writeCliBinFixture(root) {

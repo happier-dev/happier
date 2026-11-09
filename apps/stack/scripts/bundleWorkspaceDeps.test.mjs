@@ -55,7 +55,8 @@ for (const heldProducer of ['cli-common', 'fixture']) test(`Stack bundle prepare
         const output = buildEnv.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR;
         mkdirSync(output, { recursive: true });
         writeFileSync(join(output, 'index.js'), 'export const ready = true;\n');
-        if (directory === fixture.path('packages', 'cli-common')) {
+        const manifest = JSON.parse(readFileSync(join(directory, 'package.json'), 'utf8'));
+        if (manifest.name === '@happier-dev/cli-common') {
           mkdirSync(join(output, 'workspaces'), { recursive: true });
           writeFileSync(join(output, 'workspaces/index.js'), `export * from ${JSON.stringify(new URL('../../../packages/cli-common/src/workspaces/index.ts', import.meta.url).href)};\n`);
         }
@@ -642,6 +643,23 @@ test('bundleWorkspaceDeps skips rebundling when the existing bundle is already f
     }
     assert.deepEqual(counts, { copies: 0, writes: 0, bodyReads: 0 });
     assert.equal(existsSync(resolve(stackDir, 'node_modules/@happier-dev/.workspace-bundle-manifest.json')), false);
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test('Stack artifact preparation detaches a canonical source link retained by live preparation', async () => {
+  const { repoRoot, stackDir, protocolDir } = createBundleFixture('happy-stack-bundle-source-link-');
+  try {
+    const destinationDir = resolve(stackDir, 'node_modules/@happier-dev/protocol');
+    mkdirSync(dirname(destinationDir), { recursive: true });
+    fs.symlinkSync(protocolDir, destinationDir, process.platform === 'win32' ? 'junction' : 'dir');
+    await bundleWorkspaceDeps({ repoRoot, stackDir, publicationMode: 'live' });
+    assert.equal(fs.lstatSync(destinationDir).isSymbolicLink(), true);
+    await bundleWorkspaceDeps({ repoRoot, stackDir, publicationMode: 'artifact' });
+    assert.equal(fs.lstatSync(destinationDir).isSymbolicLink(), false);
+    assert.equal(readFileSync(resolve(destinationDir, 'dist/index.js'), 'utf8'),
+      readFileSync(resolve(protocolDir, 'dist/index.js'), 'utf8'));
   } finally {
     rmSync(repoRoot, { recursive: true, force: true });
   }

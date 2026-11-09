@@ -111,6 +111,7 @@ export function resolveExecutionHostGuestDevTargetsConfigPath({
   return resolveDevTargetsConfigPath({
     stackName,
     env: guestStorageEnv(mount.mountDir, env),
+    useExecutionOverride: false,
   });
 }
 

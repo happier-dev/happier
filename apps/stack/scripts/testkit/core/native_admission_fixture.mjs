@@ -71,7 +71,7 @@ export function buildNativeAdmissionFixtureEnv(env = process.env) {
 /** Remap only the fixed OS-state filesystem boundary, never a production flag.
  * Real admission, kernel identity, locking and class policy remain unchanged.
  */
-export async function installNativeAdmissionFixture({ root, admissionRoot = null, observedPidsPath = null, processMemoryKiBPath = null, prepareDependencies = false,
+export async function installNativeAdmissionFixture({ root, admissionRoot = null, observedPidsPath = null, processMemoryKiBPath = null, prepareDependencies = false, totalCpuCores,
   launcherSourcePath = process.env.HAPPIER_TEST_NATIVE_ADMISSION_LAUNCHER || join(sourceRoot, 'apps/stack/bin/hstack-exec'),
   admissionStateSourcePath = process.env.HAPPIER_TEST_NATIVE_ADMISSION_STATE || join(sourceRoot, 'apps/stack/scripts/utils/proc/native_host_admission_state.sh'),
   admissionBrokerSourcePath = process.env.HAPPIER_TEST_NATIVE_ADMISSION_BROKER || join(sourceRoot, 'apps/stack/scripts/utils/proc/admission_broker.mjs'),
@@ -144,13 +144,13 @@ esac
     copyFile(join(sourceRoot, 'apps/stack/scripts/utils/proc/native_process_priority.sh'), join(proc, 'native_process_priority.sh')),
     copyFile(join(sourceRoot, 'apps/stack/scripts/utils/proc/native_admission_client.sh'), join(proc, 'native_admission_client.sh')),
     copyFile(join(sourceRoot, 'apps/stack/scripts/utils/dev_targets/native_command_policy.sh'), join(targets, 'native_command_policy.sh')),
-    copyFile(join(sourceRoot, 'apps/stack/scripts/utils/dev_targets/native_dispatch_recovery.sh'), join(targets, 'native_dispatch_recovery.sh')),
-    copyFile(join(sourceRoot, 'apps/stack/scripts/utils/dev_targets/native_placement.sh'), join(targets, 'native_placement.sh')),
-    copyFile(join(sourceRoot, 'apps/stack/scripts/utils/dev_targets/native_execution_signals.sh'), join(targets, 'native_execution_signals.sh')),
-    copyFile(join(sourceRoot, 'apps/stack/scripts/utils/dev_targets/native_go_toolchain.sh'), join(targets, 'native_go_toolchain.sh')),
     copyFile(join(sourceRoot, 'apps/stack/scripts/utils/dev_targets/controller_coalescing.mjs'), join(targets, 'controller_coalescing.mjs')),
+    copyFile(join(sourceRoot, 'apps/stack/scripts/utils/dev_targets/native_dispatch_recovery.sh'), join(targets, 'native_dispatch_recovery.sh')),
     copyFile(join(sourceRoot, 'apps/stack/scripts/utils/dev_targets/native_sync_readiness.sh'), join(targets, 'native_sync_readiness.sh')),
     copyFile(join(sourceRoot, 'apps/stack/scripts/utils/dev_targets/remote_execution_custody.sh'), join(targets, 'remote_execution_custody.sh')),
+    copyFile(join(sourceRoot, 'apps/stack/scripts/utils/dev_targets/native_execution_signals.sh'), join(targets, 'native_execution_signals.sh')),
+    copyFile(join(sourceRoot, 'apps/stack/scripts/utils/dev_targets/native_placement.sh'), join(targets, 'native_placement.sh')),
+    copyFile(join(sourceRoot, 'apps/stack/scripts/utils/dev_targets/native_go_toolchain.sh'), join(targets, 'native_go_toolchain.sh')),
   ]);
   // A live admission change can prove its exact sibling candidate before the
   // atomic publication. Execute the real candidate policy, not a copied table.
@@ -210,7 +210,7 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
     const values = execFileSync('awk', ['/MemAvailable:/ {available=$2} /MemTotal:/ {total=$2} END {print available, total}', '/proc/meminfo'], { encoding: 'utf8' }).trim().split(/\\s+/u).map(Number);
     return { availableMemoryKiB: values[0], totalMemoryKiB: values[1] };
   };
-  const broker = createAdmissionBroker({ root: ${JSON.stringify(admissionRoot)}, oldLockPath: ${JSON.stringify(join(admissionRoot, 'old-admission.lock'))}, sampleResources: ({ slots }) => {
+  const broker = createAdmissionBroker({ root: ${JSON.stringify(admissionRoot)}, oldLockPath: ${JSON.stringify(join(admissionRoot, 'old-admission.lock'))}, readCpuCapacity: ${totalCpuCores === undefined ? 'undefined' : '() => ' + JSON.stringify(totalCpuCores)}, sampleResources: ({ slots }) => {
     appendFileSync(${JSON.stringify(resourceSamplesPath)}, 'sample\\n');
     if (process.env.FIXTURE_SAMPLES) appendFileSync(process.env.FIXTURE_SAMPLES, 'sample\\n');
     return readAdmissionMemorySample({ slots, readProcesses, readMemory });
@@ -319,7 +319,7 @@ export async function holdNativeAdmissionFixtureMemory(t, native, { totalKiB, av
   const client = pathToFileURL(native.admissionClientPath).href;
   const program = `import { runAdmissionCommand } from ${JSON.stringify(client)};
 process.exitCode = await runAdmissionCommand({ root: ${JSON.stringify(native.admissionRoot)},
-  className: 'validation', floorKiB: ${Math.max(1, totalKiB - availableKiB)}, machine: 'fixture',
+  className: 'native-source-test', floorKiB: ${Math.max(1, totalKiB - availableKiB)}, machine: 'fixture',
   repoDir: ${JSON.stringify(resolve(native.launcher, '../../../..'))}, cacheBaseDir: ${JSON.stringify(dirname(native.memoryOverridePath))},
   command: process.execPath, args: ['-e', 'process.stdout.write("ready"); process.stdin.resume();'], env: process.env });`;
   const child = spawn(process.execPath, ['--input-type=module', '-e', program], { env: buildNativeAdmissionFixtureEnv(native.env ?? process.env), stdio: ['pipe', 'pipe', 'pipe'] });

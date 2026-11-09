@@ -3550,7 +3550,7 @@ test('native author input versions accept settled text and refuse changed bytes'
   }
 });
 
-test('source author declaration failure reaches the bundle caller with package and compiler diagnostics', async context => {
+test('source author JavaScript failure reaches the bundle caller with package and source diagnostics', async context => {
   const fixture = await createTempFixture(context, {prefix:'happier-source-author-failure-'});
   const {build, env} = await installSourceAdmissionFixture(fixture.root);
   const repoDir = fixture.path('repo');
@@ -3565,63 +3565,31 @@ test('source author declaration failure reaches the bundle caller with package a
   await writeFile(join(cliDir, 'tsconfig.json'), '{}');
   await writeFile(join(cliDir, 'src/index.ts'), 'export const ready=true;');
   await writeFile(join(sdkDir, 'package.json'), JSON.stringify({name:'@happier-dev/plugin-sdk',version:'0.0.0',
-    type:'module',main:'./dist/index.js',types:'./dist/index.d.ts',
-    exports:{'.':{'happier-source':'./src/index.ts',types:'./dist/index.d.ts',default:'./dist/index.js'}},
+    type:'module',main:'./dist/index.js',types:'./dist/index.js',
+    exports:{'.':{'happier-source':'./src/index.ts',types:'./dist/index.js',default:'./dist/index.js'}},
     happier:{publicSdkRelease:{posture:'developer_preview'}}}));
   await writeFile(join(sdkDir, 'tsconfig.json'), JSON.stringify({compilerOptions:{target:'ES2022',
     module:'NodeNext',moduleResolution:'NodeNext',rootDir:'src',outDir:'dist',declaration:true},include:['src/**/*.ts']}));
-  // --noCheck still needs declaration inference, which cannot expose a private
-  // member of an exported anonymous class (TS4094).
-  await writeFile(join(sdkDir, 'src/index.ts'), 'export const broken = class { private hidden = 1; };');
+  await writeFile(join(sdkDir, 'src/index.ts'), 'export const broken = ;');
   await symlink(sdkDir, join(repoDir, 'node_modules/@happier-dev/plugin-sdk'),
     process.platform === 'win32' ? 'junction' : 'dir');
   await symlink(dirname(createRequire(import.meta.url).resolve('esbuild/package.json')), join(cliDir, 'node_modules/esbuild'),
     process.platform === 'win32' ? 'junction' : 'dir');
   await installSourcePreparationInputs(repoDir, 'daemon');
-  const diagnosticBudget = appendBoundedTail('', 'x'.repeat(100_000)).length;
-  const privateValue = createHash('sha256').update(fixture.root).digest('hex');
-  const observer = fixture.path('compiler-diagnostics.mjs');
-  // Add noisy output only at the compiler process boundary; declaration emit
-  // and all source-bundle capture, admission and failure transport stay real.
-  await writeFile(observer, `
-    import {createRequire,syncBuiltinESMExports} from 'node:module';
-    const childProcess=createRequire(import.meta.url)('node:child_process');
-    for (const method of ['spawn','fork']) {
-    const original=childProcess[method];
-    childProcess[method]=function(command,args,...options) {
-      const child=original.call(this,command,args,...options);
-      if (child.stdout && args?.some(arg=>arg.includes('--noCheck'))) child.once('exit',code=>{
-        if (code !== 0) child.stdout.emit('data',Buffer.from('\\nBearer '+process.env.SOURCE_AUTHOR_DIAGNOSTIC_SECRET
-          +'\\n'+'x'.repeat(${diagnosticBudget * 2})+'\\nlate-diagnostic\\n'));
-      });
-      return child;
-    };
-    }
-    syncBuiltinESMExports();
-  `);
-  const diagnosticEnv = {...env, SOURCE_AUTHOR_DIAGNOSTIC_SECRET:privateValue,
-    NODE_OPTIONS:`${env.NODE_OPTIONS ?? ''} --import=${pathToFileURL(observer).href}`.trim()};
   for (const location of [{outputDir:fixture.path('output')},
     {stackBaseDir:fixture.path('stacks/failure'),waitForSourceChanges:false}]) {
-    await assert.rejects(build({repoDir,...location,component:'daemon',env:diagnosticEnv}), error => {
+    await assert.rejects(build({repoDir,...location,component:'daemon',env}), error => {
       assert.equal(error.code, 'WORKSPACE_PACKAGE_BUILD_FAILED');
       assert.match(error.message, /phase=author-packages/);
       assert.match(error.message, /package=@happier-dev\/plugin-sdk/);
-      assert.match(error.message, /exitCode=1/);
-      assert.match(error.message, /src[/\\]index\.ts.*TS4094/);
-      assert.equal(error.message.includes(privateValue), false, 'compiler output must be redacted before transport');
-      assert.match(error.message, /<redacted>/);
-      assert.equal(error.message.includes('late-diagnostic'), false, 'keep the first diagnostics, not the tail');
-      assert.match(error.message, /\[later diagnostics omitted\]/);
-      const [, ...diagnostics] = error.message.split('\n');
-      assert.ok(diagnostics.join('\n').replace('\n[later diagnostics omitted]', '').length <= diagnosticBudget,
-        'the excerpt must reuse the process diagnostic budget');
+      assert.match(error.message, /src[/\\]index\.ts/);
+      assert.match(error.message, /Unexpected/);
       return true;
     });
   }
   await writeFile(join(sdkDir, 'src/index.ts'), 'export const repaired = true;');
-  const recovered = await build({repoDir,stackBaseDir:fixture.path('stacks/failure'),component:'daemon',env:diagnosticEnv});
-  assert.match(await readFile(join(recovered.runtimeDir, 'authoring/node_modules/@happier-dev/plugin-sdk/dist/index.d.ts'), 'utf8'),
+  const recovered = await build({repoDir,stackBaseDir:fixture.path('stacks/failure'),component:'daemon',env});
+  assert.match(await readFile(join(recovered.runtimeDir, 'authoring/node_modules/@happier-dev/plugin-sdk/dist/index.js'), 'utf8'),
     /repaired = true/, 'a repaired package must emit and publish normally after a terminal refusal');
 });
 
@@ -3689,58 +3657,46 @@ test('source daemon owns a usable public author SDK closure without workspace di
   await writeFile(join(sdkDir, 'src/index.ts'), "/// <reference path='../node_modules/author-external/dist/index.d.ts' />\nimport {marker} from '@happier-dev/protocol';\nexport {marker};\nexport const canonicalMarker = marker;\nimport {authorValue} from '#author-value';\nexport const canonicalAlias = authorValue;\nimport {createAuthorValue} from 'author-external';\nexport function echo(value: string) { return createAuthorValue(value).value; }\n");
   await symlink(dirname(createRequire(import.meta.url).resolve('esbuild/package.json')), join(cliDir, 'node_modules/esbuild'),
     process.platform === 'win32' ? 'junction' : 'dir');
-  const compilerCommands = fixture.path('author-compiler-commands.jsonl');
-  const compilerObserver = fixture.path('observe-author-compiler.mjs');
-  // Observe the real OS launch without replacing compiler or domain logic.
-  // Native parallel checkers replicate the declaration graph per host CPU.
-  await writeFile(compilerObserver, `
-    import {createRequire,syncBuiltinESMExports} from 'node:module';
-    import {appendFileSync,readFileSync} from 'node:fs';
-    const childProcess=createRequire(import.meta.url)('node:child_process');
-    const spawn=childProcess.spawn;
-    childProcess.spawn=function(command,args,...options) {
-      const child=spawn.call(this,command,args,...options);
-      if (args?.includes('--noCheck') && args.some(arg=>arg.endsWith('tsconfig.dist.json')))
-        child.once('exit',code=>{
-          if (code !== 0) return;
-          const info=JSON.parse(readFileSync(args[args.indexOf('--tsBuildInfoFile')+1],'utf8'));
-          appendFileSync(${JSON.stringify(compilerCommands)},JSON.stringify({args,files:info.fileNames})+'\\n');
-        });
-      return child;
-    };
-    syncBuiltinESMExports();
-  `);
-  const env = {...process.env,
-    NODE_OPTIONS:`${process.env.NODE_OPTIONS ?? ''} --import=${pathToFileURL(compilerObserver).href}`.trim()};
+  const env = process.env;
   const stackBaseDir = fixture.path('stacks/author');
   await installSourcePreparationInputs(repoDir, 'daemon');
-  let runtime = await buildSourceRuntimeBundle({repoDir, stackBaseDir, component:'daemon', env});
-  const readCompilerCommands = async () => {
-    const commands = (await readFile(compilerCommands, 'utf8')).trim().split('\n').map(line=>JSON.parse(line));
-    // Admission can forward the same compiler through several OS launches.
-    // One emitted build-info path identifies that package compilation.
-    return [...new Map(commands.map(command => [
-      command.args[command.args.indexOf('--tsBuildInfoFile') + 1], command,
-    ])).values()];
+  let declarationCompilers = 0;
+  const originalSpawn = childProcess.spawn;
+  childProcess.spawn = function(command, args, ...options) {
+    if (args?.some(arg => arg === '--project' || arg === '-p')) declarationCompilers++;
+    return originalSpawn.call(this, command, args, ...options);
   };
-  const authorCommands = await readCompilerCommands();
-  assert.ok(authorCommands.length > 0, 'the real public author compiler was observed');
-  for (const {args} of authorCommands) assert.ok(args.includes('--singleThreaded'),
-    'author declaration emission must not replicate its checker graph with host CPU count');
-  const sdkCompiler = authorCommands.find(({args})=>args.some(arg=>arg.replaceAll('\\','/').includes('/plugin-sdk/tsconfig.dist.json')));
-  assert.ok(sdkCompiler, 'the SDK declaration compiler was observed');
-  assert.equal(sdkCompiler.files.some(path=>path.replaceAll('\\','/').endsWith('/protocol/src/index.ts')), false,
-    'dependent author packages must consume the already emitted current-source declaration, not re-emit its source');
+  syncBuiltinESMExports();
+  context.after(() => { childProcess.spawn = originalSpawn; syncBuiltinESMExports(); });
+  let runtime = await buildSourceRuntimeBundle({repoDir, stackBaseDir, component:'daemon', env});
+  const compilerCount = async () => declarationCompilers;
+  assert.equal(await compilerCount(), 0, 'ordinary source preparation launches no declaration compilers');
+  const {build: buildAuthorOwner} = createRequire(new URL('../../../cli/package.json', import.meta.url))('esbuild');
+  const declarationOwner = fixture.path('author-declarations.mjs');
+  await buildAuthorOwner({entryPoints:[fileURLToPath(new URL('../../../cli/src/plugins/authoring/sourceDeclarations.ts', import.meta.url))],
+    outfile:declarationOwner,bundle:true,platform:'node',format:'esm',conditions:['happier-source'],logLevel:'silent'});
+  const {emitSourceAuthorDeclarations} = await import(pathToFileURL(declarationOwner).href);
+  const readAuthorDeclarations = async runtimeDir => {
+    const root = await mkdtemp(fixture.path('materialized-author-'));
+    await cp(join(runtimeDir,'authoring'),root,{recursive:true});
+    await makeFixtureWritable(root);
+    const sdk = join(root,'node_modules/@happier-dev/plugin-sdk');
+    await emitSourceAuthorDeclarations([sdk],async projectPath => {
+      const args = ['-p',projectPath];
+      const invocation = resolveTypeScriptCliInvocation({args,workspaceDir:repoDir,admissionClass:'source-bundle',invocationKind:'build'});
+      await promisify(execFile)(invocation.command,[...invocation.argsPrefix,...args],{cwd:repoDir,env});
+    });
+    return await readFile(join(sdk,'dist/index.d.ts'),'utf8');
+  };
   const record = JSON.parse(await readFile(join(runtime.runtimeDir, '../../source-bundle.json'), 'utf8'));
   const sdkInput = Object.entries(record.sourceInputDigests).find(([path]) => path.endsWith('packages/plugin-sdk/src/index.ts'));
   assert.match(sdkInput?.[1], /^[a-f0-9]{64}$/,
     'settled compiler source bytes must remain eligible for normal source-bundle reuse');
   assert.equal(Object.keys(record.sourceInputDigests).some(path => path.includes('node_modules/@happier-dev/protocol/')), false,
-    'author declarations must resolve canonical workspace source rather than a stale installed shadow');
+    'author inputs must resolve canonical workspace source rather than a stale installed shadow');
   const warm = await buildSourceRuntimeBundle({repoDir, stackBaseDir, component:'daemon'});
   assert.equal(warm.entrypoint, runtime.entrypoint, 'settled public author closure reuses the existing source bundle');
-  const compilerCount = async () => (await readCompilerCommands()).length;
-  assert.equal(await compilerCount(), authorCommands.length,
+  assert.equal(await compilerCount(), 0,
     'unchanged preparation performs zero author-package compiler emissions');
   const authorBytes = async root => {
     const files = {};
@@ -3758,7 +3714,7 @@ test('source daemon owns a usable public author SDK closure without workspace di
   await writeFile(join(cliDir, 'src/index.ts'), 'export const ready = "host-only-change";');
   const hostOnly = await buildSourceRuntimeBundle({repoDir, stackBaseDir, component:'daemon', env});
   assert.notEqual(hostOnly.entrypoint, runtime.entrypoint, 'the daemon must consume its changed host source');
-  assert.equal(await compilerCount(), authorCommands.length,
+  assert.equal(await compilerCount(), 0,
     'a host-only change performs zero unchanged author-package compiler emissions');
   assert.deepEqual(await authorBytes(join(hostOnly.runtimeDir, 'authoring')), originalAuthorBytes,
     'unchanged authoring inputs retain a byte-identical served package closure');
@@ -3779,7 +3735,7 @@ test('source daemon owns a usable public author SDK closure without workspace di
     [name, await authorBytes(join(runtime.runtimeDir, 'authoring/node_modules/@happier-dev', name))])));
   const dependencyOnly = await buildSourceRuntimeBundle({repoDir, stackBaseDir, component:'daemon', env});
   assert.notEqual(dependencyOnly.entrypoint, runtime.entrypoint, 'the daemon must bind the new dependency publication');
-  assert.equal(await compilerCount(), authorCommands.length,
+  assert.equal(await compilerCount(), 0,
     'workspace-only dependency changes perform zero unchanged author-package compiler emissions');
   for (const name of ['plugin-sdk', 'protocol']) {
     assert.deepEqual(await authorBytes(join(dependencyOnly.runtimeDir, 'authoring/node_modules/@happier-dev', name)),
@@ -3788,13 +3744,13 @@ test('source daemon owns a usable public author SDK closure without workspace di
   assert.equal(JSON.parse(await readFile(join(dependencyOnly.runtimeDir,
     'authoring/node_modules/@happier-dev/unrelated/package.json'), 'utf8')).name, '@happier-dev/unrelated',
   'unchanged author compilation must not hide changed host bundle membership');
-  context.diagnostic(`dependency-only rebuild: compilers=${await compilerCount()-authorCommands.length} elapsedMs=${Math.round(performance.now()-dependencyOnlyStarted)}`);
+  context.diagnostic(`dependency-only rebuild: compilers=${await compilerCount()-0} elapsedMs=${Math.round(performance.now()-dependencyOnlyStarted)}`);
   delete cliManifest.dependencies['@happier-dev/unrelated'];
   cliManifest.bundledDependencies = cliManifest.bundledDependencies.filter(name => name !== '@happier-dev/unrelated');
   await writeFile(join(cliDir, 'package.json'), JSON.stringify(cliManifest));
   await writeFile(resolveDependencyRefreshMarkerPath(repoDir), JSON.stringify({identity:'workspace-only-removal'}));
   runtime = await buildSourceRuntimeBundle({repoDir, stackBaseDir, component:'daemon', env});
-  assert.equal(await compilerCount(), authorCommands.length, 'removing unrelated workspace wiring needs no author compilation');
+  assert.equal(await compilerCount(), 0, 'removing unrelated workspace wiring needs no author compilation');
   await assert.rejects(access(join(runtime.runtimeDir, 'authoring/node_modules/@happier-dev/unrelated')), {code:'ENOENT'},
     'removed host bundles must not survive through the retained author closure');
   // The running source CLI must serve the real public resolver without looking
@@ -3813,12 +3769,13 @@ test('source daemon owns a usable public author SDK closure without workspace di
     assert.equal(await readFile(join(emittedPackage, 'README.md'), 'utf8'), `${name} authored package documentation`);
     assert.deepEqual(new Uint8Array(await readFile(join(emittedPackage, 'native/resource.bin'))), new Uint8Array([0, 255, 17]));
   }
-  const declarations = await readFile(join(sdkRoot, 'dist/index.d.ts'), 'utf8');
+  await assert.rejects(access(join(sdkRoot, 'dist/index.d.ts')), {code:'ENOENT'}, 'runtime preparation leaves declarations to author materialization');
+  const declarations = await readAuthorDeclarations(runtime.runtimeDir);
   assert.match(declarations, /echo\(value: string\): string/);
   assert.match(declarations, /canonicalMarker = "current-source"/);
   assert.match(declarations, /canonicalAlias = "package-alias"/);
   const nestedRuntime = await buildSourceRuntimeBundle({repoDir, outputDir:join(cliDir, '.source-output'), component:'daemon'});
-  assert.match(await readFile(join(nestedRuntime.runtimeDir, 'authoring/node_modules/@happier-dev/plugin-sdk/dist/index.d.ts'), 'utf8'),
+  assert.match(await readAuthorDeclarations(nestedRuntime.runtimeDir),
     /canonicalMarker = "current-source"/, 'private current-build declarations remain valid even when output is inside the checkout');
   await writeFile(join(protocolDir, 'src/index.ts'), 'export const marker = "moving-source";');
   // Earlier source-tool tests register a workspace loader for this process.
@@ -3840,26 +3797,26 @@ test('source daemon owns a usable public author SDK closure without workspace di
   // capture, package copier and SDK consumer above.
   await writeFile(join(sdkDir, 'src/authorValue.ts'), 'export const authorValue = "changed-package-alias";');
   const sdkOnly = await buildSourceRuntimeBundle({repoDir, stackBaseDir, component:'daemon', env});
-  assert.equal(await compilerCount() - beforeAuthorChange, 1,
-    'one changed SDK package invokes one author compiler');
+  assert.equal(await compilerCount() - beforeAuthorChange, 0,
+    'one changed SDK package emits JavaScript without declaration compilation');
   assert.deepEqual(await authorBytes(join(sdkOnly.runtimeDir, 'authoring/node_modules/@happier-dev/protocol')),
     originalProtocolBytes,
     'unchanged dependency output remains byte-identical');
-  assert.match(await readFile(join(sdkOnly.runtimeDir, 'authoring/node_modules/@happier-dev/plugin-sdk/dist/index.d.ts'), 'utf8'),
+  assert.match(await readAuthorDeclarations(sdkOnly.runtimeDir),
     /canonicalAlias = "changed-package-alias"/);
   await writeFile(join(protocolDir, 'src/index.ts'), 'export const marker = "moving-source";');
   const beforeDependencyChange = await compilerCount();
   const changedAuthor = await buildSourceRuntimeBundle({repoDir, stackBaseDir, component:'daemon', env});
-  assert.equal(await compilerCount() - beforeDependencyChange, 2,
-    'changed dependency declarations compile the dependency and its SDK consumer once each');
-  assert.match(await readFile(join(changedAuthor.runtimeDir, 'authoring/node_modules/@happier-dev/plugin-sdk/dist/index.d.ts'), 'utf8'),
+  assert.equal(await compilerCount() - beforeDependencyChange, 0,
+    'a changed workspace dependency emits JavaScript without declaration compilation');
+  assert.match(await readAuthorDeclarations(changedAuthor.runtimeDir),
     /canonicalMarker = "moving-source"/, 'changed dependency source reaches the served author SDK');
   assert.notDeepEqual(await authorBytes(join(changedAuthor.runtimeDir, 'authoring')), originalAuthorBytes);
   await writeFile(join(protocolDir, 'native/resource.bin'), new Uint8Array([255, 0, 23]));
   const beforeResourceChange = await compilerCount();
   const changedResource = await buildSourceRuntimeBundle({repoDir, stackBaseDir, component:'daemon', env});
-  assert.equal(await compilerCount() - beforeResourceChange, 1,
-    'a packaged resource change does not recompile consumers of unchanged declarations');
+  assert.equal(await compilerCount() - beforeResourceChange, 0,
+    'a packaged resource change needs no declaration compilation');
   assert.deepEqual(new Uint8Array(await readFile(join(changedResource.runtimeDir,
     'authoring/node_modules/@happier-dev/protocol/native/resource.bin'))), new Uint8Array([255, 0, 23]),
   'changed packaged resources must invalidate author-closure reuse');
@@ -3875,10 +3832,9 @@ test('source daemon owns a usable public author SDK closure without workspace di
   await writeFile(join(transitiveDir, 'index.js'), 'export function createValue(value) { return {value:value.length}; }');
   await writeFile(resolveDependencyRefreshMarkerPath(repoDir), JSON.stringify({identity:'external-install-change'}));
   const changedExternal = await buildSourceRuntimeBundle({repoDir, stackBaseDir, component:'daemon', env});
-  assert.equal(await compilerCount() - beforeExternalChange, 1,
-    'changed external compiler inputs invalidate only their consuming SDK package');
-  assert.match(await readFile(join(changedExternal.runtimeDir,
-    'authoring/node_modules/@happier-dev/plugin-sdk/dist/index.d.ts'), 'utf8'), /echo\(value: string\): number/,
+  assert.equal(await compilerCount() - beforeExternalChange, 0,
+    'changed external declaration inputs are captured without compiling declarations');
+  assert.match(await readAuthorDeclarations(changedExternal.runtimeDir), /echo\(value: string\): number/,
   'the served author SDK must consume the changed external declaration');
   const changedSdkUrl = pathToFileURL(join(changedExternal.runtimeDir,
     'authoring/node_modules/@happier-dev/plugin-sdk/dist/index.js')).href;

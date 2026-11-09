@@ -993,6 +993,34 @@ test('measured native workload reservations round the recorded peak without a bl
   }
 });
 
+test('native CPU projection preserves canonical declared demand and explicit worker sizing', { skip: process.platform === 'win32' }, async () => {
+  const resources = await import('./command_resources.mjs');
+  const policy = renderNativeCommandPolicy();
+  for (const className of [...Object.keys(resources.HEAVYWEIGHT_COMMAND_RESOURCES), 'unknown-class']) {
+    for (const requestedCpuCores of [0, 7, 'host']) {
+      const native = spawnSync('/bin/sh', ['-c', [policy, 'heavyweight_cpu_cores "$1" 8 3 "$2"'].join('\n'), 'cpu', className, String(requestedCpuCores)], { encoding: 'utf8' });
+      assert.equal(native.status, 0, native.stderr);
+      assert.equal(Number(native.stdout), resources.resolveAdmissionCpuCores(resources.resolveAdmissionCpuCost(className), {
+        totalCpuCores: 8, workers: 3, requestedCpuCores,
+      }), className);
+    }
+  }
+  const neutralEnv = { ...process.env, ...Object.fromEntries(resources.ADMISSION_CPU_WORKER_ENV_NAMES.map(name => [name, ''])) };
+  for (const { args, env } of [
+    { args: [], env: {} },
+    { args: [], env: { GOMAXPROCS: '7' } },
+    { args: ['--maxWorkers=6'], env: {} },
+    { args: ['--maxWorkers'], env: {} },
+    { args: ['--maxWorkers=50%'], env: {} },
+    { args: ['--minWorkers', '4'], env: { VITEST_MAX_THREADS: '3' } },
+  ]) {
+    const inputs = { args, env: { ...neutralEnv, ...env } };
+    const native = spawnSync('/bin/sh', ['-c', [policy, 'heavyweight_requested_cpu_cores "$@"'].join('\n'), 'requested-cpu', ...args], { env: inputs.env, encoding: 'utf8' });
+    assert.equal(native.status, 0, native.stderr);
+    assert.equal(native.stdout, String(resources.resolveRequestedAdmissionCpuCores(inputs)));
+  }
+});
+
 test('focused source validation uses its measured shape while compiler and suite demand retain their floor', async t => {
   const repoRoot = fileURLToPath(new URL('../../../../../', import.meta.url));
   const fixture = await createTempFixture(t, { prefix: 'focused-validation-policy-' });

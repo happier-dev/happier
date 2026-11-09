@@ -1,9 +1,11 @@
 // @happier-test-preparation source
 import assert from 'node:assert/strict';
+import childProcess from 'node:child_process';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { createServer, Socket } from 'node:net';
+import { syncBuiltinESMExports } from 'node:module';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -14,7 +16,8 @@ import { writeFakeBin } from '../../testkit/core/fake_bin_harness.mjs';
 import { brokerAddress } from './admission_socket.mjs';
 import { createAdmissionBroker, readAdmissionMemorySample } from './admission_broker.mjs';
 import { DEFAULT_FILE_CHANGE_CATCH_UP_MS } from '../../../../../packages/cli-common/fileChangeObserver.mjs';
-import { requestAdmissionSample } from './admission_client.mjs';
+import { requestAdmissionSample, runAdmissionCommand } from './admission_client.mjs';
+import * as admissionClient from './admission_client.mjs';
 
 // Finite cutover coverage consumes an explicitly selected pre-broker producer.
 // Remove with the old admitted cohort; never reinterpret the current checkout
@@ -102,6 +105,88 @@ test('a waiting client carries its original arrival through a broker reconnect',
     assert.equal(requests.length, 2);
     assert.equal(requests[1].arrivedAt, requests[0].arrivedAt);
     assert.equal(client.stdout(), '');
+  });
+
+test('admitted callbacks preserve their result and failure, and refusal never runs their work',
+  { skip: process.platform !== 'linux' }, async t => {
+    const fixture = await restartFixture(t);
+    let availableMemoryKiB = 100;
+    const broker = createAdmissionBroker({ root: fixture.native.admissionRoot,
+      oldLockPath: join(fixture.root, 'old-admission.lock'),
+      sampleResources: async () => ({ availableMemoryKiB, totalMemoryKiB: 100 }) });
+    await broker.start();
+    t.after(() => broker.close());
+    const options = { root: fixture.native.admissionRoot, className: 'validation', floorKiB: 1,
+      machine: 'fixture', env: buildNativeAdmissionFixtureEnv(), repoDir: fixture.root };
+    const value = { refreshed: true };
+    assert.equal(await admissionClient.runAdmittedTask(options, async env => {
+      assert.ok(env.HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT);
+      assert.equal((await requestAdmissionSample(fixture.native.admissionRoot)).activeCount, 1);
+      return value;
+    }), value);
+    const expectedFailure = new Error('fixture installer failed');
+    await assert.rejects(admissionClient.runAdmittedTask(options, async () => { throw expectedFailure; }),
+      error => error === expectedFailure);
+    availableMemoryKiB = 0;
+    await assert.rejects(admissionClient.runAdmittedTask({ ...options, noWait: true },
+      async () => assert.fail('a refused callback ran')), { code: 'HSTACK_MEMORY_BUSY' });
+    assert.equal((await requestAdmissionSample(fixture.native.admissionRoot)).activeCount, 0);
+  });
+
+test('a queued admission client spawns no processes and schedules no recurring work',
+  { skip: process.platform !== 'linux' }, async t => {
+    const fixture = await restartFixture(t);
+    let connection;
+    let enqueue;
+    const queued = new Promise(resolve => { enqueue = resolve; });
+    const server = createServer(socket => {
+      connection = socket;
+      const lines = createInterface({ input: socket });
+      lines.once('line', () => {
+        socket.write(JSON.stringify({ kind: 'queued', waitingCount: 1 }) + '\n');
+      });
+    });
+    server.listen(brokerAddress(fixture.native.admissionRoot));
+    await once(server, 'listening');
+    t.after(() => new Promise(resolve => server.close(resolve)));
+    t.mock.method(console, 'error', () => enqueue());
+    t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+    let timerFires = 0;
+    for (const name of ['setTimeout', 'setInterval']) {
+      const schedule = globalThis[name];
+      t.mock.method(globalThis, name, (callback, ...args) => schedule((...values) => {
+        timerFires++;
+        return callback(...values);
+      }, ...args));
+    }
+    const processCalls = [];
+    for (const name of ['spawn', 'spawnSync', 'execFile', 'execFileSync']) {
+      const original = childProcess[name];
+      t.mock.method(childProcess, name, (...args) => {
+        processCalls.push(name);
+        return original(...args);
+      });
+    }
+    syncBuiltinESMExports();
+    try {
+      const completion = runAdmissionCommand({ root: fixture.native.admissionRoot,
+        className: 'validation', floorKiB: 1, machine: 'fixture',
+        command: process.execPath, args: ['-e', 'process.exit(0)'],
+        locks: [{ path: join(fixture.root, 'publication.lock') }],
+        env: buildNativeAdmissionFixtureEnv(), repoDir: fixture.root });
+      await queued;
+      processCalls.length = 0;
+      t.mock.timers.tick(60_000);
+      await new Promise(setImmediate);
+      assert.deepEqual(processCalls, [], 'idle capacity waiters must not launch ps or other helper processes');
+      assert.equal(timerFires, 0, 'idle capacity waiters must not run timed checks');
+      connection.end(JSON.stringify({ kind: 'refused', reason: 'HSTACK_MEMORY_BUSY' }) + '\n');
+      assert.equal(await completion, 75);
+    } finally {
+      for (const name of ['spawn', 'spawnSync', 'execFile', 'execFileSync']) childProcess[name].mock.restore();
+      syncBuiltinESMExports();
+      connection?.destroy();
+    }
   });
 
 test('admission reports one waiting line with enqueue facts only when capacity queues the command',

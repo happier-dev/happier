@@ -16,7 +16,7 @@ import { recordStackRuntimeStart, recordStackRuntimeUpdate } from './utils/stack
 const repoDir = fileURLToPath(new URL('../../../', import.meta.url));
 
 test('stack info observes replacement source processes beyond a stale controller projection', {
-  timeout: 30_000, skip: process.platform === 'win32',
+  skip: process.platform === 'win32',
 }, async t => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-info-source-replacement-' });
   const stackName = 'replacement';
@@ -39,7 +39,7 @@ test('stack info observes replacement source processes beyond a stale controller
     import { createServer } from 'node:http';
     import { randomUUID } from 'node:crypto';
     import { spawn } from 'node:child_process';
-    import { mkdir, writeFile } from 'node:fs/promises';
+    import { mkdir, readFile, writeFile } from 'node:fs/promises';
     import { dirname, join } from 'node:path';
     import { resolvePreferredStackDaemonStatePaths } from ${JSON.stringify(new URL('./utils/auth/credentials_paths.mjs', import.meta.url).href)};
     import { applyStackDaemonLifecycleScopeEnv } from ${JSON.stringify(new URL('./utils/auth/stable_scope_id.mjs', import.meta.url).href)};
@@ -71,7 +71,10 @@ test('stack info observes replacement source processes beyond a stale controller
       await writeFile(daemonStatePath, JSON.stringify({ pid: process.pid, httpPort: port, startedAt: Date.now(), controlToken: randomUUID() }));
       await recordStackRuntimeStart(statePath, { stackName, ownerPid: Number(ownerPid), sourceUi: 'disabled',
         processes: { serverPid: process.pid, daemonPid: process.pid }, ports: { server: port },
+        sourceRuntimeLaunch: { entrypoint, cliDir: bundleDir },
         sourceRuntimeIdentities: { server: { selected: identity, loaded: identity }, daemon: { selected: identity, loaded: identity } } });
+      await writeFile(daemonStatePath, JSON.stringify({ ...JSON.parse(await readFile(daemonStatePath, 'utf8')),
+        startedWithRuntimeEntrypoint: identity === 'incumbent' ? join(bundleDir, 'managed', 'package-dist', 'index.mjs') : entrypoint }));
       process.send({ port, pid: process.pid });
     });
     process.on('message', message => {
@@ -146,6 +149,8 @@ test('stack info observes replacement source processes beyond a stale controller
   const before = await observe();
   assert.equal(before.runtime.components.daemon.running, true);
   assert.equal(before.runtime.sourceRuntimeIdentities.daemon.loaded, 'incumbent');
+  assert.equal(before.runtime.daemonEntry.loaded, join(paths.stackBaseDir, 'fixture-bundles', 'incumbent', 'managed', 'package-dist', 'index.mjs'));
+  assert.notEqual(before.runtime.daemonEntry.loaded, before.runtime.daemonEntry.selected);
   assert.equal(before.database.provider, 'postgres', 'loaded bundle overrides the configured SQLite default');
   assert.equal(before.database.basis, 'loaded-source-bundle');
   assert.equal(probes, 1, 'one live target probe covers both placed services');
@@ -168,6 +173,8 @@ test('stack info observes replacement source processes beyond a stale controller
     daemon: { selected: 'successor', loaded: 'successor' },
   });
   assert.equal(after.runtime.components.daemon.running, true);
+  assert.equal(after.runtime.daemonEntry.loaded, after.runtime.daemonEntry.selected);
+  assert.equal(after.runtime.daemonEntry.loaded, join(paths.stackBaseDir, 'fixture-bundles', 'successor', 'apps', 'server', 'sources', 'main.mjs'));
   assert.equal(after.database.provider, 'mysql', 'replacement observation must refresh database identity');
   assert.equal(after.database.basis, 'loaded-source-bundle');
   assert.equal(after.runtime.health.status, 'healthy');
@@ -188,6 +195,7 @@ test('stack info observes replacement source processes beyond a stale controller
   const lost = await observe();
   assert.equal(lost.runtime.components.daemon.status, 'unknown');
   assert.equal(lost.runtime.sourceRuntimeIdentities.daemon.loaded, null);
+  assert.equal(lost.runtime.daemonEntry, null);
   assert.ok(lost.runtime.health.issues.includes('daemon_unknown'));
   assert.equal(lost.database.provider, null, 'an unreachable loaded runtime must not be presented as configured SQLite');
   assert.equal(lost.database.basis, 'unavailable');

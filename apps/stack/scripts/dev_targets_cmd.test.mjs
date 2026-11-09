@@ -9,6 +9,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { writeFakeBin } from './testkit/core/fake_bin_harness.mjs';
 import { resolveHeavyweightMemoryFloorKiB, resolveRemoteStackStatePaths } from './utils/dev_targets/remote_commands.mjs';
 import { resolveDevTargetMutagenRuntime } from './utils/dev_targets/mutagen_runtime.mjs';
+import { DEV_TARGET_SYNC_EXECUTOR_REPO, resolveMutagenSessionName } from './utils/dev_targets/mutagen_project.mjs';
+import { loadDevTargetExecutionConfig, loadDevTargetsConfig } from './utils/dev_targets/config.mjs';
 
 test('server handoff persists an inherited target registry only after the real directory transfer', async () => {
   const root = await mkdtemp(join(tmpdir(), 'hstack-inherited-server-move-'));
@@ -54,6 +56,75 @@ test('server handoff persists an inherited target registry only after the real d
 
 const execFileAsync = promisify(execFile);
 const script = join(import.meta.dirname, 'dev_targets.mjs');
+
+async function createConfigPathFixture(t) {
+  const root = await mkdtemp(join(tmpdir(), 'hstack-config-path-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const stackPath = join(root, 'repo-test', 'dev-targets.json');
+  const overridePath = join(root, 'scratch', 'dev-targets.json');
+  const config = { version: 3, commandExecution: { mode: 'local' },
+    targets: ['nl1', 'nl3'].map(name => ({ name, platform: 'posix', ssh: name,
+      repoDir: `/repo/${name}`, cliHomeDir: `/state/${name}` })) };
+  await mkdir(join(root, 'repo-test'), { recursive: true });
+  await mkdir(join(root, 'scratch'), { recursive: true });
+  await writeFile(stackPath, JSON.stringify(config));
+  await writeFile(overridePath, JSON.stringify({ ...config,
+    targets: config.targets.map(target => ({ ...target, repoDir: `/scratch/${target.name}` })) }));
+  const { binDir } = writeFakeBin({ root, name: 'ssh',
+    content: '#!/bin/sh\nprintf \'__HAPPIER_WORKER_POWER__={"ok":true}\\n\'\n' });
+  return { root, stackPath, overridePath, env: { HAPPIER_STACK_STACK: 'repo-test',
+    HAPPIER_EXEC_CONFIG_PATH: overridePath, PATH: `${binDir}:${process.env.PATH}` } };
+}
+
+test('config path override isolates command placement writes from the default stack', async t => {
+  const { root, stackPath, overridePath, env } = await createConfigPathFixture(t);
+  const before = await readFile(stackPath);
+  await run(['placement', 'set', 'commands', 'auto', '--targets=nl1,nl3'], root, env);
+  const changed = JSON.parse(await readFile(overridePath, 'utf8'));
+  assert.equal(changed.commandExecution.mode, 'auto');
+  assert.deepEqual(changed.commandExecution.targets, ['nl1', 'nl3']);
+  assert.deepEqual(await readFile(stackPath), before);
+});
+
+test('config path override is shared by path, show and placement readers', async t => {
+  const { root, overridePath, env } = await createConfigPathFixture(t);
+  assert.equal((await run(['path'], root, env)).path, overridePath);
+  const shown = await run(['show', 'nl1'], root, env);
+  assert.equal(shown.path, overridePath);
+  assert.equal(shown.target.repoDir, '/scratch/nl1');
+  assert.equal((await run(['placement', 'show'], root, env)).path, overridePath);
+  assert.equal((await loadDevTargetExecutionConfig({ env })).path, overridePath);
+  const runtime = await loadDevTargetsConfig({ stackName: 'repo-test',
+    env: { ...env, HAPPIER_STACK_STORAGE_DIR: root } });
+  assert.equal(runtime.path, join(root, 'repo-test', 'dev-targets.json'));
+  assert.equal(runtime.config.targets[0].repoDir, '/repo/nl1');
+});
+
+test('config path override rejects malformed or missing files without falling back', async t => {
+  const { root, stackPath, overridePath, env } = await createConfigPathFixture(t);
+  const before = await readFile(stackPath);
+  for (const value of ['relative.json', `${overridePath}\n`, join(root, 'absent.json')]) {
+    const result = await runRaw(['placement', 'set', 'commands', 'local'], root,
+      { ...env, HAPPIER_EXEC_CONFIG_PATH: value });
+    assert.equal(result.code, 1);
+    assert.deepEqual(await readFile(stackPath), before);
+  }
+});
+
+test('config path override refuses an explicit stack before reading or writing either config', async t => {
+  const { root, stackPath, overridePath, env } = await createConfigPathFixture(t);
+  const beforeStack = await readFile(stackPath);
+  const beforeOverride = await readFile(overridePath);
+  for (const args of [['path'], ['show', 'nl1'], ['placement', 'set', 'commands', 'auto', '--targets=nl1,nl3']]) {
+    for (const stackArgs of [['--stack=repo-test'], ['--stack', 'repo-test']]) {
+      const result = await runRaw([...args, ...stackArgs], root, env);
+      assert.equal(result.code, 1);
+      assert.match(result.stderr, /--stack.*HAPPIER_EXEC_CONFIG_PATH/);
+    }
+  }
+  assert.deepEqual(await readFile(stackPath), beforeStack);
+  assert.deepEqual(await readFile(overridePath), beforeOverride);
+});
 
 test('QA browser refuses an unconfigured browser pool before launching a browser', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'hstack-qa-browser-pin-'));
@@ -335,6 +406,7 @@ async function run(args, storageDir, extraEnv = {}) {
       HAPPIER_STACK_REPO_DIR: '',
       HAPPIER_STACK_ENV_FILE: '',
       HAPPIER_STACK_DISABLE_STACK_ENV_AUTOLOAD: '1',
+      HAPPIER_EXEC_CONFIG_PATH: '',
       ...extraEnv,
     },
   });
@@ -352,6 +424,7 @@ async function runRaw(args, storageDir, extraEnv = {}, cwd = process.cwd()) {
         HAPPIER_STACK_REPO_DIR: '',
         HAPPIER_STACK_ENV_FILE: '',
         HAPPIER_STACK_DISABLE_STACK_ENV_AUTOLOAD: '1',
+        HAPPIER_EXEC_CONFIG_PATH: '',
         ...extraEnv,
       },
     });
@@ -863,10 +936,11 @@ test('dev-targets sync-service detached owns continuous synchronization independ
     const binDir = join(root, 'bin');
     await mkdir(binDir, { recursive: true });
     const mutagen = join(binDir, 'mutagen');
+    const sessionName = resolveMutagenSessionName('linux', DEV_TARGET_SYNC_EXECUTOR_REPO);
     await writeFile(mutagen, [
       '#!/bin/sh',
       'if [ "$1 $2" = "sync list" ]; then',
-      '  printf \'[{"name":"happier-linux","paused":false,"status":"watching","successfulCycles":2,"alpha":{"connected":true,"scanned":true},"beta":{"connected":true,"scanned":true}}]\\n\'',
+      `  printf '[{"name":"${sessionName}","paused":false,"status":"watching","successfulCycles":2,"alpha":{"connected":true,"scanned":true},"beta":{"connected":true,"scanned":true}}]\\n'`,
       'elif [ "$1" = "version" ]; then',
       '  printf "fixture Mutagen version\\n"',
       'elif [ "$1 $2" = "sync resume" ]; then',
@@ -888,7 +962,7 @@ test('dev-targets sync-service detached owns continuous synchronization independ
       '--repo-dir=C:/repo',
       '--cli-home-dir=C:/home',
     ], root);
-    const commandEnv = { PATH: `${binDir}:${process.env.PATH}` };
+    const commandEnv = { PATH: `${binDir}:${process.env.PATH}`, HAPPIER_STACK_SYNC_SOURCE_DIR: DEV_TARGET_SYNC_EXECUTOR_REPO };
 
     const startResult = await runRaw(
       ['sync-service', 'start', '--detached', '--stack=repo-test', '--json'],
@@ -909,7 +983,7 @@ test('dev-targets sync-service detached owns continuous synchronization independ
     assert.equal(status.statuses[0].status.state, 'ready');
 
     const preparationFile = resolveDevTargetMutagenRuntime({
-      stackBaseDir: join(root, 'repo-test'), env: { HAPPIER_STACK_STORAGE_DIR: root },
+      stackBaseDir: join(root, 'repo-test'), env: { ...commandEnv, HAPPIER_STACK_STORAGE_DIR: root },
     }).syncServiceStateFile;
     await writeFile(preparationFile, JSON.stringify({
       version: 1, state: 'failed',
@@ -1133,7 +1207,7 @@ const result=spawnSync('/bin/bash',['-c',args.at(-1)],{stdio:'inherit',env:proce
   assert.equal(provisioning.code, 0, provisioning.stderr);
   const provisionPolicy = await readFile(env.TEST_SUDOERS, 'utf8');
   assert.match(provisionPolicy, /apt-get/);
-  assert.match(provisionPolicy, /corepack/);
+  assert.match(provisionPolicy, /agent-browser/);
   assert.doesNotMatch(provisionPolicy, /NOPASSWD: ALL|\/bash \*|\/sh \*/);
   const withoutPermission = await runRaw(['host', 'prepare', 'worker', '--passwordless-provisioning', '--stack=prepare-test'], root, env);
   assert.equal(withoutPermission.code, 1);

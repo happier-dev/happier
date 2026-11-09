@@ -17,6 +17,7 @@ set -euo pipefail
 # - qa        : browser runtime only; no user Codex configuration or build-tool setup
 # - toolchain : Node + npm + Go + ripgrep + native build tools; pinned pnpm follows source sync
 # - bun      : reconcile only the pinned standalone compiler on an existing worker
+# - resources: install the existing user resource slices only; run as the worker account
 #
 # Env overrides:
 # - HAPPIER_PROVISION_NODE_MAJOR (default: 24)
@@ -28,7 +29,7 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage:
-  ./linux-ubuntu-provision.sh [--profile=happier|installer|bare|qa|toolchain|bun]
+  ./linux-ubuntu-provision.sh [--profile=happier|installer|bare|qa|toolchain|bun|resources]
 
 Examples:
   ./linux-ubuntu-provision.sh --profile=happier
@@ -104,7 +105,7 @@ PLAYWRIGHT_VERSION="${HAPPIER_PROVISION_PLAYWRIGHT_VERSION:-1.58.2}"
 BUN_VERSION="${HAPPIER_PROVISION_BUN_VERSION:-}"
 
 case "${PROFILE}" in
-  happier|installer|bare|qa|toolchain|bun) ;;
+  happier|installer|bare|qa|toolchain|bun|resources) ;;
   *)
     echo "[provision] invalid --profile: ${PROFILE}" >&2
     usage >&2
@@ -152,6 +153,56 @@ provision_node_toolchain() {
   fi
   say "npm: $(npm --version)"
 }
+
+provision_happier_user_resource_slices() {
+  local unit_dir="${HOME}/.config/systemd/user"
+  mkdir -p "${unit_dir}"
+
+  # Slice names establish the hierarchy: happier-jobs.slice is a child of
+  # happier.slice. Keep session work lower priority without imposing a memory
+  # ceiling or an OOM policy on the agent process tree.
+  cat > "${unit_dir}/happier.slice" <<'EOF'
+[Unit]
+Description=Happier user workload
+EOF
+  chmod 0644 "${unit_dir}/happier.slice"
+
+  cat > "${unit_dir}/happier-critical.slice" <<'EOF'
+[Unit]
+Description=Happier control plane
+
+[Slice]
+# Keep the daemon and future control-plane descendants alive through guest
+# pressure. This is a protection floor, not an agent/session memory cap.
+MemoryLow=4G
+EOF
+  chmod 0644 "${unit_dir}/happier-critical.slice"
+
+  cat > "${unit_dir}/happier-jobs.slice" <<'EOF'
+[Unit]
+Description=Happier session jobs
+
+[Slice]
+CPUWeight=50
+IOWeight=50
+# Reclaim and throttle disposable session work before it can starve the guest
+# OS and the protected Happier control plane. This is deliberately soft: jobs
+# can exceed it under pressure and are never OOM-killed by this policy.
+MemoryHigh=80%
+EOF
+  chmod 0644 "${unit_dir}/happier-jobs.slice"
+
+  # A non-interactive provision may not have a user bus yet. The unit files
+  # remain durable and systemd will discover them when the manager is active.
+  if require_cmd systemctl; then
+    systemctl --user daemon-reload >/dev/null 2>&1 || true
+  fi
+}
+
+if [[ "${PROFILE}" == "resources" ]]; then
+  provision_happier_user_resource_slices
+  exit 0
+fi
 
 if [[ "${PROFILE}" == "toolchain" ]]; then
   provision_node_toolchain
@@ -255,50 +306,6 @@ if [[ "${PROFILE}" == "installer" ]]; then
   exit 0
 fi
 
-provision_happier_user_resource_slices() {
-  local unit_dir="${HOME}/.config/systemd/user"
-  mkdir -p "${unit_dir}"
-
-  # Slice names establish the hierarchy: happier-jobs.slice is a child of
-  # happier.slice. Keep session work lower priority without imposing a memory
-  # ceiling or an OOM policy on the agent process tree.
-  cat > "${unit_dir}/happier.slice" <<'EOF'
-[Unit]
-Description=Happier user workload
-EOF
-  chmod 0644 "${unit_dir}/happier.slice"
-
-  cat > "${unit_dir}/happier-critical.slice" <<'EOF'
-[Unit]
-Description=Happier control plane
-
-[Slice]
-# Keep the daemon and future control-plane descendants alive through guest
-# pressure. This is a protection floor, not an agent/session memory cap.
-MemoryLow=4G
-EOF
-  chmod 0644 "${unit_dir}/happier-critical.slice"
-
-  cat > "${unit_dir}/happier-jobs.slice" <<'EOF'
-[Unit]
-Description=Happier session jobs
-
-[Slice]
-CPUWeight=50
-IOWeight=50
-# Reclaim and throttle disposable session work before it can starve the guest
-# OS and the protected Happier control plane. This is deliberately soft: jobs
-# can exceed it under pressure and are never OOM-killed by this policy.
-MemoryHigh=80%
-EOF
-  chmod 0644 "${unit_dir}/happier-jobs.slice"
-
-  # A non-interactive provision may not have a user bus yet. The unit files
-  # remain durable and systemd will discover them when the manager is active.
-  if require_cmd systemctl && [[ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
-    systemctl --user daemon-reload >/dev/null 2>&1 || true
-  fi
-}
 
 say "installing base packages"
 as_root apt-get install -y --no-install-recommends \

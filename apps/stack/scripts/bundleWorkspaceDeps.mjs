@@ -79,6 +79,7 @@ export async function bundleWorkspaceDeps(opts = {}) {
   return withWorkspaceBundleLock(async () => {
     syncBundledWorkspacePackages({
       repoRoot,
+      publicationMode,
       packages: bundles.map(bundle => resolveBundlePackageName(bundle).slice('@happier-dev/'.length)),
       hostPackageDirs: [stackDir],
       cliCommonWorkspacesModule: workspaceModule,

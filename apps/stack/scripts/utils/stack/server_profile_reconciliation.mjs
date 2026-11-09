@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { createServerUrlComparableKey } from '@happier-dev/protocol/server/urls';
+import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 
 function normalizeServerUrl(url) {
   return String(url ?? '').trim().replace(/\/+$/, '');
@@ -71,6 +72,18 @@ export function readActiveServerUrlsFromCliSettings(homeDir) {
   } catch {
     return null;
   }
+}
+
+// The established profile, not a response from the new port, names the Home
+// whose authenticated descriptor must be published before endpoint refresh.
+export function readStackServerProfileHomeDescriptor({ homeDir, serverId }) {
+  const settings = readCliSettings(homeDir);
+  if (!settings && existsSync(join(homeDir, 'settings.json'))) {
+    throw new Error('Cannot read the established Home profile for server readiness');
+  }
+  const profile = settings?.servers?.[serverId || settings.activeServerId];
+  if (profile?.homeConnectionDescriptor === undefined) return null;
+  return HomeConnectionDescriptorV1Schema.parse(profile.homeConnectionDescriptor);
 }
 
 export function assertStackServerProfileReconciled({

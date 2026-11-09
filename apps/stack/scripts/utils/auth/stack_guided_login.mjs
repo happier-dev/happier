@@ -16,7 +16,8 @@ import {
 import { readEnvObjectFromFile } from '../env/read.mjs';
 import { getWebappUrlEnvOverride, resolveServerUrls, resolveStackServerEndpoint } from '../server/urls.mjs';
 import { resolveStackRuntimeLaunchContext } from '../../runtime/launch/resolveStackRuntimeLaunchContext.mjs';
-import { buildBorrowedExpoUiUrl, isBorrowedExpoConsumer, resolveBorrowedExpoRuntime } from '../../runtime/shared/borrowed_expo.mjs';
+import { resolveCliEntrypoint } from '../../runtime/launch/resolveCliEntrypoint.mjs';
+import { buildBorrowedExpoWebappUrl, isBorrowedExpoConsumer, resolveBorrowedExpoRuntime } from '../../runtime/shared/borrowed_expo.mjs';
 import {
   applyCliRuntimeLaunchProvenanceEnv,
   resolveCliRuntimeLaunchSpec,
@@ -39,11 +40,9 @@ async function resolveRuntimeExpoWebappUrlForAuth({ rootDir, stackName, env = pr
     if (isBorrowedExpoConsumer({ consumerStackName: stackName, producerStackName })) {
       const borrowedExpo = await resolveBorrowedExpoRuntime({ rootDir, producerStackName, env: componentEnv });
       if (!borrowedExpo?.running) return '';
-      const serverPort = await resolveServerPortForCoreAuth({ stackName, env: componentEnv });
-      return buildBorrowedExpoUiUrl({
+      return buildBorrowedExpoWebappUrl({
         consumerHost: resolveLocalhostHost({ stackMode: true, stackName }),
         expoPort: borrowedExpo.port,
-        serverPort,
       }) || '';
     }
     const runtimeStatePath = getStackRuntimeStatePath(stackName);
@@ -514,19 +513,14 @@ async function resolveStackAuthCliLaunch({ rootDir, env = process.env } = {}) {
   }
 
   const cliDir = getComponentDir(rootDir, 'happier-cli', env);
-  const preferredEntrypoints = [
-    join(cliDir, 'package-dist', 'index.mjs'),
-    join(cliDir, 'dist', 'index.mjs'),
-    join(cliDir, 'bin', 'happier.mjs'),
-  ];
-
-  for (const candidate of preferredEntrypoints) {
-    if (existsSync(candidate)) {
-      return { cliExecutable: candidate, cliLaunchSpec: null };
-    }
+  const resolvedCli = resolveCliEntrypoint({
+    cliDir,
+    preferSource: runtimeLaunchContext.runtimeMode.mode === 'source',
+  });
+  if (!resolvedCli) {
+    throw new Error('[auth] cannot resolve the selected Happier CLI entrypoint');
   }
-
-  return { cliExecutable: preferredEntrypoints[0], cliLaunchSpec: null };
+  return { cliExecutable: join(cliDir, 'bin', 'happier.mjs'), cliLaunchSpec: null, resolvedCli };
 }
 
 export async function resolveStackAuthCliExecutable({ rootDir, env = process.env } = {}) {
@@ -534,7 +528,7 @@ export async function resolveStackAuthCliExecutable({ rootDir, env = process.env
   return launch.cliExecutable;
 }
 
-export async function buildStackAuthLoginInvocation({ rootDir, stackName, webappUrl, env = process.env } = {}) {
+export async function buildStackAuthLoginInvocation({ rootDir, stackName, webappUrl, recoveryKeyStdin = false, env = process.env } = {}) {
   const root = String(rootDir ?? '').trim();
   if (!root) {
     throw new Error('[auth] buildStackAuthLoginInvocation requires rootDir');
@@ -543,7 +537,7 @@ export async function buildStackAuthLoginInvocation({ rootDir, stackName, webapp
   if (!url) {
     throw new Error('[auth] buildStackAuthLoginInvocation requires a webappUrl');
   }
-  const { cliExecutable, cliLaunchSpec } = await resolveStackAuthCliLaunch({ rootDir: root, env });
+  const { cliLaunchSpec, resolvedCli } = await resolveStackAuthCliLaunch({ rootDir: root, env });
   const merged = applyCliRuntimeLaunchProvenanceEnv({
     env: { ...(env ?? process.env), HAPPIER_WEBAPP_URL: url },
     cliLaunchSpec,
@@ -553,10 +547,25 @@ export async function buildStackAuthLoginInvocation({ rootDir, stackName, webapp
     throw new Error(`[auth] invalid HAPPIER_AUTH_METHOD=${method} (expected: web|browser|mobile)`);
   }
   const normalizedMethod = method === 'browser' ? 'web' : method;
+  if (resolvedCli?.kind === 'tsx') {
+    merged.TSX_TSCONFIG_PATH = resolvedCli.tsconfigPath;
+  }
 
-  const executableLooksLikeScript = cliExecutable.endsWith('.mjs') || cliExecutable.endsWith('.js') || cliExecutable.endsWith('.cjs');
-  const command = executableLooksLikeScript ? process.execPath : cliExecutable;
-  const args = executableLooksLikeScript ? [cliExecutable, 'auth', 'login'] : ['auth', 'login'];
+  const command = cliLaunchSpec?.command ?? process.execPath;
+  // Keep the proof audience, live carrier and stable native scope distinct.
+  // URL prefix flags replace the active scope with a URL-derived profile id.
+  const { internalServerUrl, canonicalServerUrl } = await resolveServerUrls({
+    env: { ...merged, HAPPIER_STACK_STACK: String(stackName ?? '').trim() || 'main' },
+    allowEnable: false,
+  });
+  merged.HAPPIER_SERVER_URL = internalServerUrl;
+  merged.HAPPIER_LOCAL_SERVER_URL = internalServerUrl;
+  merged.HAPPIER_PUBLIC_SERVER_URL = canonicalServerUrl;
+  const args = [...(cliLaunchSpec?.args ?? resolvedCli.nodeArgs),
+    ...(recoveryKeyStdin ? ['auth', 'recovery-key', 'login', '--secrets-json-stdin', '--json'] : ['auth', 'login'])];
+  // The CLI alone reads and validates recovery material from inherited stdin.
+  // Stack only supplies its existing listener bootstrap and selected CLI scope.
+  if (recoveryKeyStdin) return { command, args, env: merged };
   if (String(merged.HAPPIER_AUTH_FORCE ?? '').trim() === '1') {
     args.push('--force');
   }

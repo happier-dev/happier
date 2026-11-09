@@ -54,13 +54,11 @@ heavyweight_count_admitted_owners() {
 ensure_native_job_cpu_budget() {
   [ -z "${GOMAXPROCS+x}" ] || return 0
   native_job_platform=$(uname -s 2>/dev/null || true)
-  case "$native_job_platform" in Linux|Darwin) ;; *) return 0 ;; esac
+  # Linux receives its CPU grant from the broker after reservation. Counting
+  # hosts/holders here races admission and adds work to every queued client.
+  case "$native_job_platform" in Linux) return 0 ;; Darwin) ;; *) return 0 ;; esac
   native_job_cpu=$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || true)
   native_job_active=0
-  if [ "$native_job_platform" = Linux ]; then
-    heavyweight_count_admitted_owners || return 1
-    native_job_active=$heavyweight_active_count
-  fi
   native_job_workers=$(resolve_worker_cpu_budget "$native_job_cpu" "$native_job_active")
   [ -z "$native_job_workers" ] || export GOMAXPROCS=$native_job_workers
 }
@@ -112,6 +110,7 @@ run_heavyweight_admission() {
   [ "$#" -gt 0 ] || { printf '%s\n' '[preferred-execution] heavyweight admission requires a command' >&2; exit 1; }
   ensure_native_job_cpu_budget || exit 1
   heavyweight_prepare_export_request "$@"
+  heavyweight_requested_cpu=$(heavyweight_requested_cpu_cores "$@") || exit 1
   case "$(uname -s 2>/dev/null || true)" in
     Linux) ;;
     *)
@@ -132,7 +131,7 @@ run_heavyweight_admission() {
     set -- "--export-mode=$heavyweight_export_worker_mode" "--export-workers=$heavyweight_export_requested_workers" "$@"
   fi
   exec node "$admission_client" --run "--root=$heavyweight_admission_root" "--class=$heavyweight_admission_class" \
-    "--floor-kib=$heavyweight_floor" "--machine=$heavyweight_admission_machine" \
+    "--floor-kib=$heavyweight_floor" "--machine=$heavyweight_admission_machine" "--cpu-cores=$heavyweight_requested_cpu" \
     "--failure-id=${heavyweight_failure_id-}" "--repo=$repo_root" "--workspace-locks=${heavyweight_workspace_locks:-[]}" "$@"
 }
 

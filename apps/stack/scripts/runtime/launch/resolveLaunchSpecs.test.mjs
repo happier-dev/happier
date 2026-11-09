@@ -11,6 +11,22 @@ import {
   resolveCliRuntimeLaunchSpec,
 } from './resolveCliRuntimeLaunchSpec.mjs';
 import { resolveServerRuntimeLaunchSpec } from './resolveServerRuntimeLaunchSpec.mjs';
+import { resolveStackRuntimeLaunchContext } from './resolveStackRuntimeLaunchContext.mjs';
+import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
+
+test('source CLI placement preserves the local loaded-graph guard', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-cli-host-' });
+  const env = { HAPPIER_STACK_STORAGE_DIR: fixture.path('stacks'), HAPPIER_STACK_STACK: 'consumer' };
+  const activeRuntimeState = { placement: { daemon: 'target' },
+    remoteTargets: { target: { services: { daemon: true } } },
+    sourceRuntimeIdentities: { daemon: { selected: 'target-graph', loaded: 'target-graph' } } };
+  const controller = await resolveStackRuntimeLaunchContext({ argv: ['--runtime=source'], env, activeRuntimeState });
+  assert.equal(controller.runtimeMode.mode, 'source');
+  assert.equal(controller.cliLaunchSpec, undefined);
+  await assert.rejects(resolveStackRuntimeLaunchContext({ argv: ['--runtime=source'], env,
+    activeRuntimeState: { ...activeRuntimeState, placement: { daemon: 'local' } } }),
+  /loaded source CLI.*unavailable/i, 'remote metadata cannot waive the local loaded-daemon guard');
+});
 
 test('source server launch executes nonexecutable emitted JS through its managed runtime and honors disabled migrations', async t => {
   const serverDir = await mkdtemp(join(tmpdir(), 'hstack-source-launch-'));

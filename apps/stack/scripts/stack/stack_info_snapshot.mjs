@@ -1,7 +1,5 @@
-import { observeRemoteSourceRuntime as readRemoteSourceRuntime } from './remote_source_runtime.mjs';
-import { resolveInstalledFirstPartyComponentPaths } from '@happier-dev/cli-common/firstPartyRuntime';
-import { realpath } from 'node:fs/promises';
 import { parseEnvToObject } from '../utils/env/dotenv.mjs';
+import { inspectStackRelay } from '../utils/server/infra/iroh/runtime.mjs';
 import { getComponentDir, resolveStackEnvPath } from '../utils/paths/paths.mjs';
 import { getEnvValueAny } from '../utils/env/values.mjs';
 import { resolveLocalhostHost, preferStackLocalhostUrl } from '../utils/paths/localhost_host.mjs';
@@ -33,6 +31,12 @@ import { buildBorrowedExpoUiUrl, isBorrowedExpoConsumer, resolveBorrowedExpoRunt
 import { inspectWorkspaceQaStalePackagesForComponent } from '../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
 import { readJsonIfExists } from '../utils/fs/json.mjs';
 import { readPendingSourcePreparation } from '../runtime/shared/pending_source_start.mjs';
+import { observeRemoteSourceRuntime as readRemoteSourceRuntime } from './remote_source_runtime.mjs';
+import { readStackDatabaseIdentity } from './stack_database_identity.mjs';
+import { readSharedDatabaseCoWriters } from './shared_database_cowriters.mjs';
+import { projectLoadedRuntimeSnapshotId, readLoadedSourceRuntimeIdentities } from '../runtime/shared/loaded_runtime_identity.mjs';
+import { resolveInstalledFirstPartyComponentPaths } from '@happier-dev/cli-common/firstPartyRuntime';
+import { realpath } from 'node:fs/promises';
 import { readStackDaemonParticipants } from './daemon_participants.mjs';
 
 const readExistingEnv = readTextOrEmpty;
@@ -195,7 +199,6 @@ export async function readStackInfoSnapshot({
       }, {
         checkDaemonStateImpl: observeDaemonState,
       });
-
   if (observeRemoteSourceRuntime) {
     runtimeState = await readRemoteSourceRuntime({ stackName, baseDir, runtimeState, env: stackScopedEnv },
       { runProcess: runRemoteProcessImpl });
@@ -279,9 +282,10 @@ export async function readStackInfoSnapshot({
     : readStackRuntimeDaemonDesiredState(runtimeState);
   const daemonExpected = daemonDesiredState !== 'stopped' && daemonConfigured;
   const remoteDaemonRunning = remoteDaemon.running;
+  const remoteDaemonSignInRequired = remoteDaemon.status === 'sign-in-required';
   // The target lifecycle reports retry/preparation, not proof of native exit.
   const remoteDaemonUnknown = Boolean(remoteDaemon.target
-    && !remoteDaemonRunning && !['stopped', 'not-running', 'stopped-by-owner'].includes(remoteDaemon.status));
+    && !remoteDaemonRunning && !remoteDaemonSignInRequired && !['stopped', 'not-running', 'stopped-by-owner'].includes(remoteDaemon.status));
   const remoteExpo = resolveRuntimeRemoteServiceObservation(runtimeState, 'expo');
   const remoteServer = resolveRuntimeRemoteServiceObservation(runtimeState, 'server');
   const sourceUiLaunch = sourceUi === 'export'
@@ -444,8 +448,8 @@ export async function readStackInfoSnapshot({
   if (uiExpected && !uiRunning) {
     healthIssues.push('ui_down');
   }
-  if (daemonExpected && (running || remoteDaemonUnknown) && !daemonRunning && !remoteDaemonRunning) {
-    healthIssues.push(remoteDaemonUnknown ? 'daemon_unknown' : 'daemon_down');
+  if (daemonExpected && (running || remoteDaemonUnknown || remoteDaemonSignInRequired) && !daemonRunning && !remoteDaemonRunning) {
+    healthIssues.push(remoteDaemonSignInRequired ? 'daemon_sign_in_required' : remoteDaemonUnknown ? 'daemon_unknown' : 'daemon_down');
   }
 
   const host = resolveLocalhostHost({ stackMode: true, stackName });
@@ -475,28 +479,28 @@ export async function readStackInfoSnapshot({
     runtimeProcessTrustContext,
     runtimeStatusTrustOptions,
   );
-  const loadedSnapshotId = !sourceSnapshot && runtimeLifecycleLive ? runtimeSnapshotId || null : null;
-  const recordedSourceIdentities = { ...runtimeState?.sourceRuntimeIdentities };
-  for (const [component, observation] of [['server', remoteServer], ['daemon', remoteDaemon]]) {
-    const identity = remoteTargets[observation.target]?.sourceRuntimeIdentities?.[component];
-    if (identity) recordedSourceIdentities[component] = identity;
-  }
-  const sourceRuntimeIdentities = sourceSnapshot ? Object.fromEntries(Object.entries(recordedSourceIdentities)
-    .map(([component, identity]) => {
-      const observation = component === 'daemon' ? remoteDaemon : component === 'server' ? remoteServer : remoteExpo;
-      const remoteCustodyUnconfirmed = observation.target && !['stopped', 'not-running'].includes(observation.status);
-      const localRunning = component === 'server' ? serverRunning : component === 'ui' ? uiRunning : daemonRunning;
-      return [component, { selected: identity.selected,
-        loaded: remoteCustodyUnconfirmed || (runtimeLifecycleLive && localRunning) ? identity.loaded : null }];
-    })) : null;
+  const loadedSnapshotId = projectLoadedRuntimeSnapshotId({ runtimeState, sourceSnapshot, runtimeLifecycleLive });
+  const sourceRuntimeIdentities = await readLoadedSourceRuntimeIdentities({ stackBaseDir: baseDir, runtimeState, sourceSnapshot,
+    runtimeLifecycleLive, serverRunning, uiRunning, daemonRunning });
   const pendingSourceIdentity = sourceSnapshot && Object.values(sourceRuntimeIdentities ?? {})
     .some(identity => identity.selected && identity.selected !== identity.loaded);
+  const database = await readStackDatabaseIdentity({ stackName, env: stackEnv, runtimeState,
+    localOnly: !observeRemoteSourceRuntime, runRemoteProcessImpl,
+    serverRunning: serverRunning || remoteServer.running,
+    sourceSnapshot,
+    loadedSourceIdentity: sourceRuntimeIdentities?.server?.loaded,
+    loadedSnapshotId, snapshotBaseDir: runtimeInspection.producerStackBaseDir ?? baseDir,
+    loadedSnapshotManifest: loadedSnapshotId === selectedSnapshotId ? runtimeInspection.manifest : null });
+  const sharedDatabase = await readSharedDatabaseCoWriters({ stackName, database,
+    loadedSourceIdentity: sourceRuntimeIdentities?.server?.loaded, loadedSnapshotId,
+    sourceTime: sourceRuntimeIdentities?.server?.sourceTime,
+    snapshotBaseDir: runtimeInspection.producerStackBaseDir ?? baseDir });
   if (running && pendingSourceIdentity) healthIssues.push('runtime_identity_pending');
   const sourceReload = await readJsonIfExists(join(baseDir, 'source-runtime/reload.json'));
   const sourcePreparation = sourceSnapshot ? await readPendingSourcePreparation({ stackBaseDir: baseDir }) : null;
-  const preparing = Boolean(sourcePreparation) || (sourceSnapshot && sourceReload?.status === 'preparing');
+  const preparing = Boolean(sourcePreparation);
   if (running && preparing) healthIssues.push('runtime_preparing');
-  const healthStatus = stopCleanupIncomplete ? 'degraded' : !running
+  const healthStatus = stopCleanupIncomplete || remoteDaemonSignInRequired ? 'degraded' : !running
     ? remoteDaemonUnknown ? 'unknown' : sourcePreparation ? 'preparing' : 'stopped'
     : healthIssues.length > 0 ? 'degraded' : 'healthy';
   const pendingManualRestart = Boolean(
@@ -520,7 +524,6 @@ export async function readStackInfoSnapshot({
   ].map(async ([component, dir, target]) => [component,
     target && target !== 'local' ? null : await inspectWorkspaceQaStalePackagesForComponent(dir),
   ])));
-
   const managedCli = remoteDaemon.target ? remoteTargets[remoteDaemon.target]?.managedCli ?? null
     : await readManagedCliIdentity(componentEnv);
   // Startup records the executing module's identity. Use that authenticated
@@ -542,6 +545,8 @@ export async function readStackInfoSnapshot({
     envPath,
     runtimeStatePath,
     serverComponent,
+    database,
+    ...(sharedDatabase ? { sharedDatabase } : {}),
     stackRemote,
     pinned: {
       serverPort: Number.isFinite(pinnedServerPort) && pinnedServerPort > 0 ? pinnedServerPort : null,
@@ -550,6 +555,7 @@ export async function readStackInfoSnapshot({
       managedCli,
       daemonEntry,
       ...(sourceSnapshot ? { daemonParticipants } : {}),
+      irohRelay: await inspectStackRelay({ env: stackScopedEnv, runtimeState, repoDir, stackBaseDir: baseDir }),
       script: typeof runtimeState?.script === 'string' ? runtimeState.script : null,
       ownerPid: Number.isFinite(ownerPid) && ownerPid > 1 ? ownerPid : null,
       runningPid: Number.isFinite(runningPid) && runningPid > 1 ? runningPid : null,
@@ -614,6 +620,7 @@ export async function readStackInfoSnapshot({
         issues: healthIssues,
       },
       ports: runtimePorts,
+      portAllocations: runtimeState?.portAllocations ?? null,
       serverProxy,
       serverLifecycle,
       runtimePublication,

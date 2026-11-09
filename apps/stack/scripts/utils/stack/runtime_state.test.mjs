@@ -7,43 +7,24 @@ import { spawnTestProcess } from '../../testkit/core/spawn_test_process.mjs';
 
 import * as runtimeStateModule from './runtime_state.mjs';
 
-test('owner shutdown preserves daemon custody and leaves external cleanup to its transaction', async t => {
-  const dir = await mkdtemp(join(tmpdir(), 'hstack-overlapping-preserved-stop-'));
+test('completed stop retains controller and per-host server port choices without live runtime custody', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'hstack-stable-ports-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const statePath = join(dir, 'stack.runtime.json');
-  await recordStackRuntimeStart(statePath, {
-    stackName: 'overlapping-stop', ownerPid: 701, processes: { daemonPid: 703, daemonPids: [703] },
-    sourceRuntimeIdentities: { daemon: { selected: 'retained-source', loaded: 'retained-source' } },
-    placement: { daemon: 'nl3', server: 'nl3' },
-    remoteTargets: { nl3: { services: { daemon: true, server: true },
-      status: 'stopped', serviceStatus: { daemon: 'stopped', server: 'stopped' } } },
-  });
-  const result = await withStackRuntimeStopTransaction(statePath, { preserveDaemon: true }, async transaction => {
-    // The remote controller closes while external cleanup is outside its
-    // mutation lock. Only that external transaction may consume its stop.
-    const shutdownSnapshot = await captureStackRuntimeStopSnapshot(statePath);
-    assert.equal(await finalizeStackRuntimeOwnerShutdown(statePath, shutdownSnapshot, {
-      preserveDaemon: true, cleanupResults: [],
-    }), false);
-    assert.equal((await readStackRuntimeStateFile(statePath)).ownerPid, 701);
-    return await transaction.finalize({ cleanupResults: [] });
-  });
-  assert.equal(result.finalized, true);
-  const retained = await readStackRuntimeStateFile(statePath);
-  assert.equal(retained.ownerPid, null);
-  assert.equal(retained.stopRequest, null);
-  assert.equal(retained.remoteTargets.nl3.services.daemon, true);
-  assert.equal(retained.sourceRuntimeIdentities.daemon.loaded, 'retained-source');
-  await recordStackRuntimeStart(statePath, {
-    stackName: 'overlapping-stop', ownerPid: 701,
-    processes: { daemonPid: 703, daemonPids: [703] },
-  });
-  const ownerSnapshot = await captureStackRuntimeStopSnapshot(statePath);
-  assert.equal(await finalizeStackRuntimeOwnerShutdown(statePath, ownerSnapshot, {
-    preserveDaemon: true, cleanupResults: [],
-  }), true);
-  assert.equal((await readStackRuntimeStateFile(statePath))?.processes?.daemonPid, 703,
-    'the shared owner-shutdown boundary must support native daemon preservation');
+  await recordStackRuntimeStart(statePath, { stackName: 'stable-ports', ownerPid: null,
+    ports: { server: 43123 }, remoteTargets: { nl3: { services: { server: true },
+      servicePorts: { server: 14321 }, status: 'stopped', serviceStatus: { server: 'stopped' } } } });
+  const expected = await captureStackRuntimeStopSnapshot(statePath);
+  assert.equal((await finalizeStackRuntimeStop(statePath, { expected, cleanupResults: [] })).finalized, true);
+  const stopped = await readStackRuntimeStateFile(statePath);
+  assert.equal(stopped?.portAllocations?.controller?.port, 43123);
+  assert.equal(stopped?.portAllocations?.servers?.nl3?.port, 14321);
+  assert.deepEqual(getStackRuntimeProcessEntries(stopped), []);
+  assert.deepEqual(getStackRuntimePendingRemoteTargets(stopped), []);
+  assert.equal(stopped.ownerPid, null);
+  assert.equal(stopped.ports, undefined, 'a remembered choice is not a published live endpoint');
+  await recordStackRuntimeStart(statePath, { stackName: 'stable-ports', ownerPid: null, ports: { server: 43123 } });
+  assert.equal((await readStackRuntimeStateFile(statePath)).portAllocations.servers.nl3.port, 14321);
 });
 
 test('publication component updates derive the aggregate phase without losing neighboring outcomes', async (t) => {
@@ -68,6 +49,8 @@ test('publication component updates derive the aggregate phase without losing ne
 });
 import { readProcessInstanceFingerprintSync } from '../../../../../packages/cli-common/processInstance.mjs';
 import { killProcessGroupOwnedByStack } from '../proc/ownership.mjs';
+import { resolveObservedDevTargetService } from '../dev_targets/service_placement.mjs';
+import { buildRemoteStackOperationCommand } from '../dev_targets/remote_commands.mjs';
 
 import {
   readStackServerLifecycle,
@@ -108,6 +91,45 @@ test('active runtime reads retain only a matching stack with a live recorded own
   assert.equal(await readActiveStackRuntimeStateFile(statePath, { stackName: 'source-qa' }), null);
 });
 
+test('owner shutdown preserves daemon custody and leaves external cleanup to its transaction', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'hstack-overlapping-preserved-stop-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const statePath = join(dir, 'stack.runtime.json');
+  await recordStackRuntimeStart(statePath, {
+    stackName: 'overlapping-stop', ownerPid: 701, processes: { daemonPid: 703, daemonPids: [703] },
+    sourceRuntimeIdentities: { daemon: { selected: 'retained-source', loaded: 'retained-source' } },
+    placement: { daemon: 'nl3', server: 'nl3' },
+    remoteTargets: { nl3: { services: { daemon: true, server: true },
+      status: 'stopped', serviceStatus: { daemon: 'stopped', server: 'stopped' } } },
+  });
+  const result = await withStackRuntimeStopTransaction(statePath, { preserveDaemon: true }, async transaction => {
+    // The remote controller closes while external cleanup is outside its
+    // mutation lock. Only that external transaction may consume its stop.
+    const shutdownSnapshot = await captureStackRuntimeStopSnapshot(statePath);
+    assert.equal(await finalizeStackRuntimeOwnerShutdown(statePath, shutdownSnapshot, {
+      preserveDaemon: true, cleanupResults: [],
+    }), false);
+    assert.equal((await readStackRuntimeStateFile(statePath)).ownerPid, 701);
+    return await transaction.finalize({ cleanupResults: [] });
+  });
+  assert.equal(result.finalized, true);
+  const retained = await readStackRuntimeStateFile(statePath);
+  assert.equal(retained.ownerPid, null);
+  assert.equal(retained.stopRequest, null);
+  assert.equal(retained.remoteTargets.nl3.services.daemon, true);
+  assert.equal(retained.sourceRuntimeIdentities.daemon.loaded, 'retained-source');
+  await recordStackRuntimeStart(statePath, {
+    stackName: 'overlapping-stop', ownerPid: 701,
+    processes: { daemonPid: 703, daemonPids: [703] },
+  });
+  const ownerSnapshot = await captureStackRuntimeStopSnapshot(statePath);
+  assert.equal(await finalizeStackRuntimeOwnerShutdown(statePath, ownerSnapshot, {
+    preserveDaemon: true, cleanupResults: [],
+  }), true);
+  assert.equal((await readStackRuntimeStateFile(statePath))?.processes?.daemonPid, 703,
+    'the shared owner-shutdown boundary must support native daemon preservation');
+});
+
 test('preserve-daemon finalization retains remote custody without local daemon PIDs', async t => {
   const dir = await mkdtemp(join(tmpdir(), 'hstack-runtime-remote-preserve-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
@@ -131,6 +153,46 @@ test('preserve-daemon finalization retains remote custody without local daemon P
   assert.equal(retained.placement.daemon, 'linux1');
   assert.deepEqual(retained.processes, {});
 });
+
+for (const platform of ['posix', 'windows']) {
+test(`preserve-daemon stop retains source snapshot routing after native roles report stopped (${platform})`, async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'hstack-preserved-daemon-routing-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const statePath = join(dir, 'stack.runtime.json');
+  const stackName = 'remote-preserve';
+  const target = { name: 'nl3', platform, ssh: 'test-nl3',
+    repoDir: platform === 'windows' ? 'C:/repo' : '/remote/repo',
+    cliHomeDir: platform === 'windows' ? 'C:/state' : '/remote/state' };
+  await recordStackRuntimeStart(statePath, { stackName, ownerPid: null,
+    placement: { server: 'nl3', daemon: 'nl3' },
+    remoteTargets: { nl3: { runtimeMode: 'source-snapshot',
+      services: { server: true, daemon: true }, status: 'running',
+      serviceStatus: { server: 'running', daemon: 'running' } } } });
+  const expected = await captureStackRuntimeStopSnapshot(statePath);
+  // A native shutdown can report no live processes. Preservation must still
+  // retain where daemon-only status, stop and a later start belong.
+  await recordStackRuntimeUpdate(statePath, { remoteTargets: { nl3: {
+    status: 'stopped', serviceStatus: { server: 'stopped', daemon: 'stopped' },
+  } } });
+  assert.equal((await finalizeStackRuntimeStop(statePath, { expected, preserveDaemon: true })).finalized, true);
+  const retained = await readStackRuntimeStateFile(statePath);
+  const placed = resolveObservedDevTargetService({ config: { targets: [target],
+    runtimePlacement: { daemon: { mode: 'prefer-target', target: 'nl3' } } },
+    runtimeState: retained, service: 'daemon' });
+  assert.equal(placed.runtimeMode, 'source-snapshot');
+  for (const action of ['status', 'stop', 'start', 'restart']) {
+    const remote = buildRemoteStackOperationCommand(placed.target, { stackName,
+      runtimeMode: placed.runtimeMode, operation: 'daemon', passthrough: [action, '--json'] });
+    const command = platform === 'windows'
+      ? Buffer.from(remote.split(' ').at(-1), 'base64').toString('utf16le') : remote;
+    assert.ok(command.includes(`/stack-state/${stackName}/cli`), action);
+    assert.equal(command.includes('dev-target-nl3-'), false, action);
+  }
+  const fullStop = await captureStackRuntimeStopSnapshot(statePath);
+  assert.equal((await finalizeStackRuntimeStop(statePath, { expected: fullStop })).finalized, true);
+  assert.equal(await readStackRuntimeStateFile(statePath), null, 'full stop releases stopped daemon custody');
+});
+}
 
 test('finalization cannot discard a remote role whose native retirement is unconfirmed', async t => {
   const dir = await mkdtemp(join(tmpdir(), 'hstack-runtime-remote-stop-'));
@@ -250,7 +312,7 @@ test('stop finalization retains a local forward published after the stop snapsho
   assert.equal((await readStackRuntimeStateFile(statePath)).remoteTargets.linux1.forwardPid, 702);
 });
 
-test('unrelated runtime updates preserve producer-recorded identity and Windows refuses a same-pid successor', async (t) => {
+test('unrelated runtime updates preserve producer identity and Windows retires it without signalling a same-pid successor', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'hstack-runtime-process-successor-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const statePath = join(dir, 'stack.runtime.json');
@@ -294,7 +356,7 @@ test('unrelated runtime updates preserve producer-recorded identity and Windows 
   });
 
   assert.equal(persistedFingerprint, recordedFingerprint);
-  assert.deepEqual(termination, { killed: false, reason: 'process_instance_changed' });
+  assert.deepEqual(termination, { killed: true, reason: 'already_exited' });
   assert.equal(terminationCalls, 0);
 });
 
@@ -870,6 +932,44 @@ test('startup admission does not discard a live recorded process when ownership 
   assert.equal(retained?.processes?.serverPid, process.pid);
 });
 
+test('runner initialization continues its claimed process incarnation for failure cleanup', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'hstack-runtime-runner-incarnation-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const statePath = join(dir, 'stack.runtime.json');
+  const input = { stackName: 'runner-incarnation', ownerPid: process.pid, ports: {} };
+  const claimed = await recordStackRuntimeStart(statePath, input);
+  const initialized = await recordStackRuntimeStart(statePath, {
+    ...input, ports: { server: 3005 },
+  }, { continueOwner: true });
+
+  assert.equal(initialized.startedAt, claimed.startedAt);
+  assert.equal(initialized.ports.server, 3005);
+  const stop = await recordStackRuntimeStopRequest(statePath, {
+    expectedOwnerPid: claimed.ownerPid,
+    expectedOwnerStartedAt: claimed.startedAt,
+  });
+  assert.equal(stop.authorized, true);
+});
+
+test('runner initialization cannot continue a different recorded process instance', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'hstack-runtime-runner-successor-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const statePath = join(dir, 'stack.runtime.json');
+  const input = { stackName: 'runner-successor', ownerPid: process.pid, ports: {} };
+  const claimed = await recordStackRuntimeStart(statePath, input);
+  await recordStackRuntimeUpdate(statePath, {
+    processInstances: { owner: { pid: process.pid, fingerprint: 'departed-process-instance' } },
+  });
+  const successor = await recordStackRuntimeStart(statePath, input, { continueOwner: true });
+  assert.notEqual(successor.startedAt, claimed.startedAt);
+  const staleStop = await recordStackRuntimeStopRequest(statePath, {
+    expectedOwnerPid: claimed.ownerPid,
+    expectedOwnerStartedAt: claimed.startedAt,
+  });
+  assert.equal(staleStop.authorized, false);
+  assert.equal(staleStop.reason, 'successor_owner_incarnation');
+});
+
 test('expected-owner stop rejects a reused pid with a different lifecycle startedAt', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'hstack-runtime-stop-pid-reuse-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
@@ -1015,6 +1115,9 @@ test('stop finalization deletes matching state after owner exit and preserves se
   assert.equal(preserveStop.expected.startedAt, runtime.startedAt);
   const preserved = await finalizeStackRuntimeStop(statePath, { expected: preserveStop.expected, preserveDaemon: true });
   assert.equal(preserved.finalized, true);
+  assert.equal(await finalizeStackRuntimeOwnerShutdown(statePath, {
+    ownerPid: runtime.ownerPid, startedAt: runtime.startedAt,
+  }), false, 'a retired owner cannot discard the daemon custody preserved by the completed stop');
   const state = await readStackRuntimeStateFile(statePath);
   assert.equal(state.ownerPid, null);
   assert.deepEqual(state.processes, { daemonPid: 703, daemonPids: [703] });

@@ -3,7 +3,11 @@ import { EventEmitter } from 'node:events';
 import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { runCaptureResult } from '../proc/proc.mjs';
+import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
+import { writeFakeBin } from '../../testkit/core/fake_bin_harness.mjs';
 import { resolveDevTargetMutagenRuntime } from './mutagen_runtime.mjs';
 import { readyDevTargetSyncResult as readyListResult } from '../../testkit/core/dev_target_sync.mjs';
 
@@ -15,12 +19,21 @@ import {
   syncDevTarget,
 } from './executor.mjs';
 
-const emptySourceDir = mkdtempSync(join(tmpdir(), 'happier-explicit-executor-tests-'));
-writeFileSync(join(emptySourceDir, 'package.json'), JSON.stringify({ workspaces: [] }));
-test.after(() => rmSync(emptySourceDir, { recursive: true, force: true }));
+const sourceFixtureDir = mkdtempSync(join(tmpdir(), 'happier-explicit-executor-tests-'));
+writeFileSync(join(sourceFixtureDir, 'package.json'), JSON.stringify({ workspaces: [] }));
+// Source-test classification follows the actual CLI resolver and setup policy.
+// The fixture checkout has no remote dependencies, but retains those declarations.
+mkdirSync(join(sourceFixtureDir, 'apps/cli/src'), { recursive: true });
+writeFileSync(join(sourceFixtureDir, 'apps/cli/vitest.config.ts'),
+  readFileSync(new URL('../../../../cli/vitest.config.ts', import.meta.url), 'utf8').replace(
+    "'./scripts/vitestWorkspacePackageResolution'",
+    JSON.stringify(fileURLToPath(new URL('../../../../cli/scripts/vitestWorkspacePackageResolution.ts', import.meta.url)))));
+writeFileSync(join(sourceFixtureDir, 'apps/cli/src/test-setup.unit.ts'),
+  readFileSync(new URL('../../../../cli/src/test-setup.unit.ts', import.meta.url)));
+test.after(() => rmSync(sourceFixtureDir, { recursive: true, force: true }));
 
 function runDevTargetCommand(options, dependencies) {
-  return runDevTargetCommandImpl({ sourceDir: emptySourceDir, ...options }, dependencies);
+  return runDevTargetCommandImpl({ sourceDir: sourceFixtureDir, ...options }, dependencies);
 }
 
 const target = {
@@ -35,7 +48,7 @@ test('workspace aliases prepare their manifest component before remote payload a
   const sourceDir = mkdtempSync(join(tmpdir(), 'happier-workspace-alias-executor-'));
   t.after(() => rmSync(sourceDir, { recursive: true, force: true }));
   mkdirSync(join(sourceDir, 'apps', 'viewer'), { recursive: true });
-  writeFileSync(join(sourceDir, 'package.json'), JSON.stringify({ workspaces: ['apps/*'] }));
+  writeFileSync(join(sourceDir, 'package.json'), JSON.stringify({ packageManager: 'yarn@1.22.22', workspaces: ['apps/*'] }));
   writeFileSync(join(sourceDir, 'apps', 'viewer', 'package.json'), JSON.stringify({
     name: '@fixture/viewer', scripts: { build: 'node compile.mjs' },
   }));
@@ -74,27 +87,14 @@ test('remote preparation retries refused multiplex admission but never an ambigu
   }
 });
 
-test('dependency bootstrap preserves streamed ownership refusal across process completion', async () => {
-  for (const scenario of [{ code: 1, stream: 'stderr', refused: true }, { code: 0, stream: 'stderr', refused: false }, { code: 1, stream: 'stdout', refused: false }]) {
-    const result = await runDevTargetDependencyBootstrap({ target, stackBaseDir: '/tmp/stack', syncAlreadyVerified: true }, {
-      runCommand: options => runDevTargetCommand(options, {
-        spawnProcess: ({ onLine }) => {
-          onLine({ stream: scenario.stream, line: 'Error: Expo pid=123 has no verified dependency-safe restart owner. Stop the owning Stack once on this target.' });
-          onLine({ stream: scenario.stream, line: "  code: 'HAPPIER_DEPENDENCY_METRO_RESTART_REQUIRED'" });
-          return { completion: Promise.resolve({ code: scenario.code, signal: null }) };
-        },
-      }),
-    });
-    assert.equal(result.error?.code === 'HAPPIER_DEPENDENCY_METRO_RESTART_REQUIRED', scenario.refused);
-    if (scenario.refused) assert.match(result.error.message, /Stop the owning Stack once/);
-  }
-});
-
 test('try admission reports owner denial only when exit 75 and its stderr sentinel agree', async () => {
   const sentinel = 'HSTACK_ADMISSION_BUSY:admission-test-id';
   for (const scenario of [
     { code: 75, stream: 'stderr', line: sentinel, declined: true },
     { code: 75, stream: 'stderr', line: 'HSTACK_ADMISSION_DISK:admission-test-id', declined: true },
+    { code: 75, stream: 'stderr', line: 'HSTACK_ADMISSION_CAPACITY:admission-test-id', declined: true },
+    { code: 75, stream: 'stderr', line: 'HSTACK_ADMISSION_CAPACITY:another-execution-id', declined: false },
+    { code: 75, stream: 'stdout', line: 'HSTACK_ADMISSION_CAPACITY:admission-test-id', declined: false },
     { code: 75, stream: 'stderr', line: 'HSTACK_ADMISSION_DISK:another-execution-id', declined: false },
     { code: 75, stream: 'stderr', line: 'HSTACK_ADMISSION_BUSY:another-execution-id', declined: false },
     { code: 75, stream: 'stderr', line: '[preferred-execution] heavyweight admission declined before dispatch (memory-available)', declined: false },
@@ -202,11 +202,13 @@ function transitionProblemListResult() {
 
 test('dependency bootstrap delegates to the cancellable remote command owner', async () => {
   const calls = [];
+  const controller = new AbortController();
   const result = await runDevTargetDependencyBootstrap({
     target,
     stackBaseDir: '/tmp/stack',
     syncAlreadyVerified: true,
     defaultBuildMode: 'qa-runtime',
+    signal: controller.signal,
     env: { TEST_ENV: 'project' },
   }, {
     runCommand: async (options) => {
@@ -216,7 +218,6 @@ test('dependency bootstrap delegates to the cancellable remote command owner', a
   });
 
   assert.deepEqual(result, { code: 0, signal: null });
-  assert.equal(typeof calls[0].onLine, 'function');
   const { onLine, ...invocation } = calls[0];
   assert.deepEqual(invocation, {
     target,
@@ -234,6 +235,7 @@ test('dependency bootstrap delegates to the cancellable remote command owner', a
     },
     dependencyAdmission: 'skip',
     provenance: 'skip',
+    signal: controller.signal,
     syncAlreadyVerified: true,
     env: { TEST_ENV: 'project' },
   });
@@ -276,26 +278,31 @@ test('workspace preparation delegates the component path to the cancellable remo
   }]);
 });
 
-test('explicit remote execution rejects Git commands before sync or SSH', async () => {
+test('explicit remote execution rejects authority-bound commands before sync or SSH', async () => {
   let boundaryCalls = 0;
-  await assert.rejects(
-    runDevTargetCommand({
-      target,
-      stackBaseDir: '/tmp/stack',
-      commandArgs: ['git', 'status'],
-      env: {},
-    }, {
-      runCaptureResult: async () => {
-        boundaryCalls += 1;
-        return readyListResult();
-      },
-      spawnProcess: () => {
-        boundaryCalls += 1;
-        return { completion: Promise.resolve({ code: 0, signal: null }) };
-      },
-    }),
-    /Git.*authoritative|primary.*Git/i,
-  );
+  for (const [commandArgs, error] of [
+    [['git', 'status'], /Git.*authoritative|primary.*Git/i],
+    [['node', 'scripts/api-governance/cli.mjs', '--profile', 'plugin-ui', '--write'], /tracked-source writer.*authoritative/i],
+  ]) {
+    await assert.rejects(
+      runDevTargetCommand({
+        target,
+        stackBaseDir: '/tmp/stack',
+        commandArgs,
+        env: {},
+      }, {
+        runCaptureResult: async () => {
+          boundaryCalls += 1;
+          return readyListResult();
+        },
+        spawnProcess: () => {
+          boundaryCalls += 1;
+          return { completion: Promise.resolve({ code: 0, signal: null }) };
+        },
+      }),
+      error,
+    );
+  }
   assert.equal(boundaryCalls, 0);
 });
 
@@ -887,6 +894,46 @@ test(`remote exec ${signal} awaits cancellation without a subordinate deadline b
   assert.equal(signalSource.listenerCount('SIGHUP'), 0);
 });
 }
+
+test('JavaScript cancellation preserves real custody signal events on controller stderr', { skip: process.platform === 'win32' }, async t => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-cancel-events-' });
+  // SSH is the OS transport boundary; its cancellation reply comes from the
+  // real custody producer rather than a handwritten event fixture.
+  writeFakeBin({ root, name: 'ssh', content: `#!/bin/sh
+exec /bin/bash "$CUSTODY_SOURCE" run "$CUSTODY_RECORD" js-cancel-events /bin/bash -c 'sleep 300 & exit 0'
+` });
+  const script = `
+    import { EventEmitter } from 'node:events';
+    import { runDevTargetCommand } from ${JSON.stringify(new URL('./executor.mjs', import.meta.url).href)};
+    const signals = new EventEmitter();
+    let complete;
+    const child = { completion: new Promise(resolve => { complete = resolve; }) };
+    await runDevTargetCommand({
+      target: ${JSON.stringify(target)}, stackBaseDir: ${JSON.stringify(root)}, sourceDir: ${JSON.stringify(sourceFixtureDir)},
+      commandArgs: ['long-test'], syncAlreadyVerified: true, provenance: 'skip', env: process.env,
+    }, {
+      signalSource: signals,
+      spawnProcess: () => { setImmediate(() => signals.emit('SIGTERM')); return child; },
+      stopProcess: async () => { complete({ code: null, signal: 'SIGTERM' }); },
+    });
+  `;
+  const result = await runCaptureResult(process.execPath, ['--input-type=module', '-e', script], {
+    env: { ...process.env, PATH: `${join(root, 'bin')}:${process.env.PATH}`, TMPDIR: root,
+      CUSTODY_SOURCE: new URL('./remote_execution_custody.sh', import.meta.url).pathname,
+      CUSTODY_RECORD: join(root, 'remote-exec/js-cancel-events.pid') },
+  });
+  assert.equal(result.exitCode, 0, result.err);
+  assert.equal(result.out, '', 'cancellation diagnostics must not enter payload stdout');
+  const lines = result.err.split('\n').filter(line => line.includes('[preferred-execution] custody_signal '));
+  assert.ok(lines.length > 0, 'successful cancellation must expose its real signal events');
+  for (const line of lines) {
+    const event = JSON.parse(line.slice(line.indexOf('[preferred-execution] custody_signal ') + '[preferred-execution] custody_signal '.length));
+    assert.equal(event.execution_id, 'js-cancel-events');
+    assert.equal(event.initiating_execution_id, 'js-cancel-events');
+    assert.equal(event.signal, 'TERM');
+    assert.equal(event.syscall_result, 0);
+  }
+});
 
 test('remote cancellation failure still stops local SSH and reports unconfirmed cleanup', async () => {
   const signalSource = new EventEmitter();

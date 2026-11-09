@@ -14,8 +14,12 @@ test('requiresStackDaemonPreflight skips daemon preflight for session create hel
   assert.equal(requiresStackDaemonPreflight(['session', 'create', '-h']), false);
 });
 
-test('requiresStackDaemonPreflight keeps daemon preflight for executable session and attach paths', () => {
+test('requiresStackDaemonPreflight considers Session creation for target-aware preflight', () => {
   assert.equal(requiresStackDaemonPreflight(['session', 'create']), true);
+  assert.equal(requiresStackDaemonPreflight(['session', 'create', '--machine-id', 'remote-machine', '--json']), true);
+});
+
+test('requiresStackDaemonPreflight keeps daemon preflight for resume and attach paths', () => {
   assert.equal(requiresStackDaemonPreflight(['resume']), true);
   assert.equal(requiresStackDaemonPreflight(['attach']), true);
 });

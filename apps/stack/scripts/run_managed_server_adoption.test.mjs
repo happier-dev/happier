@@ -82,7 +82,7 @@ test('source runner recovery adopts a healthy daemon from its frozen selection w
     HAPPIER_STACK_AUTO_AUTH_SEED:'0', HAPPIER_STACK_MIGRATE_CREDENTIALS:'0',
     HAPPIER_STACK_TAILSCALE_SERVE:'0', HAPPIER_STACK_SYNC_BUNDLED_WORKSPACES:'0',
     HAPPIER_STACK_SKIP_REFRESH_DEPS:'1', HAPPIER_STACK_SERVER_COMPONENT:'happier-server-light'};
-  const daemonEnv = getDaemonEnv({baseEnv:env, cliHomeDir, internalServerUrl:serverUrl, publicServerUrl:serverUrl, stackName});
+  const daemonEnv = await getDaemonEnv({baseEnv:env, cliHomeDir, internalServerUrl:serverUrl, publicServerUrl:serverUrl, stackName});
   const {statePath} = resolvePreferredStackDaemonStatePaths({cliHomeDir, serverUrl, env:daemonEnv});
   const daemon = spawnDaemonLikeProcess({cliHomeDir, statePaths:[statePath], internalServerUrl:serverUrl, publicServerUrl:serverUrl, env:daemonEnv});
   let runner;

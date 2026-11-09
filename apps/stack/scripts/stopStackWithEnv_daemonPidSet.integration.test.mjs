@@ -99,9 +99,78 @@ async function createStopFixture(t, { stackName = 'test-stack' } = {}) {
 
 async function writeRuntimeState(path, state) {
   await writeFile(path, JSON.stringify({
-    startedAt: '2026-07-17T08:00:00.000Z',
+    startedAt: new Date().toISOString(),
     ...state,
   }, null, 2) + '\n', 'utf8');
+}
+
+for (const cleanup of ['service stop', 'restart continuation']) {
+  test(`${cleanup} retires a starting daemon that never published an HTTP port`, async (t) => {
+    const fixture = await createStopFixture(t, { stackName: 'starting-daemon-no-port' });
+    const daemon = await fixture.spawnDaemon('starting-daemon');
+    const env = { ...process.env, HAPPIER_STACK_STACK: fixture.stackName,
+      HAPPIER_STACK_ENV_FILE: fixture.envPath, HAPPIER_STACK_CLI_HOME_DIR: fixture.cliHomeDir,
+      HAPPIER_STACK_REPO_DIR: fixture.repoRoot };
+    const internalServerUrl = 'http://127.0.0.1:4101';
+    env.HAPPIER_SERVER_URL = internalServerUrl;
+    const daemonEnv = await getDaemonEnv({ baseEnv: env, cliHomeDir: fixture.cliHomeDir,
+      internalServerUrl, publicServerUrl: internalServerUrl, stackName: fixture.stackName });
+    const { statePath } = resolvePreferredStackDaemonStatePaths({ cliHomeDir: fixture.cliHomeDir,
+      serverUrl: internalServerUrl, env: daemonEnv });
+    await mkdir(dirname(statePath), { recursive: true });
+    await writeFile(statePath, JSON.stringify({ pid: daemon.pid, httpPort: 0, startedAt: Date.now() }));
+    await writeRuntimeState(fixture.runtimeStatePath, { stackName: fixture.stackName, ownerPid: null,
+      processes: { daemonPid: daemon.pid },
+      ...(cleanup === 'restart continuation' ? { stopRequest: {
+        requestedBy: 'restart', reason: 'complete interrupted stop', preserveDaemon: false,
+      } } : {}),
+    });
+    const input = { rootDir: fixture.repoRoot, stackName: fixture.stackName,
+      baseDir: fixture.baseDir, env, json: true, noDocker: true, autoSweep: false };
+    const result = cleanup === 'service stop'
+      ? await stopStackServiceWithEnv(input, async () => {})
+      : await completeInterruptedStackStopBeforeStart(input);
+    assert.deepEqual(result.daemonSessionsStopped, {
+      ok: true, skipped: true, reason: 'missing_http_port', stoppedSessionIds: [],
+    });
+    assert.equal(result.finalization.finalized, true);
+    await waitForProcessExit({ pid: daemon.pid });
+    await assert.rejects(access(fixture.runtimeStatePath), { code: 'ENOENT' });
+  });
+}
+
+for (const identity of ['absent', 'reused', 'inconclusive']) {
+  test(`interrupted stop handles an unreachable recorded daemon with no server (${identity})`, async (t) => {
+    const fixture = await createStopFixture(t, { stackName: `reboot-${identity}` });
+    const daemonPid = identity === 'absent' ? 2147483647 : process.pid;
+    const env = { ...process.env, HAPPIER_STACK_STACK: fixture.stackName,
+      HAPPIER_STACK_ENV_FILE: fixture.envPath, HAPPIER_STACK_CLI_HOME_DIR: fixture.cliHomeDir,
+      HAPPIER_STACK_REPO_DIR: fixture.repoRoot };
+    const daemonEnv = await getDaemonEnv({ baseEnv: env, cliHomeDir: fixture.cliHomeDir,
+      internalServerUrl: 'http://127.0.0.1:3005', publicServerUrl: 'http://127.0.0.1:3005', stackName: fixture.stackName });
+    const { statePath } = resolvePreferredStackDaemonStatePaths({ cliHomeDir: fixture.cliHomeDir,
+      serverUrl: 'http://127.0.0.1:3005', env: daemonEnv });
+    await mkdir(dirname(statePath), { recursive: true });
+    await writeFile(statePath, JSON.stringify({ pid: daemonPid, httpPort: 0, startedAt: Date.now() }));
+    await writeRuntimeState(fixture.runtimeStatePath, { stackName: fixture.stackName, ownerPid: null,
+      processes: { daemonPid }, ...(identity === 'reused' ? { processInstances: { processes: {
+        daemonPid: { pid: daemonPid, fingerprint: 'prior-boot-incarnation' } } } } : {}),
+      stopRequest: { requestedBy: 'restart', reason: 'reboot recovery', preserveDaemon: false } });
+    const kill = process.kill.bind(process);
+    t.mock.method(process, 'kill', (pid, signal) => {
+      if (pid === daemonPid && identity === 'inconclusive') {
+        throw Object.assign(new Error('unreadable process'), { code: 'EACCES' });
+      }
+      assert.equal(signal, 0, 'no stale or inconclusive process may be signalled');
+      return kill(pid, signal);
+    });
+    const result = await stopStackWithEnv({ rootDir: fixture.rootDir, stackName: fixture.stackName,
+      baseDir: fixture.baseDir, env, json: true, noDocker: true, autoSweep: false });
+    assert.equal(result.finalization?.finalized, identity !== 'inconclusive');
+    if (identity === 'inconclusive') await access(fixture.runtimeStatePath);
+    else await assert.rejects(access(fixture.runtimeStatePath), { code: 'ENOENT' });
+    assert.doesNotThrow(() => kill(process.pid, 0));
+  });
 }
 
 async function waitForFile(path) {
@@ -120,7 +189,7 @@ test('source stack stop preserves runtime custody when retained CLI retirement f
   const env = { ...process.env, HAPPIER_STACK_STACK: fixture.stackName,
     HAPPIER_STACK_REPO_DIR: fixture.repoRoot, HAPPIER_STACK_CLI_HOME_DIR: fixture.cliHomeDir,
     HAPPIER_HOME_DIR: fixture.cliHomeDir, HAPPIER_STACK_ENV_FILE: fixture.envPath };
-  const daemonEnv = getDaemonEnv({ baseEnv: env, cliHomeDir: fixture.cliHomeDir,
+  const daemonEnv = await getDaemonEnv({ baseEnv: env, cliHomeDir: fixture.cliHomeDir,
     internalServerUrl: 'http://127.0.0.1:3005', publicServerUrl: 'http://127.0.0.1:3005', stackName: fixture.stackName });
   const { lockPath } = resolvePreferredStackDaemonStatePaths({ cliHomeDir: fixture.cliHomeDir,
     serverUrl: 'http://127.0.0.1:3005', env: daemonEnv });
@@ -167,6 +236,54 @@ test('startup retires an unloadable source bundle and admits the replacement aft
   assert.equal(replacement.ownerPid, process.pid);
   assert.equal(replacement.stopRequest, null);
 });
+
+for (const owner of ['absent', 'prior-boot', 'live']) {
+  test(`startup completes stale-dependency cleanup only after owner retirement (${owner})`, async (t) => {
+    const fixture = await createStopFixture(t, { stackName: `stale-dependencies-${owner}` });
+    const bundleDir = join(fixture.baseDir, 'retained-source');
+    const cliDir = join(bundleDir, 'apps', 'cli');
+    const entrypoint = join(cliDir, 'src', 'index.mjs');
+    await mkdir(dirname(entrypoint), { recursive: true });
+    await writeFile(entrypoint, 'throw new Error("retired source must not be launched");\n');
+    // A pre-refresh capture cannot launch against the replacement dependency tree.
+    await writeFile(join(bundleDir, 'source-bundle.json'), JSON.stringify({ dependencyPublication: null }));
+    const ownerPid = owner === 'absent' ? 2147483647 : process.pid;
+    const startedAt = owner === 'prior-boot' ? '1970-01-01T00:00:01.000Z' : new Date().toISOString();
+    await writeRuntimeState(fixture.runtimeStatePath, { version: 1, stackName: fixture.stackName,
+      ownerPid, startedAt, processes: { daemonPid: 2147483646 },
+      sourceRuntimeLaunch: { entrypoint, cliDir, env: {} },
+      stopRequest: { requestedBy: 'stack restart', reason: 'recover retained source after reboot',
+        preserveDaemon: false, requestedAt: new Date().toISOString() } });
+    const signal = process.kill.bind(process);
+    t.mock.method(process, 'kill', (pid, requestedSignal) => {
+      assert.equal(requestedSignal, 0, 'recovery must not signal a stale or unconfirmed process');
+      return signal(pid, requestedSignal);
+    });
+    const resume = () => completeInterruptedStackStopBeforeStart({ rootDir: fixture.rootDir,
+      stackName: fixture.stackName, baseDir: fixture.baseDir,
+      env: { ...process.env, HAPPIER_STACK_STACK: fixture.stackName,
+        HAPPIER_STACK_ENV_FILE: fixture.envPath, HAPPIER_STACK_CLI_HOME_DIR: fixture.cliHomeDir,
+        HAPPIER_STACK_REPO_DIR: fixture.repoRoot }, json: true, noDocker: true, autoSweep: false,
+    }, {
+      // OS shutdown refusal: the live owner has not exited; never signal the test runner.
+      requestLifecycleOwnerShutdownImpl: async () => ({ killed: false, reason: 'ownership_inconclusive' }),
+    });
+    if (owner === 'live') {
+      await assert.rejects(resume, { code: 'ESTACKRUNTIMECLEANUPINCOMPLETE' });
+      assert.equal(JSON.parse(await readFile(fixture.runtimeStatePath, 'utf8')).ownerPid, process.pid);
+      return;
+    }
+    const result = await resume();
+    assert.equal(result.finalization?.finalized, true);
+    await assert.rejects(access(fixture.runtimeStatePath), { code: 'ENOENT' });
+    await withStackRuntimeStartClaim(fixture.runtimeStatePath, { stackName: fixture.stackName }, async ({ recordStart }) => {
+      await recordStart({ stackName: fixture.stackName, script: 'replacement', ownerPid: process.pid, ports: {} });
+    });
+    const replacement = JSON.parse(await readFile(fixture.runtimeStatePath, 'utf8'));
+    assert.equal(replacement.ownerPid, process.pid);
+    assert.equal(replacement.stopRequest, null);
+  });
+}
 
 test('explicit-stop fallback applies canonical grace only to persisted server process roles', async (t) => {
   const fixture = await createStopFixture(t, { stackName: 'server-role-grace' });

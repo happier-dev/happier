@@ -26,7 +26,7 @@ import { resolveRemoteValidationPlacementClass } from './validation_preparation_
 import { readShellCommandPrefix, workspaceBuildCommands, workspaceBuildSequence } from './shell_command_sequence.mjs';
 import { HOST_OBSERVATION_PROGRAMS } from './host_observation.mjs';
 import { COMPILER_NATIVE_TEST_FILES, COMPILER_TEST_SUITES, refineCompilerSuiteSelection } from './compiler_test_suites.mjs';
-import { HEAVYWEIGHT_COMMAND_RESOURCES, LEGACY_VALIDATION_ADMISSION_CLASSES, SOURCE_WEB_EXPORT_MEMORY as EXPORT_MEMORY } from './command_resources.mjs';
+import { ADMISSION_CPU_WORKER_ENV_NAMES, ADMISSION_CPU_WORKER_FLAGS, HEAVYWEIGHT_COMMAND_RESOURCES, LEGACY_VALIDATION_ADMISSION_CLASSES, SOURCE_WEB_EXPORT_MEMORY as EXPORT_MEMORY } from './command_resources.mjs';
 export { HEAVYWEIGHT_COMMAND_RESOURCES, LEGACY_VALIDATION_ADMISSION_CLASSES } from './command_resources.mjs';
 
 // Both dispatchers evaluate this policy. The native artifact is generated once,
@@ -1347,6 +1347,49 @@ function renderShellCommandRules(rules) {
     return '  if ' + conditions + '; then\n' + Object.entries(set).map(([key, value]) => '    policy_' + key + '=' + posixQuote(value)).join('\n') + '\n  fi';
   }).join('\n');
 }
+function renderNativeCpuPolicy() {
+  return [
+    'heavyweight_cpu_cores() {',
+    '  case "$1" in',
+    ...Object.entries(HEAVYWEIGHT_COMMAND_RESOURCES).map(([name, resource]) => {
+      const value = resource.cpuCores === 'host' ? '$2' : resource.cpuCores === 'workers' ? '${3:-$2}' : String(resource.cpuCores);
+      return `    ${name}) heavyweight_cpu_cost=${value} ;;`;
+    }),
+    '    *) heavyweight_cpu_cost=$2 ;;',
+    '  esac',
+    '  heavyweight_cpu_requested=${4:-0}',
+    '  [ "$heavyweight_cpu_requested" != host ] || heavyweight_cpu_requested=$2',
+    '  if [ "$heavyweight_cpu_requested" -gt "$heavyweight_cpu_cost" ]; then heavyweight_cpu_cost=$heavyweight_cpu_requested; fi',
+    '  printf \'%s\' "$heavyweight_cpu_cost"',
+    '}',
+    'heavyweight_include_requested_cpu() {',
+    '  [ "$heavyweight_requested_cpu" != host ] || return 0',
+    '  case "$1" in',
+    '    \'\') return 0 ;;',
+    '    *[!0-9]*|0*) heavyweight_requested_cpu=host; return 0 ;;',
+    '  esac',
+    '  if ! [ "$1" -le 9007199254740991 ] 2>/dev/null; then heavyweight_requested_cpu=host',
+    '  elif [ "$1" -gt "$heavyweight_requested_cpu" ]; then heavyweight_requested_cpu=$1; fi',
+    '}',
+    'heavyweight_requested_cpu_cores() {',
+    '  heavyweight_requested_cpu=0',
+    `  for heavyweight_cpu_value in ${ADMISSION_CPU_WORKER_ENV_NAMES.map(name => `"\${${name}-}"`).join(' ')}; do`,
+    '    heavyweight_include_requested_cpu "$heavyweight_cpu_value"',
+    '  done',
+    '  while [ "$#" -gt 0 ]; do',
+    '    case "$1" in',
+    `      ${ADMISSION_CPU_WORKER_FLAGS.join('|')}) shift; heavyweight_cpu_value=\${1-host} ;;`,
+    `      ${ADMISSION_CPU_WORKER_FLAGS.map(flag => `${flag}=*`).join('|')}) heavyweight_cpu_value=\${1#*=} ;;`,
+    '      *) shift; continue ;;',
+    '    esac',
+    '    heavyweight_include_requested_cpu "$heavyweight_cpu_value"',
+    '    [ "$#" -eq 0 ] || shift',
+    '  done',
+    '  printf \'%s\' "$heavyweight_requested_cpu"',
+    '}',
+  ];
+}
+
 export function renderNativeCommandPolicy() {
   const [serialSegment, parallelSegment] = EXPORT_MEMORY_SEGMENTS.map(segment =>
     `b=${segment.baseNumerator}; n=${segment.numerator}; d=${segment.denominator}`);
@@ -1361,6 +1404,7 @@ export function renderNativeCommandPolicy() {
     // attempts, using OpenSSH's integral-second unit. This is independent of
     // configured cache reuse; it must not shorten exact or payload connections.
     `placement_probe_connect_timeout_seconds() { printf '%s' '${Math.max(1, Math.floor(DEFAULT_LOAD_PROBE_TTL_MS / 2 / 1000))}'; }`,
+    ...renderNativeCpuPolicy(),
     'heavyweight_memory_floor_kib() {',
     '  case "$1" in',
     ...Object.entries(HEAVYWEIGHT_MEMORY_KIB).map(([key, value]) => '    ' + key + ') heavyweight_policy_floor=' + posixQuote(String(value)) + ' ;;'),

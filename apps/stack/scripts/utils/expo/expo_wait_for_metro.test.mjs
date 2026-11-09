@@ -131,6 +131,31 @@ test('waitForExpoMetroRunning stops before probing when its caller cancels readi
   assert.equal(probes, 0);
 });
 
+test('Metro readiness cancellation wins while an otherwise healthy response body is pending', { timeout: 10_000 }, async t => {
+  const server = createServer((_request, response) => {
+    response.writeHead(200, { 'x-react-native-project-root': '/fixture/project' });
+    response.write('packager-status:');
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => {
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+  });
+  const controller = new AbortController();
+  let received;
+  const headers = new Promise(resolve => { received = resolve; });
+  const fetchResponse = globalThis.fetch;
+  t.mock.method(globalThis, 'fetch', async (...args) => {
+    const response = await fetchResponse(...args);
+    received();
+    return response;
+  });
+  const pending = waitForExpoMetroRunning({ port: server.address().port, signal: controller.signal });
+  await headers;
+  controller.abort(new Error('target closed'));
+  assert.deepEqual(await pending, { ok: false, reason: 'aborted', probes: 1 });
+});
+
 test('looksLikeExpoMetro falls back to the root document when /status is unavailable', async () => {
   const originalFetch = globalThis.fetch;
   const urls = [];

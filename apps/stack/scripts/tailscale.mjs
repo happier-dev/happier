@@ -1,19 +1,22 @@
 import './utils/env/env.mjs';
 import { parseArgs } from './utils/cli/args.mjs';
-import { run } from './utils/proc/proc.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { isSandboxed, sandboxAllowsGlobalSideEffects } from './utils/env/sandbox.mjs';
 import { resolveStackServerEndpoint } from './utils/server/urls.mjs';
 import { getStackName, resolveStackEnvPath } from './utils/paths/paths.mjs';
 import { banner, bullets, cmd as cmdFmt, kv, ok, sectionTitle } from './utils/ui/layout.mjs';
 import { cyan, dim, green } from './utils/ui/ansi.mjs';
-import {
-  runTailscaleServeEnable as runSharedTailscaleServeEnable,
-  runTailscaleServeReset as runSharedTailscaleServeReset,
-  runTailscaleServeStatus as runSharedTailscaleServeStatus,
-  tailscaleServeHttpsUrlForInternalServerUrlFromStatus,
-} from '@happier-dev/cli-common/tailscale';
 import { resolveRelayAccessConfiguredCanonicalPublicServerUrl } from '@happier-dev/cli-common/relayAccess';
+import { TailscaleCommandError } from '@happier-dev/cli-common/tailscale';
+import {
+  getServeConfig, tailscaleAutoEnableTimeoutMs, tailscaleServeHttpsUrlForInternalServerUrl,
+  tailscaleServeHttpsUrl, tailscaleServeStatus, tailscaleServeEnable, tailscaleServeReset,
+} from './utils/net/tailscale_serve.mjs';
+
+export {
+  tailscaleServeHttpsUrlForInternalServerUrl, tailscaleServeHttpsUrl, tailscaleServeStatus,
+  tailscaleServeEnable, tailscaleServeReset, maybeEnableTailscaleServe, maybeResetTailscaleServe,
+} from './utils/net/tailscale_serve.mjs';
 
 /**
  * Manage Tailscale Serve for exposing the local UI/API over HTTPS (secure context).
@@ -21,7 +24,7 @@ import { resolveRelayAccessConfiguredCanonicalPublicServerUrl } from '@happier-d
  * This wraps:
  * - `tailscale serve --bg http://127.0.0.1:3005`
  * - `tailscale serve status`
- * - `tailscale serve reset`
+ * - listener/path-scoped `tailscale serve ... off`
  *
  * Commands:
  * - status
@@ -29,149 +32,6 @@ import { resolveRelayAccessConfiguredCanonicalPublicServerUrl } from '@happier-d
  * - disable (alias: reset)
  * - url (print the HTTPS URL for the current configured upstream)
  */
-
-function getServeConfig(internalServerUrl) {
-  const upstream = process.env.HAPPIER_STACK_TAILSCALE_UPSTREAM?.trim()
-    ? process.env.HAPPIER_STACK_TAILSCALE_UPSTREAM.trim()
-    : internalServerUrl;
-  const servePath = process.env.HAPPIER_STACK_TAILSCALE_SERVE_PATH?.trim()
-    ? process.env.HAPPIER_STACK_TAILSCALE_SERVE_PATH.trim()
-    : '/';
-  return { upstream, servePath };
-}
-
-export async function tailscaleServeHttpsUrlForInternalServerUrl(internalServerUrl) {
-  try {
-    const status = await tailscaleServeStatus();
-    return tailscaleServeHttpsUrlForInternalServerUrlFromStatus(status, internalServerUrl);
-  } catch {
-    return null;
-  }
-}
-
-function assertTailscaleAllowed(action) {
-  if (isSandboxed() && !sandboxAllowsGlobalSideEffects()) {
-    throw new Error(
-      `[local] tailscale ${action} is disabled in sandbox mode.\n` +
-        `Reason: Tailscale Serve is global machine state and sandbox runs must be isolated.\n` +
-        `If you really want this, set: HAPPIER_STACK_SANDBOX_ALLOW_GLOBAL=1`
-    );
-  }
-}
-
-function parseTimeoutMs(raw, defaultMs) {
-  const s = (raw ?? '').trim();
-  if (!s) return defaultMs;
-  const n = Number(s);
-  // Allow 0 to disable timeouts for user-triggered commands.
-  if (!Number.isFinite(n)) return defaultMs;
-  return n > 0 ? n : 0;
-}
-
-function tailscaleProbeTimeoutMs() {
-  return parseTimeoutMs(process.env.HAPPIER_STACK_TAILSCALE_CMD_TIMEOUT_MS, 2500);
-}
-
-function tailscaleUserEnableTimeoutMs() {
-  return parseTimeoutMs(process.env.HAPPIER_STACK_TAILSCALE_ENABLE_TIMEOUT_MS, 30000);
-}
-
-function tailscaleAutoEnableTimeoutMs() {
-  return parseTimeoutMs(process.env.HAPPIER_STACK_TAILSCALE_ENABLE_TIMEOUT_MS_AUTO, tailscaleProbeTimeoutMs());
-}
-
-function tailscaleUserResetTimeoutMs() {
-  return parseTimeoutMs(process.env.HAPPIER_STACK_TAILSCALE_RESET_TIMEOUT_MS, 15000);
-}
-
-export async function tailscaleServeHttpsUrl({ internalServerUrl } = {}) {
-  try {
-    const status = await tailscaleServeStatus();
-    const comparableInternalServerUrl =
-      String(internalServerUrl ?? '').trim() ||
-      (await resolveStackServerEndpoint()).internalServerUrl;
-    return tailscaleServeHttpsUrlForInternalServerUrlFromStatus(status, comparableInternalServerUrl);
-  } catch {
-    return null;
-  }
-}
-
-export async function tailscaleServeStatus() {
-  assertTailscaleAllowed('status');
-  return await runSharedTailscaleServeStatus({
-    env: process.env,
-    timeoutMs: tailscaleProbeTimeoutMs(),
-  });
-}
-
-export async function tailscaleServeEnable({ internalServerUrl, timeoutMs } = {}) {
-  assertTailscaleAllowed('enable');
-  const { upstream, servePath } = getServeConfig(internalServerUrl);
-  const result = await runSharedTailscaleServeEnable({
-    env: process.env,
-    servePath,
-    timeoutMs: Number.isFinite(timeoutMs) ? timeoutMs : tailscaleUserEnableTimeoutMs(),
-    upstreamUrl: upstream,
-  });
-  const httpsUrl =
-    result.httpsUrl ||
-    (result.approvalUrl ? null : await tailscaleServeHttpsUrlForInternalServerUrl(upstream));
-
-  if (result.approvalUrl) {
-    try {
-      await run('open', [result.approvalUrl]);
-    } catch {
-      // ignore (headless / restricted environment)
-    }
-  }
-
-  return {
-    enableUrl: result.approvalUrl,
-    httpsUrl,
-    status: result.rawStatus,
-  };
-}
-
-export async function tailscaleServeReset({ timeoutMs } = {}) {
-  assertTailscaleAllowed('reset');
-  await runSharedTailscaleServeReset({
-    env: process.env,
-    timeoutMs: Number.isFinite(timeoutMs) ? timeoutMs : tailscaleUserResetTimeoutMs(),
-  });
-}
-
-export async function maybeEnableTailscaleServe({ internalServerUrl }) {
-  if (isSandboxed() && !sandboxAllowsGlobalSideEffects()) {
-    return null;
-  }
-  const enabled = (process.env.HAPPIER_STACK_TAILSCALE_SERVE ?? '0') === '1';
-  if (!enabled) {
-    return null;
-  }
-  try {
-    // This is called from automation; it must not hang for long.
-    return await tailscaleServeEnable({ internalServerUrl, timeoutMs: tailscaleAutoEnableTimeoutMs() });
-  } catch (e) {
-    throw new Error(`[local] failed to enable tailscale serve (is Tailscale running/authenticated?): ${e instanceof Error ? e.message : String(e)}`);
-  }
-}
-
-export async function maybeResetTailscaleServe() {
-  if (isSandboxed() && !sandboxAllowsGlobalSideEffects()) {
-    return;
-  }
-  const enabled = (process.env.HAPPIER_STACK_TAILSCALE_SERVE ?? '0') === '1';
-  const resetOnExit = (process.env.HAPPIER_STACK_TAILSCALE_RESET_ON_EXIT ?? '0') === '1';
-  if (!enabled || !resetOnExit) {
-    return;
-  }
-  try {
-    // Shutdown path: never block for long.
-    await tailscaleServeReset({ timeoutMs: tailscaleProbeTimeoutMs() });
-  } catch {
-    // ignore
-  }
-}
 
 async function sleep(ms) {
   await new Promise((r) => setTimeout(r, ms));
@@ -222,63 +82,50 @@ export async function resolvePublicServerUrl({
     };
   }
 
-  // Non-main stacks:
-  // - Never auto-enable (global machine state) by default.
-  // - If the caller explicitly allows it AND Tailscale Serve is already configured for this stack's
-  //   internal URL, prefer the HTTPS URL (safe: status must match the internal URL).
-  if (stackName && stackName !== 'main') {
-    if (allowEnable) {
-      const existing = await tailscaleServeHttpsUrlForInternalServerUrl(internalServerUrl);
-      if (existing) {
-        return { publicServerUrl: existing, source: 'tailscale-status' };
-      }
-    }
-    return {
-      publicServerUrl: effectiveEnvPublicUrl || defaultPublicUrl,
-      source: effectiveEnvPublicUrl ? (relayAccessPublicUrl ? 'relay-access' : 'env') : 'default',
-    };
-  }
-
-  // If serve is already configured, use its HTTPS URL if present.
-  const existing = await tailscaleServeHttpsUrlForInternalServerUrl(internalServerUrl);
-  if (existing) {
-    return { publicServerUrl: existing, source: 'tailscale-status' };
-  }
-
-  const enableServe = (env.HAPPIER_STACK_TAILSCALE_SERVE ?? '0') === '1';
-  if (!enableServe || !allowEnable) {
-    return {
-      publicServerUrl: effectiveEnvPublicUrl || defaultPublicUrl,
-      source: effectiveEnvPublicUrl ? (relayAccessPublicUrl ? 'relay-access' : 'env') : 'default',
-    };
-  }
-
-  // Try enabling serve (best-effort); then wait a bit for Tailscale to be ready/configured.
-  try {
-    const res = await tailscaleServeEnable({ internalServerUrl, timeoutMs: tailscaleAutoEnableTimeoutMs() });
-    if (res?.httpsUrl) {
-      return { publicServerUrl: res.httpsUrl, source: 'tailscale-enable' };
-    }
-  } catch {
-    // ignore and fall back to waiting/polling
-  }
-
-  const waitMs = env.HAPPIER_STACK_TAILSCALE_WAIT_MS?.trim()
-    ? Number(env.HAPPIER_STACK_TAILSCALE_WAIT_MS.trim())
-    : 15000;
-  const deadline = Date.now() + (Number.isFinite(waitMs) ? waitMs : 15000);
-  while (Date.now() < deadline) {
-    const url = await tailscaleServeHttpsUrlForInternalServerUrl(internalServerUrl);
-    if (url) {
-      return { publicServerUrl: url, source: 'tailscale-wait' };
-    }
-    await sleep(500);
-  }
-
-  return {
+  const fallback = {
     publicServerUrl: effectiveEnvPublicUrl || defaultPublicUrl,
     source: effectiveEnvPublicUrl ? (relayAccessPublicUrl ? 'relay-access' : 'env') : 'default',
   };
+  // Discovery is optional: preserve other routes while reporting a terminal refusal.
+  try {
+    const nonMainStack = Boolean(stackName && stackName !== 'main');
+    // Non-main stacks may discover an existing route, but never auto-enable one.
+    if (nonMainStack && !allowEnable) return fallback;
+    const existing = await tailscaleServeHttpsUrlForInternalServerUrl(internalServerUrl);
+    if (existing) {
+      return { publicServerUrl: existing, source: 'tailscale-status' };
+    }
+    const enableServe = (env.HAPPIER_STACK_TAILSCALE_SERVE ?? '0') === '1';
+    if (nonMainStack || !enableServe || !allowEnable) return fallback;
+
+    // Try enabling Serve, then use the existing readiness budget for transient failures.
+    try {
+      const res = await tailscaleServeEnable({ internalServerUrl, timeoutMs: tailscaleAutoEnableTimeoutMs() });
+      if (res?.httpsUrl) {
+        return { publicServerUrl: res.httpsUrl, source: 'tailscale-enable' };
+      }
+    } catch (error) {
+      if (error instanceof TailscaleCommandError && error.failure?.retryable === false) throw error;
+    }
+
+    const waitMs = env.HAPPIER_STACK_TAILSCALE_WAIT_MS?.trim()
+      ? Number(env.HAPPIER_STACK_TAILSCALE_WAIT_MS.trim())
+      : 15000;
+    const deadline = Date.now() + (Number.isFinite(waitMs) ? waitMs : 15000);
+    while (Date.now() < deadline) {
+      const url = await tailscaleServeHttpsUrlForInternalServerUrl(internalServerUrl);
+      if (url) {
+        return { publicServerUrl: url, source: 'tailscale-wait' };
+      }
+      await sleep(500);
+    }
+
+    return fallback;
+  } catch (error) {
+    if (!(error instanceof TailscaleCommandError) || !error.failure) throw error;
+    console.warn(`[tailscale] ${error.failure.code}: ${error.message}`);
+    return { ...fallback, failure: error.failure };
+  }
 }
 
 async function main() {
@@ -432,7 +279,10 @@ async function main() {
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch((err) => {
-    console.error('[tailscale] failed:', err);
-    process.exit(1);
+    if (err instanceof TailscaleCommandError && err.failure) {
+      printResult({ json: wantsJson(process.argv.slice(2)), data: { ok: false, failure: err.failure },
+        text: `[tailscale] failed: ${err.message}` });
+    } else console.error('[tailscale] failed:', err instanceof Error ? err.message : String(err));
+    process.exitCode = 1;
   });
 }

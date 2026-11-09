@@ -1086,7 +1086,7 @@ while True:
       if (pythonIndex < 0) throw new Error(`unexpected guest invocation: ${args.join(' ')}`);
       const result = await runCommandCapture('python3', args.slice(pythonIndex + 1), {
         input,
-        env: { ...process.env, HOME: guestHome, TMPDIR: '/tmp' },
+        env: { ...process.env, HOME: guestHome, HAPPIER_STACK_STORAGE_DIR: join(guestHome, '.happier', 'stacks'), TMPDIR: '/tmp' },
         sanitizeEnv: false,
       });
       return { exitCode: result.code, out: result.stdout, err: result.stderr };

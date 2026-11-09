@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -11,6 +11,8 @@ import { createStackHappierCliCommandFixture } from './testkit/stack_happier_cli
 import { createRuntimeSnapshotFixture } from './testkit/runtime_snapshot_testkit.mjs';
 import { buildStubHappierServerSetSource } from './testkit/core/stub_happier_cli_server_set.mjs';
 import { buildStackStableScopeId } from './utils/auth/stable_scope_id.mjs';
+import { spawnTestProcess } from './testkit/core/spawn_test_process.mjs';
+import { recordStackRuntimeStart } from './utils/stack/runtime_state.mjs';
 
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = dirname(scriptsDir);
@@ -30,6 +32,8 @@ function buildStubHappyCliScript({ message }) {
       `  homeDir: process.env.HAPPIER_HOME_DIR || null,`,
       `  serverUrl: process.env.HAPPIER_SERVER_URL || null,`,
       `  webappUrl: process.env.HAPPIER_WEBAPP_URL || null,`,
+      `  irohRelayUrls: process.env.HAPPIER_IROH_RELAY_URLS || null,`,
+      `  irohRelayPolicy: process.env.HAPPIER_IROH_RELAY_POLICY || null,`,
       `  activeServerId: process.env.HAPPIER_ACTIVE_SERVER_ID || null,`,
       `}));`,
     ].join('\n');
@@ -82,23 +86,34 @@ async function createHappyStackFixture(
 
   let runtimeServerPidValue = runtimeServerPid;
   if (runtimeServerPid === 'stack-owned') {
-    const runtimeServer = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
-      stdio: 'ignore',
+    const runtimeServer = spawnTestProcess(process.execPath, ['-e', `
+      require('node:http').createServer((_req, res) => res.end('ok')).listen(
+        Number(process.argv[1]), '127.0.0.1', () => process.send('ready'),
+      );
+    `, String(fixture.serverPort)], {
+      stdio: ['ignore', 'ignore', 'inherit', 'ipc'],
       env: {
         PATH: process.env.PATH ?? '',
         HOME: process.env.HOME ?? '',
         HAPPIER_STACK_STACK: stackName,
         HAPPIER_STACK_ENV_FILE: fixture.envPath,
         HAPPIER_STACK_CLI_HOME_DIR: fixture.stackCliHome,
+        HAPPIER_STACK_PROCESS_KIND: 'server',
       },
     });
-    t.after(() => {
+    const serverExited = once(runtimeServer, 'exit');
+    t.after(async () => {
       try {
         runtimeServer.kill('SIGKILL');
       } catch {
         // ignore
       }
+      await serverExited;
     });
+    await Promise.race([
+      once(runtimeServer, 'message', { signal: t.signal }),
+      serverExited.then(() => { throw new Error('Runtime server fixture exited before listening'); }),
+    ]);
     runtimeServerPidValue = runtimeServer.pid;
   }
 
@@ -115,21 +130,16 @@ async function createHappyStackFixture(
   }
 
   if (runtimeOwnerPid !== null || runtimeServerPid !== null) {
-    await writeFile(
+    await recordStackRuntimeStart(
       join(fixture.storageDir, stackName, 'stack.runtime.json'),
-      JSON.stringify(
-        {
-          version: 1,
-          stackName,
-          ephemeral: true,
-          ownerPid: runtimeOwnerPid,
-          ports: { server: fixture.serverPort },
-          processes: { serverPid: runtimeServerPidValue },
-        },
-        null,
-        2
-      ) + '\n',
-      'utf-8'
+      {
+        stackName,
+        ephemeral: true,
+        ownerPid: runtimeOwnerPid,
+        ports: { server: fixture.serverPort },
+        processes: { serverPid: runtimeServerPidValue },
+      },
+      { env: fixture.baseEnv },
     );
   }
 
@@ -159,6 +169,20 @@ test('hstack stack happier <name> runs CLI under that stack env', async (t) => {
   assert.ok(String(out.envFile).endsWith(`/${fixture.stackName}/env`), `expected envFile to end with /${fixture.stackName}/env, got: ${out.envFile}`);
   assert.equal(out.homeDir, join(fixture.storageDir, fixture.stackName, 'cli'));
   assert.equal(out.serverUrl, `http://127.0.0.1:${fixture.serverPort}`);
+});
+
+test('hstack stack happier carries the runtime relay settings into service-install and CLI consumers', async (t) => {
+  const fixture = await createHappyStackFixture(t, { prefix: 'happier-stack-iroh-relay-', message: 'relay-env' });
+  await writeFile(join(fixture.storageDir, fixture.stackName, 'stack.runtime.json'), JSON.stringify({
+    processes: {}, irohRelay: { status: 'ready', httpsUrl: 'https://relay.example.ts.net:8443' },
+  }));
+  const result = await runNodeCapture([join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'happier', fixture.stackName], {
+    cwd: rootDir, env: { ...fixture.baseEnv, HAPPIER_STACK_IROH_RELAY: '1', HAPPIER_IROH_RELAY_POLICY: '', HAPPIER_IROH_RELAY_URLS: '' },
+  });
+  assert.equal(result.code, 0, result.stderr);
+  const output = JSON.parse(result.stdout.trim());
+  assert.equal(output.irohRelayUrls, 'https://relay.example.ts.net:8443');
+  assert.equal(output.irohRelayPolicy, 'automatic');
 });
 
 test('hstack stack happier <name> preserves the caller cwd for relative CLI paths', async (t) => {

@@ -8,7 +8,30 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { buildSourceRuntimeBundle, captureSourceWebBuildInputs } from './build_source_runtime.mjs';
 import { resolveServerRuntimeLaunchSpec } from '../runtime/launch/resolveServerRuntimeLaunchSpec.mjs';
 import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
+import { installSourcePreparationInputs } from '../testkit/core/source_runtime_fixture.mjs';
 import { SOURCE_CONDITION, readCliSourceEntries, readWorkspacePackages, createWorkspaceSourceResolver } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
+
+function resolveStagedOutputPath(runtime, file) {
+  return resolve(runtime.runtimeDir, '../../workspace', file);
+}
+
+async function assertRetainedEntrySourceMap(runtime, sourcePath) {
+  const javascriptPath = runtime.entrypoint.replace(/\.mjs$/, '.js');
+  const javascript = await readFile(javascriptPath, 'utf8');
+  const reference = /\/\/# sourceMappingURL=(.+)/.exec(javascript)?.[1];
+  assert.ok(reference && !reference.startsWith('data:'), 'staged entry references an external source map');
+  await readFile(new URL(reference, pathToFileURL(javascriptPath)), 'utf8');
+  const metafile = JSON.parse(await readFile(join(runtime.runtimeDir, 'metafile.json'), 'utf8'));
+  // Shared chunks can own all of an entry's code, leaving its own map empty.
+  for (const file of Object.keys(metafile.outputs).filter(path => path.endsWith('.map'))) {
+    const map = JSON.parse(await readFile(resolveStagedOutputPath(runtime, file), 'utf8'));
+    const index = map.sources.findIndex(path => path.endsWith(sourcePath));
+    if (index < 0) continue;
+    assert.ok(map.sourcesContent[index].length > 0, 'staged map retains captured TypeScript after input retirement');
+    return;
+  }
+  assert.fail('staged runtime graph maps the authored TypeScript entry');
+}
 
 test('captured source daemon graph retains env-gated stack debug startup', async t => {
   const sourceRepoDir = fileURLToPath(new URL('../../../../', import.meta.url));
@@ -43,6 +66,7 @@ test('installed source daemon bundles the real plugin, child-entry, sodium and I
   const outputDir = await mkdtemp('/var/tmp/happier-source-runtime-daemon-');
   const started = performance.now();
   const runtime = await buildSourceRuntimeBundle({ repoDir, outputDir, component: 'daemon' });
+  await assertRetainedEntrySourceMap(runtime, 'apps/cli/src/index.ts');
   const elapsedMs = performance.now() - started;
   const metafile = JSON.parse(await readFile(join(runtime.runtimeDir, 'metafile.json'), 'utf8'));
   assert.equal(Object.keys(metafile.inputs).some((file) => /^(apps|packages)\/.*\/dist\//.test(file)), false);
@@ -57,8 +81,8 @@ test('installed source daemon bundles the real plugin, child-entry, sodium and I
   const rightsOutput = Object.entries(metafile.outputs).find(([, output]) => output.exports.includes('derivePluginDaemonContributionRegistrationRights'));
   assert.ok(registrationOutput, 'frozen SDK registration owner is present');
   assert.ok(rightsOutput, 'frozen Protocol registration rights owner is present');
-  const { createPluginRegistrationScope } = await import(pathToFileURL(resolve(repoDir, registrationOutput[0])).href);
-  const { derivePluginDaemonContributionRegistrationRights } = await import(pathToFileURL(resolve(repoDir, rightsOutput[0])).href);
+  const { createPluginRegistrationScope } = await import(pathToFileURL(resolveStagedOutputPath(runtime, registrationOutput[0])).href);
+  const { derivePluginDaemonContributionRegistrationRights } = await import(pathToFileURL(resolveStagedOutputPath(runtime, rightsOutput[0])).href);
   for (const agent of ['claude', 'codex']) {
     const pluginDir = join(outputDir, 'packages/plugins', agent);
     const declaration = JSON.parse(await readFile(join(pluginDir, '.happier-plugin/plugin.json'), 'utf8'));
@@ -77,8 +101,17 @@ test('installed source daemon bundles the real plugin, child-entry, sodium and I
       await scope.dispose();
     }
   }
-  const runner = await import(pathToFileURL(join(outputDir, 'packages/plugins/codex/dist/agent/runtime/engine.js')).href);
-  assert.equal(typeof runner.createCodexAgentRuntime, 'function');
+  const codexDir = join(outputDir, 'packages/plugins/codex');
+  const codexDeclaration = JSON.parse(await readFile(join(codexDir, '.happier-plugin/plugin.json'), 'utf8'));
+  const runnerDeclaration = codexDeclaration.runtime.agentFactories.find(factory => factory.localAgentId === 'codex');
+  assert.ok(runnerDeclaration, 'frozen declaration retains the authored Codex runner locator');
+  const runner = await import(pathToFileURL(join(codexDir, runnerDeclaration.normalizedModulePath)).href);
+  assert.equal(typeof runner[runnerDeclaration.locator.export], 'function');
+  const engineOutput = Object.entries(metafile.outputs).find(([, output]) =>
+    output.entryPoint?.endsWith('packages/plugins/codex/src/agent/runtime/engine.ts'));
+  assert.ok(engineOutput, 'the lazy Codex engine is retained as an executable chunk');
+  const engine = await import(pathToFileURL(resolveStagedOutputPath(runtime, engineOutput[0])).href);
+  assert.equal(typeof engine.createCodexAgentRuntime, 'function');
   const childEnvironment = { ...process.env, ...runtime.env, HAPPIER_HOME_DIR: join(outputDir, 'home') };
   const libraryAndVoice = spawnSync(process.execPath, ['--input-type=module', '--eval', `
     import assert from 'node:assert/strict';
@@ -104,8 +137,8 @@ test('installed source daemon bundles the real plugin, child-entry, sodium and I
   assert.ok(runOwnerOutput, 'canonical Run runtime is embedded in the frozen split graph');
   const subprocessSelector = spawnSync(process.execPath, ['--input-type=module', '--eval', `
     import assert from 'node:assert/strict';
-    const owner = await import(${JSON.stringify(pathToFileURL(resolve(repoDir, subprocessOwnerOutput[0])).href)});
-    await import(${JSON.stringify(pathToFileURL(resolve(repoDir, runOwnerOutput[0])).href)});
+    const owner = await import(${JSON.stringify(pathToFileURL(resolveStagedOutputPath(runtime, subprocessOwnerOutput[0])).href)});
+    await import(${JSON.stringify(pathToFileURL(resolveStagedOutputPath(runtime, runOwnerOutput[0])).href)});
     for (const args of [['codex', '--started-by', 'daemon'], ['daemon', 'voice-inference-worker']]) {
       const selected = owner.buildHappyCliSubprocessInvocation(args);
       assert.equal(selected.runtime, 'node');
@@ -123,6 +156,7 @@ test('installed source server bundles without workspace dist preparation', async
   const outputDir = await mkdtemp('/var/tmp/happier-source-runtime-server-');
   const started = performance.now();
   const runtime = await buildSourceRuntimeBundle({ repoDir, outputDir, component: 'server', serverComponent: 'happier-server-light', dbProvider: 'sqlite' });
+  await assertRetainedEntrySourceMap(runtime, 'apps/server/sources/main.light.ts');
   const metafile = JSON.parse(await readFile(join(runtime.runtimeDir, 'metafile.json'), 'utf8'));
   assert.equal(Object.keys(metafile.inputs).some((file) => /^(apps|packages)\/.*\/dist\//.test(file)), false);
   const launch = resolveServerRuntimeLaunchSpec({ sourceRuntimeLaunch: runtime, migrationsEnabled: false });
@@ -165,6 +199,7 @@ test('frozen source crypto executes the real Argon2id golden vector beside Ink a
   await symlink(join(repoDir, 'apps/cli/node_modules'), join(cliDir, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
   await writeFile(join(cliDir, 'package.json'), JSON.stringify({ name: '@happier-dev/cli', type: 'module' }));
   await writeFile(join(cliDir, 'tsconfig.json'), JSON.stringify({ compilerOptions: { paths: { '@/*': [join(repoDir, 'apps/cli/src/*')] } } }));
+  await installSourcePreparationInputs(fixture, 'daemon');
   await writeFile(join(cliDir, 'src/index.ts'), `import {deriveNativeEmailPasswordKeys} from ${JSON.stringify(join(repoDir, 'apps/cli/src/auth/nativeEmailPasswordCrypto.ts'))};\nimport {render} from 'ink';\nexport async function probe() { const keys = await deriveNativeEmailPasswordKeys({password:'a password with spaces 🗝',kdf:{algorithm:'argon2id13',salt:'AAAAAAAAAAAAAAAAAAAAAA',opsLimit:3,memLimitBytes:67108864,outputBytes:32}}); try { return [Buffer.from(keys.authKey).toString('base64url'), typeof render]; } finally { keys.authKey.fill(0);keys.wrapKey.fill(0); } }\n`);
   const runtime = await buildSourceRuntimeBundle({ repoDir: fixture, outputDir: join(fixture, 'runtime'), component: 'daemon' });
   const compiled = await import(pathToFileURL(runtime.entrypoint).href);

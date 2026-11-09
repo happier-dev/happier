@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { performance } from 'node:perf_hooks';
-import { mkdir, readFile, writeFile, access } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, access, chmod, readdir, copyFile, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import { buildNativeAdmissionFixtureEnv, installNativeAdmissionFixture } from '../../testkit/core/native_admission_fixture.mjs';
@@ -12,6 +12,57 @@ import { writeFakeBin } from '../../testkit/core/fake_bin_harness.mjs';
 const custody = new URL('./remote_execution_custody.sh', import.meta.url).pathname;
 const quote = value => `'${value.replaceAll("'", "'\\''")}'`;
 const tempHelper = new URL('../../../../../scripts/testing/process/temporaryDirectories.mjs', import.meta.url).href;
+
+// Observe the real signal syscall boundary, including its return status. Keep
+// custody's identity checks and process teardown real beneath this observer.
+function spawnObservedCustody(args, options) {
+  const child = spawn('/bin/bash', ['-c', `
+    kill() {
+      local status
+      builtin kill "$@" 2>/dev/null; status=$?
+      case "$1" in
+        -TERM|-KILL) printf '[fixture-signal] %s %s %s\\n' "$1" "\${!#}" "$status" >&5 ;;
+      esac
+      return "$status"
+    }
+    export -f kill
+    exec /bin/bash "$@"
+  `, 'custody-observer', custody, ...args], { ...options, stdio: [...options.stdio, 'ignore', 'ignore', 'pipe'] });
+  let trace = '';
+  child.stdio[5].on('data', chunk => { trace += chunk; });
+  child.custodySignalTrace = () => trace;
+  return child;
+}
+
+function signalEvents(stderr) {
+  const prefix = '[preferred-execution] custody_signal ';
+  return stderr.split(/\r?\n/u).filter(line => line.startsWith(prefix))
+    .map(line => JSON.parse(line.slice(prefix.length)));
+}
+
+function assertSignalEvents(stderr, executionId, trace, initiatingExecutionId = executionId) {
+  const events = signalEvents(stderr);
+  const syscalls = trace.split(/\r?\n/u).filter(line => line.startsWith('[fixture-signal] '))
+    .map(line => {
+      const [, signal, target, result] = line.split(' ');
+      return { signal: signal.slice(1), target: Number(target), result: Number(result) };
+    });
+  const actual = events.map(event => {
+    assert.deepEqual(Object.keys(event).sort(), ['at', 'execution_id', 'initiating_execution_id', 'members', 'reason', 'signal', 'syscall_result', 'target_id', 'target_kind']);
+    assert.match(event.at, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/u);
+    assert.equal(event.execution_id, executionId);
+    assert.equal(event.initiating_execution_id, initiatingExecutionId);
+    assert.ok(['completed', 'lifeline_eof', 'signal', 'custody_cancel', 'controller_orphan_cleanup', 'reaper_orphan', 'native_cleanup'].includes(event.reason));
+    assert.ok(['pid', 'pgid'].includes(event.target_kind));
+    assert.ok(Number.isSafeInteger(event.target_id) && event.target_id > 0);
+    assert.ok(Array.isArray(event.members));
+    for (const member of event.members) assert.match(member, /^\d+:\d+$/u);
+    return { signal: event.signal, target: event.target_kind === 'pgid' ? -event.target_id : event.target_id, result: event.syscall_result };
+  });
+  const sorted = values => values.map(value => JSON.stringify(value)).sort();
+  assert.deepEqual(sorted(actual), sorted(syscalls), 'every actual TERM/KILL must have exactly one result event');
+  return events;
+}
 
 test('unrelated nondumpable process does not veto abandoned scratch while a live command keeps its root', { skip: process.platform !== 'linux' }, async t => {
   if (spawnSync('sudo', ['-n', 'true']).status !== 0) return t.skip('noninteractive procfs observation unavailable');
@@ -124,6 +175,66 @@ test('routed scratch defaults beneath the disk-backed worker home and preserves 
   }
 });
 
+test('completed commands leave no private scratch roots containing read-only Go module caches', { skip: process.platform !== 'linux' }, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-readonly-command-', registerCleanup: false });
+  const { root } = fixture;
+  const paths = [];
+  t.after(async () => {
+    for (const path of paths) await chmod(join(path, 'go-cache'), 0o700).catch(error => { if (error.code !== 'ENOENT') throw error; });
+    await fixture.cleanup();
+  });
+  const env = await processCensusEnv(root, [process.pid]);
+  delete env.TMPDIR;
+  delete env.TMP;
+  delete env.TEMP;
+  for (let index = 0; index < 3; index++) {
+    const result = spawnSync('/bin/bash', [custody, 'run', join(root, `worker-home/remote-exec/completed-${index}.pid`), `completed-${index}`,
+      process.execPath, '--input-type=module', '-e', `
+        import { mkdirSync, writeFileSync, chmodSync } from 'node:fs';
+        import { join } from 'node:path';
+        const root = process.env.TMPDIR;
+        console.log(root);
+        const cache = join(root, 'go-cache');
+        mkdirSync(cache);
+        writeFileSync(join(cache, 'module'), 'compiler cache');
+        chmodSync(cache, 0o500);
+      `], { env, encoding: 'utf8' });
+    paths.push(result.stdout.trim());
+    assert.equal(result.status, 0, 'successful command teardown must remove its read-only cache');
+  }
+  assert.equal((await readdir(join(root, 'worker-home/tmp'))).length, 0, 'N completed executions retain zero private roots');
+});
+
+test('command scratch is removed after failure and every trappable cancellation path', { skip: process.platform !== 'linux' }, async t => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-command-exits-' });
+  const env = await processCensusEnv(root, [process.pid]);
+  delete env.TMPDIR;
+  delete env.TMP;
+  delete env.TEMP;
+  for (const mode of ['failure', 'SIGHUP', 'SIGINT', 'SIGTERM', 'lifeline']) {
+    await t.test(mode, async () => {
+      const child = spawn('/bin/bash', [custody, 'run', join(root, `worker-home/remote-exec/${mode}.pid`), mode,
+        process.execPath, '-e', `console.log(process.env.TMPDIR);${mode === 'failure' ? 'process.exit(23)' : 'process.stdin.resume();setInterval(()=>{},1000)'}`], {
+        env: { ...env, ...(mode === 'lifeline' ? { HAPPIER_REMOTE_EXEC_LIFELINE: '1' } : {}) },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      let output = '', error = '';
+      child.stdout.on('data', chunk => { output += chunk; });
+      child.stderr.on('data', chunk => { error += chunk; });
+      const closed = once(child, 'close');
+      t.after(() => child.kill('SIGTERM'));
+      await waitFor(() => output.includes('\n'), 'payload did not publish command scratch');
+      if (mode === 'lifeline') child.stdin.end();
+      else if (mode !== 'failure') child.kill(mode);
+      const [code, signal] = await closed;
+      assert.equal(signal, null, error);
+      if (mode === 'lifeline') assert.ok([130, 143].includes(code), error);
+      else assert.equal(code, mode === 'failure' ? 23 : 130, error);
+      await assert.rejects(access(output.trim()), { code: 'ENOENT' }, error);
+    });
+  }
+});
+
 test('default command scratch admits Chromium singleton sockets on the disk-backed worker path', { skip: process.platform !== 'linux' }, async t => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-socket-', parentDir: '/tmp' });
   const env = { ...process.env };
@@ -180,6 +291,40 @@ test('private scratch cleanup retains an older process that receives its binding
   assert.equal(Number(spawnSync('/bin/bash', ['-c', '. "$1"; heavyweight_process_token "$2"', 'identity', identity, String(older.pid)], { encoding: 'utf8' }).stdout), olderToken);
   assert.ok(running(older.pid), 'scratch cleanup must leave the external holder alive');
   await access(result.stdout.trim());
+});
+
+test('command exit retains a detached cwd holder without an inherited temporary binding', { skip: process.platform !== 'linux' }, async t => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-command-cwd-holder-' });
+  const env = await processCensusEnv(root, [process.pid]);
+  const holderFile = join(root, 'holder.pid');
+  writeFakeBin({ root, name: 'ps', content: `#!/bin/sh
+if [ "$*" = '-eo pid=,pgid=,stat=,uid=' ]; then
+  extra=$(cat ${quote(holderFile)} 2>/dev/null)
+  exec /bin/ps -p ${process.pid}\${extra:+,$extra} -o pid=,pgid=,stat=,uid=
+fi
+exec /bin/ps "$@"
+` });
+  delete env.TMPDIR;
+  delete env.TMP;
+  delete env.TEMP;
+  const result = spawnSync('/bin/bash', [custody, 'run', join(root, 'worker-home/remote-exec/held.pid'), 'held',
+    process.execPath, '--input-type=module', '-e', `
+      import { spawn } from 'node:child_process';
+      import { tmpdir } from 'node:os';
+      import { writeFileSync } from 'node:fs';
+      const env = { ...process.env };
+      delete env.TMPDIR; delete env.TMP; delete env.TEMP;
+      const directory = tmpdir();
+      const holder = spawn('/bin/sleep', ['300'], { cwd: directory, env, detached: true, stdio: 'ignore' });
+      holder.unref();
+      writeFileSync(${JSON.stringify(holderFile)}, String(holder.pid));
+      console.log(JSON.stringify({ directory, pid: holder.pid }));
+    `], { env, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  const held = JSON.parse(result.stdout.trim());
+  t.after(() => { try { process.kill(held.pid, 'SIGTERM'); } catch {} });
+  assert.ok(running(held.pid), 'the detached holder remains live');
+  await access(held.directory);
 });
 
 test('explicit maintenance reclaims marked dead temp owners while retaining live groups, reused PIDs and unmarked neighbors', { skip: process.platform !== 'linux' }, async t => {
@@ -392,13 +537,69 @@ async function waitFor(predicate, message) {
     if (await predicate()) return;
     await new Promise(resolve => setTimeout(resolve, 20));
   }
-  assert.fail(message);
+  assert.fail(typeof message === 'function' ? message() : message);
 }
+
+test('dispatch startup avoids per-record processes and blocked custody performs no recurring probes', { skip: process.platform === 'win32' }, async t => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-custody-cost-' });
+  const records = join(root, 'remote-exec');
+  await mkdir(records);
+  // Match the observed retained-record scale without creating hundreds of
+  // artificial workers: each record names this genuinely live parent.
+  for (let index = 0; index < 505; index++) {
+    await writeFile(join(records, `native-live ${index}.pid`), `${process.pid}\n`);
+  }
+  const trace = join(root, 'process-counts');
+  for (const name of ['ps', 'sed', 'tr']) {
+    writeFakeBin({ root, name, content: `#!/bin/sh
+case ${name}:"$1" in
+  ps:-p) printf 'pid-probe\\n' >> "$CUSTODY_COUNT_TRACE" ;;
+  sed:*) case "$3" in */remote-exec/native-*.pid) printf 'record-read\\n' >> "$CUSTODY_COUNT_TRACE" ;; esac ;;
+  tr:*) printf 'trim-process\\n' >> "$CUSTODY_COUNT_TRACE" ;;
+esac
+exec /usr/bin/${name} "$@"
+` });
+  }
+  await writeFile(trace, '');
+  const child = spawn('/bin/bash', [custody, 'run', join(records, 'current.pid'), 'current', process.execPath, '-e',
+    'console.log("blocked");process.stdin.resume();process.stdin.once("end",()=>process.exit(0))'], {
+    env: { ...process.env, TMPDIR: root, PATH: join(root, 'bin') + ':' + process.env.PATH, CUSTODY_COUNT_TRACE: trace },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  const closed = once(child, 'close');
+  t.after(async () => { child.stdin.end(); await closed; });
+  let output = '', error = '';
+  child.stdout.on('data', chunk => { output += chunk; });
+  child.stderr.on('data', chunk => { error += chunk; });
+  await waitFor(() => output.includes('blocked\n'), () => `custody payload did not block: ${error}`);
+  const startup = await readFile(trace, 'utf8');
+  const counts = Object.fromEntries(['pid-probe', 'record-read', 'trim-process'].map(name => [name, startup.split('\n').filter(line => line === name).length]));
+  assert.deepEqual(counts, { 'pid-probe': 0, 'record-read': 0, 'trim-process': 0 }, 'retained live records require no per-record subprocesses');
+  await new Promise(resolve => setTimeout(resolve, 100));
+  assert.equal(await readFile(trace, 'utf8'), startup, 'blocked custody must not repeat process probes');
+});
+
+test('failed process inventory preserves native records instead of declaring their owners dead', { skip: process.platform === 'win32' }, async t => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-custody-inventory-' });
+  const records = join(root, 'remote-exec');
+  await mkdir(records);
+  const record = join(records, 'native-unobserved.pid');
+  await writeFile(record, `${process.pid}\n`);
+  writeFakeBin({ root, name: 'ps', content: '#!/bin/sh\nexit 1\n' });
+  writeFakeBin({ root, name: 'uname', content: '#!/bin/sh\nprintf "Darwin\\n"\n' });
+  const result = spawnSync('/bin/bash', [custody, 'run', join(records, 'current.pid'), 'current', '/usr/bin/true'], {
+    env: { ...process.env, TMPDIR: root, PATH: join(root, 'bin') + ':' + process.env.PATH }, encoding: 'utf8',
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(await readFile(record, 'utf8'), `${process.pid}\n`);
+});
 
 test('new dispatch reaps identified legacy native orphans and preserves live and reused PID neighbors', { skip: process.platform === 'win32' }, async t => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-remote-custody-' });
   const records = join(root, 'remote-exec');
   await mkdir(records);
+  const deadFile = join(records, 'native-dead.pid');
+  await writeFile(deadFile, '2147483647\n');
   const orphanId = 'native-orphan-1791280000';
   const orphanFile = join(records, `${orphanId}.pid`);
   const childFile = join(root, 'stubborn.pid');
@@ -428,10 +629,16 @@ test('new dispatch reaps identified legacy native orphans and preserves live and
   t.after(() => { try { process.kill(unrelatedPid, 'SIGTERM'); } catch {} });
   const mismatchedFile = join(records, 'native-mismatched-1791280000.pid');
   await writeFile(mismatchedFile, `${unrelatedPid}\n`);
-  const result = spawnSync('/bin/bash', [custody, 'run', join(records, 'native-next-1791280000.pid'), 'native-next-1791280000', '/usr/bin/true'], { encoding: 'utf8' });
-  assert.equal(result.status, 0, result.stderr);
+  const next = spawnObservedCustody(['run', join(records, 'native-next-1791280000.pid'), 'native-next-1791280000', '/usr/bin/true'], { stdio: ['ignore', 'pipe', 'pipe'] });
+  let error = '';
+  next.stderr.on('data', chunk => { error += chunk; });
+  assert.deepEqual(await once(next, 'close'), [0, null], error);
+  const events = assertSignalEvents(error, orphanId, next.custodySignalTrace(), 'native-next-1791280000');
+  assert.ok(events.some(event => event.target_kind === 'pid' && event.target_id === childPid && event.signal === 'KILL'), error);
+  for (const event of events) assert.equal(event.reason, 'reaper_orphan');
   await waitFor(() => !running(childPid) && !running(orphanPid), 'legacy orphan survived reaping');
   await assert.rejects(readFile(orphanFile), { code: 'ENOENT' });
+  await assert.rejects(readFile(deadFile), { code: 'ENOENT' });
   assert.ok(running(live.pid), 'live neighbor was terminated');
   assert.equal(await readFile(liveFile, 'utf8'), `${live.pid}\n`);
   assert.equal(await readFile(reusedFile, 'utf8'), `${live.pid}\n`);
@@ -439,15 +646,50 @@ test('new dispatch reaps identified legacy native orphans and preserves live and
   await assert.rejects(readFile(mismatchedFile), { code: 'ENOENT' });
 });
 
+test('native child signals retain their loaded POSIX owner after source removal and escape inherited execution ids', { skip: process.platform === 'win32' }, async t => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-native-signals-' });
+  const source = join(root, 'native_execution_signals.sh');
+  await copyFile(new URL('./native_execution_signals.sh', import.meta.url), source);
+  const executionId = 'native-signal-"\\\n\t';
+  const child = spawn('/bin/bash', [custody, 'run', join(root, 'native-signals.pid'), executionId, '/bin/sh', '-c', `
+    . ${quote(source)}
+    sleep 300 &
+    target=$!
+    printf 'READY %s\\n' "$target"
+    read -r command || exit 97
+    native_execution_signal "$HAPPIER_REMOTE_EXECUTION_ID" "$HAPPIER_REMOTE_EXECUTION_ID" native_cleanup TERM pid "$target" ''
+    wait "$target"
+    exit 0
+  `], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const completion = once(child, 'close');
+  t.after(async () => { if (child.exitCode === null) child.kill('SIGTERM'); await completion; });
+  let error = '', output = '';
+  child.stdout.on('data', chunk => { output += chunk; });
+  child.stderr.on('data', chunk => { error += chunk; });
+  await waitFor(() => /^READY \d+\n$/u.test(output), 'POSIX signal owner did not load');
+  const target = Number(output.split(' ')[1]);
+  await unlink(source);
+  child.stdin.end('signal\n');
+  assert.deepEqual(await completion, [0, null], error);
+  const events = signalEvents(error).filter(event => event.reason === 'native_cleanup');
+  assert.equal(events.length, 1, error);
+  assert.deepEqual({ ...events[0], at: undefined }, { at: undefined,
+    execution_id: executionId, initiating_execution_id: executionId, reason: 'native_cleanup',
+    signal: 'TERM', target_kind: 'pid', target_id: target, members: [], syscall_result: 0 });
+  assert.equal(running(target), false, 'unlinked source prevented owned child teardown');
+});
+
 test('remote custody preserves payload input when no lifetime pipe is requested', { skip: process.platform === 'win32' }, async t => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-remote-input-' });
-  const child = spawn('/bin/bash', [custody, 'run', join(root, 'remote-exec/input-custody.pid'), 'input-custody', '/bin/cat'], { stdio: ['pipe', 'pipe', 'pipe'] });
-  let output = '';
+  const child = spawnObservedCustody(['run', join(root, 'remote-exec/input-custody.pid'), 'input-custody', '/bin/cat'], { stdio: ['pipe', 'pipe', 'pipe'] });
+  let output = '', error = '';
   child.stdout.on('data', chunk => { output += chunk; });
+  child.stderr.on('data', chunk => { error += chunk; });
   const closed = once(child, 'close');
   child.stdin.end('input survives custody\n');
   assert.deepEqual(await closed, [0, null]);
   assert.equal(output, 'input survives custody\n');
+  assert.deepEqual(assertSignalEvents(error, 'input-custody', child.custodySignalTrace()), [], 'completion without live members must not send or log a signal');
   await assert.rejects(readFile(join(root, 'remote-exec/input-custody.pid')), { code: 'ENOENT' });
 });
 
@@ -470,14 +712,15 @@ test('remote lifetime custody does not leak its private pipe descriptor to the p
 test('control input reaches the admitted payload and EOF cancels its process tree', { skip: process.platform === 'win32' }, async t => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-remote-control-' });
   const pidFile = join(root, 'remote-exec/control-custody.pid');
-  const child = spawn('/bin/bash', [custody, 'run', pidFile, 'control-custody', process.execPath, '-e', `
+  const child = spawnObservedCustody(['run', pidFile, 'control-custody', process.execPath, '-e', `
     console.log('READY');
     process.stdin.once('data', chunk => console.log('BODY:' + chunk.toString().trim()));
     setInterval(() => {}, 1000);
   `], { env: { ...process.env, HAPPIER_REMOTE_EXEC_LIFELINE: '1', HAPPIER_REMOTE_EXEC_CONTROL_STDIN: '1' }, stdio: ['pipe', 'pipe', 'pipe'] });
   t.after(() => child.kill('SIGTERM'));
-  let output = '';
+  let output = '', error = '';
   child.stdout.on('data', chunk => { output += chunk; });
+  child.stderr.on('data', chunk => { error += chunk; });
   const closed = once(child, 'close');
   await waitFor(() => output.includes('READY\n'), 'controller did not become ready');
   assert.doesNotMatch(output, /BODY:/);
@@ -485,12 +728,14 @@ test('control input reaches the admitted payload and EOF cancels its process tre
   await waitFor(() => output.includes('BODY:{"requestPath":"/tmp/request"}'), 'control ACK never reached payload');
   child.stdin.end();
   assert.deepEqual(await closed, [130, null]);
+  const events = assertSignalEvents(error, 'control-custody', child.custodySignalTrace());
+  assert.ok(events.some(event => event.reason === 'lifeline_eof' && event.signal === 'TERM'), error);
   await assert.rejects(readFile(pidFile), { code: 'ENOENT' });
 });
 
 test('control input survives the native admitted process tree', { skip: process.platform !== 'linux' }, async t => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-admitted-control-' });
-  const native = await installNativeAdmissionFixture({ root });
+  const native = await installNativeAdmissionFixture({ root, prepareDependencies: true });
   writeFakeBin({ root, name: 'awk', content: '#!/bin/sh\ncase "$*" in */proc/meminfo*) printf "28000000 30000000\\n" ;; */proc/loadavg*|*/proc/pressure/*) printf "0\\n" ;; *) exec /usr/bin/awk "$@" ;; esac\n' });
   writeFakeBin({ root, name: 'systemctl', content: '#!/bin/sh\nexit 1\n' });
   const child = spawn('/bin/bash', [custody, 'run', join(root, 'remote-exec/native-input.pid'), 'native-input', '/bin/sh', native.launcher, '--heavyweight-admission', '--class=runtime-build', '--machine=worker', '--', process.execPath, '-e', `
@@ -503,7 +748,9 @@ test('control input survives the native admitted process tree', { skip: process.
   child.stdout.on('data', chunk => { output += chunk; });
   child.stderr.on('data', chunk => { error += chunk; });
   const closed = once(child, 'close');
-  await waitFor(() => output.includes('READY\n'), 'native controller did not become ready: ' + error);
+  await waitFor(() => output.includes('READY\n') || child.exitCode !== null || child.signalCode !== null,
+    () => `native controller did not become ready (exit=${child.exitCode}, signal=${child.signalCode}): ${error}`);
+  assert.match(output, /READY\n/u, `native controller exited before readiness (exit=${child.exitCode}, signal=${child.signalCode}): ${error}`);
   child.stdin.write('{"requestPath":"/tmp/request"}\n');
   assert.deepEqual(await closed, [0, null], error);
   assert.match(output, /BODY:/);
@@ -515,17 +762,33 @@ test('remote custody cleans up stubborn descendants after the command leader exi
   const body = `bash -c ${quote(`trap '' TERM; printf '%s\\n' "$$" > ${quote(marker)}; while :; do sleep 1; done`)} & while [ ! -f ${quote(marker)} ]; do sleep 0.01; done; exit 7`;
   let childPid;
   t.after(() => { if (childPid) { try { process.kill(childPid, 'SIGKILL'); } catch {} } });
-  const child = spawn('/bin/bash', [custody, 'run', join(root, 'remote-exec/leader-exit.pid'), 'leader-exit', '/bin/bash', '-c', body], { stdio: 'ignore' });
+  const child = spawnObservedCustody(['run', join(root, 'remote-exec/leader-exit.pid'), 'leader-exit', '/bin/bash', '-c', body], { stdio: ['ignore', 'pipe', 'pipe'] });
+  let error = '';
+  child.stderr.on('data', chunk => { error += chunk; });
   const closed = once(child, 'close');
   await waitFor(async () => {
     childPid = Number(await readFile(marker, 'utf8').catch(() => '0'));
     return childPid > 0;
   }, 'descendant did not start');
+  const identity = new URL('../proc/native_process_identity.sh', import.meta.url).pathname;
+  const token = spawnSync('/bin/bash', ['-c', '. "$1"; heavyweight_process_token "$2"', 'identity', identity, String(childPid)], { encoding: 'utf8' }).stdout.trim();
   assert.deepEqual(await closed, [7, null]);
   await waitFor(() => !running(childPid), 'descendant survived normal command leader exit');
+  const events = assertSignalEvents(error, 'leader-exit', child.custodySignalTrace());
+  assert.deepEqual(events.map(event => event.signal), ['TERM', 'KILL']);
+  for (const event of events) {
+    assert.equal(event.reason, 'completed');
+    assert.equal(event.target_kind, 'pgid');
+    assert.equal(event.syscall_result, 0);
+    if (process.platform === 'linux') assert.ok(event.members.includes(`${childPid}:${token}`), error);
+  }
 });
 
 test('TTY custody cancellation terminates a foreground job that defers wrapper traps', { skip: process.platform !== 'linux' }, async t => {
+  for (const [reason, initiatingExecutionId, cancelArgs] of [
+    ['custody_cancel', 'tty-custody', []],
+    ['controller_orphan_cleanup', 'native-cleanup-dispatch', ['controller_orphan_cleanup', 'native-cleanup-dispatch']],
+  ]) await t.test(reason, async t => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-remote-tty-' });
   const marker = join(root, 'foreground.pid');
   const pidFile = join(root, 'remote-exec/tty-custody.pid');
@@ -541,11 +804,17 @@ test('TTY custody cancellation terminates a foreground job that defers wrapper t
     childPid = Number(await readFile(marker, 'utf8').catch(() => '0'));
     return childPid > 0;
   }, 'foreground TTY job did not start');
-  const cancel = spawn('/bin/bash', [custody, 'cancel', pidFile, 'tty-custody'], { stdio: 'ignore' });
+  const cancel = spawnObservedCustody(['cancel', pidFile, 'tty-custody', ...cancelArgs], { stdio: ['ignore', 'pipe', 'pipe'] });
+  let error = '';
+  cancel.stderr.on('data', chunk => { error += chunk; });
   const closed = once(cancel, 'close');
   assert.deepEqual(await closed, [0, null]);
+  const events = assertSignalEvents(error, 'tty-custody', cancel.custodySignalTrace(), initiatingExecutionId);
+  assert.ok(events.some(event => event.target_kind === 'pgid' && event.target_id === childPid && event.signal === 'KILL'), error);
+  for (const event of events) assert.equal(event.reason, reason);
   await waitFor(() => !running(childPid), 'foreground TTY job survived cancellation');
   await waitFor(async () => !(await readFile(pidFile, 'utf8').catch(() => '')), 'TTY execution identity survived cancellation');
+  });
 });
 
 test('delayed group cancellation reports unavailable identity without signaling an unverified group', { skip: process.platform !== 'linux' }, async t => {
@@ -579,16 +848,21 @@ test('delayed group cancellation reports unavailable identity without signaling 
           heavyweight_stat_line="${leader.pid} (fixture) S ${Array(18).fill('0').join(' ')} $fixture_token"`} ;;
       esac
     }
-    kill() { printf '%s\\n' "$*" >> ${quote(signals)}; }
+    kill() { printf '%s\\n' "$*" >> ${quote(signals)}; [ "$1" != -TERM ]; }
     export -f ps read kill
     exec /bin/bash ${quote(custody)} cancel ${quote(pidFile)} identity-execution
     `;
     const result = spawnSync('/bin/bash', ['-c', bootstrap], { encoding: 'utf8' });
-    assert.equal(result.status, 0, result.stderr);
+    // A diagnostic is not successful cancellation: the user's custody
+    // contract requires a nonzero result while the original group is unknown.
+    assert.equal(result.status, 1, result.stderr);
+    await access(pidFile);
     const recorded = await readFile(signals, 'utf8');
     assert.ok(recorded.includes(`-TERM -- -${leader.pid}`), recorded);
     assert.ok(!recorded.includes(`-KILL -- -${leader.pid}`), 'an unverified group was signaled after the grace period');
     assert.ok(result.stderr.trim().length > 0, `${identityState} identity left incomplete cancellation silent`);
     assert.ok(result.stderr.includes(String(leader.pid)), 'diagnostic did not identify the unverified group');
+    const event = signalEvents(result.stderr).find(event => event.target_kind === 'pgid' && event.target_id === leader.pid && event.signal === 'TERM');
+    assert.equal(event?.syscall_result, 1, 'failed signal syscalls must retain their actual result');
   }
 });

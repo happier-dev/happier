@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { parseArgs } from './utils/cli/args.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { getRootDir } from './utils/paths/paths.mjs';
-import { run } from './utils/proc/proc.mjs';
+import { runForegroundChild } from './utils/execution_host/foreground_child.mjs';
 
 const TOOL_SCRIPTS = {
   'setup-pr': 'scripts/setup_pr.mjs',
@@ -20,7 +20,16 @@ const TOOL_SCRIPTS = {
   edison: 'scripts/edison.mjs',
   bench: 'scripts/bench.mjs',
   'managed-lima': 'scripts/managed_lima.mjs',
+  'iroh-relay': 'scripts/iroh_relay.mjs',
 };
+
+async function runTool(rootDir, scriptRel, forwarded) {
+  const result = await runForegroundChild({ command: process.execPath,
+    args: [join(rootDir, scriptRel), ...forwarded],
+    options: { cwd: rootDir, env: process.env, stdio: 'inherit' } });
+  if (result.signal) process.kill(process.pid, result.signal);
+  else process.exitCode = result.exitCode ?? 1;
+}
 
 async function main() {
   const rootDir = getRootDir(import.meta.url);
@@ -37,14 +46,14 @@ async function main() {
   if (wantsHelp(argv, { flags }) && scriptRel && cmd && cmd !== 'help') {
     const idx = argv.indexOf(cmd);
     const forwarded = idx === -1 ? argv.slice(1) : [...argv.slice(0, idx), ...argv.slice(idx + 1)];
-    await run(process.execPath, [join(rootDir, scriptRel), ...forwarded], { cwd: rootDir, env: process.env });
+    await runTool(rootDir, scriptRel, forwarded);
     return;
   }
 
   if (wantsHelp(argv, { flags }) || !cmd || cmd === 'help') {
     printResult({
       json,
-      data: { commands: ['setup-pr', 'review-pr', 'import', 'review', 'edison', 'bench', 'managed-lima'] },
+      data: { commands: ['setup-pr', 'review-pr', 'import', 'review', 'edison', 'bench', 'managed-lima', 'iroh-relay'] },
       text: [
         '[tools] usage:',
         '  hstack tools setup-pr --repo=<pr-url|number> [--dev|--start] [--json] [-- ...]',
@@ -54,6 +63,7 @@ async function main() {
         '  hstack tools edison [--stack=<name>] -- <edison args...>',
         '  hstack tools bench catalog | run [--concurrency=1] [--workload=ID | -- COMMAND [ARG...]]',
         '  hstack tools managed-lima setup|status|doctor|start|stop|shell|ssh-config --instance=NAME [--profile=balanced] [--json]',
+        '  hstack tools iroh-relay install|status|stop [--json]',
       ].join('\n'),
     });
     return;
@@ -65,7 +75,7 @@ async function main() {
 
   const idx = argv.indexOf(cmd);
   const forwarded = idx === -1 ? argv.slice(1) : [...argv.slice(0, idx), ...argv.slice(idx + 1)];
-  await run(process.execPath, [join(rootDir, scriptRel), ...forwarded], { cwd: rootDir, env: process.env });
+  await runTool(rootDir, scriptRel, forwarded);
 }
 
 main().catch((err) => {

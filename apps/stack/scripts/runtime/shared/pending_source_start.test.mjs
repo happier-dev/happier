@@ -5,7 +5,10 @@ import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
-import { beginPendingSourceStart, readPendingSourcePreparation, SOURCE_START_SUPERSEDED_MARKER } from './pending_source_start.mjs';
+import { beginPendingSourceStart, readPendingSourcePreparation, emitSourcePreparationPhase, parseSourcePreparationPhaseLine, SOURCE_START_SUPERSEDED_MARKER } from './pending_source_start.mjs';
+import { prepareSourceComponent } from '../../utils/dev/devReloadCoordinator.mjs';
+import { prepareSourceRuntimeReload } from '../launch/prepareSourceRuntimeReload.mjs';
+import { prepareDependencyConsumersForRefresh } from '../../utils/proc/dependency_consumers.mjs';
 import { fileURLToPath } from 'node:url';
 import { sanitizeStackTestRunnerEnv } from '../../utils/test/test_env.mjs';
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
@@ -32,6 +35,142 @@ test('source preparation can register after a failed install so its producer can
 
   start = await beginPendingSourceStart({ stackBaseDir, repoDir, env });
   assert.deepEqual(await readPendingSourcePreparation({ stackBaseDir }), { phase: 'preparing' });
+});
+
+test('failed source preparation releases refresh while its input watcher remains ready to retry', { timeout: 15000 }, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-failed-source-preparation-' });
+  const repoDir = fixture.path('repo');
+  const stackBaseDir = fixture.path('stacks', 'preparing');
+  for (const project of ['cli', 'ui']) {
+    await mkdir(join(repoDir, 'apps', project, 'scripts'), { recursive: true });
+    await writeFile(join(repoDir, 'apps', project, 'package.json'), JSON.stringify({ name: `@fixture/${project}` }));
+  }
+  await mkdir(join(repoDir, 'packages'));
+  await mkdir(join(repoDir, 'node_modules'));
+  const source = join(repoDir, 'apps/cli/scripts/input.mjs');
+  await writeFile(source, 'export const ready = ;');
+  const env = { ...process.env, HAPPIER_STACK_HOME_DIR: fixture.root,
+    HAPPIER_STACK_STORAGE_DIR: fixture.path('stacks'), HAPPIER_STACK_ENV_FILE: '',
+    HAPPIER_STACK_PM_CACHE_BASE_DIR: fixture.path('cache'), HAPPIER_STACK_REPO_DIR: repoDir };
+  const start = await beginPendingSourceStart({ stackBaseDir, repoDir, env });
+  const abort = new AbortController();
+  let completion;
+  t.after(async () => { abort.abort(); await completion; await start.dispose(); });
+  await writeFile(join(stackBaseDir, 'env'), `HAPPIER_STACK_REPO_DIR=${repoDir}\n`);
+  await assert.doesNotReject(prepareDependencyConsumersForRefresh({ installDir: repoDir, env }),
+    'pending preparation remains observable without excluding dependency writers');
+  let failed;
+  const failure = new Promise(resolve => { failed = resolve; });
+  let attempts = 0;
+  completion = prepareSourceComponent({ repoDir, target: 'daemon', preparation: start, env, signal: abort.signal,
+    logger: { log() {}, warn() {}, error() { failed(); } },
+    async prepare() {
+      attempts++;
+      await start.setPhase({ phase: 'queued', component: 'daemon' });
+      const result = await runNodeCapture(['--check', source]);
+      if (result.code) throw Object.assign(new Error(result.stderr), { code: result.code });
+      return { ready: true };
+    },
+  }).then(result => ({ result }), error => ({ error }));
+  assert.equal(await Promise.race([failure.then(() => 'waiting-for-input'), completion]), 'waiting-for-input');
+  assert.equal(await readPendingSourcePreparation({ stackBaseDir }), null);
+  assert.equal(attempts, 1, 'a settled failure does not hot-retry');
+  let installs = 0;
+  const refresh = await withDependencyRefresh({ installDir: repoDir, force: true, env }, async () => { installs++; });
+  assert.equal(refresh.refreshed, true);
+  assert.equal(installs, 1, 'one refresh proceeds without waiting for an input correction');
+  await writeFile(source, 'export const ready = true;');
+  assert.deepEqual(await completion, { result: { ready: true } });
+  assert.equal(start.signal.aborted, false, 'failure does not retire or supersede the request');
+  assert.ok(attempts >= 2, 'the existing input watcher retries the same request, including dependency-input changes');
+});
+
+test('remote failed preparation is observable but not pending, and another active target still gates', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-remote-failed-preparation-' });
+  const start = await beginPendingSourceStart({ stackBaseDir: fixture.root });
+  t.after(() => start.dispose());
+  await start.setPhase({ phase: 'queued', component: 'daemon' }, 'daemon-host');
+  let line;
+  const stdout = t.mock.method(process.stdout, 'write', value => { line = value; return true; });
+  try { emitSourcePreparationPhase({ phase: 'failed', component: 'daemon' }); }
+  finally { stdout.mock.restore(); }
+  const failure = parseSourcePreparationPhaseLine(line.trimEnd());
+  assert.deepEqual(failure, { phase: 'failed', component: 'daemon' });
+  await start.setPhase(failure, 'daemon-host');
+  assert.equal(await readPendingSourcePreparation({ stackBaseDir: fixture.root }), null);
+  await start.setPhase({ phase: 'building', component: 'server' }, 'server-host');
+  assert.deepEqual((await readPendingSourcePreparation({ stackBaseDir: fixture.root })).targets,
+    { 'server-host': { phase: 'building', component: 'server' } });
+  await start.setPhase({ phase: 'queued', component: 'daemon' }, 'daemon-host');
+  assert.equal((await readPendingSourcePreparation({ stackBaseDir: fixture.root })).targets['daemon-host'].phase, 'queued');
+  await start.setPhase({ phase: 'failed', component: 'daemon' });
+  assert.equal((await readPendingSourcePreparation({ stackBaseDir: fixture.root })).targets['server-host'].phase, 'building',
+    'a local failure cannot hide another target that is still building');
+  await start.setPhase({ phase: 'failed', component: 'server' }, 'server-host');
+  await start.setPhase(failure, 'daemon-host');
+  assert.equal(await readPendingSourcePreparation({ stackBaseDir: fixture.root }), null);
+  await start.setPhase({ phase: 'preparing', component: 'daemon' });
+  assert.deepEqual(await readPendingSourcePreparation({ stackBaseDir: fixture.root }), { phase: 'preparing', component: 'daemon' },
+    'a new local attempt is pending even while completed target failures remain recorded');
+});
+
+test('concurrent source preparation reports active local work until every unfinished component is waiting', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-concurrent-source-preparation-' });
+  const start = await beginPendingSourceStart({ stackBaseDir: fixture.root });
+  t.after(() => start.dispose());
+  await start.setPhase({ phase: 'building', component: 'server' });
+  await start.setPhase({ phase: 'building', component: 'daemon' });
+  await start.setPhase({ phase: 'failed', component: 'daemon' });
+  assert.deepEqual(await readPendingSourcePreparation({ stackBaseDir: fixture.root }),
+    { phase: 'building', component: 'server' }, 'one failure cannot hide a sibling that still needs dependency custody');
+  await start.setPhase({ phase: 'prepared', component: 'server' });
+  assert.equal(await readPendingSourcePreparation({ stackBaseDir: fixture.root }), null,
+    'an immutable completed sibling must not turn a failed input wait back into active preparation');
+  await start.setPhase({ phase: 'preparing', component: 'daemon' });
+  assert.deepEqual(await readPendingSourcePreparation({ stackBaseDir: fixture.root }),
+    { phase: 'preparing', component: 'daemon' });
+  await start.setPhase({ phase: 'prepared', component: 'daemon' });
+  assert.equal((await readPendingSourcePreparation({ stackBaseDir: fixture.root })).phase, 'prepared');
+});
+
+test('concurrent source preparation does not count completed local or remote siblings as active after failure', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-concurrent-remote-preparation-' });
+  const start = await beginPendingSourceStart({ stackBaseDir: fixture.root });
+  t.after(() => start.dispose());
+  await start.setPhase({ phase: 'building', component: 'server' });
+  await start.setPhase({ phase: 'failed', component: 'daemon' }, 'remote');
+  assert.equal((await readPendingSourcePreparation({ stackBaseDir: fixture.root })).phase, 'building');
+  await start.setPhase({ phase: 'prepared', component: 'server' });
+  assert.equal(await readPendingSourcePreparation({ stackBaseDir: fixture.root }), null);
+  await start.setPhase({ phase: 'failed', component: 'server' });
+  await start.setPhase({ phase: 'prepared', component: 'daemon' }, 'remote');
+  assert.equal(await readPendingSourcePreparation({ stackBaseDir: fixture.root }), null);
+  await start.setPhase({ phase: 'checking' });
+  assert.equal((await readPendingSourcePreparation({ stackBaseDir: fixture.root })).phase, 'checking',
+    'the composed smoke phase is active after components are ready');
+});
+
+test('failed source preparation cannot leave a competing preparing reload diagnostic', { timeout: 10000 }, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-reload-preparation-diagnostic-' });
+  let prepared;
+  const ready = new Promise(resolve => { prepared = resolve; });
+  let activate;
+  const activation = new Promise(resolve => { activate = resolve; });
+  // No services are requested: exercise the real reload/marker composition
+  // while holding only its existing caller-controlled activation boundary.
+  const reloading = prepareSourceRuntimeReload({ stackName: 'diagnostic', stackBaseDir: fixture.root,
+    repoDir: fixture.root, args: ['--no-dev-targets', '--no-daemon', '--no-ui', '--server-url=http://127.0.0.1:1'],
+    env: { ...process.env, HAPPIER_STACK_SERVER_COMPONENT: 'happier-server-light' },
+    activation, onPrepared: prepared }).then(result => ({ result }), error => ({ error }));
+  try {
+    await Promise.race([ready, reloading.then(result => { throw result.error ?? new Error('reload exited before activation'); })]);
+    const diagnostic = JSON.parse(await readFile(fixture.path('source-runtime/reload.json'), 'utf8'));
+    assert.equal(typeof diagnostic.logPath, 'string');
+    assert.equal(diagnostic.status, undefined, 'the live marker alone owns preparation status');
+  } finally {
+    activate(false);
+    await reloading;
+  }
 });
 
 test('real source runner keeps its pending marker through server spawn and cleans up failed readiness', async t => {
@@ -100,7 +239,7 @@ test('real source runner keeps its pending marker through server spawn and clean
     .then(refreshed => ({ refreshed: refreshed.refreshed, stacksNeedingRestart: refreshed.stacksNeedingRestart }),
       error => ({ code: error.code }));
   assert.deepEqual({ atSpawn: JSON.parse(await readFile(observation, 'utf8')), afterStartup: outcome }, {
-    atSpawn: { pending: true, refreshCode: 'HAPPIER_DEPENDENCY_STACK_START_IN_PROGRESS' },
+    atSpawn: { pending: true, refreshCode: null },
     afterStartup: { refreshed: true, stacksNeedingRestart: [stackName] },
   });
 });

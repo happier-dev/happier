@@ -49,11 +49,19 @@ async function prepareTypecheckBatch({ repoDir, componentRelativeDirs, batchRead
 // mirror): UI source tests import it, and its only producer is the checkout's
 // own esbuild generator, which needs the replica's installed dependencies and
 // rewrites the file only when its bytes change. Older checkouts lack it.
-async function prepareUiAtmosphereCore(repoDir) {
+async function prepareUiAtmosphereCore(repoDir, env, signal) {
   const generator = resolve(repoDir, 'apps/ui/tools/atmosphere/buildAtmosphereRenderers.mjs');
   if (!existsSync(generator)) return;
-  const { buildAtmosphereRenderers } = await import(pathToFileURL(generator).href);
-  await buildAtmosphereRenderers({ web: false });
+  // Source bundling uses the existing source-build envelope, independently of
+  // the later validation reader. The child inherits admission's thread budget.
+  const result = await runWorkspaceBuildAdmission({ command: process.execPath,
+    args: ['--input-type=module', '--eval',
+      `import { buildAtmosphereRenderers } from ${JSON.stringify(pathToFileURL(generator).href)}; await buildAtmosphereRenderers({ web: false });`],
+    cwd: repoDir, env, signal, admissionClass: 'source-bundle', stdio: 'inherit' });
+  if (result.error) throw result.error;
+  if (result.status !== 0 || result.signal) {
+    throw Object.assign(new Error('UI source compilation failed'), { exitCode: result.status, signal: result.signal });
+  }
 }
 
 function resolveComponentDir(repoDir, componentRelativeDir) {
@@ -97,7 +105,7 @@ export async function prepareRemoteValidationWorkspace({
     if (normalizedComponentPath === 'apps/cli' && requiredTools.split(/\s+/u).includes('go')) {
       await prepareCliSourceNativeCustody(repoDir, env);
     }
-    if (normalizedComponentPath === 'apps/ui') await prepareUiAtmosphereCore(repoDir);
+    if (normalizedComponentPath === 'apps/ui') await prepareUiAtmosphereCore(repoDir, env, signal);
     return { ok: true, built: [], skipped: ['workspace-source-test'] };
   }
   if (validationKind === 'typecheck') {
@@ -125,12 +133,9 @@ export async function prepareRemoteValidationWorkspace({
       workspaceNames: resolveCliBundledWorkspacePackageNames({ repoRoot: resolve(repoDir) }),
       env,
       publicationMode: 'live',
-      // These generated files are deliberately replica-owned and absent from
-      // Mutagen. Preparation must materialize them, not check a nonexistent
-      // local projection or synchronize the primary checkout's stale bytes.
-      // Only materialize outputs excluded from the one-way source replica.
-      // Source-synchronized projections remain untouched so the following
-      // check can still detect drift in the authoritative checkout bytes.
+      // The entire .happier-plugin tree is replica-owned, including plugin.json.
+      // Materialize it from synchronized CLI declaration assets; leave those
+      // controller-owned declarations and source projections untouched.
       bundledPluginArtifactPublication: { mode: 'write', targetOwnedOnly: true },
     });
   }

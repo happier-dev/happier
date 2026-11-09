@@ -9,6 +9,8 @@ import { fileURLToPath } from 'node:url';
 
 import { startLocalDaemonWithAuth, stopLocalDaemon } from './daemon.mjs';
 import { writeStubHappierCliFiles } from './testkit/core/stub_happier_cli_files.mjs';
+import { buildStubHappierServerSetSource } from './testkit/core/stub_happier_cli_server_set.mjs';
+import { sanitizeStackTestRunnerEnv } from './utils/test/test_env.mjs';
 
 const DAEMON_TEST_PROCESS_HELPER_PATH = fileURLToPath(
   new URL('./testkit/core/spawn_daemon_like_process.mjs', import.meta.url),
@@ -55,6 +57,7 @@ async function startProfileAuthServer({ port, allowToken }) {
   });
   await new Promise((resolve) => server.listen(port, '127.0.0.1', resolve));
   return {
+    url: `http://127.0.0.1:${port}`,
     close: async () => {
       await new Promise((resolve) => server.close(resolve));
     },
@@ -85,6 +88,7 @@ import { join } from 'node:path';
 import { killDetachedProcessGroup, spawnDaemonLikeProcess } from ${JSON.stringify(DAEMON_TEST_PROCESS_HELPER_PATH)};
 
 const args = process.argv.slice(2);
+${buildStubHappierServerSetSource()}
 const home = process.env.HAPPIER_HOME_DIR || process.env.HAPPIER_STACK_CLI_HOME_DIR;
 if (!home) process.exit(2);
 
@@ -205,7 +209,7 @@ test('invalid-auth auto-reseed uses resolved stack name instead of null placehol
     });
 
     const env = {
-      ...process.env,
+      ...sanitizeStackTestRunnerEnv(process.env, { isolatedStackRoot: tmp }),
       ...FAST_DAEMON_START_VERIFY_ENV,
       HAPPIER_STACK_REPO_DIR: tmp,
       PATH: `${binDir}:${process.env.PATH ?? ''}`,
@@ -307,7 +311,7 @@ test(policy === 'reseed' ? 'invalid-auth auto-reseed overwrites stale target cre
     });
 
     const env = {
-      ...process.env,
+      ...sanitizeStackTestRunnerEnv(process.env, { isolatedStackRoot: tmp }),
       ...FAST_DAEMON_START_VERIFY_ENV,
       HAPPIER_STACK_REPO_DIR: tmp,
       PATH: `${binDir}:${process.env.PATH ?? ''}`,
@@ -446,7 +450,7 @@ test('invalid-auth auto-reseed falls back to the next usable seed when the confi
     });
 
     const env = {
-      ...process.env,
+      ...sanitizeStackTestRunnerEnv(process.env, { isolatedStackRoot: tmp }),
       ...FAST_DAEMON_START_VERIFY_ENV,
       HAPPIER_STACK_REPO_DIR: tmp,
       PATH: `${binDir}:${process.env.PATH ?? ''}`,
@@ -550,7 +554,7 @@ test('invalid-auth auto-reseed falls through to a later usable local seed when t
     });
 
     const env = {
-      ...process.env,
+      ...sanitizeStackTestRunnerEnv(process.env, { isolatedStackRoot: tmp }),
       ...FAST_DAEMON_START_VERIFY_ENV,
       HAPPIER_STACK_REPO_DIR: tmp,
       PATH: `${binDir}:${process.env.PATH ?? ''}`,
@@ -610,6 +614,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const args = process.argv.slice(2);
+${buildStubHappierServerSetSource()}
 const home = process.env.HAPPIER_HOME_DIR || process.env.HAPPIER_STACK_CLI_HOME_DIR;
 if (!home) process.exit(2);
 
@@ -751,7 +756,7 @@ if (sub === 'start') {
     });
 
     const env = {
-      ...process.env,
+      ...sanitizeStackTestRunnerEnv(process.env, { isolatedStackRoot: tmp }),
       ...FAST_DAEMON_START_VERIFY_ENV,
       HAPPIER_STACK_REPO_DIR: tmp,
       PATH: `${binDir}:${process.env.PATH ?? ''}`,
@@ -828,6 +833,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const args = process.argv.slice(2);
+${buildStubHappierServerSetSource()}
 const home = process.env.HAPPIER_HOME_DIR || process.env.HAPPIER_STACK_CLI_HOME_DIR;
 if (!home) process.exit(2);
 
@@ -930,7 +936,7 @@ if (sub === 'start') {
     });
 
     const env = {
-      ...process.env,
+      ...sanitizeStackTestRunnerEnv(process.env, { isolatedStackRoot: tmp }),
       ...FAST_DAEMON_START_VERIFY_ENV,
       HAPPIER_STACK_REPO_DIR: tmp,
       PATH: `${binDir}:${process.env.PATH ?? ''}`,

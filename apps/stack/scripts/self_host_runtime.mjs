@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { spawnBackgroundSync } from '@happier-dev/cli-common/process';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import {
@@ -29,7 +29,10 @@ import {
   buildLaunchdPlistXml,
   buildServiceDefinition,
   buildWindowsScheduledTaskPowerShellAction,
+  planWindowsServiceLauncher,
+  splitQualifiedWindowsScheduledTaskName,
   planServiceAction,
+  preflightServiceInstallAssets,
   renderSystemdServiceUnit,
   renderWindowsScheduledTaskWrapperPs1,
   resolveServiceBackend,
@@ -227,7 +230,8 @@ function assertRoot() {
 }
 
 function runCommand(cmd, args, { cwd, env, allowFail = false, stdio = 'pipe' } = {}) {
-  const result = spawnSync(cmd, args, {
+  const result = spawnBackgroundSync(cmd, args, {
+    windowsHide: stdio !== 'inherit',
     cwd,
     env: env ?? process.env,
     encoding: 'utf-8',
@@ -959,7 +963,7 @@ export function renderUpdaterScheduledTaskWrapperPs1({
   });
 }
 
-export function buildUpdaterScheduledTaskCreateArgs({ backend, taskName, definitionPath, intervalMinutes = 1440, at } = {}) {
+export function planUpdaterScheduledTaskCreate({ backend, taskName, definitionPath, intervalMinutes = 1440, at, windowsLauncher } = {}) {
   const b = String(backend ?? '').trim();
   const name = String(taskName ?? '').trim();
   const definition = String(definitionPath ?? '').trim();
@@ -969,9 +973,12 @@ export function buildUpdaterScheduledTaskCreateArgs({ backend, taskName, definit
   const parsedAt = parseDailyAtTime(at);
   const minutesRaw = Number(intervalMinutes);
   const minutes = Number.isFinite(minutesRaw) ? Math.max(15, Math.floor(minutesRaw)) : 1440;
-  const ps = buildWindowsScheduledTaskPowerShellAction({ definitionPath: definition });
+  const launcher = b === 'schtasks-user'
+    ? planWindowsServiceLauncher({ definitionPath: definition, label: splitQualifiedWindowsScheduledTaskName(name).taskName, windowsLauncher })
+    : null;
+  const taskAction = launcher?.commandLine ?? buildWindowsScheduledTaskPowerShellAction({ definitionPath: definition });
 
-  return [
+  return { copies: launcher ? [launcher.copy] : [], args: [
     '/Create',
     '/F',
     '/SC',
@@ -982,9 +989,13 @@ export function buildUpdaterScheduledTaskCreateArgs({ backend, taskName, definit
     '/TN',
     name,
     '/TR',
-    ps,
+    taskAction,
     ...(b === 'schtasks-system' ? ['/RU', 'SYSTEM', '/RL', 'HIGHEST'] : []),
-  ];
+  ] };
+}
+
+export function buildUpdaterScheduledTaskCreateArgs(params = {}) {
+  return planUpdaterScheduledTaskCreate(params).args;
 }
 
 function resolveAutoUpdateEnabled(argv, fallback) {
@@ -1132,7 +1143,7 @@ async function installAutoUpdateJob({ config, enabled, intervalMinutes, at }) {
     stderrPath,
   });
   const name = `Happier\\${updaterLabel}`;
-  const args = buildUpdaterScheduledTaskCreateArgs({
+  const scheduledTask = planUpdaterScheduledTaskCreate({
     backend,
     taskName: name,
     definitionPath,
@@ -1141,8 +1152,9 @@ async function installAutoUpdateJob({ config, enabled, intervalMinutes, at }) {
   });
   const plan = {
     writes: [{ path: definitionPath, contents: definitionContents, mode: 0o644 }],
+    copies: scheduledTask.copies,
     commands: [
-      { cmd: 'schtasks', args },
+      { cmd: 'schtasks', args: scheduledTask.args },
       { cmd: 'schtasks', args: ['/Run', '/TN', name] },
     ],
   };
@@ -1168,50 +1180,19 @@ async function uninstallAutoUpdateJob({ config }) {
   const definitionPath = buildServiceDefinition({ backend, homeDir: homedir(), spec: baseSpec }).path;
 
   if (backend === 'systemd-system' || backend === 'systemd-user') {
-    const prefix = backend === 'systemd-user' ? ['--user'] : [];
     const timerPath = definitionPath.replace(/\.service$/, '.timer');
-    const plan = {
-      writes: [],
-      commands: [
-        { cmd: 'systemctl', args: [...prefix, 'disable', '--now', `${updaterLabel}.timer`], allowFail: true },
-        { cmd: 'systemctl', args: [...prefix, 'disable', '--now', `${updaterLabel}.service`], allowFail: true },
-        { cmd: 'systemctl', args: [...prefix, 'daemon-reload'] },
-      ],
-    };
-    await applyServicePlan(plan);
-    await rm(timerPath, { force: true }).catch(() => {});
-    await rm(definitionPath, { force: true }).catch(() => {});
-    return { uninstalled: true, backend, label: updaterLabel };
+    await applyServicePlan(planServiceAction({ backend, action: 'uninstall', label: updaterLabel, definitionPath: timerPath }));
   }
 
-  if (backend === 'launchd-system' || backend === 'launchd-user') {
-    const plan = planServiceAction({
-      backend,
-      action: 'uninstall',
-      label: updaterLabel,
-      definitionPath,
-      persistent: true,
-    });
-    await applyServicePlan(plan);
-    await rm(definitionPath, { force: true }).catch(() => {});
-    return { uninstalled: true, backend, label: updaterLabel };
-  }
-
-  const name = `Happier\\${updaterLabel}`;
-  const plan = {
-    writes: [],
-    commands: [
-      { cmd: 'schtasks', args: ['/End', '/TN', name], allowFail: true },
-      { cmd: 'schtasks', args: ['/Delete', '/F', '/TN', name], allowFail: true },
-    ],
-  };
-  await applyServicePlan(plan);
-  await rm(definitionPath, { force: true }).catch(() => {});
+  await applyServicePlan(planServiceAction({
+    backend, action: 'uninstall', label: updaterLabel, definitionPath,
+    taskName: `Happier\\${updaterLabel}`, persistent: true,
+  }));
   return { uninstalled: true, backend, label: updaterLabel };
 }
 
 async function restartAndCheckHealth({ config, serviceSpec, port }) {
-  await restartManagedService({ platform: config.platform, mode: config.mode, spec: serviceSpec }).catch(() => {});
+  await restartManagedService({ platform: config.platform, mode: config.mode, homeDir: homedir(), spec: serviceSpec }).catch(() => {});
   const timeoutMs = resolveSelfHostHealthTimeoutMs();
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
@@ -1823,6 +1804,8 @@ export async function runSelfHostRuntimeMutationWithServiceRecovery({
   const previousDefinitionContents = existsSync(previousDefinition.path)
     ? await readFile(previousDefinition.path, 'utf-8').catch(() => previousDefinition.contents)
     : previousDefinition.contents;
+  // Install and recovery both require the task-host asset before incumbent stop.
+  await preflightServiceInstallAssets({ backend });
 
   try {
     return await mutateRuntime({
@@ -2006,7 +1989,7 @@ async function performSelfHostPostPromoteSteps({
         intervalMinutes: autoUpdateReconcile.intervalMinutes,
         at: autoUpdateReconcile.at,
       }).catch(() => null)
-      : await uninstallAutoUpdateJob({ config }).catch(() => null);
+      : await uninstallAutoUpdateJob({ config });
 
   return {
     uiResult,
@@ -2423,7 +2406,7 @@ async function cmdUninstall({ channel, mode, argv, json }) {
     platform: config.platform,
   });
   const serviceSpec = buildSelfHostServerServiceSpec({ config, envText: fallbackEnvText });
-  await uninstallAutoUpdateJob({ config }).catch(() => {});
+  await uninstallAutoUpdateJob({ config });
   await uninstallManagedService({
     platform: config.platform,
     mode: config.mode,
@@ -2691,7 +2674,8 @@ function resolveRelayHostForwardSupport(env = process.env) {
   }
 
   try {
-    const probe = spawnSync('happier', ['relay', 'host', '--help'], {
+    const probe = spawnBackgroundSync('happier', ['relay', 'host', '--help'], {
+      windowsHide: true,
       env,
       stdio: 'ignore',
       encoding: 'utf-8',
@@ -2788,7 +2772,7 @@ export async function runSelfHostCli(argv = process.argv.slice(2)) {
     shouldAttemptRelayHostForward(process.env) &&
     resolveRelayHostForwardSupport(process.env)
   ) {
-    const forwarded = spawnSync('happier', ['relay', 'host', ...resolveRelayHostForwardedArgv(argv)], {
+    const forwarded = spawnBackgroundSync('happier', ['relay', 'host', ...resolveRelayHostForwardedArgv(argv)], {
       env: process.env,
       stdio: 'inherit',
       encoding: 'utf-8',

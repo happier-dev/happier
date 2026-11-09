@@ -119,8 +119,7 @@ test('renderMutagenProject creates one-way source replicas while retaining targe
     '.tmp',
     '.playwright-cli',
     'packages/brand/brand',
-    'packages/plugins/*/.happier-plugin/*',
-    '!packages/plugins/*/.happier-plugin/plugin.json',
+    'packages/plugins/*/.happier-plugin',
     'packages/plugin-sdk/fixtures/qa-plugin-authoring/created/qa-*/.happier-plugin',
     '.project',
     '.happier',
@@ -264,6 +263,9 @@ test('renderMutagenProject preserves default exclusions inside re-included proje
   await writeFile(fixture.path('empty-excludes'), '');
 
   const excluded = [
+    'packages/plugins/codex/.happier-plugin',
+    'packages/plugins/codex/.happier-plugin/plugin.json',
+    'packages/plugins/sentry/.happier-plugin/plugin.json',
     'packages/plugins/codex/.happier-plugin/daemon.cjs',
     'packages/plugins/codex/.happier-plugin/.happier-chunks/chunk.js',
     'packages/plugins/codex/.happier-plugin/agent/runtime/factory.js',
@@ -271,8 +273,8 @@ test('renderMutagenProject preserves default exclusions inside re-included proje
     'packages/plugin-sdk/fixtures/qa-plugin-authoring/created/qa-example/.happier-plugin/plugin.json',
   ];
   const included = ['.project/README.md', 'packages/triage-qa/src/coverage/source.ts',
-    'packages/plugins/codex/.happier-plugin/plugin.json',
-    'packages/plugins/sentry/.happier-plugin/plugin.json',
+    'packages/plugins/codex/src/manifest.ts',
+    'apps/cli/assets/bundled-plugin-manifests/codex.json',
     'packages/plugin-sdk/fixtures/authored/.happier-plugin/plugin.json',
     'packages/protocol/src/browser/target/source.ts',
     'apps/cli/src/plugins/testkit/fixtures/packed-external-voice-provider/dist/index.js'];

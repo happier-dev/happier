@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runNodeCapture } from './testkit/stack_script_command_testkit.mjs';
 import { resolveRemoteStackStatePaths } from './utils/dev_targets/remote_commands.mjs';
+import { randomUUID } from 'node:crypto';
 
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = dirname(scriptsDir);
@@ -68,6 +69,58 @@ test('hstack stack env <name> defaults to list', async (t) => {
   });
   assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
   assert.ok(res.stdout.includes('FOO=bar'), `expected stdout to include FOO=bar\nstdout:\n${res.stdout}`);
+});
+
+test('shared stack info and env list expose the source database identity without source contents', async t => {
+  const fixture = await createStackEnvFixture(t);
+  const sourceDir = join(fixture.baseEnv.HAPPIER_STACK_STORAGE_DIR, 'source-dev');
+  const sourceEnvPath = join(sourceDir, 'env');
+  const password = randomUUID();
+  const secret = randomUUID();
+  const databaseUrl = `postgresql://lane:${password}@127.0.0.1:5432/shared`;
+  await mkdir(sourceDir, { recursive: true });
+  await writeFile(sourceEnvPath, `HAPPIER_DB_PROVIDER=postgres\nDATABASE_URL=${databaseUrl}\nHAPPIER_FILES_BACKEND=s3\nHAPPIER_SERVER_AT_REST_SECRET=${secret}\n`);
+  await writeFile(fixture.envPath, `HAPPIER_DB_PROVIDER=sqlite\nHAPPIER_STACK_SERVER_COMPONENT=happier-server-light\nHAPPIER_STACK_DAEMON=0\nHAPPIER_STACK_SERVE_UI=0\nHAPPIER_STACK_SHARED_DB_SOURCE_STACK=source-dev\nHAPPIER_STACK_SHARED_DB_SOURCE_ENV_FILE=${sourceEnvPath}\n`);
+  const info = await runNodeCapture([join(rootDir, 'scripts', 'stack.mjs'), 'info', fixture.stackName, '--json'], {
+    cwd: rootDir, env: fixture.baseEnv,
+  });
+  const listed = await runNodeCapture([join(rootDir, 'scripts', 'stack.mjs'), 'env', fixture.stackName, 'list'], {
+    cwd: rootDir, env: fixture.baseEnv,
+  });
+  assert.equal(info.code, 0, 'stack info must succeed');
+  assert.equal(listed.code, 0, 'stack env list must succeed');
+  for (const output of [info.stdout, info.stderr, listed.stdout, listed.stderr]) {
+    assert.equal(output.includes(databaseUrl), false, 'source database URL must stay private');
+    assert.equal(output.includes(password), false, 'source database password must stay private');
+    assert.equal(output.includes(secret), false, 'source at-rest material must stay private');
+  }
+  assert.deepEqual(JSON.parse(info.stdout).database, {
+    provider: 'postgres', sharedSource: true, sourceStack: 'source-dev', filesBackend: 's3', basis: 'configured',
+  });
+  assert.match(listed.stdout, /HAPPIER_DB_PROVIDER=sqlite\n\[env\] DB provider overridden by shared source source-dev \(effective: postgres; basis: configured\)/);
+  await rm(sourceEnvPath);
+  const unavailable = await runNodeCapture([join(rootDir, 'scripts', 'stack.mjs'), 'env', fixture.stackName, 'list'], {
+    cwd: rootDir, env: fixture.baseEnv,
+  });
+  assert.equal(unavailable.code, 0);
+  assert.match(unavailable.stdout, /effective: unavailable; basis: unavailable/,
+    'missing source configuration must not attest the raw consumer provider');
+});
+
+test('standalone stack database identity preserves the provider and env listing', async t => {
+  const fixture = await createStackEnvFixture(t, { initialEnv: 'HAPPIER_DB_PROVIDER=sqlite\nHAPPIER_STACK_DAEMON=0\nHAPPIER_STACK_SERVE_UI=0\n' });
+  const info = await runNodeCapture([join(rootDir, 'scripts', 'stack.mjs'), 'info', fixture.stackName, '--json'], {
+    cwd: rootDir, env: fixture.baseEnv,
+  });
+  const listed = await runNodeCapture([join(rootDir, 'scripts', 'stack.mjs'), 'env', fixture.stackName, 'list'], {
+    cwd: rootDir, env: fixture.baseEnv,
+  });
+  assert.equal(info.code, 0);
+  assert.equal(listed.code, 0);
+  assert.deepEqual(JSON.parse(info.stdout).database, {
+    provider: 'sqlite', sharedSource: false, sourceStack: null, filesBackend: 'local', basis: 'configured',
+  });
+  assert.equal(listed.stdout, `[env] path: ${fixture.envPath}\nHAPPIER_DB_PROVIDER=sqlite\nHAPPIER_STACK_DAEMON=0\nHAPPIER_STACK_SERVE_UI=0\n`);
 });
 
 test('hstack stack env set rejects invalid KEY=VALUE assignment form', async (t) => {

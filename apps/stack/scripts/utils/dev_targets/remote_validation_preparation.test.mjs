@@ -1,26 +1,212 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { once } from 'node:events';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, symlinkSync, unlinkSync, watch, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { createServer } from 'node:net';
+import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import { buildNativeAdmissionFixtureEnv, installCliNativeCustodySourceFixture, installNativeAdmissionFixture, installWorkspaceAdmissionProcessFixture } from '../../testkit/core/native_admission_fixture.mjs';
 import { writeFakeBin } from '../../testkit/core/fake_bin_harness.mjs';
-import { ensureWorkspacePackagesBuiltForComponent } from '../../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
+import { collectWorkspaceBuildBatchResources, ensureWorkspacePackagesBuiltForComponent } from '../../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
 import { withWorkspaceBundleLock } from '../../../../../packages/cli-common/workspaceBundleLock.mjs';
 import { resolveWorkspacePackageBuildLockPath } from '../../../../../scripts/workspaces/workspacePackageBuildLock.mjs';
 import { resolveTypeScriptCliInvocation } from '../../../../../scripts/workspaces/resolveTypeScriptCliInvocation.mjs';
 import { prepareWorkspaceTypecheckDeclarations } from '../../../../../scripts/workspaces/prepareReferencedTypecheckDeclarations.mjs';
 import { runWorkspaceBuildAdmission } from '../proc/workspace_build_admission.mjs';
-import { isPidAlive } from '../proc/pids.mjs';
-import { resolveDependencyRefreshLockPath, withDependencyRefreshLock } from '../proc/dependency_refresh.mjs';
-import { withJsonOwnerFileLock } from '../proc/jsonOwnerFileLock.mjs';
-import { resolveRemoteCommandPolicy } from './remote_commands.mjs';
+import { resolveHeavyweightMemoryFloorKiB, resolveRemoteCommandPolicy } from './remote_commands.mjs';
 
 import { prepareRemoteValidationWorkspace } from './remote_validation_preparation.mjs';
 import { resolveCliBundledWorkspacePackageNames } from '../../../../cli/scripts/buildSharedDeps.mjs';
+import { resolveDependencyRefreshLockPath, withDependencyRefresh } from '../proc/dependency_refresh.mjs';
+
+async function assertNativeAdmissionIdle(native) {
+  const status = await native.brokerStatus();
+  assert.equal(status.activeCount, 0);
+  assert.equal(status.waitingCount, 0);
+}
+
+function readOutputPublicationIdentity(paths) {
+  return paths.map(path => {
+    const { ino, mtimeMs, ctimeMs, size } = statSync(path);
+    return { ino, mtimeMs, ctimeMs, size };
+  });
+}
+
+test('UI source preparation launches zero unadmitted esbuild producers', { skip: process.platform !== 'linux' }, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-source-prep-admission-' });
+  const native = await installWorkspaceAdmissionProcessFixture(t, fixture.root);
+  const generator = fixture.path('apps/ui/tools/atmosphere/buildAtmosphereRenderers.mjs');
+  const result = fixture.path('source-build-admission.json');
+  mkdirSync(join(generator, '..'), { recursive: true });
+  // The generator module is the external source compiler boundary. Keep the
+  // real preparation, admission, reservation and subprocess owners underneath.
+  writeFileSync(generator, `import { writeFileSync } from 'node:fs';
+export async function buildAtmosphereRenderers(options) {
+  if (process.env.HSTACK_SOURCE_PREPARATION_FIXTURE !== 'admitted'
+    || process.env.HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT !== ${JSON.stringify(native.admissionRoot)}
+    || !process.env.HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT) {
+    throw Object.assign(new Error('Source compiler launched outside admission'), { code: 'UNADMITTED_SOURCE_COMPILATION' });
+  }
+  writeFileSync(${JSON.stringify(result)}, JSON.stringify({ web: options.web, admitted: true }));
+}
+`);
+  await prepareRemoteValidationWorkspace({ repoDir: fixture.root, componentRelativeDir: 'apps/ui',
+    validationKind: 'source-test', env: { ...native.env, HSTACK_SOURCE_PREPARATION_FIXTURE: 'admitted' } });
+  assert.deepEqual(JSON.parse(readFileSync(result, 'utf8')), { web: false, admitted: true });
+  await assertNativeAdmissionIdle(native);
+});
+
+test('source reload preparation rebuilds stale package output once and publishes a capture before later edits', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-reload-stale-protocol-' });
+  const root = fixture.root;
+  for (const app of ['cli', 'ui', 'server', 'stack']) {
+    mkdirSync(fixture.path('apps', app), { recursive: true });
+    writeFileSync(fixture.path('apps', app, 'package.json'), JSON.stringify({ name: `@fixture/${app}`,
+      ...(app === 'stack' ? { dependencies: { '@happier-dev/protocol': 'workspace:*' } } : {}) }));
+  }
+  const packageManager = JSON.parse(readFileSync(new URL('../../../../../package.json', import.meta.url), 'utf8')).packageManager;
+  writeFileSync(fixture.path('package.json'), JSON.stringify({ private: true, packageManager }));
+  writeFileSync(fixture.path('pnpm-lock.yaml'), '# fixture\n');
+  writeFileSync(fixture.path('pnpm-workspace.yaml'), 'packages:\n  - "apps/*"\n  - "packages/*"\n');
+  const pkg = fixture.path('packages/protocol');
+  mkdirSync(join(pkg, 'src'), { recursive: true });
+  writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name: '@happier-dev/protocol', type: 'module',
+    main: './dist/index.js', scripts: { build: 'node compile.mjs' } }));
+  const source = join(pkg, 'src/index.ts');
+  const output = join(pkg, 'dist/index.js');
+  const countPath = fixture.path('compiler-count');
+  writeFileSync(source, 'export const value = "published";');
+  // Substitute only the external compiler process. Capture, fingerprints,
+  // package publication and remote preparation all use their real owners.
+  writeFileSync(join(pkg, 'compile.mjs'), `import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+const countPath = process.env.HAPPIER_TEST_COMPILER_COUNT;
+writeFileSync(countPath, String(Number(existsSync(countPath) ? readFileSync(countPath, 'utf8') : 0) + 1));
+const output = process.env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR;
+mkdirSync(output, { recursive: true });
+const captured = readFileSync('src/index.ts', 'utf8');
+if (process.env.HAPPIER_TEST_LATER_SOURCE) writeFileSync(${JSON.stringify(source)}, 'export const value = "after-capture";');
+writeFileSync(join(output, 'index.js'), captured);
+`);
+  const native = await installWorkspaceAdmissionProcessFixture(t, root);
+  const env = { ...native.env, HAPPIER_STACK_SKIP_REFRESH_DEPS: '1', HAPPIER_STACK_DISABLE_REFRESH_DEPS: '1',
+    HAPPIER_WORKSPACE_BUILD_MODE: 'strict', HAPPIER_TEST_COMPILER_COUNT: countPath };
+  await ensureWorkspacePackagesBuiltForComponent(fixture.path('apps/stack'), { env, quiet: true });
+  assert.equal(readFileSync(countPath, 'utf8'), '1');
+  const command = ['node', './apps/stack/scripts/runtime/launch/prepareSourceRuntimeReload.mjs', '--worker', '{}'];
+  const policy = resolveRemoteCommandPolicy(command, { cwd: root, repoRoot: root, env });
+  const prepare = () => prepareRemoteValidationWorkspace({ repoDir: root, componentRelativeDir: policy.component,
+    validationKind: policy.kind, defaultBuildMode: policy.preparationBuildMode, env });
+
+  writeFileSync(source, 'export const value = "synced-fix";');
+  await prepare();
+  assert.match(readFileSync(output, 'utf8'), /"synced-fix"/,
+    'the real reload policy must prepare the new package before the worker can import its dist');
+  assert.equal(readFileSync(countPath, 'utf8'), '2', 'one demand compiles the changed package once');
+  await prepare();
+  assert.equal(readFileSync(countPath, 'utf8'), '2', 'unchanged reload preparation performs zero compiler work');
+
+  writeFileSync(source, 'export const value = "captured";');
+  env.HAPPIER_TEST_LATER_SOURCE = '1';
+  await prepare();
+  assert.match(readFileSync(output, 'utf8'), /"captured"/);
+  assert.equal(readFileSync(countPath, 'utf8'), '3', 'later source edits do not discard the completed capture');
+  delete env.HAPPIER_TEST_LATER_SOURCE;
+  await prepare();
+  assert.match(readFileSync(output, 'utf8'), /"after-capture"/);
+  assert.equal(readFileSync(countPath, 'utf8'), '4', 'the next demand rebuilds the later source once');
+  await prepare();
+  assert.equal(readFileSync(countPath, 'utf8'), '4');
+});
+
+for (const mode of ['in-process', 'child', 'exhausted']) test(`declaration publication discards compiler output spanning a dependency writer (${mode})`, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-declaration-dependency-drift-' });
+  const root = fixture.root;
+  const pkg = fixture.path('packages/protocol');
+  const consumer = fixture.path('apps/server');
+  for (const name of ['cli', 'ui', 'server']) {
+    mkdirSync(fixture.path('apps', name), { recursive: true });
+    writeFileSync(fixture.path('apps', name, 'package.json'), JSON.stringify({ name: `@fixture/${name}`,
+      ...(name === 'server' ? { dependencies: { '@happier-dev/protocol': 'workspace:*' } } : {}) }));
+  }
+  mkdirSync(join(pkg, 'src'), { recursive: true });
+  mkdirSync(join(pkg, 'dist'), { recursive: true });
+  writeFileSync(join(pkg, 'dist/index.js'), 'unrelated JavaScript publication');
+  writeFileSync(join(pkg, 'dist/.build-manifest.json'), 'unrelated JavaScript build stamp');
+  mkdirSync(fixture.path('node_modules/external-fixture'), { recursive: true });
+  writeFileSync(fixture.path('package.json'), '{"private":true}');
+  writeFileSync(fixture.path('pnpm-lock.yaml'), '# fixture\n');
+  writeFileSync(fixture.path('pnpm-workspace.yaml'), 'packages:\n  - "apps/*"\n  - "packages/*"\n');
+  writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name: '@happier-dev/protocol', types: './dist/index.d.ts',
+    dependencies: { 'external-fixture': '1.0.0' } }));
+  writeFileSync(join(pkg, 'src/index.ts'), 'import { current } from "external-fixture"; export const value = current;');
+  writeFileSync(join(pkg, 'tsconfig.json'), JSON.stringify({ compilerOptions: { declaration: true, rootDir: 'src',
+    outDir: 'dist', module: 'esnext', moduleResolution: 'bundler', types: [] }, include: ['src/**/*.ts'] }));
+  const external = fixture.path('node_modules/external-fixture/index.d.ts');
+  writeFileSync(external, 'export declare const current: "before";');
+  const countPath = fixture.path('compiler-count');
+  const cache = fixture.path('.project/tmp/typecheck-declarations/projects/packages/protocol');
+  const stamp = join(cache, 'inputs.json');
+  const wrapper = fixture.path('compiler-boundary.mjs');
+  const hook = fixture.path('compiler-boundary-hook.mjs');
+  const refreshOwner = new URL('../proc/dependency_refresh.mjs', import.meta.url).href;
+  writeFileSync(wrapper, `import assert from 'node:assert/strict';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { withDependencyRefresh } from ${JSON.stringify(refreshOwner)};
+const count = Number(existsSync(${JSON.stringify(countPath)}) ? readFileSync(${JSON.stringify(countPath)}, 'utf8') : 0) + 1;
+writeFileSync(${JSON.stringify(countPath)}, String(count));
+assert.equal(existsSync(${JSON.stringify(stamp)}), false, 'spanned declaration cache must be discarded before rebuilding');
+const result = spawnSync(process.argv[2], process.argv.slice(3), { env: process.env, stdio: 'inherit' });
+if (result.status !== 0) process.exit(result.status ?? 1);
+if (count === 1 || ${JSON.stringify(mode === 'exhausted')}) await withDependencyRefresh({ installDir: ${JSON.stringify(root)}, env: process.env, force: true }, async () => {
+  writeFileSync(${JSON.stringify(external)}, 'export declare const current: "after";');
+});
+`);
+  // Replace only compiler process launch. The selected Microsoft compiler,
+  // declaration/cache owner, publication locks and dependency writer stay real.
+  writeFileSync(hook, `import childProcess from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
+const original = childProcess.spawn;
+childProcess.spawn = (command, args, options = {}) => {
+  if (options.env?.HAPPIER_DECLARATION_FIXTURE_WRAPPED !== '1' && args.includes('--build') && args.includes('--singleThreaded')) {
+    return original(process.execPath, [${JSON.stringify(wrapper)}, command, ...args], { ...options,
+      env: { ...options.env, HAPPIER_DECLARATION_FIXTURE_WRAPPED: '1' } });
+  }
+  return original(command, args, options);
+};
+syncBuiltinESMExports();
+export function restore() { childProcess.spawn = original; syncBuiltinESMExports(); }
+`);
+  const { restore } = await import(pathToFileURL(hook).href);
+  t.after(restore);
+  const env = { ...buildNativeAdmissionFixtureEnv(), CI: '1', HAPPIER_DEV_TARGET_EXECUTION: '',
+    HAPPIER_HSTACK_LOCAL_ADMISSION_REQUIRED: '', HAPPIER_STACK_HOME_DIR: root, HAPPIER_STACK_ENV_FILE: '',
+    HAPPIER_STACK_SKIP_REFRESH_DEPS: '', HAPPIER_STACK_DISABLE_REFRESH_DEPS: '',
+    NODE_OPTIONS: [process.env.NODE_OPTIONS, `--import=${hook}`].filter(Boolean).join(' ') };
+  await withDependencyRefresh({ installDir: root, env }, async () => {});
+  if (mode !== 'in-process') writeFileSync(fixture.path('pnpm-lock.yaml'), '# next dependency inputs visible before emission\n');
+  const prepare = prepareWorkspaceTypecheckDeclarations(consumer, { env, withinTypecheckAdmission: mode === 'in-process', signal: t.signal });
+  if (mode === 'exhausted') {
+    await assert.rejects(prepare, { code: 'BUILD_INPUTS_CHANGED', trailingPassExhausted: true });
+    assert.equal(existsSync(join(pkg, 'dist/index.d.ts')), false);
+    assert.equal(existsSync(join(cache, 'incremental.tsbuildinfo')), false);
+    assert.equal(existsSync(stamp), false);
+  } else {
+    await prepare;
+    assert.match(readFileSync(join(pkg, 'dist/index.d.ts'), 'utf8'), /value: "after"/);
+    assert.equal(existsSync(stamp), true);
+    await prepareWorkspaceTypecheckDeclarations(consumer, { env, withinTypecheckAdmission: mode === 'in-process', signal: t.signal });
+    assert.match(readFileSync(join(pkg, 'dist/index.d.ts'), 'utf8'), /value: "after"/);
+  }
+  assert.equal(readFileSync(countPath, 'utf8'), '2', 'one spanned compilation triggers exactly one trailing pass');
+  assert.equal(readFileSync(join(pkg, 'dist/index.js'), 'utf8'), 'unrelated JavaScript publication');
+  assert.equal(readFileSync(join(pkg, 'dist/.build-manifest.json'), 'utf8'), 'unrelated JavaScript build stamp');
+});
 
 test('explicit typecheck batch prepares strict producers once before its same-worker readers', { skip: process.platform !== 'linux' }, async t => {
   const { root } = await createTempFixture(t, { prefix: 'happier-typecheck-batch-' });
@@ -50,16 +236,28 @@ appendFileSync(${JSON.stringify(builds)}, 'build\\n');`);
   const reads = join(root, 'reads');
   const reader = join(root, 'reader.mjs');
   writeFileSync(reader, `import assert from 'node:assert/strict';
-import { appendFileSync, readFileSync, readdirSync } from 'node:fs';
+import { appendFileSync, readFileSync } from 'node:fs';
+import { requestAdmissionSample } from ${JSON.stringify(pathToFileURL(native.admissionClientPath).href)};
+import { withWorkspaceBundleLock } from ${JSON.stringify(new URL('../../../../../packages/cli-common/workspaceBundleLock.mjs', import.meta.url).href)};
 const output = readFileSync(${JSON.stringify(join(producer, 'dist/index.js'))}, 'utf8');
 assert.equal(output, readFileSync(${JSON.stringify(source)}, 'utf8'));
-assert.equal(readdirSync(${JSON.stringify(join(native.admissionRoot, 'owners'))}).length, 1);
+assert.equal((await requestAdmissionSample(${JSON.stringify(native.admissionRoot)})).activeCount, 1);
+await withWorkspaceBundleLock(() => {}, {
+  lockPath: ${JSON.stringify(resolveWorkspacePackageBuildLockPath(producer, { name: '@fixture/producer' }))},
+  env: {}, wait: false,
+});
 appendFileSync(${JSON.stringify(reads)}, output);`);
   const batch = () => prepareRemoteValidationWorkspace({ repoDir: root, validationKind: 'typecheck',
     componentRelativeDirs: ['apps/cli', 'apps/ui', 'apps/server'],
     batchReader: { command: process.execPath, args: [reader], cwd: root },
     env: { ...native.env, HAPPIER_WORKSPACE_BUILD_MODE: 'source-dev', HAPPIER_STACK_REPO_DIR: root,
       HAPPIER_STACK_RUNTIME_IDENTITY_REPO_DIR: root } });
+  await assert.rejects(prepareRemoteValidationWorkspace({ repoDir: root, validationKind: 'typecheck',
+    componentRelativeDirs: ['apps/cli', 'apps/missing'],
+    batchReader: { command: process.execPath, args: [reader], cwd: root }, env: native.env }),
+  { message: 'Workspace build batch components must belong to one monorepo' });
+  assert.equal(existsSync(builds), false, 'an invalid batch cannot partially publish before rejection');
+  assert.equal(existsSync(reads), false, 'an invalid batch cannot run its reader');
   await batch();
   assert.equal(existsSync(reads), true, 'the batch must run its reader after producer publication');
   const coldBuilds = readFileSync(builds, 'utf8');
@@ -69,8 +267,7 @@ appendFileSync(${JSON.stringify(reads)}, output);`);
   await batch();
   assert.equal(readFileSync(builds, 'utf8'), `${coldBuilds}build\n`);
   assert.equal(readFileSync(reads, 'utf8'), 'export const value = 1;\nexport const value = 1;\nexport const value = 2;\n');
-  assert.deepEqual(readdirSync(join(native.admissionRoot, 'owners')), []);
-  assert.deepEqual(readdirSync(join(native.admissionRoot, 'waiters')), []);
+  await assertNativeAdmissionIdle(native);
 
   // The process preload changes the source graph only after the real native
   // owner has acquired the first batch's resources. This is an OS boundary,
@@ -86,33 +283,173 @@ if (process.argv[2] === '--typecheck-batch-worker' && !existsSync(${JSON.stringi
   writeFileSync(file, JSON.stringify({ ...manifest, dependencies: { ...manifest.dependencies, '@fixture/late': 'workspace:*' } }));
   writeFileSync(${JSON.stringify(changed)}, 'changed');
 }`);
+  // A copied output still needs the publisher's verification pass even when
+  // its bytes match. This reaches the queued worker without changing content.
+  const publishedOutput = join(producer, 'dist/index.js');
+  writeFileSync(publishedOutput, readFileSync(publishedOutput));
   await prepareRemoteValidationWorkspace({ repoDir: root, validationKind: 'typecheck',
     componentRelativeDirs: ['apps/cli', 'apps/ui', 'apps/server'],
     batchReader: { command: process.execPath, args: [reader], cwd: root },
     env: { ...native.env, NODE_OPTIONS: `${native.env.NODE_OPTIONS} --import=${pathToFileURL(changeGraph).href}`,
       HAPPIER_STACK_REPO_DIR: root, HAPPIER_STACK_RUNTIME_IDENTITY_REPO_DIR: root } });
+  assert.equal(existsSync(changed), true, 'graph drift must be exercised beneath admitted producer custody');
   assert.equal(readFileSync(reads, 'utf8'), 'export const value = 1;\nexport const value = 1;\nexport const value = 2;\nexport const value = 2;\n',
     'a changed graph must unwind and admit its new resources before running the reader exactly once');
-  assert.deepEqual(readdirSync(join(native.admissionRoot, 'owners')), []);
-  assert.deepEqual(readdirSync(join(native.admissionRoot, 'waiters')), []);
+  await assertNativeAdmissionIdle(native);
 
   const beforeFailure = readFileSync(reads, 'utf8');
   const compilePath = join(producer, 'compile.mjs');
   const compiler = readFileSync(compilePath, 'utf8');
   writeFileSync(compilePath, `${compiler}\nthrow new Error('fixture producer rejected its input');\n`);
   writeFileSync(source, 'export const value = 3;\n');
-  await assert.rejects(batch, { message: 'Typecheck preparation batch failed' });
+  await assert.rejects(batch, error => {
+    assert.equal(error.message, 'Typecheck preparation batch failed');
+    assert.equal(error.exitCode, 1);
+    assert.equal(error.cause.code, 'EEXIT', 'the original producer failure reason survives the batch worker');
+    return true;
+  });
   assert.equal(readFileSync(reads, 'utf8'), beforeFailure, 'producer failure must not start a reader');
   assert.equal(readFileSync(join(producer, 'dist/index.js'), 'utf8'), 'export const value = 2;\n',
     'producer failure must retain the last coherent publication');
-  assert.deepEqual(readdirSync(join(native.admissionRoot, 'owners')), []);
-  assert.deepEqual(readdirSync(join(native.admissionRoot, 'waiters')), []);
+  await assertNativeAdmissionIdle(native);
   writeFileSync(compilePath, compiler);
   await batch();
   assert.equal(readFileSync(reads, 'utf8'), `${beforeFailure}export const value = 3;\n`);
+
+  await t.test('cancelling an admitted producer releases every resource before settling', async () => {
+    const server = createServer();
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const connected = once(server, 'connection');
+    const originalSource = readFileSync(source);
+    const beforeReads = readFileSync(reads, 'utf8');
+    writeFileSync(source, `${originalSource}\n`);
+    // Hold only the compiler OS process, beneath the real batch/native owners.
+    writeFileSync(compilePath, `import {connect} from 'node:net';
+const socket=connect(${server.address().port},'127.0.0.1',()=>socket.write('compiling'));
+socket.on('data',()=>{});
+`);
+    const cancellation = new AbortController();
+    const pending = prepareRemoteValidationWorkspace({ repoDir: root, validationKind: 'typecheck',
+      componentRelativeDirs: ['apps/cli', 'apps/ui', 'apps/server'],
+      batchReader: { command: process.execPath, args: [reader], cwd: root },
+      env: { ...native.env, HAPPIER_STACK_REPO_DIR: root, HAPPIER_STACK_RUNTIME_IDENTITY_REPO_DIR: root },
+      signal: cancellation.signal });
+    void pending.catch(() => {});
+    let socket;
+    try {
+      [socket] = await Promise.race([connected, pending.then(() => { throw new Error('producer exited before compiling'); })]);
+      await once(socket, 'data');
+      cancellation.abort();
+      await assert.rejects(pending, { name: 'AbortError' });
+      assert.equal(readFileSync(reads, 'utf8'), beforeReads, 'a cancelled producer must never start its reader');
+      assert.equal(readFileSync(join(producer, 'dist/index.js'), 'utf8'), originalSource.toString());
+      await assertNativeAdmissionIdle(native);
+    } finally {
+      cancellation.abort();
+      socket?.destroy();
+      await pending.catch(() => {});
+      await new Promise(resolve => server.close(resolve));
+      writeFileSync(source, originalSource);
+      writeFileSync(compilePath, compiler);
+    }
+  });
+
+  await t.test('a live watcher retains no publication locks and an independent publisher proceeds', async () => {
+    const server = createServer();
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const { port } = server.address();
+    const watching = once(server, 'connection');
+    const watchReader = join(root, 'watch-reader.mjs');
+    writeFileSync(watchReader, `import { watch } from 'node:fs';
+import { connect } from 'node:net';
+const watcher = watch(${JSON.stringify(source)}, () => {});
+const socket = connect(${port}, '127.0.0.1', () => socket.write('watching'));
+socket.on('end', () => watcher.close());
+socket.on('error', error => { watcher.close(); throw error; });`);
+    const pending = prepareRemoteValidationWorkspace({ repoDir: root, validationKind: 'typecheck',
+      componentRelativeDirs: ['apps/cli', 'apps/ui', 'apps/server'],
+      batchReader: { command: process.execPath, args: [watchReader, '--watch'], cwd: root },
+      env: { ...native.env, HAPPIER_STACK_REPO_DIR: root, HAPPIER_STACK_RUNTIME_IDENTITY_REPO_DIR: root } });
+    let socket;
+    try {
+      [socket] = await Promise.race([watching, pending.then(() => { throw new Error('watcher exited before starting'); })]);
+      await once(socket, 'data');
+      for (const lockPath of [join(root, '.project/tmp/cli-dist-build.lock'),
+        resolveWorkspacePackageBuildLockPath(producer, { name: '@fixture/producer' })]) {
+        await withWorkspaceBundleLock(() => {}, { lockPath, env: {}, wait: false });
+      }
+      assert.equal(readFileSync(builds, 'utf8'), `${coldBuilds}build\nbuild\nbuild\n`,
+        'starting the unchanged watcher must not rebuild any producer');
+    } finally {
+      socket?.end();
+      await pending.finally(() => server.close());
+    }
+    await assertNativeAdmissionIdle(native);
+  });
+
+  const beforeReaderFailure = readFileSync(builds, 'utf8');
+  await assert.rejects(prepareRemoteValidationWorkspace({ repoDir: root, validationKind: 'typecheck',
+    componentRelativeDirs: ['apps/cli', 'apps/ui', 'apps/server'],
+    batchReader: { command: process.execPath, args: ['-e', 'process.exit(7)'], cwd: root },
+    env: { ...native.env, HAPPIER_STACK_REPO_DIR: root, HAPPIER_STACK_RUNTIME_IDENTITY_REPO_DIR: root } }),
+  { exitCode: 7 });
+  assert.equal(readFileSync(builds, 'utf8'), beforeReaderFailure,
+    'a reader failure must not rebuild or retry producer preparation');
+  await assertNativeAdmissionIdle(native);
+
+  await t.test('a reader-bearing producer request is rejected before publication', async () => {
+    // A queued controller can outlive a source update. It must not mistake
+    // producer-only success for execution of the reader it still delegates.
+    writeFileSync(source, 'export const value = 4;\n');
+    const components = ['cli', 'ui', 'server'].map(name => join(root, 'apps', name));
+    const resources = await collectWorkspaceBuildBatchResources(components, { env: native.env });
+    const resultPath = join(root, 'rejected-reader-result.json');
+    const before = readFileSync(builds, 'utf8');
+    const result = await runWorkspaceBuildAdmission({
+      command: process.execPath,
+      args: [fileURLToPath(new URL('./remote_validation_preparation.mjs', import.meta.url)),
+        '--typecheck-batch-worker', JSON.stringify({ repoDir: root, components,
+          identity: resources.identity, readerAdmissionClass: 'compilation', resultPath,
+          reader: { command: process.execPath, args: [reader], cwd: root } })],
+      locks: resources.locks, admissionClass: resources.admissionClass, cwd: root,
+      env: { ...native.env, HAPPIER_STACK_REPO_DIR: root, HAPPIER_STACK_RUNTIME_IDENTITY_REPO_DIR: root },
+    });
+    assert.notEqual(result.status, 0, 'a producer worker must reject a delegated reader');
+    assert.equal(JSON.parse(readFileSync(resultPath, 'utf8')).code, 'HSTACK_TYPECHECK_PRODUCER_READER_FORBIDDEN');
+    assert.equal(readFileSync(builds, 'utf8'), before, 'invalid worker requests must not publish');
+    assert.equal(readFileSync(join(producer, 'dist/index.js'), 'utf8'), 'export const value = 3;\n');
+    await batch();
+    assert.equal(readFileSync(builds, 'utf8'), `${before}build\n`, 'a current controller explicitly retries once');
+    assert.equal(readFileSync(join(producer, 'dist/index.js'), 'utf8'), 'export const value = 4;\n');
+    await assertNativeAdmissionIdle(native);
+  });
+
+  await t.test('a queued legacy producer request keeps strict defaults without delegating a reader', async () => {
+    writeFileSync(source, 'export const value = 5;\n');
+    const components = ['cli', 'ui', 'server'].map(name => join(root, 'apps', name));
+    const resources = await collectWorkspaceBuildBatchResources(components, { env: native.env });
+    const resultPath = join(root, 'legacy-producer-result.json');
+    const beforeReads = readFileSync(reads, 'utf8');
+    const result = await runWorkspaceBuildAdmission({
+      command: process.execPath,
+      args: [fileURLToPath(new URL('./remote_validation_preparation.mjs', import.meta.url)),
+        '--typecheck-batch-worker', JSON.stringify({ repoDir: root, components,
+          identity: resources.identity, readerAdmissionClass: 'compilation', resultPath })],
+      locks: resources.locks, admissionClass: resources.admissionClass, cwd: root,
+      env: { ...native.env, HAPPIER_WORKSPACE_BUILD_MODE: 'source-dev',
+        HAPPIER_STACK_REPO_DIR: root, HAPPIER_STACK_RUNTIME_IDENTITY_REPO_DIR: root },
+    });
+    assert.equal(result.status, 0, 'legacy requests must still publish through the strict compiler boundary');
+    assert.deepEqual(JSON.parse(readFileSync(resultPath, 'utf8')).result.built, ['@fixture/producer']);
+    assert.equal(readFileSync(join(producer, 'dist/index.js'), 'utf8'), 'export const value = 5;\n');
+    assert.equal(readFileSync(reads, 'utf8'), beforeReads, 'a finite legacy producer cannot run a reader');
+    await assertNativeAdmissionIdle(native);
+  });
 });
 
-test('CLI source preparation stages admitted native custody and releases publication before the reader', { skip: process.platform !== 'linux' }, async t => {
+test('CLI source preparation stages admitted native custody without package-dist capacity or a build-time publication lease', { skip: process.platform !== 'linux' }, async t => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-cli-source-native-preparation-' });
   await installNativeAdmissionFixture({ root });
   const repoDir = join(root, 'native-owner');
@@ -125,10 +462,19 @@ test('CLI source preparation stages admitted native custody and releases publica
   writeFileSync(join(repoDir, 'pnpm-lock.yaml'), '# source fixture');
   writeFileSync(join(repoDir, 'pnpm-workspace.yaml'), 'packages:\n  - "apps/*"\n  - "packages/*"\n');
   const buildRecord = join(root, 'native-build');
+  const goEnvProbe = `if [ "$1" = env ] && [ "$2" = -json ]; then
+  printf '%s\\n' '{"GOVERSION":"go1.25.0","GOFLAGS":"","GOEXPERIMENT":"","GOAMD64":"","GOARM":"","GOARM64":""}'
+  exit 0
+fi`;
   // Go and physical capacity are OS boundaries. The real source setup,
   // native admission, authenticated lease and staging owner remain live.
   writeFakeBin({ root, name: 'go', content: `#!/bin/sh
-[ -n "$HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN" ] || exit 91
+${goEnvProbe}
+[ -n "$HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT" ] || exit 91
+if [ -e '${join(repoDir, '.project/tmp/cli-dist-build.lock')}' ]; then
+  '${process.execPath}' --input-type=module --eval 'import { readFileSync } from "node:fs";
+if (JSON.parse(readFileSync(${JSON.stringify(join(repoDir, '.project/tmp/cli-dist-build.lock'))}, "utf8")).pid !== ${process.pid}) process.exit(92);'
+fi
 while [ "$#" -gt 0 ]; do
   if [ "$1" = '-o' ]; then shift; output=$1; fi
   shift
@@ -136,7 +482,9 @@ done
 cat '${nativeSource}' > "$output"
 printf 'compiled\\n' >> '${buildRecord}'
 ` });
-  writeFakeBin({ root, name: 'awk', content: '#!/bin/sh\ncase "$*" in */proc/meminfo*) printf "33554432 33554432\\n" ;; *) exec /usr/bin/awk "$@" ;; esac\n' });
+  // This real admission path fits the measured native class, but cannot
+  // admit the unrelated six-GiB package-dist envelope.
+  writeFakeBin({ root, name: 'awk', content: '#!/bin/sh\ncase "$*" in */proc/meminfo*) printf "4194304 4194304\\n" ;; *) exec /usr/bin/awk "$@" ;; esac\n' });
   writeFakeBin({ root, name: 'systemctl', content: '#!/bin/sh\nexit 1\n' });
   const env = { ...buildNativeAdmissionFixtureEnv(), PATH: `${join(root, 'bin')}:${process.env.PATH}`,
     HAPPIER_EXEC_CONFIG_PATH: '', HAPPIER_DEV_TARGET_EXECUTION: '1' };
@@ -160,6 +508,94 @@ printf 'compiled\\n' >> '${buildRecord}'
     'an existing binary is not proof that the public preparation consumed current Go source');
   assert.equal(readFileSync(buildRecord, 'utf8'), 'compiled\ncompiled\n');
   assert.throws(() => readFileSync(join(repoDir, '.project/tmp/cli-dist-build.lock')), { code: 'ENOENT' });
+
+  // A prior test may still be executing the published helper. Replacing its
+  // path must preserve that process and publish complete new bytes atomically.
+  writeFileSync(nativeSource, readFileSync('/bin/sleep'));
+  await prepare();
+  const executable = join(cliDir, 'tools/unpacked/happier-process-custody');
+  const incumbent = spawn(executable, ['60'], { stdio: 'ignore' });
+  const closed = once(incumbent, 'close');
+  await once(incumbent, 'spawn');
+  try {
+    await prepare();
+    assert.equal(incumbent.exitCode, null, 'publication must not retire an executing helper');
+    assert.deepEqual(readFileSync(executable), readFileSync('/bin/sleep'));
+  } finally {
+    incumbent.kill('SIGTERM');
+    await closed;
+  }
+
+  await t.test('a finite live publisher releases one waiting preparation without refusal or rebuild', { timeout: 30_000 }, async t => {
+    const acquired = Promise.withResolvers();
+    const release = Promise.withResolvers();
+    const lockPath = join(repoDir, '.project/tmp/cli-dist-build.lock');
+    const waiting = Promise.withResolvers();
+    mkdirSync(join(repoDir, '.project/tmp'), { recursive: true });
+    const watcher = watch(join(repoDir, '.project/tmp'), () => {
+      if (existsSync(`${lockPath}.priority-claim`)) waiting.resolve();
+    });
+    const holder = withWorkspaceBundleLock(async () => {
+      acquired.resolve();
+      await release.promise;
+    }, { lockPath });
+    let preparation;
+    t.after(async () => {
+      watcher.close();
+      release.resolve();
+      await holder;
+      await preparation?.catch(() => {});
+    });
+    await acquired.promise;
+    const previousPayload = readFileSync(executable);
+    const previousBuilds = readFileSync(buildRecord, 'utf8');
+    writeFileSync(nativeSource, 'native-custody-after-wait');
+    preparation = prepare();
+    await Promise.race([waiting.promise, preparation.then(() => assert.fail('preparation must wait for publication'))]);
+    assert.equal(JSON.parse(readFileSync(lockPath, 'utf8')).pid, process.pid,
+      'a waiter preserves the live publication holder');
+    assert.deepEqual(readFileSync(executable), previousPayload,
+      'waiting preserves the existing native helper');
+    assert.equal(readFileSync(buildRecord, 'utf8'), `${previousBuilds}compiled\n`,
+      'native compilation completes once before publication waiting');
+    release.resolve();
+    await holder;
+    await preparation;
+    assert.equal(readFileSync(executable, 'utf8'), 'native-custody-after-wait');
+    assert.equal(readFileSync(buildRecord, 'utf8'), `${previousBuilds}compiled\n`,
+      'publication resumes the same prepared payload without retrying the native build');
+    assert.equal(existsSync(`${lockPath}.priority-claim`), false);
+  });
+  writeFileSync(nativeSource, 'native-custody-after-release');
+  await prepare();
+  assert.equal(readFileSync(executable, 'utf8'), 'native-custody-after-release',
+    'an explicit later preparation succeeds after the publication holder releases');
+
+  await t.test('a failed Go preparation preserves a redacted typed cause at the refusal sink', async () => {
+    const priorPayload = readFileSync(executable);
+    const sensitiveValue = 'native-preparation-fixture-sensitive-value';
+    env.HAPPIER_TEST_SECRET = sensitiveValue;
+    writeFileSync(nativeSource, 'native-custody-rejected-source');
+    writeFakeBin({ root, name: 'go', content: `#!/bin/sh
+${goEnvProbe}
+printf '%s\\n' 'compile: native input rejected' "$HAPPIER_TEST_SECRET" >&2
+exit 23
+` });
+    await assert.rejects(prepare(), error => {
+      assert.equal(error.code, 'HSTACK_CLI_NATIVE_CUSTODY_PREPARATION_FAILED');
+      assert.equal(error.phase, 'native-custody-preparation');
+      assert.equal(error.retryable, false);
+      assert.equal(error.cause?.phase, 'native-custody-preparation');
+      assert.equal(error.cause?.step, 'go-build');
+      assert.equal(error.cause?.exitCode, 23);
+      assert.equal(error.cause?.signal, null);
+      assert.ok(error.cause?.errorLines.includes('compile: native input rejected'));
+      assert.ok(!JSON.stringify(error).includes(sensitiveValue));
+      return true;
+    });
+    assert.deepEqual(readFileSync(executable), priorPayload,
+      'a failed preparation preserves the previously published helper');
+  });
 });
 
 test('typecheck consumers share current canonical declarations without JavaScript publication or redirects', async t => {
@@ -333,15 +769,6 @@ process.exitCode = result.status ?? 1;`);
   const native = await installWorkspaceAdmissionProcessFixture(t, root, { env: { PATH: process.env.PATH,
     HAPPIER_STACK_REPO_DIR: root, HAPPIER_STACK_RUNTIME_IDENTITY_REPO_DIR: root,
     HAPPIER_STACK_PM_CACHE_BASE_DIR: join(root, 'worker-cache') } });
-  const liveOwners = () => {
-    let entries;
-    try { entries = readdirSync(join(native.admissionRoot, 'owners')); }
-    catch (error) { if (error.code === 'ENOENT') return []; throw error; }
-    return entries.filter(name => {
-      try { return isPidAlive(Number(readFileSync(join(native.admissionRoot, 'owners', name, 'process'), 'utf8').split(' ')[0])); }
-      catch (error) { if (error.code === 'ENOENT') return false; throw error; }
-    });
-  };
   const runner = fileURLToPath(new URL('../../../../../scripts/workspaces/runTypeScriptCli.mjs', import.meta.url));
   const check = async () => {
     const child = spawn(process.execPath, [runner, '-p', 'tsconfig.json', '--pretty', 'false'], {
@@ -355,18 +782,22 @@ process.exitCode = result.status ?? 1;`);
     });
     // Observe the actual native reservation rather than a compiler timing log;
     // the runner's measurement adapter need not emit a startup marker.
-    const sampling = setInterval(() => {
-      const owners = liveOwners();
-      if (owners.length) admissions.push(owners);
-    }, 10);
+    let sampling = true;
+    const sampled = (async () => {
+      while (sampling) {
+        const status = await native.brokerStatus();
+        if (status.activeCount) admissions.push({ activeCount: status.activeCount, reservedMemoryKiB: status.reservedMemoryKiB });
+        await delay(10);
+      }
+    })();
     let result;
     try {
       result = await new Promise((resolve, reject) => { child.once('error', reject); child.once('close', (status, signal) => resolve({ status, signal })); });
-    } finally { clearInterval(sampling); }
+    } finally { sampling = false; await sampled; }
     assert.ok(admissions.length > 0, stderr);
-    assert.equal(admissions[0].length, 1, 'compilation owns one envelope');
-    for (const owners of admissions) assert.deepEqual(owners, admissions[0],
-      'the reader retains its authenticated admission');
+    for (const status of admissions) assert.deepEqual(status,
+      { activeCount: 1, reservedMemoryKiB: resolveHeavyweightMemoryFloorKiB('compilation') },
+      'the reader retains one compilation envelope');
     assert.doesNotMatch(stderr, /class=declaration-emit|TS2883|TS2742|node_modules\/\.cache/);
     assert.doesNotMatch(stderr, /\[typecheck-preparation\]|\[typecheck-declarations\]/,
       'a public compiler must not revive withdrawn producer preparation');
@@ -382,11 +813,10 @@ process.exitCode = result.status ?? 1;`);
   const current = await check();
   assert.equal(current.status, 0, current.stdout + current.stderr);
   assert.equal(existsSync(resolveWorkspacePackageBuildLockPath(dependency, metadata)), false);
-  assert.deepEqual(liveOwners(), []);
+  await assertNativeAdmissionIdle(native);
 });
 
-test('native declaration admission waits for dependency refresh, queue and package-build locks before emitting once', { skip: process.platform !== 'linux' }, async t => {
-  for (const mode of ['refresh', 'queue', 'package']) await t.test(mode, async t => {
+test('native declaration admission waits for package-build publication before emitting once', { skip: process.platform !== 'linux' }, async t => {
     const { root } = await createTempFixture(t, { prefix: 'hstack-declaration-busy-lock-' });
     writeFileSync(join(root, 'package.json'), '{"private":true}');
     writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "apps/*"\n  - "packages/*"\n');
@@ -405,49 +835,49 @@ test('native declaration admission waits for dependency refresh, queue and packa
       return dir;
     }).filter(dir => !dir.endsWith('/ui'));
     // Only physical-worker process/OS observations are adapted; native disk,
-    // admission, dependency queue and Microsoft declaration emission stay real.
+    // admission, package publication and Microsoft declaration emission stay real.
     const native = await installWorkspaceAdmissionProcessFixture(t, root, {
       env: { PATH: process.env.PATH, HAPPIER_STACK_REPO_DIR: root,
         HAPPIER_STACK_RUNTIME_IDENTITY_REPO_DIR: root, HAPPIER_STACK_PM_CACHE_BASE_DIR: join(root, 'worker-cache') },
     });
-    const lockPath = resolveDependencyRefreshLockPath(root, native.env);
-    let complete;
-    const blocked = new Promise(resolve => { complete = resolve; });
-    const blockedConsumers = new Set();
+    const blocked = Promise.withResolvers();
     const diagnostics = [];
     let terminal;
     const started = performance.now();
     const run = async () => {
-      terminal = Promise.all(consumers.map((consumer, index) => prepareWorkspaceTypecheckDeclarations(consumer, {
+      terminal = Promise.all(consumers.map(consumer => prepareWorkspaceTypecheckDeclarations(consumer, {
         env: native.env, runPreparation: async options => {
           const result = await runWorkspaceBuildAdmission({ ...options, launcherPath: native.launcher, stdio: 'pipe', signal: t.signal,
-            onStderr: value => {
-              if (String(value).includes('workspace-lease-busy')) {
-                blockedConsumers.add(index);
-                if (blockedConsumers.size === consumers.length) complete();
-              }
+            onStderr: () => {
+              // Queue delivery wakes this observation; broker state owns the
+              // barrier, independent of human-readable diagnostic wording.
+              void native.brokerStatus().then(status => {
+                if (status.waitingCount === consumers.length && status.activeCount === 0) blocked.resolve();
+              }, blocked.reject);
             } });
           diagnostics.push(result.stderr ?? '');
           if (result.status !== 0) t.diagnostic(result.stderr ?? String(result.status));
           return result;
         },
       })));
-      await Promise.race([blocked, terminal.then(() => assert.fail('declaration consumers did not wait for the held lock'))]);
-      assert.deepEqual(readdirSync(join(native.admissionRoot, 'owners')), [], 'busy producers reserve no capacity');
+      await Promise.race([blocked.promise, terminal.then(() => assert.fail('declaration consumers did not wait for the held lock'))]);
+      assert.equal((await native.brokerStatus()).activeCount, 0, 'busy producers reserve no capacity');
       assert.equal(existsSync(join(dependency, 'dist/index.d.ts')), false);
     };
-    if (mode === 'refresh') await withDependencyRefreshLock({ installDir: root, env: native.env, signal: t.signal }, run);
-    else if (mode === 'queue') await withJsonOwnerFileLock(run, { lockPath: `${lockPath}.queue.lock`, signal: t.signal });
-    else await withWorkspaceBundleLock(run, { lockPath: resolveWorkspacePackageBuildLockPath(dependency,
-      { name: '@happier-dev/protocol' }), signal: t.signal });
-    await terminal;
+    try {
+      await withWorkspaceBundleLock(run, { lockPath: resolveWorkspacePackageBuildLockPath(dependency,
+        { name: '@happier-dev/protocol' }), signal: t.signal });
+      await terminal;
+    } finally {
+      // The containing lock releases first, including when the barrier fails.
+      await terminal?.catch(() => {});
+    }
     const emitted = diagnostics.flatMap(value => [...value.matchAll(/\[typecheck-declarations\] (\{[^\n]+\})/g)])
       .flatMap(match => JSON.parse(match[1]).emitted);
     assert.deepEqual(emitted, ['@happier-dev/protocol'], 'concurrent cold consumers emit once after lock release');
     assert.match(readFileSync(join(dependency, 'dist/index.d.ts'), 'utf8'), /current = true/);
-    t.diagnostic(JSON.stringify({ mode, concurrentConsumers: consumers.length, emitted: emitted.length,
+    t.diagnostic(JSON.stringify({ concurrentConsumers: consumers.length, emitted: emitted.length,
       packageBuilds: 0, elapsedMs: Math.round(performance.now() - started) }));
-  });
 });
 
 test('declaration preparation leaves consumer admission and references untouched', async t => {
@@ -544,7 +974,7 @@ test('newer declarations preserve build stamps and cannot hide stale JavaScript 
 });
 
 test('runtime preparation publishes captured inputs and preserves last-green after compiler failure', async t => {
-  for (const scenario of ['warm', 'cold', 'damaged', 'compiler-error']) await t.test(scenario, async t => {
+  for (const scenario of ['warm', 'cold', 'damaged', 'compiler-error', 'dependency-drift']) await t.test(scenario, async t => {
     const { root } = await createTempFixture(t, { prefix: 'hstack-finite-preparation-drift-' });
     writeFileSync(join(root, 'package.json'), JSON.stringify({ private: true }));
     writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "apps/*"\n  - "packages/*"\n');
@@ -571,11 +1001,15 @@ test('runtime preparation publishes captured inputs and preserves last-green aft
         if (moving && scenario === 'compiler-error') throw Object.assign(new Error('src/index.ts(1,1): error TS2322: incompatible value'), { code: 'EEXIT', exitCode: 1 });
         writeFileSync(join(env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, 'index.js'), readFileSync(join(dir, 'src/index.ts')));
         writeFileSync(join(env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, 'index.d.ts'), 'export declare const value: string;\n');
+        // An external dependency writer can advance its generation even when
+        // it fails before publishing a new ready marker.
+        if (moving && scenario === 'dependency-drift') writeFileSync(generationPath, JSON.stringify({ generation: 'after-failed-writer' }));
         if (moving) writeFileSync(source, `export const value = "moving-${attempts}";\n`);
       },
     };
     const env = { ...process.env, HAPPIER_WORKSPACE_BUILD_MODE: 'strict',
       HAPPIER_STACK_REPO_DIR: root, HAPPIER_STACK_RUNTIME_IDENTITY_REPO_DIR: root };
+    const generationPath = `${resolveDependencyRefreshLockPath(root, env)}.generation`;
     if (scenario !== 'cold') await ensureWorkspacePackagesBuiltForComponent(join(root, 'apps/server'), {
       env, workspaceBuildBoundary,
     });
@@ -598,6 +1032,15 @@ test('runtime preparation publishes captured inputs and preserves last-green aft
       assert.equal(attempts, 1);
       assert.equal(readFileSync(output, 'utf8'), 'export const value = "green";\n');
       assert.deepEqual(JSON.parse(readFileSync(receipt, 'utf8')), greenRecord);
+      return;
+    }
+    if (scenario === 'dependency-drift') {
+      const publicationBefore = readOutputPublicationIdentity([output, receipt]);
+      await assert.rejects(prepare(), { code: 'BUILD_INPUTS_CHANGED', trailingPassExhausted: false });
+      assert.equal(attempts, 1, 'dependency drift rejects one artifact compile without an internal recompile');
+      assert.equal(readFileSync(output, 'utf8'), 'export const value = "green";\n');
+      assert.deepEqual(JSON.parse(readFileSync(receipt, 'utf8')), greenRecord);
+      assert.deepEqual(readOutputPublicationIdentity([output, receipt]), publicationBefore, 'rejected artifacts cause zero package-output publications');
       return;
     }
     const result = await prepare();
@@ -681,6 +1124,7 @@ export async function buildAtmosphereRenderers({ web = true } = {}) {
 
 test('source-test readers leave cold, current and stale outputs to their producers', async (t) => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-source-preparation-' });
+  const native = await installWorkspaceAdmissionProcessFixture(t, root);
   writeFileSync(join(root, 'package.json'), JSON.stringify({ private: true }));
   writeFileSync(join(root, 'pnpm-lock.yaml'), '# fixture\n');
   writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "apps/*"\n  - "packages/*"\n');
@@ -693,23 +1137,56 @@ test('source-test readers leave cold, current and stale outputs to their produce
   }
   mkdirSync(join(protocol, 'src'), { recursive: true });
   writeFileSync(join(cli, 'package.json'), JSON.stringify({ name: '@fixture/cli', dependencies: { '@fixture/protocol': 'workspace:*' } }));
-  writeFileSync(join(protocol, 'package.json'), JSON.stringify({ name: '@fixture/protocol', main: './dist/index.js', scripts: { build: 'node compile.mjs' } }));
-  writeFileSync(join(protocol, 'compile.mjs'), 'import { mkdirSync, writeFileSync } from "node:fs"; const out = process.env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR; mkdirSync(out, { recursive: true }); writeFileSync(out + "/index.js", "export const value = 1;\\n");');
+  writeFileSync(join(protocol, 'package.json'), JSON.stringify({ name: '@fixture/protocol', type: 'module', main: './dist/index.js', scripts: { build: 'node compile.mjs' } }));
+  const count = join(root, 'compiler-count');
+  // Only the external compiler is substituted. Policy, graph, admission,
+  // capture and atomic package publication use the production owners.
+  writeFileSync(join(protocol, 'compile.mjs'), `import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
+appendFileSync(${JSON.stringify(count)}, 'compile\\n');
+writeFileSync(process.env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR + '/index.js', readFileSync('src/index.ts'));
+`);
   const source = join(protocol, 'src/index.ts');
+  const output = join(protocol, 'dist/index.js');
+  const receipt = join(protocol, 'dist/.happier-build-inputs.json');
+  const env = { ...native.env, HAPPIER_STACK_REPO_DIR: root, HAPPIER_STACK_RUNTIME_IDENTITY_REPO_DIR: root };
   writeFileSync(source, 'export const value = 1;\n');
   const prepare = async () => {
     for (const componentRelativeDir of ['apps/cli', 'apps/ui', 'packages/plugin-sdk']) {
-      await prepareRemoteValidationWorkspace({ repoDir: root, componentRelativeDir, validationKind: 'source-test' });
+      await prepareRemoteValidationWorkspace({ repoDir: root, componentRelativeDir, validationKind: 'source-test', env });
+    }
+    const args = ['vitest', 'run', '--config=vitest.inMemory.config.ts', 'selected.test.ts'];
+    const policies = [resolveRemoteCommandPolicy(args, { cwd: cli, repoRoot: root })];
+    if (process.platform !== 'win32') {
+      const artifact = fileURLToPath(new URL('./native_command_policy.sh', import.meta.url));
+      const result = spawnSync('/bin/sh', ['-c', '. "$1"; repo_root=$2; invoked_cwd=$2/apps/cli; shift 2; resolve_native_command_policy "$@"; printf "%s,%s" "$policy_kind" "$policy_component"', 'policy', artifact, root, ...args], { encoding: 'utf8' });
+      assert.equal(result.status, 0, result.stderr);
+      const [kind, component] = result.stdout.split(',');
+      policies.push({ kind, component });
+    }
+    const compilesBefore = existsSync(count) ? readFileSync(count, 'utf8') : '';
+    const publicationBefore = existsSync(output) ? readOutputPublicationIdentity([output, receipt]) : null;
+    for (const policy of policies) {
+      const result = await prepareRemoteValidationWorkspace({ repoDir: root, componentRelativeDir: policy.component,
+        validationKind: policy.kind, env });
+      assert.equal(existsSync(count) ? readFileSync(count, 'utf8') : '', compilesBefore,
+        'in-memory source preparation executes zero workspace-package compilers');
+      assert.equal(policy.kind, 'source-test');
+      assert.deepEqual(result.built, []);
+      assert.deepEqual(existsSync(output) ? readOutputPublicationIdentity([output, receipt]) : null, publicationBefore,
+        'in-memory source preparation performs zero atomic package-output publications');
     }
   };
   await prepare();
-  assert.throws(() => readFileSync(join(protocol, 'dist/index.js')), { code: 'ENOENT' });
-  mkdirSync(join(protocol, 'dist'), { recursive: true });
-  writeFileSync(join(protocol, 'dist/index.js'), 'export const value = 1;\n');
+  assert.throws(() => readFileSync(output), { code: 'ENOENT' });
+  await ensureWorkspacePackagesBuiltForComponent(cli, { env, quiet: true });
+  assert.equal(readFileSync(count, 'utf8'), 'compile\n', 'the real producer admits the fixture output');
   await prepare();
   writeFileSync(source, 'export const value = 2;\n');
   await prepare();
-  assert.equal(readFileSync(join(protocol, 'dist/index.js'), 'utf8'), 'export const value = 1;\n');
+  assert.equal(readFileSync(output, 'utf8'), 'export const value = 1;\n');
+  await ensureWorkspacePackagesBuiltForComponent(cli, { env, quiet: true });
+  assert.equal(readFileSync(count, 'utf8'), 'compile\ncompile\n', 'the unrelated stale output really needs rebuilding');
+  assert.equal(readFileSync(output, 'utf8'), 'export const value = 2;\n');
 });
 
 test('source-test collection follows Protocol source edits and rejects malformed reachable source without dist', async (t) => {

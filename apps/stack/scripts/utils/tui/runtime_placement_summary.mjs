@@ -12,7 +12,10 @@ export function resolveRuntimeRemoteServiceObservation(runtime, service) {
     : null;
   const state = target ? normalizeRecord(remoteTargets[target]) : {};
   const serviceStatus = normalizeRecord(state.serviceStatus)[serviceName];
-  const status = typeof serviceStatus === 'string'
+  // A native process observation cannot make its failed transport available.
+  const status = state.phase === 'tunnel' && state.status !== 'running'
+    ? state.status ?? 'unknown'
+    : typeof serviceStatus === 'string'
     ? serviceStatus
     : (typeof state.status === 'string' ? state.status : null);
   return {

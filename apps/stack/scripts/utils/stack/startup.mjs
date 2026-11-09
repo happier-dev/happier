@@ -3,6 +3,7 @@ import { ensureDepsInstalled, ensureWorkspacePackagesBuiltForComponent } from '.
 import { isSandboxed, sandboxAllowsGlobalSideEffects } from '../env/sandbox.mjs';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { mkdir } from 'node:fs/promises';
 import { resolvePrismaClientImportForDbProvider } from '../server/prisma_client_import.mjs';
 import { findAnyCredentialPathInCliHome } from '../auth/credentials_paths.mjs';
@@ -11,6 +12,7 @@ import { applyHappyServerMigrations } from '../server/infra/happy_server_infra.m
 import {
   renderPrismaCompatibleSqliteDatabaseUrl,
   resolveServerLightSqliteDatabaseUrlOptionsFromEnv,
+  resolveServerMigrationsEnabled,
 } from '@happier-dev/cli-common/firstPartyRuntime/selfHostServerEnv';
 
 function looksLikeMissingTableError(msg) {
@@ -43,6 +45,7 @@ function resolveSqliteDatabaseUrlForDataDir({ dataDir, env }) {
 }
 
 async function probeAccountCount({ serverDir, env, dbProvider = 'sqlite' }) {
+  const framedSocketModuleUrl = pathToFileURL(join(serverDir, 'sources/storage/pgliteFramedSocketServer.mjs')).href;
   const runEnv = dbProvider === 'sqlite' && !(env?.DATABASE_URL ?? '').toString().trim()
     ? (() => {
         const dataDir = firstNonEmptyEnv(env?.HAPPIER_SERVER_LIGHT_DATA_DIR, env?.HAPPY_SERVER_LIGHT_DATA_DIR);
@@ -59,7 +62,7 @@ async function probeAccountCount({ serverDir, env, dbProvider = 'sqlite' }) {
 	  let server;
 		try {
 	    const { PGlite } = await import('@electric-sql/pglite');
-	    const { PGLiteSocketServer } = await import('@electric-sql/pglite-socket');
+	    const { FramedPgliteSocketServer } = await import(${JSON.stringify(framedSocketModuleUrl)});
 	    const { PrismaClient } = await import('@prisma/client');
 	    const dbDirPrimary = (process.env.HAPPIER_SERVER_LIGHT_DB_DIR ?? '').toString().trim();
 	    const dbDirLegacy = (process.env.HAPPY_SERVER_LIGHT_DB_DIR ?? '').toString().trim();
@@ -67,7 +70,7 @@ async function probeAccountCount({ serverDir, env, dbProvider = 'sqlite' }) {
 	    if (!dbDir) throw new Error('Missing HAPPIER_SERVER_LIGHT_DB_DIR or HAPPY_SERVER_LIGHT_DB_DIR for pglite probe');
 	    pglite = new PGlite(dbDir);
 	    await pglite.waitReady;
-	    server = new PGLiteSocketServer({ db: pglite, host: '127.0.0.1', port: 0 });
+	    server = new FramedPgliteSocketServer({ db: pglite, host: '127.0.0.1', port: 0 });
 	    await server.start();
 	    const raw = server.getServerConn();
 	    const url = (() => {
@@ -344,12 +347,11 @@ export async function ensureHappyServerSchemaReady({ serverDir, env }) {
 
 export async function getAccountCountForServerComponent({ serverComponentName, serverDir, env, bestEffort = false }) {
   if (
-    bestEffort &&
+    (bestEffort || !resolveServerMigrationsEnabled(env)) &&
     (serverComponentName === 'happier-server-light' || serverComponentName === 'happier-server')
   ) {
-    // Best-effort callers use the count only as an auth-seeding heuristic after a
-    // server has already been admitted. Preparing dependencies or migrations here
-    // would put a repository build/install on the stack-availability critical path.
+    // Admitted servers and migration-disabled consumers need existing Account
+    // facts only. Keep their probes read-only, without repository preparation.
     return await probeExistingAccountCountForServerComponent({
       serverComponentName,
       serverDir,

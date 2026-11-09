@@ -4,15 +4,17 @@ import { access, mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { writeFakeBin } from './testkit/core/fake_bin_harness.mjs';
+import { fakeChromeCommandLine } from './testkit/core/fake_chrome_command_line.mjs';
 import { resolveRemoteStackStatePaths } from './utils/dev_targets/remote_commands.mjs';
 import { isAlive, setupStackStopSweepFixture, spawnOwnedSleep, waitForProcessAlive, waitForProcessExit } from './testkit/stack_stop_sweeps_testkit.mjs';
 
 for (const remote of [false, true]) test(`stack stop closes its browser (${remote ? 'remote' : 'local'}) without runtime state and preserves another stack browser`, { skip: process.platform === 'win32', timeout: 30000 }, async t => {
   const fixture = await setupStackStopSweepFixture({ importMetaUrl: import.meta.url, t, stackName: 'browser-stop-fixture' });
   t.after(() => fixture.cleanup());
+  const chromePort = await fakeChromeCommandLine(t);
   const { binDir } = writeFakeBin({ root: fixture.tmp, name: 'agent-browser', content: `#!${process.execPath}
 const fs=require('node:fs'),path=require('node:path'),a=process.argv.slice(2);
-if(a.includes('open'))fs.writeFileSync(path.join(a[a.indexOf('--profile')+1],'DevToolsActivePort'),'40201\\n/devtools/browser/fixture-browser\\n');
+if(a.includes('open'))fs.writeFileSync(path.join(a[a.indexOf('--profile')+1],'DevToolsActivePort'),${JSON.stringify(`${chromePort}\n/devtools/browser/fixture-browser\n`)});
 else setTimeout(()=>process.exit(0),2500);
 ` });
   let envPath = fixture.envPath;
@@ -23,8 +25,16 @@ else setTimeout(()=>process.exit(0),2500);
     await mkdir(dirname(envPath), { recursive: true });
     await writeFile(envPath, '');
     await writeFile(join(fixture.baseDir, 'dev-targets.json'), JSON.stringify({ version: 3, targets: [target] }));
-    // Only SSH is replaced; Stack stop, remote command construction, process
-    // inventory, browser worker and cleanup are the real production path.
+    // Synchronization and SSH are external process boundaries. Source admission,
+    // remote command construction, process inventory and cleanup remain real.
+    writeFakeBin({ root: fixture.tmp, name: 'mutagen', content: `#!${process.execPath}
+(async()=>{
+const {captureDevTargetSyncFixture}=await import(${JSON.stringify(new URL('./testkit/core/dev_target_sync.mjs', import.meta.url).href)});
+const result=captureDevTargetSyncFixture('mutagen',process.argv.slice(2));
+if(!result)process.exit(2);
+process.stdout.write(result.out);process.exit(result.exitCode);
+})().catch(()=>process.exit(1));
+` });
     writeFakeBin({ root: fixture.tmp, name: 'ssh', content: `#!${process.execPath}
 const result=require('node:child_process').spawnSync('/bin/bash',['-c',process.argv.at(-1)],{stdio:'inherit',env:process.env});process.exit(result.status??1);
 ` });
@@ -50,6 +60,7 @@ const result=require('node:child_process').spawnSync('/bin/bash',['-c',process.a
   await waitForProcessAlive({ pid: neighbor.pid });
   const result = await fixture.runStackStop(['--json']);
   assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout).stopped.browsers.warnings, [], result.stderr);
   assert.equal(isAlive(worker.pid), false, 'stack stop must retire its browser worker');
   assert.deepEqual(await completion, { code: 0, signal: null }, error);
   await assert.rejects(access(ready.profile), { code: 'ENOENT' });

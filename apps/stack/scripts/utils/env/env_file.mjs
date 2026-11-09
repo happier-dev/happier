@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { withJsonOwnerFileLock } from '../proc/jsonOwnerFileLock.mjs';
+import { parseDotenv } from './dotenv.mjs';
 
 function envFileLockPath(envPath) {
   return `${envPath}.owner.lock`;
@@ -32,11 +33,18 @@ export async function ensureEnvFileUpdated({ envPath, updates }) {
   });
 }
 
-export async function ensureEnvFileMutated({ envPath, updates = [], removeKeys = [] }) {
+export async function ensureEnvFileMutated({ envPath, updates = [], removeKeys = [], retainKeys = null }) {
   const keys = Array.from(new Set(removeKeys.map((key) => String(key).trim()).filter(Boolean)));
-  if (!updates.length && !keys.length) return;
+  const normalize = key => process.platform === 'win32' ? key.toUpperCase() : key;
+  const retained = retainKeys === null ? null : new Set([...retainKeys, ...updates.map(({ key }) => key)].map(normalize));
+  const prune = content => {
+    const removed = retained === null ? keys
+      : [...keys, ...[...parseDotenv(content).keys()].filter(key => !retained.has(normalize(key)))];
+    return removed.length ? pruneEnvKeys(content, removed) : content;
+  };
+  if (!updates.length && !keys.length && retained === null) return;
   const current = await readText(envPath);
-  const currentPruned = keys.length ? pruneEnvKeys(current, keys) : current;
+  const currentPruned = prune(current);
   const currentNext = updates.length ? applyEnvUpdates(currentPruned, updates) : currentPruned;
   if (envContentsEqual(current, currentNext)) {
     return;
@@ -44,7 +52,7 @@ export async function ensureEnvFileMutated({ envPath, updates = [], removeKeys =
   await withEnvFileLock(envPath, async () => {
     await mkdir(dirname(envPath), { recursive: true });
     const existing = await readText(envPath);
-    const pruned = keys.length ? pruneEnvKeys(existing, keys) : existing;
+    const pruned = prune(existing);
     const next = updates.length ? applyEnvUpdates(pruned, updates) : pruned;
     await writeFileIfChanged(existing, next, envPath);
   });

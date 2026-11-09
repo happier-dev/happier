@@ -1,6 +1,7 @@
-import { buildRemoteStackRetirementProbeCommand, buildRemoteStackStopCommand } from './remote_commands.mjs';
+import { buildRemoteStackOperationCommand, buildRemoteStackRetirementProbeCommand, buildRemoteStackStopCommand } from './remote_commands.mjs';
 import { runDevTargetControlProcess } from './sync_project.mjs';
 import { resolveDevTargetSshDiagnostic } from './ssh_transport.mjs';
+import { describeStackRuntimeCleanupFailure } from '../stack/stop_failure.mjs';
 
 // Startup replacement, supervisor shutdown and an interrupted parent stop all
 // delegate retirement to the native Stack owner. Transport loss is not cleanup.
@@ -21,6 +22,26 @@ export async function retireStackDevTarget({ target, options, sshArgs = [], env,
   if (retirementProbe?.code === 0) {
     logger.warn?.(`[dev-targets] ${target.name} prior Stack retirement transport closed (code=${String(result?.code ?? 'unknown')}) after cleanup was verified`);
     return;
+  }
+  // Consume the native Stop result, never diagnostic prose or a generic exit
+  // code. A confirmed incomplete cleanup needs operator recovery, not another
+  // expensive prepare/stop cycle. Ambiguous transport outcomes remain retryable.
+  let stopped;
+  try { stopped = JSON.parse(result?.out ?? ''); } catch {}
+  const finalization = stopped?.stopped?.finalization;
+  if (result?.code === 1 && stopped?.ok === false && finalization?.finalized === false
+    && typeof finalization.reason === 'string' && /^[a-z][a-z0-9_]*$/.test(finalization.reason)) {
+    // Native state lives in the target's namespace, not its default Stack home.
+    // A stalled session drain also refuses /restart; canonical daemon Stop owns
+    // acknowledged shutdown and verified retirement without repeating that drain.
+    const recovery = `On ${target.name}, run:\n${buildRemoteStackStopCommand(target, { ...options, preserveDaemon: true })}`
+      + `\nThen run:\n${buildRemoteStackOperationCommand(target, { ...options, operation: 'daemon', passthrough: ['stop', '--json'] })}`
+      + '\nRetry the start from the controller. These commands preserve Agent Session processes.';
+    const cause = Object.assign(new Error(`stop incomplete: ${describeStackRuntimeCleanupFailure(stopped.stopped)}`), { code: finalization.reason });
+    throw Object.assign(new Error(`[dev-targets] ${target.name} prior Stack retirement refused: ${cause.message}. ${recovery}`, { cause }), {
+      code: 'EDEVTARGETRETIREMENTREFUSED', phase: 'stop', retryable: false,
+      commandExitCode: result.code, recovery, actions: stopped.stopped,
+    });
   }
   const error = new Error(`[dev-targets] ${target.name} prior Stack retirement failed (code=${String(result?.code ?? 'unknown')})`
     + (result?.err ? `: ${String(result.err).trim()}` : ''));

@@ -33,7 +33,7 @@ test('admission reclaims dead and incomplete owners even while capacity is unava
 });
 
 for (const entry of ['native', 'explicit', 'local']) {
-  test(entry === 'local' ? 'local compilation refuses an active dependency writer before admission and admits its ready tree after release'
+  test(entry === 'local' ? 'local compilation waits for an active dependency writer before admission and admits its ready tree after release'
     : `${entry} compilation bootstraps dependencies before admission so their lock holder can finish`, { skip: process.platform !== 'linux', timeout: 30_000 }, async t => {
     const fixture = await createTempFixture(t, { prefix: 'hstack-preparation-admission-' });
     const { launcher, admissionRoot } = await installNativeAdmissionFixture({ root: fixture.root, prepareDependencies: true });
@@ -111,7 +111,7 @@ esac
     let stderr = '';
     try {
       await withDependencyRefreshLock({ installDir: checkout, env }, async () => {
-        child = spawn(entry === 'explicit' ? '/bin/bash' : '/bin/sh', args, { cwd: component, env });
+        child = spawn(entry === 'explicit' ? '/bin/bash' : '/bin/sh', args, { cwd: component, env, signal: t.signal });
         child.stderr.on('data', chunk => { stderr += chunk; });
         completed = new Promise((resolveExit, reject) => {
           child.once('error', reject);
@@ -130,24 +130,15 @@ esac
         });
         assert.equal(installer.status, 0, `dependency lock holder must finish while compilation prepares: ${installer.stderr}`);
         await assert.rejects(access(compiled), { code: 'ENOENT' });
-        if (entry === 'local') {
-          const refused = await completed;
-          assert.equal(refused.code, 1, stderr);
-          assert.match(stderr, /HAPPIER_DEPENDENCIES_NEED_REFRESH/);
-        }
+        assert.equal(child.exitCode, null, 'compilation must wait until the active dependency writer releases');
       });
     } finally {
       // Releasing the real dependency lock lets even the defective compile
       // drain, so RED never leaves a blocked fixture process behind.
       if (completed) {
         const result = await completed;
-        assert.equal(result.code, entry === 'local' ? 1 : 0, `${result.signal ?? ''} ${stderr}`);
-        if (entry === 'local') assert.match(stderr, /HAPPIER_DEPENDENCIES_NEED_REFRESH/);
+        assert.equal(result.code, 0, `${result.signal ?? ''} ${stderr}`);
       }
-    }
-    if (entry === 'local') {
-      const ready = spawnSync('/bin/sh', args, { cwd: component, env, encoding: 'utf8' });
-      assert.equal(ready.status, 0, ready.stderr);
     }
     assert.equal(await readFile(compiled, 'utf8'), 'compiled');
     assert.deepEqual(await readdir(join(admissionRoot, 'owners')), []);

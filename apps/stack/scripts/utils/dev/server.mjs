@@ -44,6 +44,8 @@ import { buildServerRuntimeEnv } from '../server/server_env.mjs';
 import { ensureSourceServerWorkspacePackagesBuilt } from '../server/source_server_workspace_deps.mjs';
 import { resolveServerRuntimeLaunchSpec } from '../../runtime/launch/resolveServerRuntimeLaunchSpec.mjs';
 import { runServerRuntimeMigration } from '../../runtime/launch/runServerRuntimeMigration.mjs';
+import { preflightSourceRuntimeMigrations } from '../../runtime/launch/preflightSourceRuntimeMigrations.mjs';
+import { assertSharedDatabaseMigrationsApplied } from '../server/shared_database_migration_gate.mjs';
 import {
   readDevReloadWatchChangeSignature as readDevServerWatchChangeSignature,
   readDevReloadWatchChangeSignatureAsync as readDevServerWatchChangeSignatureAsync,
@@ -333,7 +335,9 @@ export async function createDevServerReloadDescriptors({ serverDir, existsSyncIm
 
   return [
     makeDescriptor('server:app', 'server', serverAppPaths),
-    makeDescriptor('server:prisma', 'server', serverPrismaPaths),
+    // The app-only migration plan was admitted before capture. Unlike ordinary
+    // source edits, Prisma drift can invalidate its permission to skip migration.
+    { ...makeDescriptor('server:prisma', 'server', serverPrismaPaths), invalidatesGeneration: true },
     ...(!graph ? [makeDescriptor('shared:workspace-observation', 'shared', [join(repoRoot, 'packages')])] : []),
     ...[...(graph?.closure ?? [])].map((packageName) => makeDescriptor(
       `shared:${packageName.split('/')[1] ?? packageName}`,
@@ -642,7 +646,7 @@ export async function stopStackOwnedServerForRestart(
   return { stopped: Boolean(stopPid), pid: recordedPid };
 }
 
-async function prepareCapturedDevServer({ sourceRuntimeOptions, serverComponentName, serverEnv, reuseSelected = false }) {
+async function prepareCapturedDevServer({ sourceRuntimeOptions, serverComponentName, serverEnv, reuseSelected = false, currentServerDir }) {
   const { buildSourceRuntimeBundle } = await import('../../build/build_source_runtime.mjs');
   const dbProvider = applyServerHostDatabaseProviderEnv({ serverComponentName, env: serverEnv });
   const logger = sourceRuntimeOptions.logger ?? console;
@@ -652,8 +656,12 @@ async function prepareCapturedDevServer({ sourceRuntimeOptions, serverComponentN
     env: serverEnv, devStartup: true, reuseSelected,
     waitForSourceChanges: reuseSelected === 'if-available' });
   logger.log(`[local] server: ${built.lastGreen ? 'retained' : 'captured'} source generation ${built.identity} ready`);
-  return { ...resolveServerRuntimeLaunchSpec({ sourceRuntimeLaunch: built,
-    migrationsEnabled: resolveServerMigrationsEnabled(serverEnv) }), source: 'runtime' };
+  const launchSpec = { ...resolveServerRuntimeLaunchSpec({ sourceRuntimeLaunch: built,
+    migrationsEnabled: resolveServerMigrationsEnabled(serverEnv), env: serverEnv,
+    stackBaseDir: sourceRuntimeOptions.stackBaseDir }), source: 'runtime' };
+  await preflightSourceRuntimeMigrations({ server: built, env: serverEnv,
+    stackBaseDir: sourceRuntimeOptions.stackBaseDir, signal: sourceRuntimeOptions.signal, currentServerDir });
+  return launchSpec;
 }
 
 export async function preflightDevServerRestart(
@@ -669,7 +677,7 @@ export async function preflightDevServerRestart(
   delete serverEnv.HAPPIER_STACK_SERVER_RESTART_PREFLIGHT_ALREADY_DONE;
   if (sourceRuntimeOptions) {
     return { ran: true, reason: 'captured-source', sourceRuntimeLaunchSpec: await prepareCapturedDevServer({
-      sourceRuntimeOptions, serverComponentName, serverEnv,
+      sourceRuntimeOptions, serverComponentName, serverEnv, currentServerDir: serverDir,
     }) };
   }
   const enabled = String(serverEnv.HAPPIER_STACK_SERVER_RESTART_PREFLIGHT ?? '').trim() !== '0';
@@ -744,6 +752,7 @@ export async function startDevServer({
   serverDir,
   autostart,
   baseEnv,
+  cliHomeDir,
   serverPort,
   serverBindPort = serverPort,
   internalServerUrl,
@@ -807,6 +816,7 @@ export async function startDevServer({
   }
   let usePriorRuntime = Boolean(
     priorRuntimeServerLaunchSpec?.source === 'runtime'
+    && serverEnv.HAPPIER_STACK_SERVER_CPU_PROF !== '1'
     && String(priorRuntimeServerLaunchSpec?.command ?? '').trim(),
   );
   let sourceRuntimeLaunchSpec = null;
@@ -854,7 +864,7 @@ export async function startDevServer({
   const ensureWorkspacePackagesBuiltBeforeSpawn = async () => {
     if (sourceRuntimeOptions) {
       sourceRuntimeLaunchSpec = await prepareCapturedDevServer({ sourceRuntimeOptions, serverComponentName, serverEnv,
-        reuseSelected: admitPriorBuildsImmediately ? 'if-available' : false });
+        reuseSelected: admitPriorBuildsImmediately ? 'if-available' : false, currentServerDir: restart ? serverDir : undefined });
       return;
     }
     try {
@@ -911,6 +921,11 @@ export async function startDevServer({
   }
 
   if (serverAlreadyRunning && !restart) {
+    await waitForServerReadyImpl(internalServerUrl, {
+      timeoutMs: resolveServerReadyTimeoutMs({ serverComponentName, env: serverEnv }),
+      env: baseEnv,
+      cliHomeDir,
+    });
     return { serverEnv, serverScript, serverProc: null };
   }
 
@@ -950,6 +965,9 @@ export async function startDevServer({
         existingOnLine?.(lineEvent);
       },
     };
+    if (!usePriorRuntime && !sourceRuntimeLaunchSpec) {
+      await assertSharedDatabaseMigrationsApplied({ serverDir, env: launchEnv });
+    }
     const server = usePriorRuntime || sourceRuntimeLaunchSpec
       ? await spawnPriorRuntimeServerImpl({
           launchSpec: usePriorRuntime ? priorRuntimeServerLaunchSpec : sourceRuntimeLaunchSpec,
@@ -978,11 +996,15 @@ export async function startDevServer({
         timeoutMs: readinessTimeoutMs,
         childProcess: server,
         startupDeadline,
+        env: baseEnv,
+        cliHomeDir,
       });
       if (backendInternalServerUrl !== internalServerUrl) {
         await waitForServerReadyImpl(internalServerUrl, {
           timeoutMs: readinessTimeoutMs,
           childProcess: server,
+          env: baseEnv,
+          cliHomeDir,
         });
       }
       listenerPid = await assertServerPortOwnedBySpawnedProcessGroupImpl({
@@ -1118,6 +1140,7 @@ export function createDevServerReloadExecutor({
   internalServerUrl,
   serverScript,
   serverEnv,
+  cliHomeDir,
   runtimeStatePath,
   stackName,
   envPath,
@@ -1332,6 +1355,7 @@ export function createDevServerReloadExecutor({
     } else if (capturedLaunch) {
       applyRuntimeServerDatabaseEnv({ env: nextEnv, serverDir: capturedLaunch.serverDir });
     }
+    if (!capturedLaunch) await assertSharedDatabaseMigrationsApplied({ serverDir, env: nextEnv });
     let next = null;
     const transition = {
       generation: reloadPlan?.generation,
@@ -1382,6 +1406,8 @@ export function createDevServerReloadExecutor({
         timeoutMs: resolveServerReadyTimeoutMs({ serverComponentName, env: nextEnv }),
         childProcess: next,
         startupDeadline,
+        env: nextEnv,
+        cliHomeDir,
       });
       const listenerPid = await assertServerPortOwnedBySpawnedProcessGroup({
         serverPort: port,

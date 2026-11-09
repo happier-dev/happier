@@ -1,7 +1,12 @@
+// @happier-test-preparation source
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { EventEmitter } from 'node:events';
+import { randomUUID } from 'node:crypto';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
+import { waitForBackgroundStackReadiness } from '../../stack/run_script_with_stack_env.mjs';
 
 import {
   createServerReadinessDeadline,
@@ -215,6 +220,120 @@ test('waitForServerReady accepts an extended timeout for delayed healthy startup
   } finally {
     await fixture.close();
   }
+});
+
+async function descriptorReadinessFixture(t) {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-descriptor-readiness-' });
+  const serverId = 'stack_descriptor__id_default';
+  const url = 'http://127.0.0.1:41234';
+  const descriptor = { v: 1, homeServerIdentityId: 'srv_expected_home', revision: 2,
+    canonicalServerUrl: url, endpoints: [{ kind: 'https', url }] };
+  const token = randomUUID();
+  await mkdir(fixture.path('servers', serverId), { recursive: true });
+  await writeFile(fixture.path('servers', serverId, 'access.key'), JSON.stringify({ token }));
+  await writeFile(fixture.path('settings.json'), JSON.stringify({ schemaVersion: 6,
+    activeServerId: serverId, servers: { [serverId]: { id: serverId, serverUrl: url,
+      webappUrl: url, homeConnectionDescriptor: descriptor } } }));
+  return { url, descriptor, token, env: { HAPPIER_STACK_CLI_HOME_DIR: fixture.root,
+    HAPPIER_ACTIVE_SERVER_ID: serverId } };
+}
+
+for (const surface of ['server', 'background']) {
+test(`${surface} readiness holds endpoint refresh and daemon preflight until the authenticated expected Home descriptor is published`,
+  { timeout: 5_000 }, async t => {
+    const fixture = await descriptorReadinessFixture(t);
+    const phases = [];
+    let descriptorReads = 0;
+    let observeWaiting;
+    const waiting = new Promise(resolve => { observeWaiting = resolve; });
+    let publish;
+    const published = new Promise(resolve => { publish = resolve; });
+    const controller = new AbortController();
+    t.after(() => controller.abort());
+    t.mock.method(globalThis, 'fetch', async (url, options) => {
+      if (String(url).endsWith('/health')) return Response.json({ status: 'ok', service: 'happier-server' });
+      assert.equal(new URL(url).pathname, '/v1/features/authenticated');
+      assert.equal(options.redirect, 'manual');
+      assert.equal(options.headers.Authorization, `Bearer ${fixture.token}`);
+      descriptorReads += 1;
+      if (descriptorReads === 1) return Response.json({ features: {}, capabilities: {} });
+      observeWaiting();
+      await published;
+      assert.deepEqual(phases, [], 'endpoint refresh and daemon preflight must still be held');
+      return Response.json({ features: {}, capabilities: { serverIdentity: {
+        serverIdentityId: fixture.descriptor.homeServerIdentityId } }, homeConnectionDescriptor: fixture.descriptor });
+    });
+    const pending = (surface === 'server'
+      ? waitForServerReady(fixture.url, { env: fixture.env, intervalMs: 0, signal: controller.signal })
+      : waitForBackgroundStackReadiness({ stackName: 'descriptor', scriptPath: 'run.mjs', args: ['--no-daemon'],
+        env: fixture.env, internalServerUrl: fixture.url, timeoutMs: 1_000 }))
+      .then(() => { phases.push('server_set', 'daemon_preflight'); });
+    try {
+      assert.equal(await Promise.race([pending.then(() => 'ready'), waiting.then(() => 'waiting')]), 'waiting');
+      assert.deepEqual(phases, []);
+    } finally {
+      publish();
+    }
+    await pending;
+    assert.deepEqual(phases, ['server_set', 'daemon_preflight']);
+    assert.equal(descriptorReads, 2, 'one fresh authenticated read per existing readiness attempt');
+  });
+}
+
+for (const surface of ['server', 'background']) {
+test(`${surface} readiness never admits an authenticated descriptor for a different Home`, async t => {
+  const fixture = await descriptorReadinessFixture(t);
+  const phases = [];
+  t.mock.method(globalThis, 'fetch', async url => String(url).endsWith('/health')
+    ? Response.json({ status: 'ok', service: 'happier-server' })
+    : Response.json({ features: {}, capabilities: { serverIdentity: { serverIdentityId: 'srv_other_home' } },
+      homeConnectionDescriptor: { ...fixture.descriptor, homeServerIdentityId: 'srv_other_home' } }));
+  const starting = surface === 'server'
+    ? waitForServerReady(fixture.url, { env: fixture.env, intervalMs: 0, timeoutMs: 100 })
+    : waitForBackgroundStackReadiness({ stackName: 'descriptor', scriptPath: 'dev.mjs',
+      env: fixture.env, internalServerUrl: fixture.url, timeoutMs: 100 });
+  await assert.rejects(starting.then(() => { phases.push('server_set', 'daemon_preflight'); }), /Home.*identity|identity.*Home/i);
+  assert.deepEqual(phases, []);
+});
+}
+
+for (const status of [401, 403]) {
+for (const surface of ['server', 'background']) {
+test(`${surface} readiness leaves a signed-out local server running and reports sign-in-required after HTTP ${status}`, async t => {
+  const fixture = await descriptorReadinessFixture(t);
+  const paths = [];
+  t.mock.method(globalThis, 'fetch', async url => {
+    const path = new URL(url).pathname;
+    paths.push(path);
+    if (path === '/v1/features/authenticated') return new Response(null, { status });
+    return Response.json({ status: 'ok', service: 'happier-server', features: {}, capabilities: {
+      serverIdentity: { serverIdentityId: fixture.descriptor.homeServerIdentityId } },
+      homeConnectionDescriptor: fixture.descriptor });
+  });
+  const child = new EventEmitter();
+  child.exitCode = null;
+  child.signalCode = null;
+  const result = surface === 'server'
+    ? await waitForServerReady(fixture.url, { env: fixture.env, childProcess: child })
+    : await waitForBackgroundStackReadiness({ stackName: 'descriptor', scriptPath: 'dev.mjs',
+      env: fixture.env, internalServerUrl: fixture.url, timeoutMs: 100,
+      isRunnerAlive: () => child.exitCode === null });
+  assert.deepEqual(result, { status: 'sign-in-required' });
+  assert.equal(child.exitCode, null, 'signed-out readiness must settle without a server startup failure');
+  assert.equal(child.listenerCount('exit'), 0);
+  assert.deepEqual(paths, ['/v1/features/authenticated'], 'sign-in-required settles without re-polls or unauthenticated fallback');
+});
+}
+}
+
+test('server readiness preserves its existing budget while an authenticated descriptor is withheld', async t => {
+  const fixture = await descriptorReadinessFixture(t);
+  t.mock.method(globalThis, 'fetch', async url => {
+    assert.equal(new URL(url).pathname, '/v1/features/authenticated');
+    return Response.json({ features: {}, capabilities: {} });
+  });
+  await assert.rejects(waitForServerReady(fixture.url, { env: fixture.env, timeoutMs: 30, intervalMs: 1,
+    continueWhileChildAlive: false }), /Timed out waiting for server/);
 });
 
 test('waitForServerReady accepts generic ok health payloads for runtime startup readiness', async () => {

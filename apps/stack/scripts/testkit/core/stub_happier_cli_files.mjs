@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import cliDistBuildManifest from '../../utils/cli/cliDistBuildManifestLoader.mjs';
@@ -51,6 +51,11 @@ export async function writeStubHappierCliFiles(
   if (typeof srcIndexScript !== 'undefined') {
     await mkdir(join(cliDir, 'src'), { recursive: true });
     await writeFile(join(cliDir, 'src', 'index.ts'), srcIndexScript, 'utf-8');
+    // The fixture checkout's source-runtime leaf; the real one also loads tsx.
+    const sourceRuntimeDir = join(monoRoot, 'packages', 'cli-common');
+    await mkdir(sourceRuntimeDir, { recursive: true });
+    await writeFile(join(sourceRuntimeDir, 'registerSourceRuntime.mjs'),
+      `import ${JSON.stringify(import.meta.resolve('tsx'))};\n`, 'utf-8');
   }
 
   if (typeof binHappierScript !== 'undefined') {

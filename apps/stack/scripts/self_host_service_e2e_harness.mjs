@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, readdir } from 'node:fs/promises';
+import { cp, mkdtemp, readdir } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 const SELF_HOST_PORT_MIN = 20_000;
 const SELF_HOST_PORT_MAX = 29_999;
@@ -50,6 +50,12 @@ export async function extractBinaryFromArtifact({ artifactPath, binaryName, labe
     extractDir,
     binaryPath: join(extractDir, roots[0], name),
   };
+}
+
+export async function stageExtractedBinaryPayload(binaryPath, destinationDir) {
+  const stagedBinaryPath = join(destinationDir, basename(binaryPath));
+  await cp(dirname(binaryPath), destinationDir, { recursive: true });
+  return stagedBinaryPath;
 }
 
 export async function waitForHealth(url, timeoutMs = 60_000) {

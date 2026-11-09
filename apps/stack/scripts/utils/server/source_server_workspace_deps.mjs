@@ -1,5 +1,6 @@
 import { ensureWorkspacePackagesBuiltForComponent, pmSpawnScript } from '../proc/pm.mjs';
 import { WORKSPACE_BUILD_MODE_ENV } from '../../../../../scripts/workspaces/workspaceChildBuildEnv.mjs';
+import { assertSharedDatabaseMigrationsApplied } from './shared_database_migration_gate.mjs';
 
 export async function ensureSourceServerWorkspacePackagesBuilt(
   {
@@ -38,5 +39,6 @@ export async function spawnSourceServerScript(
     { runtimeBackedStart: false, serverDir, env, quiet, startup: true },
     { ensureWorkspacePackagesBuiltForComponentImpl },
   );
+  await assertSharedDatabaseMigrationsApplied({ serverDir, env });
   return await pmSpawnScriptImpl({ label, dir: serverDir, script, env });
 }

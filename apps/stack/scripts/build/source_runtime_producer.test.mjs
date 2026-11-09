@@ -14,14 +14,14 @@ import { parseSourceReloadRefusalLine } from '../runtime/shared/source_reload_re
 import { parseArgs } from '../utils/cli/args.mjs';
 import { isDevStartupSourceDrift } from '../utils/dev/devReloadCoordinator.mjs';
 
-test('reload freshness arguments require the request boundary unless older source is explicitly allowed', async () => {
+test('reload freshness defaults to request time and an explicit fix time permits prebuilt adoption', async () => {
   const { resolveSourceRuntimeReloadArguments } = await import('../runtime/launch/prepareSourceRuntimeReload.mjs');
   const requestStartedAt = Date.parse('2026-11-09T12:00:00.000Z');
   const past = '2026-11-09T11:00:00.000Z';
   const future = '2026-11-09T13:00:00.000Z';
   for (const { args, expected } of [
     { args: ['--no-ui'], expected: requestStartedAt },
-    { args: [`--source-after=${past}`], expected: requestStartedAt },
+    { args: [`--source-after=${past}`], expected: Date.parse(past) },
     { args: [`--source-after=${future}`], expected: Date.parse(future) },
     { args: ['--allow-older-source'], expected: undefined },
     { args: ['--allow-older-source', `--source-after=${past}`], expected: Date.parse(past) },
@@ -31,8 +31,11 @@ test('reload freshness arguments require the request boundary unless older sourc
     assert.equal(parseArgs(request.args).kv.get('--source-after'), expected == null ? undefined : new Date(expected).toISOString());
   }
   const controller = resolveSourceRuntimeReloadArguments({ args: ['--no-ui'], requestStartedAt });
-  const worker = resolveSourceRuntimeReloadArguments({ args: controller.args, onHost: true, requestStartedAt: Date.parse(future) });
+  const worker = resolveSourceRuntimeReloadArguments({ args: controller.args, requestStartedAt: Date.parse(future) });
   assert.equal(worker.sourceCapturedAfter, controller.sourceCapturedAfter, 'a later worker clock must preserve the controller boundary');
+  const fix = resolveSourceRuntimeReloadArguments({ args: [`--source-after=${past}`], requestStartedAt });
+  assert.equal(resolveSourceRuntimeReloadArguments({ args: fix.args, requestStartedAt: Date.parse(future) }).sourceCapturedAfter,
+    Date.parse(past), 'an explicit fix boundary also survives dispatch to a later worker');
 });
 
 async function writable(path) {
@@ -141,6 +144,16 @@ test('real source reload adopts a coherent producer pair and waits for activatio
     } });
   const daemonSelection = JSON.parse(await readFile(join(stacks[0], 'source-runtime/selected-daemon.json'), 'utf8'));
   assert.equal((await import(pathToFileURL(daemonSelection.entrypoint))).value, 2);
+  const completed = JSON.parse(await readFile(resolve(dirname(daemonSelection.entrypoint), '../../../source-bundle.json'), 'utf8'));
+  const compilerCount = (await readFile(compilers, 'utf8')).trim().split('\n').length;
+  await writeFile(entry, 'export const value = 3;');
+  await native.prepareReload({ repoDir, stackName: 'qa-one', stackBaseDir: stacks[0],
+    args: ['--no-ui', '--no-dev-targets', `--source-after=${completed.sourceCapture.capturedAt}`],
+    env: { ...env, HAPPIER_STACK_DAEMON: '1', HAPPIER_STACK_SERVER_COMPONENT: 'happier-server-light' } });
+  assert.equal((await readFile(compilers, 'utf8')).trim().split('\n').length, compilerCount,
+    'an explicit fix time adopts the finished producer pair with zero compiler work');
+  assert.equal(JSON.parse(await readFile(join(stacks[0], 'source-runtime/selected-daemon.json'), 'utf8')).entrypoint,
+    daemonSelection.entrypoint, 'fast adoption keeps the eligible finished capture');
   const selectedBeforeFailure = await Promise.all(['server', 'daemon'].map(component =>
     readFile(join(stacks[0], `source-runtime/selected-${component}.json`), 'utf8')));
   await writeFile(entry, 'this is invalid syntax !');

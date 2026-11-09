@@ -3,14 +3,476 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { spawn } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
+import { once } from 'node:events';
+import { watch } from 'node:fs';
 import { createTempFixture } from './testkit/core/temp_fixture.mjs';
 import { runNodeCapture } from './testkit/core/run_node_capture.mjs';
 import { withPatchedProcessEnv } from './testkit/core/env_scope.mjs';
 import { resolveDevTargetMutagenRuntime } from './utils/dev_targets/mutagen_runtime.mjs';
 import { pickNextFreeTcpPort } from './utils/net/ports.mjs';
+import { withJsonOwnerFileLock } from './utils/proc/jsonOwnerFileLock.mjs';
+import { resolveStackCleanupExecutorLockTimeoutMs } from './utils/stack/stop.mjs';
+import { DEFAULT_FILE_CHANGE_CATCH_UP_MS } from '../../../packages/cli-common/fileChangeObserver.mjs';
 
 import * as stackEnvRunner from './stack/run_script_with_stack_env.mjs';
 import { SOURCE_START_SUPERSEDED_MARKER } from './runtime/shared/pending_source_start.mjs';
+import { buildStackStableScopeId } from './utils/auth/stable_scope_id.mjs';
+import { isPidAlive } from './utils/stack/runtime_state.mjs';
+
+test('same-stack allocation reuses its previous free controller port across launches', async () => {
+  const changes = [];
+  const selected = await stackEnvRunner.allocateFreshEphemeralServerPort({
+    startPort: 3009, preferredServerPort: 43123,
+    reservedPorts: new Set([43124]),
+    observeTcpPortAvailabilityImpl: async () => ({ status: 'free' }),
+    pickNextFreeTcpPortImpl: async () => 43124,
+    isTcpPortFreeImpl: async () => true,
+    onPortChange: change => changes.push(change),
+  });
+  assert.equal(selected, 43123);
+  assert.deepEqual(changes, []);
+});
+
+test('same-stack allocation moves a remembered controller port reserved by another stack', async () => {
+  const reservedPorts = new Set([43123, 43124]);
+  const changes = [];
+  const selected = await stackEnvRunner.allocateFreshEphemeralServerPort({
+    startPort: 43123, preferredServerPort: 43123, reservedPorts,
+    // A reservation excludes even a socket that would currently probe free.
+    observeTcpPortAvailabilityImpl: async () => ({ status: 'free' }),
+    onPortChange: change => changes.push(change),
+  });
+  assert.equal(reservedPorts.has(selected), false);
+  assert.deepEqual(changes, [{ previousPort: 43123, port: selected, reason: 'previous-port-occupied' }]);
+});
+
+test('same-stack allocation reports a foreign occupied controller port and leaves it alone', async () => {
+  const changes = [];
+  const selected = await stackEnvRunner.allocateFreshEphemeralServerPort({
+    startPort: 3009, preferredServerPort: 43123,
+    observeTcpPortAvailabilityImpl: async () => ({ status: 'occupied', reason: 'address-in-use' }),
+    pickNextFreeTcpPortImpl: async () => 43124,
+    isTcpPortFreeImpl: async () => true,
+    onPortChange: change => changes.push(change),
+  });
+  assert.equal(selected, 43124);
+  assert.deepEqual(changes, [{ previousPort: 43123, port: 43124, reason: 'previous-port-occupied' }]);
+});
+
+test('same-stack allocation fails closed on inconclusive previous-port availability', async () => {
+  await assert.rejects(stackEnvRunner.allocateFreshEphemeralServerPort({
+    startPort: 3009, preferredServerPort: 43123,
+    observeTcpPortAvailabilityImpl: async () => ({ status: 'inconclusive', reason: 'interface-inventory-unavailable' }),
+    pickNextFreeTcpPortImpl: async () => 43124,
+    isTcpPortFreeImpl: async () => true,
+  }), error => error.code === 'EPORTSELECTIONINCONCLUSIVE');
+});
+
+test('a stopped or rebooted stack reuses its controller socket through real foreground launches', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-controller-relaunch-' });
+  const stackName = 'controller-relaunch';
+  const storageDir = fixture.path('stacks');
+  const baseDir = join(storageDir, stackName);
+  const statePath = join(baseDir, 'stack.runtime.json');
+  const marker = fixture.path('controller-port');
+  const env = { HAPPIER_STACK_REPO_DIR: fixture.root, HAPPIER_STACK_CLI_HOME_DIR: join(baseDir, 'cli'),
+    HAPPIER_STACK_RUNTIME_MODE: 'source', HAPPIER_STACK_SERVER_COMPONENT: 'happier-server-light',
+    HAPPIER_STACK_DAEMON: '0', HAPPIER_STACK_STOP_AUTO_SWEEP: '0' };
+  withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: storageDir, HAPPIER_STACK_REPO_DIR: fixture.root });
+  for (const directory of [baseDir, join(baseDir, 'cli'), fixture.path('scripts'),
+    ...['cli', 'server', 'ui'].map(app => fixture.path('apps', app))]) await mkdir(directory, { recursive: true });
+  await writeFile(fixture.path('package.json'), '{"private":true}');
+  for (const app of ['cli', 'server', 'ui']) await writeFile(fixture.path('apps', app, 'package.json'), '{}');
+  await writeFile(join(baseDir, 'env'), Object.entries(env).map(([name, value]) => `${name}=${value}`).join('\n'));
+  const previousPort = await pickNextFreeTcpPort(43123);
+  await writeFile(statePath, JSON.stringify({ version: 1, stackName, ownerPid: null, processes: {},
+    portAllocations: { controller: { port: previousPort } } }));
+  await writeFile(fixture.path('scripts', 'dev.mjs'),
+    `import {createServer} from 'node:net'; import {writeFile} from 'node:fs/promises';
+     const server=createServer(); server.listen(Number(process.env.HAPPIER_STACK_SERVER_PORT),'127.0.0.1',async()=>{
+       await writeFile(${JSON.stringify(marker)},String(server.address().port)); server.close(); });`);
+  for (const phase of ['start', 'restart', 'reboot']) {
+    if (phase === 'reboot') {
+      const bundleDir = fixture.path('retained-source');
+      const cliDir = join(bundleDir, 'apps', 'cli');
+      const entrypoint = join(cliDir, 'src', 'index.mjs');
+      await mkdir(dirname(entrypoint), { recursive: true });
+      await writeFile(entrypoint, 'throw new Error("retired source must not be launched");\n');
+      await writeFile(join(bundleDir, 'source-bundle.json'), JSON.stringify({ dependencyPublication: null }));
+      await writeFile(statePath, JSON.stringify({ version: 1, stackName, ownerPid: process.pid,
+        startedAt: '1970-01-01T00:00:01.000Z', processes: { daemonPid: 2147483647 },
+        sourceRuntimeLaunch: { entrypoint, cliDir, env: {} },
+        portAllocations: { controller: { port: previousPort } },
+        stopRequest: { requestedBy: 'restart', reason: 'reboot recovery', preserveDaemon: false,
+          requestedAt: new Date().toISOString() } }));
+    }
+    await rm(marker, { force: true });
+    const args = phase === 'start' ? [] : ['--restart'];
+    await stackEnvRunner.runStackScriptWithStackEnv({ rootDir: fixture.root, stackName, scriptPath: 'dev.mjs',
+      args: [...args, '--no-daemon', '--no-ui', '--no-browser', '--no-dev-targets'] });
+    assert.equal(Number(await readFile(marker, 'utf8')), previousPort);
+    const stopped = JSON.parse(await readFile(statePath, 'utf8'));
+    assert.equal(stopped.portAllocations.controller.port, previousPort);
+    assert.equal(stopped.ownerPid, null);
+    assert.equal(stopped.ports, undefined);
+  }
+});
+
+test('controller fallback keeps retained full-server auxiliary ports reserved', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-controller-auxiliary-' });
+  const stackName = 'controller-auxiliary';
+  const storageDir = fixture.path('stacks');
+  const baseDir = join(storageDir, stackName);
+  const statePath = join(baseDir, 'stack.runtime.json');
+  const marker = fixture.path('bound-ports');
+  const foreign = (await import('node:net')).createServer();
+  await new Promise((resolve, reject) => foreign.once('error', reject).listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => foreign.close(resolve)));
+  const previousPort = foreign.address().port;
+  const backendPort = await pickNextFreeTcpPort(43123);
+  const env = { HAPPIER_STACK_REPO_DIR: fixture.root, HAPPIER_STACK_CLI_HOME_DIR: join(baseDir, 'cli'),
+    HAPPIER_STACK_RUNTIME_MODE: 'source', HAPPIER_STACK_SERVER_COMPONENT: 'happier-server',
+    HAPPIER_STACK_MANAGED_INFRA: '0', HAPPIER_STACK_DAEMON: '0', HAPPIER_STACK_STOP_AUTO_SWEEP: '0' };
+  withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: storageDir, HAPPIER_STACK_REPO_DIR: fixture.root,
+    HAPPIER_STACK_STACK_PORT_START: String(backendPort) });
+  for (const directory of [baseDir, join(baseDir, 'cli'), fixture.path('scripts'),
+    ...['cli', 'server', 'ui'].map(app => fixture.path('apps', app))]) await mkdir(directory, { recursive: true });
+  await writeFile(fixture.path('package.json'), '{"private":true}');
+  for (const app of ['cli', 'server', 'ui']) await writeFile(fixture.path('apps', app, 'package.json'), '{}');
+  await writeFile(join(baseDir, 'env'), Object.entries(env).map(([name, value]) => `${name}=${value}`).join('\n'));
+  await writeFile(statePath, JSON.stringify({ version: 1, stackName, ownerPid: null, processes: {},
+    startedAt: new Date().toISOString(), ports: { server: previousPort, backend: backendPort } }));
+  await writeFile(fixture.path('scripts', 'dev.mjs'),
+    `import {createServer} from 'node:net'; import {writeFile} from 'node:fs/promises';
+     const server=createServer(), backend=createServer();
+     await new Promise(resolve=>server.listen(Number(process.env.HAPPIER_STACK_SERVER_PORT),'127.0.0.1',resolve));
+     await new Promise(resolve=>backend.listen(Number(process.env.HAPPIER_STACK_SERVER_BACKEND_PORT),'127.0.0.1',resolve));
+     await writeFile(${JSON.stringify(marker)},JSON.stringify([server.address().port,backend.address().port]));
+     server.close(); backend.close();`);
+  await stackEnvRunner.runStackScriptWithStackEnv({ rootDir: fixture.root, stackName, scriptPath: 'dev.mjs',
+    args: ['--restart', '--no-daemon', '--no-ui', '--no-browser', '--no-dev-targets'] });
+  const [controllerPort, selectedBackendPort] = JSON.parse(await readFile(marker, 'utf8'));
+  assert.notEqual(controllerPort, backendPort);
+  assert.notEqual(controllerPort, previousPort);
+  assert.equal(selectedBackendPort, backendPort);
+  assert.equal(foreign.listening, true);
+});
+
+for (const pinned of [false, true]) {
+  test(`signed-out background start succeeds and leaves its runner alive (pinned=${pinned})`, { timeout: 15_000 }, async t => {
+    const fixture = await createTempFixture(t, { prefix: 'hstack-background-signin-' });
+    const stackName = 'background-signin';
+    const storageDir = fixture.path('stacks');
+    const baseDir = join(storageDir, stackName);
+    const cliHomeDir = join(baseDir, 'cli');
+    const runtimeStatePath = join(baseDir, 'stack.runtime.json');
+    const serverId = buildStackStableScopeId({ stackName });
+    const port = await pickNextFreeTcpPort(40000);
+    const url = ['http:', '', `127.0.0.1:${port}`].join('/');
+    const env = {
+      HAPPIER_STACK_REPO_DIR: fixture.root, HAPPIER_STACK_CLI_HOME_DIR: cliHomeDir,
+      HAPPIER_STACK_RUNTIME_MODE: 'source', HAPPIER_STACK_DEV_PROXY: '0',
+      HAPPIER_STACK_SERVER_COMPONENT: 'happier-server-light', HAPPIER_STACK_STOP_AUTO_SWEEP: '0',
+      ...(pinned ? { HAPPIER_STACK_SERVER_PORT: String(port) } : {}),
+    };
+    withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: storageDir, HAPPIER_STACK_REPO_DIR: fixture.root,
+      HAPPIER_STACK_STACK_BACKGROUND_READY_TIMEOUT_MS: '1500' });
+    for (const directory of [join(cliHomeDir, 'servers', serverId), fixture.path('scripts'),
+      ...['cli', 'server', 'ui'].map(app => fixture.path('apps', app))]) await mkdir(directory, { recursive: true });
+    await writeFile(fixture.path('package.json'), '{"private":true}');
+    for (const app of ['cli', 'server', 'ui']) await writeFile(fixture.path('apps', app, 'package.json'), '{}');
+    await writeFile(join(baseDir, 'env'), Object.entries(env).map(([name, value]) => `${name}=${value}`).join('\n'));
+    await writeFile(join(cliHomeDir, 'servers', serverId, 'access.key'), JSON.stringify({ token: randomBytes(32).toString('hex') }));
+    const descriptor = { v: 1, homeServerIdentityId: 'srv_background_home', revision: 1,
+      canonicalServerUrl: url, endpoints: [{ kind: 'https', url }] };
+    await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ schemaVersion: 6, activeServerId: serverId,
+      servers: { [serverId]: { id: serverId, serverUrl: url, homeConnectionDescriptor: descriptor } } }));
+    // Substitute only the runner process boundary: the launcher, publication,
+    // authenticated readiness decision and cleanup path remain production code.
+    await writeFile(fixture.path('scripts', 'dev.mjs'), `
+      import { createServer } from 'node:http';
+      import { recordStackRuntimeUpdate } from ${JSON.stringify(new URL('./utils/stack/runtime_state.mjs', import.meta.url).href)};
+      const server = createServer((request, response) => {
+        response.setHeader('content-type', 'application/json');
+        if (request.url === '/v1/features/authenticated') return response.writeHead(${pinned ? 403 : 401}).end();
+        response.end(JSON.stringify({ status: 'ok', service: 'happier-server' }));
+      });
+      server.listen(Number(process.env.HAPPIER_STACK_SERVER_PORT), '127.0.0.1', async () => {
+        await recordStackRuntimeUpdate(process.env.HAPPIER_STACK_RUNTIME_STATE_PATH, { processes: { serverPid: process.pid } });
+      });
+    `);
+    const warnings = [];
+    t.mock.method(console, 'warn', message => warnings.push(String(message)));
+    let runnerPid;
+    try {
+      await stackEnvRunner.runStackScriptWithStackEnv({ rootDir: fixture.root, stackName, scriptPath: 'dev.mjs', background: true,
+        args: ['--no-ui', '--no-browser', '--no-dev-targets'], extraEnv: env });
+      const runtime = JSON.parse(await readFile(runtimeStatePath, 'utf8'));
+      runnerPid = runtime.ownerPid;
+      assert.match(warnings.join('\n'), /server ready; CLI sign-in-required/);
+      assert.doesNotMatch(warnings.join('\n'), /readiness failed|readiness is still pending/,
+        'sign-in-required must settle as ready rather than time out waiting for a daemon');
+      assert.equal(isPidAlive(runnerPid), true, 'the background runner must outlive the successful launcher');
+      assert.equal(runtime.processes.serverPid, runnerPid);
+    } finally {
+      runnerPid ??= JSON.parse(await readFile(runtimeStatePath, 'utf8').catch(() => '{}')).ownerPid;
+      if (runnerPid && isPidAlive(runnerPid)) process.kill(runnerPid, 'SIGTERM');
+    }
+  });
+}
+
+for (const pinned of [false, true]) {
+  test(`background source runner preserves terminal supersession (pinned=${pinned})`, async t => {
+    const fixture = await createTempFixture(t, { prefix: 'hstack-background-superseded-' });
+    const stackName = 'superseded-source';
+    const storageDir = fixture.path('stacks');
+    const baseDir = join(storageDir, stackName);
+    const env = {
+      HAPPIER_STACK_REPO_DIR: fixture.root, HAPPIER_STACK_CLI_HOME_DIR: join(baseDir, 'cli'),
+      HAPPIER_DEV_TARGET_EXECUTION: '1', HAPPIER_STACK_RUNTIME_MODE: 'source',
+      HAPPIER_STACK_SERVER_COMPONENT: 'happier-server-light', HAPPIER_STACK_DAEMON: '0',
+      HAPPIER_STACK_STOP_AUTO_SWEEP: '0',
+      ...(pinned ? { HAPPIER_STACK_SERVER_PORT: String(await pickNextFreeTcpPort(40000)) } : {}),
+    };
+    withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: storageDir, HAPPIER_STACK_REPO_DIR: fixture.root });
+    for (const directory of [baseDir, join(baseDir, 'cli'), fixture.path('scripts'),
+      ...['cli', 'server', 'ui'].map(app => fixture.path('apps', app))]) await mkdir(directory, { recursive: true });
+    await writeFile(fixture.path('package.json'), '{"private":true}');
+    for (const app of ['cli', 'server', 'ui']) await writeFile(fixture.path('apps', app, 'package.json'), '{}');
+    await writeFile(join(baseDir, 'env'), Object.entries(env).map(([name, value]) => `${name}=${value}`).join('\n'));
+    // The subprocess emits the canonical runner terminal result before any
+    // service exists. The background wrapper and error propagation stay real.
+    await writeFile(fixture.path('scripts', 'run.mjs'), `process.stdout.write(${JSON.stringify(SOURCE_START_SUPERSEDED_MARKER + '\n')});`);
+    const result = await runNodeCapture(['--input-type=module', '-e', `
+      import { runStackScriptWithStackEnv } from ${JSON.stringify(new URL('./stack/run_script_with_stack_env.mjs', import.meta.url).href)};
+      try {
+        await runStackScriptWithStackEnv(${JSON.stringify({ rootDir: fixture.root, stackName, scriptPath: 'run.mjs', background: true,
+          args: ['--runtime=source', '--reuse-source-runtime', '--no-daemon', '--no-ui', '--no-browser'], extraEnv: env })});
+        process.exit(0);
+      } catch (error) {
+        console.log('WRAPPER_RESULT=' + JSON.stringify({ code: error.code ?? null }));
+        process.exit(1);
+      }
+    `], { env: process.env });
+    assert.equal(result.code, 1, result.stderr);
+    const terminal = JSON.parse(result.stdout.split('\n').find(line => line.startsWith('WRAPPER_RESULT=')).slice('WRAPPER_RESULT='.length));
+    assert.equal(terminal.code, 'ESOURCESTARTSUPERSEDED', 'background launch must retain the terminal source-start result');
+  });
+}
+
+test('restarting selected source never enters fresh-source preparation', { timeout: 15_000 }, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-reuse-selected-source-' });
+  const stackName = 'reuse-selected-source';
+  const storageDir = fixture.path('stacks');
+  const baseDir = join(storageDir, stackName);
+  const marker = fixture.path('selected-runner-started');
+  const env = { HAPPIER_STACK_REPO_DIR: fixture.root, HAPPIER_STACK_CLI_HOME_DIR: join(baseDir, 'cli'),
+    HAPPIER_DEV_TARGET_EXECUTION: '1',
+    HAPPIER_STACK_RUNTIME_MODE: 'source', HAPPIER_STACK_SERVER_COMPONENT: 'happier-server-light',
+    HAPPIER_STACK_DAEMON: '0', HAPPIER_STACK_STOP_AUTO_SWEEP: '0' };
+  withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: storageDir, HAPPIER_STACK_REPO_DIR: fixture.root });
+  for (const directory of [baseDir, join(baseDir, 'cli'), fixture.path('scripts'),
+    ...['cli', 'server', 'ui'].map(app => fixture.path('apps', app))]) await mkdir(directory, { recursive: true });
+  await writeFile(fixture.path('package.json'), '{"private":true}');
+  for (const app of ['cli', 'server', 'ui']) await writeFile(fixture.path('apps', app, 'package.json'), '{}');
+  await writeFile(join(baseDir, 'env'), Object.entries(env).map(([name, value]) => `${name}=${value}`).join('\n'));
+  // The launched runner is an OS/process boundary. A source capture here is a
+  // defect: this minimal repository deliberately has no new source to build.
+  await writeFile(fixture.path('scripts', 'run.mjs'), `import {writeFile} from 'node:fs/promises'; await writeFile(${JSON.stringify(marker)}, 'started');`);
+  await stackEnvRunner.runStackScriptWithStackEnv({ rootDir: fixture.root, stackName, scriptPath: 'run.mjs',
+    args: ['--runtime=source', '--restart', '--reuse-source-runtime', '--no-dev-targets', '--no-server', '--no-ui', '--no-daemon', '--server-url=http://127.0.0.1:3005'] });
+  assert.equal(await readFile(marker, 'utf8'), 'started');
+  await assert.rejects(readFile(join(baseDir, 'source-runtime', 'reload.json')), error => error.code === 'ENOENT',
+    'recovery must not create a fresh-source preparation record');
+});
+
+test('restart waits for the cleanup completion signal beyond the standalone lock deadline', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-restart-completion-wait-' });
+  const stackName = 'restart-completion-wait';
+  const baseDir = fixture.path('stacks', stackName);
+  const envPath = join(baseDir, 'env');
+  const lockPath = join(baseDir, 'stack.cleanup-executor.lock');
+  const waitersPath = `${lockPath}.waiters`;
+  await mkdir(waitersPath, { recursive: true });
+  for (const app of ['cli', 'server', 'ui']) await mkdir(fixture.path('apps', app), { recursive: true });
+  const env = { HAPPIER_STACK_REPO_DIR: fixture.root, HAPPIER_STACK_STACK: stackName,
+    HAPPIER_STACK_STORAGE_DIR: fixture.path('stacks'), HAPPIER_STACK_ENV_FILE: envPath,
+    HAPPIER_STACK_CLI_HOME_DIR: join(baseDir, 'cli'), HAPPIER_STACK_STOP_AUTO_SWEEP: '0' };
+  await writeFile(envPath, Object.entries(env).map(([name, value]) => `${name}=${value}`).join('\n'));
+  const inheritedDeadline = resolveStackCleanupExecutorLockTimeoutMs({ env: {} });
+  const clockNow = Date.now;
+  // Keep the real holder fresh while advancing only the waiting process's
+  // clock beyond the existing standalone command deadline.
+  const holder = spawn(process.execPath, ['--input-type=module', '-e', `
+    import {once} from 'node:events';
+    import {withJsonOwnerFileLock} from ${JSON.stringify(new URL('./utils/proc/jsonOwnerFileLock.mjs', import.meta.url).href)};
+    const now=Date.now; Date.now=()=>now()+${inheritedDeadline * 2};
+    await withJsonOwnerFileLock(async()=>{
+      process.send('locked'); await once(process,'message');
+    },{lockPath:${JSON.stringify(lockPath)}});
+    process.disconnect();
+  `], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+  t.after(async () => {
+    if (holder.exitCode === null && holder.signalCode === null) { holder.kill('SIGKILL'); await once(holder, 'exit'); }
+  });
+  await once(holder, 'message');
+  const incumbent = { version: 1, stackName, ownerPid: null,
+    startedAt: new Date().toISOString(), processes: {} };
+  await writeFile(join(baseDir, 'stack.runtime.json'), JSON.stringify(incumbent));
+  const watcher = watch(waitersPath);
+  t.after(() => watcher.close());
+  const queued = once(watcher, 'change');
+  let outcome = null;
+  const stopping = stackEnvRunner.stopObservedStackForRestart({ rootDir: fixture.root,
+    stackName: incumbent.stackName, baseDir, incumbentRuntimeState: incumbent, json: true,
+    env,
+  }).then(value => { outcome = { ok: true, value }; }, error => { outcome = { ok: false, error }; });
+  await queued;
+  const clock = t.mock.method(Date, 'now', () => clockNow() + inheritedDeadline + 1);
+  // A real competing ticket wakes the existing file-change observer.
+  await assert.rejects(withJsonOwnerFileLock(async () => {}, { lockPath, wait: false }),
+    error => error?.code === 'EJSONOWNERFILELOCKBUSY');
+  await new Promise(resolve => setTimeout(resolve, DEFAULT_FILE_CHANGE_CATCH_UP_MS));
+  assert.equal(outcome, null, 'restart must await cleanup rather than exhaust a standalone lock deadline');
+  clock.mock.restore();
+  holder.send('release');
+  await stopping;
+  assert.ifError(outcome?.error);
+  assert.equal(outcome?.ok, true);
+  assert.equal(outcome?.value.finalization?.finalized, true);
+});
+
+for (const successor of [false, true]) {
+  test(`restart ${successor ? 'refuses a foreign cleanup' : 'completes its own late stop before claiming the replacement'}`, async t => {
+    if (process.platform === 'win32') return t.skip('fixture requires a handled POSIX termination signal');
+    const fixture = await createTempFixture(t, { prefix: 'hstack-restart-finalization-' });
+    const rootDir = fixture.path('repo');
+    const storageDir = fixture.path('stacks');
+    const stackName = 'restart-finalization';
+    const baseDir = join(storageDir, stackName);
+    const envPath = join(baseDir, 'env');
+    const cliHomeDir = join(baseDir, 'cli');
+    const statePath = join(baseDir, 'stack.runtime.json');
+    const markerPath = fixture.path('replacement-started');
+    withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: storageDir, HAPPIER_STACK_REPO_DIR: rootDir });
+    for (const path of [baseDir, cliHomeDir, join(rootDir, 'scripts'),
+      ...['cli', 'server', 'ui'].map(app => join(rootDir, 'apps', app))]) await mkdir(path, { recursive: true });
+    await writeFile(join(rootDir, 'package.json'), '{"private":true}\n');
+    for (const app of ['cli', 'server', 'ui']) await writeFile(join(rootDir, 'apps', app, 'package.json'), '{}\n');
+    const env = { HAPPIER_STACK_REPO_DIR: rootDir, HAPPIER_STACK_CLI_HOME_DIR: cliHomeDir,
+      HAPPIER_STACK_RUNTIME_MODE: 'source', HAPPIER_STACK_SERVER_COMPONENT: 'happier-server-light',
+      HAPPIER_STACK_DAEMON: '0', HAPPIER_STACK_STOP_AUTO_SWEEP: '0' };
+    await writeFile(envPath, Object.entries(env).map(([name, value]) => `${name}=${value}`).join('\n'));
+    // A real runner's shutdown projection can advance after the stop snapshot.
+    // That invalidates the first finalization without changing its incarnation.
+    const owner = spawn(process.execPath, ['--input-type=module', '-e', `
+      import {readFile,writeFile} from 'node:fs/promises';
+      process.on('SIGTERM', async () => {
+        const path=${JSON.stringify(statePath)};
+        const state=JSON.parse(await readFile(path,'utf8'));
+        state.serverLifecycle={phase:'stopped'};
+        ${successor ? `state.ownerPid=${process.pid}; state.startedAt='2026-10-25T18:00:00.001Z'; state.sentinel='foreign-cleanup';` : ''}
+        await writeFile(path,JSON.stringify(state));
+        process.exit(0);
+      });
+      process.send('ready');
+      setInterval(()=>{},1000);
+    `], { detached: process.platform !== 'win32', stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+      env: { ...process.env, ...env, HAPPIER_STACK_STACK: stackName,
+        HAPPIER_STACK_ENV_FILE: envPath, HAPPIER_STACK_PROCESS_KIND: 'infra', HAPPIER_HOME_DIR: cliHomeDir } });
+    t.after(async () => {
+      if (owner.exitCode === null && owner.signalCode === null) { owner.kill('SIGKILL'); await once(owner, 'exit'); }
+    });
+    await once(owner, 'message');
+    const { readProcessInstanceFingerprintSync } = await import('@happier-dev/cli-common/processInstance');
+    await writeFile(statePath, JSON.stringify({ version: 1, stackName, ownerPid: owner.pid,
+      startedAt: new Date().toISOString(), ports: { server: await pickNextFreeTcpPort(49291) },
+      processes: {}, serverLifecycle: { phase: 'ready' },
+      processInstances: { owner: { pid: owner.pid, fingerprint: readProcessInstanceFingerprintSync(owner.pid) } } }));
+    await writeFile(join(rootDir, 'scripts', 'dev.mjs'),
+      `import {writeFile} from 'node:fs/promises'; await writeFile(${JSON.stringify(markerPath)},'started');`);
+    const restart = () => stackEnvRunner.runStackScriptWithStackEnv({ rootDir, stackName, scriptPath: 'dev.mjs',
+      args: ['--restart', '--no-daemon', '--no-ui', '--no-browser', '--no-dev-targets'] });
+    if (successor) {
+      await assert.rejects(restart, error => error?.code === 'ESTACKRUNTIMECLEANUPINCOMPLETE');
+      const retained = JSON.parse(await readFile(statePath, 'utf8'));
+      assert.equal(retained.ownerPid, process.pid);
+      assert.equal(retained.sentinel, 'foreign-cleanup');
+      assert.ok(retained.stopRequest);
+      await assert.rejects(readFile(markerPath), { code: 'ENOENT' });
+    } else {
+      await restart();
+      assert.equal(await readFile(markerPath, 'utf8'), 'started');
+      const stopped = JSON.parse(await readFile(statePath, 'utf8'));
+      assert.ok(stopped.portAllocations.controller.port > 0);
+      assert.equal(stopped.ownerPid, null);
+      assert.equal(stopped.ports, undefined);
+    }
+    assert.ok(owner.exitCode !== null || owner.signalCode !== null);
+  });
+}
+
+for (const owned of [true, false]) {
+  test(`restart swap ${owned ? 'retires its recorded orphan incumbent and binds' : 'moves around a foreign listener'}`, async t => {
+    const fixture = await createTempFixture(t, { prefix: 'hstack-restart-orphan-' });
+    const storageDir = fixture.path('stacks');
+    const rootDir = fixture.path('repo');
+    const stackName = 'restart-orphan';
+    const baseDir = join(storageDir, stackName);
+    const envPath = join(baseDir, 'env');
+    const cliHomeDir = join(baseDir, 'cli');
+    const markerPath = fixture.path('replacement-bound');
+    withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: storageDir, HAPPIER_STACK_REPO_DIR: rootDir });
+    for (const path of [baseDir, cliHomeDir, join(rootDir, 'scripts'),
+      ...['cli', 'server', 'ui'].map(app => join(rootDir, 'apps', app))]) await mkdir(path, { recursive: true });
+    await writeFile(join(rootDir, 'package.json'), '{"private":true}\n');
+    for (const app of ['cli', 'server', 'ui']) await writeFile(join(rootDir, 'apps', app, 'package.json'), '{}\n');
+    const env = { HAPPIER_STACK_REPO_DIR: rootDir, HAPPIER_STACK_CLI_HOME_DIR: cliHomeDir,
+      HAPPIER_STACK_RUNTIME_MODE: 'source', HAPPIER_STACK_SERVER_COMPONENT: 'happier-server-light', HAPPIER_STACK_DAEMON: '0' };
+    await writeFile(envPath, Object.entries(env).map(([key, value]) => `${key}=${value}`).join('\n'));
+    // Model a server detached from an earlier runner: its native identity remains
+    // recorded, but there is no surviving controller PID to authorize by.
+    const server = spawn(process.execPath, ['--input-type=module', '-e',
+      "import {createServer} from 'node:net'; const s=createServer(); s.listen(0,'127.0.0.1',()=>console.log(s.address().port));"], {
+      detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'ignore'],
+      env: owned ? { ...process.env, ...env, HAPPIER_STACK_STACK: stackName,
+        HAPPIER_STACK_ENV_FILE: envPath, HAPPIER_STACK_PROCESS_KIND: 'infra', HAPPIER_HOME_DIR: cliHomeDir }
+        : { PATH: process.env.PATH },
+    });
+    t.after(async () => { if (server.exitCode === null && server.signalCode === null) { server.kill('SIGKILL'); await once(server, 'exit'); } });
+    const [chunk] = await once(server.stdout, 'data');
+    const port = Number(String(chunk).trim());
+    assert.ok(port > 0);
+    const { readProcessInstanceFingerprintSync } = await import('@happier-dev/cli-common/processInstance');
+    const incumbent = { version: 1, stackName, ownerPid: null,
+      startedAt: '2026-10-25T03:00:00.000Z', ports: { server: port },
+      processes: owned ? { serverPid: server.pid } : {},
+      processInstances: { processes: owned ? { serverPid: { pid: server.pid,
+        fingerprint: readProcessInstanceFingerprintSync(server.pid) } } : {} } };
+    await writeFile(join(baseDir, 'stack.runtime.json'), JSON.stringify(incumbent));
+    await writeFile(join(rootDir, 'scripts', 'dev.mjs'),
+      `import {createServer} from 'node:net'; import {writeFile} from 'node:fs/promises';
+       const server=createServer(); server.listen(Number(process.env.HAPPIER_STACK_SERVER_PORT),'127.0.0.1',async()=>{
+         await writeFile(${JSON.stringify(markerPath)},String(server.address().port)); server.close(); });`);
+    const restart = () => stackEnvRunner.runStackScriptWithStackEnv({ rootDir, stackName, scriptPath: 'dev.mjs',
+      args: ['--restart', '--no-daemon', '--no-ui', '--no-browser', '--no-dev-targets'] });
+    if (owned) {
+      await restart();
+      assert.equal(await readFile(markerPath, 'utf8'), String(port));
+      assert.ok(server.exitCode !== null || server.signalCode !== null, 'incumbent must exit before replacement binds');
+    } else {
+      await restart();
+      const selectedPort = Number(await readFile(markerPath, 'utf8'));
+      assert.notEqual(selectedPort, port);
+      assert.equal(server.exitCode, null);
+      assert.equal(server.signalCode, null);
+      const stopped = JSON.parse(await readFile(join(baseDir, 'stack.runtime.json'), 'utf8'));
+      assert.deepEqual(stopped.portAllocations.controller, { port: selectedPort, previousPort: port, reason: 'previous-port-occupied' });
+    }
+  });
+}
 
 for (const scriptPath of ['run.mjs', 'dev.mjs']) {
   test(`${scriptPath} restart refuses unavailable placement/sync before replacing incumbent state`, async t => {
@@ -247,7 +709,7 @@ test('source reload preserves an omitted daemon and retires a requested remote r
   assert.equal(stackEnvRunner.shouldPreserveDaemonForRestart(), true);
 });
 
-test('fresh non-restart allocation excludes a stale recorded port held by a foreign listener', async () => {
+test('fresh non-restart allocation excludes a remembered port held by a foreign listener', async () => {
   const staleForeignPort = 3012;
   const reservedPorts = new Set();
   const pickedPorts = [];
@@ -255,7 +717,8 @@ test('fresh non-restart allocation excludes a stale recorded port held by a fore
 
   const selected = await stackEnvRunner.allocateFreshEphemeralServerPort({
     startPort: staleForeignPort,
-    staleRuntimeServerPort: staleForeignPort,
+    preferredServerPort: staleForeignPort,
+    observeTcpPortAvailabilityImpl: async () => ({ status: 'occupied' }),
     reservedPorts,
     pickNextFreeTcpPortImpl: async (_startPort, { reservedPorts: observedReservedPorts }) => {
       assert.ok(observedReservedPorts.has(staleForeignPort), 'stale runtime state must not select the foreign port');
@@ -283,7 +746,8 @@ test('fresh non-restart allocation retries one racy candidate', async () => {
 
   const selected = await stackEnvRunner.allocateFreshEphemeralServerPort({
     startPort: 3012,
-    staleRuntimeServerPort: 3012,
+    preferredServerPort: 3012,
+    observeTcpPortAvailabilityImpl: async () => ({ status: 'occupied' }),
     reservedPorts,
     pickNextFreeTcpPortImpl: async () => {
       const next = candidates.shift();
@@ -309,7 +773,8 @@ test('fresh non-restart allocation fails closed after its one bounded replacemen
   await assert.rejects(
     () => stackEnvRunner.allocateFreshEphemeralServerPort({
       startPort: 3012,
-      staleRuntimeServerPort: 3012,
+      preferredServerPort: 3012,
+      observeTcpPortAvailabilityImpl: async () => ({ status: 'occupied' }),
       reservedPorts: new Set(),
       pickNextFreeTcpPortImpl: async () => {
         const next = candidates.shift();
@@ -350,18 +815,20 @@ test('stopped-stack restart cannot authorize the outer destructive stop path', a
   );
 });
 
-test('restart cleanup is fenced to the originally observed lifecycle', async () => {
+for (const [ownerPid, successorOwnerPid] of [[999_999, 999_999], [null, null], [null, 999_999]]) {
+test(`restart cleanup is fenced to the originally observed lifecycle (${ownerPid} -> ${successorOwnerPid})`, async () => {
   const baseDir = await mkdtemp(join(tmpdir(), 'hstack-restart-successor-'));
   const runtimeStatePath = join(baseDir, 'stack.runtime.json');
   const observedRuntimeState = {
     version: 1,
     stackName: 'restart-successor-fence',
-    ownerPid: 999_999,
+    ownerPid,
     startedAt: '2026-08-13T08:00:00.000Z',
     processes: {},
   };
   const successorRuntimeState = {
     ...observedRuntimeState,
+    ownerPid: successorOwnerPid,
     startedAt: '2026-08-13T08:00:00.001Z',
     sentinel: 'successor-must-survive',
   };
@@ -385,17 +852,18 @@ test('restart cleanup is fenced to the originally observed lifecycle', async () 
 
     assert.deepEqual(result.stopAuthorization, {
       authorized: false,
-      reason: 'successor_owner_incarnation',
+      reason: ownerPid === successorOwnerPid ? 'successor_owner_incarnation' : 'successor_owner',
       expectedOwnerPid: observedRuntimeState.ownerPid,
       expectedOwnerStartedAt: observedRuntimeState.startedAt,
       currentOwnerPid: successorRuntimeState.ownerPid,
-      currentOwnerStartedAt: successorRuntimeState.startedAt,
+      currentOwnerStartedAt: ownerPid === successorOwnerPid ? successorRuntimeState.startedAt : null,
     });
     assert.deepEqual(JSON.parse(await readFile(runtimeStatePath, 'utf8')), successorRuntimeState);
   } finally {
     await rm(baseDir, { recursive: true, force: true });
   }
 });
+}
 
 test('buildAlreadyRunningMobileMetroArgs preserves Expo Tailscale mode', () => {
   assert.equal(typeof stackEnvRunner.buildAlreadyRunningMobileMetroArgs, 'function');
@@ -413,42 +881,3 @@ test('inspectExistingStartLikeRuntime treats --expo-tailscale as a mobile reques
 
   assert.equal(result.wantsMobile, true);
 });
-
-for (const pinned of [false, true]) {
-  test(`background source runner preserves terminal supersession (pinned=${pinned})`, async t => {
-    const fixture = await createTempFixture(t, { prefix: 'hstack-background-superseded-' });
-    const stackName = 'superseded-source';
-    const storageDir = fixture.path('stacks');
-    const baseDir = join(storageDir, stackName);
-    const env = {
-      HAPPIER_STACK_REPO_DIR: fixture.root, HAPPIER_STACK_CLI_HOME_DIR: join(baseDir, 'cli'),
-      HAPPIER_DEV_TARGET_EXECUTION: '1', HAPPIER_STACK_RUNTIME_MODE: 'source',
-      HAPPIER_STACK_SERVER_COMPONENT: 'happier-server-light', HAPPIER_STACK_DAEMON: '0',
-      HAPPIER_STACK_STOP_AUTO_SWEEP: '0',
-      ...(pinned ? { HAPPIER_STACK_SERVER_PORT: String(await pickNextFreeTcpPort(40000)) } : {}),
-    };
-    withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: storageDir, HAPPIER_STACK_REPO_DIR: fixture.root });
-    for (const directory of [baseDir, join(baseDir, 'cli'), fixture.path('scripts'),
-      ...['cli', 'server', 'ui'].map(app => fixture.path('apps', app))]) await mkdir(directory, { recursive: true });
-    await writeFile(fixture.path('package.json'), '{"private":true}');
-    for (const app of ['cli', 'server', 'ui']) await writeFile(fixture.path('apps', app, 'package.json'), '{}');
-    await writeFile(join(baseDir, 'env'), Object.entries(env).map(([name, value]) => `${name}=${value}`).join('\n'));
-    // The subprocess emits the canonical runner terminal result before any
-    // service exists. The background wrapper and error propagation stay real.
-    await writeFile(fixture.path('scripts', 'run.mjs'), `process.stdout.write(${JSON.stringify(SOURCE_START_SUPERSEDED_MARKER + '\n')});`);
-    const result = await runNodeCapture(['--input-type=module', '-e', `
-      import { runStackScriptWithStackEnv } from ${JSON.stringify(new URL('./stack/run_script_with_stack_env.mjs', import.meta.url).href)};
-      try {
-        await runStackScriptWithStackEnv(${JSON.stringify({ rootDir: fixture.root, stackName, scriptPath: 'run.mjs', background: true,
-          args: ['--runtime=source', '--reuse-source-runtime', '--no-daemon', '--no-ui', '--no-browser'], extraEnv: env })});
-        process.exit(0);
-      } catch (error) {
-        console.log('WRAPPER_RESULT=' + JSON.stringify({ code: error.code ?? null }));
-        process.exit(1);
-      }
-    `], { env: process.env });
-    assert.equal(result.code, 1, result.stderr);
-    const terminal = JSON.parse(result.stdout.split('\n').find(line => line.startsWith('WRAPPER_RESULT=')).slice('WRAPPER_RESULT='.length));
-    assert.equal(terminal.code, 'ESOURCESTARTSUPERSEDED', 'background launch must retain the terminal source-start result');
-  });
-}

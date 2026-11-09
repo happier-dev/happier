@@ -1,6 +1,7 @@
 import './utils/env/env.mjs';
 import { cp, mkdir, readFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { parseArgs } from './utils/cli/args.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
@@ -164,10 +165,10 @@ async function migrateLightToServer({ rootDir, fromStack, toStack, includeFiles,
 
   // Read from the snapshot via a temporary pglite socket and the standard Prisma client.
   const { PGlite } = await import('@electric-sql/pglite');
-  const { PGLiteSocketServer } = await import('@electric-sql/pglite-socket');
+  const { FramedPgliteSocketServer } = await import(pathToFileURL(join(lightDir, 'sources/storage/pgliteFramedSocketServer.mjs')).href);
   const pglite = new PGlite(snapshotDbDir);
   await pglite.waitReady;
-  const pgliteServer = new PGLiteSocketServer({ db: pglite, host: '127.0.0.1', port: 0 });
+  const pgliteServer = new FramedPgliteSocketServer({ db: pglite, host: '127.0.0.1', port: 0 });
   await pgliteServer.start();
   const snapshotDbUrl = normalizePgliteServerConnToDatabaseUrl(pgliteServer.getServerConn());
 

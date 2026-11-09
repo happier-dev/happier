@@ -11,11 +11,8 @@ import { resolveProcessTeeLogPath } from '../../utils/proc/proc.mjs';
 import { assertCanonicalManagedStackName } from '../../utils/stack/names.mjs';
 import { normalizeStackRuntimeOwnerStartedAt } from '../../utils/stack/runtime_owner_incarnation.mjs';
 import { preferStackLocalhostUrl } from '../../utils/paths/localhost_host.mjs';
-
-function toPort(value) {
-  const port = Number(value);
-  return Number.isFinite(port) && port > 0 ? Math.floor(port) : null;
-}
+import { buildBorrowedExpoWebappUrl, toPort } from './borrowed_expo_urls.mjs';
+export { buildBorrowedExpoUiUrl, buildBorrowedExpoWebappUrl } from './borrowed_expo_urls.mjs';
 
 export function isBorrowedExpoConsumer({ consumerStackName, producerStackName }) {
   const consumer = String(consumerStackName ?? '').trim();
@@ -36,18 +33,6 @@ export function resolveSourceQaUiMode({ uiMode, noUi = false, consumerStackName,
   // Missing Expo is a UI prerequisite, never a server/daemon admission gate.
   if (mode === 'borrowed') isBorrowedExpoConsumer({ consumerStackName, producerStackName });
   return mode;
-}
-
-export function buildBorrowedExpoUiUrl({ consumerHost, expoPort, serverPort }) {
-  const host = String(consumerHost ?? '').trim();
-  const normalizedExpoPort = toPort(expoPort);
-  const normalizedServerPort = toPort(serverPort);
-  if (!host || !normalizedExpoPort || !normalizedServerPort) return null;
-
-  const url = new URL(`http://${host}:${normalizedExpoPort}/`);
-  url.searchParams.set('server', `http://${host}:${normalizedServerPort}`);
-  url.searchParams.set('happier_hmr', '0');
-  return url.toString();
 }
 
 export function resolveBorrowedExpoLogPath({ producerStackBaseDir, remoteTarget }) {
@@ -148,9 +133,9 @@ export async function projectBorrowedExpoWebappEnv({
   // erase the consumer origin for the lifetime of this Stack controller.
   if (!toPort(borrowedExpo?.port)) return env;
 
-  const webappUrl = await preferStackLocalhostUrl(`http://localhost:${borrowedExpo.port}`, {
+  const webappUrl = await preferStackLocalhostUrl(buildBorrowedExpoWebappUrl({ consumerHost: 'localhost', expoPort: borrowedExpo.port }), {
     stackName: consumerStackName,
     env,
   });
-  return { ...env, HAPPIER_WEBAPP_URL: new URL(webappUrl).origin };
+  return { ...env, HAPPIER_WEBAPP_URL: webappUrl };
 }

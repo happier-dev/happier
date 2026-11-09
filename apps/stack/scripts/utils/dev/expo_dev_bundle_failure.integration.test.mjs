@@ -1,11 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
-import { chmod, mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
+import { createRequire, syncBuiltinESMExports } from 'node:module';
+import fs from 'node:fs';
+import { chmod, mkdir, readFile, stat, symlink, utimes, writeFile } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
-import { ensureDevExpoServer } from './expo_dev.mjs';
+import { ensureDevExpoServer, resolveExpoMetroCacheRoot } from './expo_dev.mjs';
+import { getExpoStatePaths, writePidState } from '../expo/expo.mjs';
 import { killProcessTree } from '../proc/proc.mjs';
 import { sanitizeStackTestRunnerEnv } from '../test/test_env.mjs';
 import { retainBundledPluginUiArtifactsInventory } from '../../../../ui/scripts/generateBundledPluginUiArtifacts.mjs';
@@ -31,12 +35,13 @@ test('disposable supervised Metro keeps serving healthy bundles across a broken 
   const runtimeRoot = dirname(requireFromUi.resolve('metro-runtime/package.json'));
   await mkdir(join(uiDir, 'node_modules/.bin'), { recursive: true });
   await writeFile(join(uiDir, 'package.json'), '{"name":"disposable-expo-reliability"}');
+  await writeFile(join(uiDir, 'metro.config.js'), 'module.exports = {};');
   await mkdir(join(uiDir, 'scripts'));
   await symlink(join(realUiDir, 'scripts/ensureWorkspacePackagesBuilt.mjs'), join(uiDir, 'scripts/ensureWorkspacePackagesBuilt.mjs'));
   const inventoryDir = join(uiDir, 'sources/sync/domains/plugins/availability');
   await mkdir(inventoryDir, { recursive: true });
   const inventory = join(inventoryDir, 'generatedBundledPluginUiArtifacts.js');
-  const lastGreen = 'export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = {fixture: require("./fixture.js")};';
+  const lastGreen = 'const BUNDLED_PLUGIN_UI_APP_ASSET_0 = require("./fixture.js");\nexport const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = {fixture: BUNDLED_PLUGIN_UI_APP_ASSET_0};';
   await writeFile(inventory, lastGreen);
   await writeFile(join(inventoryDir, 'fixture.js'), 'module.exports = "LAST_GREEN_PLUGIN_UI";');
   const warnings = [];
@@ -51,6 +56,7 @@ test('disposable supervised Metro keeps serving healthy bundles across a broken 
 const fs = require('node:fs');
 const http = require('node:http');
 fs.writeFileSync(${JSON.stringify(fixture.path('inventory-path'))}, process.env.HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY);
+fs.writeFileSync(${JSON.stringify(fixture.path('cache-env'))}, JSON.stringify({root: process.env.HAPPIER_UI_METRO_CACHE_ROOT, identity: process.env.HAPPIER_UI_METRO_CACHE_IDENTITY}));
 fs.writeFileSync('healthy.js', 'module.exports = require(' + JSON.stringify(process.env.HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY) + ');\\n');
 const Metro = require(${JSON.stringify(metroPath)}).default;
 let metro;
@@ -61,7 +67,10 @@ let listener;
   config.maxWorkers = 1;
   config.resolver.useWatchman = false;
   config.resolver.nodeModulesPaths = ${JSON.stringify([join(realUiDir, 'node_modules'), join(realUiDir, '../../node_modules')])};
-  config.cacheStores = [new (require(${JSON.stringify(cachePath)}).FileStore)({root: ${JSON.stringify(fixture.path('transforms'))}})];
+  const actualMetroConfig = require(${JSON.stringify(join(realUiDir, 'metro.config.js'))});
+  config.cacheStores = typeof actualMetroConfig.cacheStores === 'function'
+    ? actualMetroConfig.cacheStores({FileStore: require(${JSON.stringify(cachePath)}).FileStore}) : actualMetroConfig.cacheStores;
+  config.cacheVersion = actualMetroConfig.cacheVersion;
   config.fileMapCacheDirectory = ${JSON.stringify(fixture.path('filemap'))};
   fs.mkdirSync(config.fileMapCacheDirectory);
   config.reporter = {update() {}};
@@ -76,6 +85,22 @@ let listener;
 process.on('SIGTERM', async () => { listener?.close(); await metro?.end(); process.exit(0); });
 `);
   await chmod(executable, 0o755);
+  const paths = getExpoStatePaths({ baseDir: fixture.root, kind: 'expo-dev', projectDir: uiDir });
+  const retiredGraph = join(paths.stateDir, 'plugin-ui', 'preparation-ABC123');
+  await mkdir(retiredGraph, { recursive: true });
+  await writeFile(join(retiredGraph, 'old.chunk.bundle'), 'retired graph');
+  const historical = new Date(Date.now() - 48 * 3600000);
+  await utimes(join(retiredGraph, 'old.chunk.bundle'), historical, historical);
+  await utimes(retiredGraph, historical, historical);
+  const previous = spawn(process.execPath, ['-e', ''], { stdio: 'ignore' });
+  await once(previous, 'close');
+  await writePidState(paths.statePath, { pid: previous.pid, port: 0 });
+  // Control only the parent's OS process census. Real Stack startup, the UI
+  // inventory owner, retention policy, spawned Metro and asset requests run.
+  const readDirectories = fs.readdirSync;
+  const processCensus = t.mock.method(fs, 'readdirSync', (path, ...args) => path === '/proc' ? [] : readDirectories(path, ...args));
+  syncBuiltinESMExports();
+  t.after(() => { processCensus.mock.restore(); syncBuiltinESMExports(); });
   result = await ensureDevExpoServer({ startUi: true, uiDir,
     autostart: { baseDir: fixture.root }, baseEnv: { ...sanitizeStackTestRunnerEnv(process.env, { isolatedStackRoot: fixture.root }),
       HAPPIER_STACK_STACK: 'qa-dev-expo-reliability', HAPPIER_STACK_ENV_FILE: fixture.path('env'),
@@ -84,6 +109,9 @@ process.on('SIGTERM', async () => { listener?.close(); await metro?.end(); proce
     apiServerUrl: 'http://127.0.0.1:1', stackMode: true,
     stackName: 'qa-dev-expo-reliability', envPath: fixture.path('env'), runtimeStatePath: fixture.path('runtime.json'),
     children, isShuttingDown: () => shuttingDown, quiet: true, spawnOptions: { silent: true } });
+  processCensus.mock.restore();
+  syncBuiltinESMExports();
+  await assert.rejects(stat(retiredGraph), { code: 'ENOENT' }, 'actual Expo startup reclaims its retired plugin preparation');
   const origin = `http://127.0.0.1:${result.port}`;
   const readyDeadline = Date.now() + 15000;
   while (true) {
@@ -91,6 +119,11 @@ process.on('SIGTERM', async () => { listener?.close(); await metro?.end(); proce
     assert.ok(Date.now() < readyDeadline, 'own disposable Metro startup did not complete');
     await new Promise(resolve => setTimeout(resolve, 25));
   }
+  const cacheEnv = JSON.parse(await readFile(fixture.path('cache-env'), 'utf8'));
+  const servingState = JSON.parse(await readFile(paths.statePath, 'utf8'));
+  assert.equal(cacheEnv.root, resolveExpoMetroCacheRoot({ tmpDir: paths.tmpDir,
+    currentFingerprint: servingState.metroConfigFingerprint }), 'Stack binds the actual Metro consumer to its selected cache generation');
+  assert.equal(cacheEnv.identity, servingState.metroConfigFingerprint);
   const bundle = entry => fetch(`${origin}/${entry}.bundle?platform=web&dev=true&minify=false`);
   const before = await bundle('broken');
   assert.equal(before.status, 200, await before.text());
@@ -115,7 +148,7 @@ process.on('SIGTERM', async () => { listener?.close(); await metro?.end(); proce
   const consumedInventory = await readFile(fixture.path('inventory-path'), 'utf8');
   assert.notEqual(consumedInventory, inventory);
   await writeFile(join(inventoryDir, 'next.js'), 'module.exports = "NEXT_GREEN_PLUGIN_UI";');
-  await writeFile(inventory, 'export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = {fixture: require("./next.js")};');
+  await writeFile(inventory, 'const BUNDLED_PLUGIN_UI_APP_ASSET_0 = require("./next.js");\nexport const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = {fixture: BUNDLED_PLUGIN_UI_APP_ASSET_0};');
   const beforePublication = await bundle('healthy');
   assert.match(await beforePublication.text(), /LAST_GREEN_PLUGIN_UI/);
   await retainBundledPluginUiArtifactsInventory({ inventoryPath: inventory, outputPath: consumedInventory });

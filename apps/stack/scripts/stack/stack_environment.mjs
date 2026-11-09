@@ -29,6 +29,7 @@ import { resolveStackServerEndpoint } from '../utils/server/urls.mjs';
 import { createListenerOwnershipObservationScope } from '../utils/server/listener_ownership.mjs';
 import { resolveSharedDatabaseSourceProvider } from '../utils/server/effective_db_provider.mjs';
 import { projectBorrowedExpoWebappEnv } from '../runtime/shared/borrowed_expo.mjs';
+import { projectRetainedRelayEnvironment } from '../utils/server/infra/iroh/configuration.mjs';
 
 const readExistingEnv = readTextOrEmpty;
 
@@ -86,6 +87,7 @@ export async function withStackEnv({
   fn,
   extraEnv = {},
   reconcileDaemonRuntimeState = true,
+  includeRuntimeRelay = false,
   beforeRuntimeReconcile = null,
 }) {
   const { envPath, baseDir } = resolveStackEnvPath(stackName);
@@ -217,6 +219,7 @@ export async function withStackEnv({
     });
   }
 
+  if (includeRuntimeRelay) env = projectRetainedRelayEnvironment(env, runtimeState?.irohRelay);
   return await fn({ env, envPath, stackEnv, runtimeStatePath, runtimeState });
 }
 

@@ -1,5 +1,5 @@
 /** Render the live-observation branch of the canonical runtime identity probe. */
-export function buildRuntimeSnapshotObservationExpression({ target, paths, services }) {
+export function buildRuntimeSnapshotObservationExpression({ target, paths, services, databaseOnly = false }) {
   const components = ['server', 'daemon'].filter(component => services[component] === true);
   return [
     '(async () => {',
@@ -13,7 +13,8 @@ export function buildRuntimeSnapshotObservationExpression({ target, paths, servi
     '  const state = info.runtime.components[component];',
     "  serviceStatus[component] = state.running ? 'running' : state.status ?? (state.ownershipStatus === 'unknown' ? 'unknown' : 'not-running');",
     '}',
-    `process.stdout.write(JSON.stringify({ sourceRuntimeIdentities, serviceStatus${services.daemon ? ', managedCli: info.runtime.managedCli, daemonEntry: info.runtime.daemonEntry, daemonParticipants: info.runtime.daemonParticipants' : ''} }));`,
+    databaseOnly ? 'process.stdout.write(JSON.stringify(info.database));'
+      : `process.stdout.write(JSON.stringify({ sourceRuntimeIdentities, serviceStatus${services.server ? ', database: info.database' : ''}${services.daemon ? ', managedCli: info.runtime.managedCli, daemonEntry: info.runtime.daemonEntry, daemonParticipants: info.runtime.daemonParticipants' : ''} }));`,
     "})().catch(() => fail('runtime_observation_failed'));",
   ].join('\n');
 }

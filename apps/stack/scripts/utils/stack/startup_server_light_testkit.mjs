@@ -37,6 +37,17 @@ export class PGLiteSocketServer {
 }
 `,
   });
+  await mkdir(join(serverDir, 'sources', 'storage'), { recursive: true });
+  await writeFile(
+    join(serverDir, 'sources', 'storage', 'pgliteFramedSocketServer.mjs'),
+    `export class FramedPgliteSocketServer {
+  constructor(_opts) {}
+  async start() {}
+  getServerConn() { return '127.0.0.1:${String(socketPort)}'; }
+  async stop() {}
+}\n`,
+    'utf-8',
+  );
   await writeEsmPkg({
     dir: join(serverDir, 'node_modules', '@prisma', 'client'),
     name: '@prisma/client',

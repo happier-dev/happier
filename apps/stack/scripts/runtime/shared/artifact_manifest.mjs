@@ -59,7 +59,6 @@ export function validateArtifactManifest(manifest) {
   const artifactFingerprint = artifactFingerprintValidation.artifactFingerprint;
   const sourceFingerprint = String(manifest?.sourceFingerprint ?? '').trim();
   const entrypoint = String(manifest?.entrypoint ?? '').trim();
-  const payloadDir = String(manifest?.payloadDir ?? '').trim();
   const supportReference = normalizeComponentSupportArtifactReference({ component, manifest });
 
   if (version !== 1) errors.push('artifact manifest version must be 1');
@@ -68,7 +67,6 @@ export function validateArtifactManifest(manifest) {
     errors.push(artifactFingerprintValidation.error.replace(/^\[runtime\] /, 'artifact manifest '));
   }
   if (!sourceFingerprint) errors.push('artifact manifest sourceFingerprint is required');
-  if (!payloadDir) errors.push('artifact manifest payloadDir is required');
   if (!entrypoint) errors.push('artifact manifest entrypoint is required');
   if (supportReference.error) errors.push(`artifact manifest ${supportReference.error}`);
 
@@ -82,7 +80,6 @@ export function validateArtifactManifest(manifest) {
           component,
           artifactFingerprint,
           sourceFingerprint,
-          payloadDir,
           entrypoint,
           ...(supportReference.reference
             ? { [supportReference.reference.field]: supportReference.reference.artifactFingerprint }

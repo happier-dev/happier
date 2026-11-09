@@ -316,8 +316,9 @@ async function buildGuidedNoExpoFixture({
     }) + '\n',
     'utf-8'
   );
+  let daemonDistClosureFingerprint = null;
   if (runtimeSnapshot) {
-    await writeRuntimeSnapshotLayout({
+    const layout = await writeRuntimeSnapshotLayout({
       stackDir: join(storageDir, stackName),
       snapshotId: 'snap-auth',
       sourceFingerprint: 'src-auth',
@@ -336,10 +337,12 @@ async function buildGuidedNoExpoFixture({
         nodeContent: 'export {};\n',
       },
     });
+    daemonDistClosureFingerprint = layout.daemonDistClosureFingerprint;
   }
 
   return {
     tmp,
+    daemonDistClosureFingerprint,
     storageDir,
     stackName,
     server,
@@ -397,6 +400,68 @@ function applyProcessEnv(patch) {
     }
   };
 }
+
+test('recovery-key stdin bootstraps the auth-safe source listener before native CLI login', async t => {
+  let ready = false;
+  const fixture = await buildGuidedNoExpoFixture({ sourceSnapshot: true, includeSourceCli: false,
+    onHealthRequest: ({ res }) => {
+      ready ||= existsSync(join(fixture.tmp, 'bootstrap.json'));
+      res.writeHead(ready ? 200 : 503, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ status: ready ? 'ok' : 'starting', service: 'happier-server' }));
+    } });
+  t.after(() => fixture.cleanup());
+  const rootDir = dirname(dirname(fileURLToPath(import.meta.url)));
+  const bootstrapPath = join(fixture.tmp, 'bootstrap.json');
+  const loginPath = join(fixture.tmp, 'login.json');
+  const realProcUrl = pathToFileURL(join(rootDir, 'scripts/utils/proc/proc.mjs')).href;
+  const loaderPath = join(fixture.tmp, 'bootstrap-process-loader.mjs');
+  const registerPath = join(fixture.tmp, 'register-bootstrap-process-loader.mjs');
+  // Only the external Stack-start process is replaced; auth orchestration,
+  // health readiness, CLI selection and stdin inheritance remain real.
+  const processBoundary = `
+    export * from ${JSON.stringify(realProcUrl)};
+    import {run as realRun} from ${JSON.stringify(realProcUrl)};
+    import {writeFileSync} from 'node:fs';
+    export async function run(command,args,options) {
+      if (args[0]?.endsWith('/scripts/stack.mjs') && args[1] === 'start') {
+        writeFileSync(${JSON.stringify(bootstrapPath)},JSON.stringify({args,authFlow:options.env.HAPPIER_STACK_AUTH_FLOW}));
+        return '';
+      }
+      return realRun(command,args,options);
+    }`;
+  await writeFile(loaderPath, `export async function resolve(specifier,context,next) {
+    if (specifier === './utils/proc/proc.mjs') return {url:${JSON.stringify(`data:text/javascript,${encodeURIComponent(processBoundary)}`)},shortCircuit:true};
+    return next(specifier,context);
+  }`);
+  await writeFile(registerPath, `import {register} from 'node:module';register(${JSON.stringify(pathToFileURL(loaderPath).href)},import.meta.url);`);
+  await writeFile(fixture.sourceEntrypoint, `
+    import {readFileSync} from 'node:fs';
+    import {createHash} from 'node:crypto';
+    const args=process.argv.slice(2);
+    if (args.includes('recovery-key')) {
+      const input=readFileSync(0,'utf8');
+      writeFileSync(${JSON.stringify(loginPath)},JSON.stringify({args,inputDigest:createHash('sha256').update(input).digest('hex')}));
+    } else if (args.includes('auth') && args.includes('login')) process.exit(42);
+    ${buildSuccessfulAuthBinScript()}
+  `);
+  const input = JSON.stringify({ recoveryKey: 'synthetic-stdin-only-fixture' });
+  const result = await runNodeCapture(['--import', registerPath, authScriptPath(rootDir), 'login',
+    '--start-if-needed', '--recovery-key-stdin'], { cwd: rootDir,
+    env: { ...fixture.env, HAPPIER_STACK_TEST_TTY: '0',
+      HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '1', HAPPIER_DAEMON_START_WAIT_TIMEOUT_MS: '1' }, input });
+  assert.equal(result.code, 0, 'stdin-only recovery must complete after starting the source listener');
+  const bootstrap = JSON.parse(await readFile(bootstrapPath, 'utf8'));
+  assert.equal(bootstrap.authFlow, '1');
+  assert.ok(bootstrap.args.includes('--runtime=source'));
+  assert.ok(bootstrap.args.includes('--no-daemon'));
+  const login = JSON.parse(await readFile(loginPath, 'utf8'));
+  assert.deepEqual(login.args.slice(-5), ['auth', 'recovery-key', 'login', '--secrets-json-stdin', '--json']);
+  const { createHash } = await import('node:crypto');
+  assert.equal(login.inputDigest, createHash('sha256').update(input).digest('hex'), 'stdin reaches only the native CLI unchanged');
+  assert.equal(login.args.includes('--key'), false);
+  assert.equal(result.stdout.includes(input), false);
+  assert.equal(result.stderr.includes(input), false);
+});
 
 async function writeOrchestratedAuthStubLoader({ dir, markerPath }) {
   const loaderPath = join(dir, 'orchestrated-auth-loader.mjs');
@@ -716,8 +781,7 @@ for (const runtimeSnapshot of [false, true]) {
     });
     const selectedUrl = new URL(expoUrl || serverUrl);
     assert.equal(selectedUrl.origin, `http://happier-${fixture.stackName}.localhost:${metro.port}`);
-    assert.equal(selectedUrl.searchParams.get('server'), serverUrl);
-    assert.equal(selectedUrl.searchParams.get('happier_hmr'), '0');
+    assert.equal(selectedUrl.search, '');
 
     const target = await resolveStackWebappTargetForAuth({
       rootDir, stackName: fixture.stackName, env: { ...fixture.env, HAPPIER_STACK_AUTH_FLOW: '1' },
@@ -982,7 +1046,7 @@ test('hstack auth login uses the active runtime snapshot cli for the actual logi
     assert.match(markerRaw, /^web$/m, `expected runtime cli to receive web method\n${markerRaw}`);
     assert.match(markerRaw, /^runtime=1$/m, `expected runtime login to retain admitted provenance\n${markerRaw}`);
     assert.match(markerRaw, /entrypoint=.*\/runtime\/builds\/snap-auth\/cli\/package-dist\/index\.mjs$/m);
-    assert.match(markerRaw, /^fingerprint=0123456789abcdef$/m);
+    assert.ok(markerRaw.split('\n').includes(`fingerprint=${fixture.daemonDistClosureFingerprint}`));
   } finally {
     if (fixture?.markerPath) {
       await rm(dirname(fixture.markerPath), { recursive: true, force: true }).catch(() => {});
@@ -1003,7 +1067,7 @@ test('printed runtime stack login preserves admitted subprocess identity', async
   const { cmd } = JSON.parse(result.stdout);
   assert.match(cmd, /HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED="1"/);
   assert.match(cmd, /HAPPIER_CLI_SUBPROCESS_DIST_ENTRYPOINT="[^"\n]+\/cli\/package-dist\/index\.mjs"/);
-  assert.match(cmd, /HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT="0123456789abcdef"/);
+  assert.ok(cmd.includes(`HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT="${fixture.daemonDistClosureFingerprint}"`));
 });
 
 test('source snapshot auth suggests source recovery while its server is still starting', async (t) => {

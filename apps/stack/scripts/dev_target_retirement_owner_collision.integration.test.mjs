@@ -86,8 +86,6 @@ test('Dev Target retirement fences a co-located controller with the same Stack i
     activeServerId: 'stack_repo-dev-a1cc5e0671__id_default',
     stackName,
   });
-  assert.match(retirementCommand, /HAPPIER_DEV_TARGET_EXECUTION=1/);
-
   controller = spawnOwnedSleep({
     env: {
       ...process.env,

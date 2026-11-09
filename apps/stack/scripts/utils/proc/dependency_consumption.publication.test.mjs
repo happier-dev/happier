@@ -2,10 +2,10 @@ import assert from 'node:assert/strict';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import test from 'node:test';
 
-import { ensureDepsInstalled } from './pm.mjs';
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import { assertDependenciesReady, markDependencyMutation, waitForDependencyRefresh,
   withDependencyConsumption, withDependencyRefresh, withDependencyRefreshLock } from './dependency_refresh.mjs';
+import { ensureDepsInstalled } from './pm.mjs';
 
 test('queued publication consumers survive failed installation and repair without package writes', { timeout: 60_000 }, async t => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-consume-repair-' });
@@ -123,7 +123,6 @@ test('an installer can consume its own admitted mutation and readers can nest', 
   });
   assert.equal(await withDependencyConsumption(options, () => withDependencyConsumption(options, () => 'nested')), 'nested');
 });
-
 
 test('the package installer publishes its pnpm diagnostic for later consumers', async t => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-installer-process-publication-' });

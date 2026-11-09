@@ -15,7 +15,7 @@ const STACK_HELP_USAGE_LINES = [
   'hstack stack env <name> shared-db <source-stack> | set KEY=VALUE [KEY2=VALUE2...] | unset KEY [KEY2...] | get KEY | list | path [--json]',
   'hstack stack auth <name> status|login|copy-from [--json]',
   'hstack stack dev <name> [-- ...]',
-  'hstack stack start <name> [-- ...]',
+  'hstack stack start <name> [--verify] [-- ...]',
   'hstack stack build <name> [-- ...]',
   'hstack stack runtime <name> activate [--web|--server|--daemon|--all] [--json] | select [--json]',
   'hstack stack review <name> [component...] [--reviewers=coderabbit,codex] [--base-remote=<remote>] [--base-branch=<branch>] [--base-ref=<ref>] [--chunks|--no-chunks] [--chunking=auto|head-slice|commit-window] [--chunk-max-files=N] [--json]',

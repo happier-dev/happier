@@ -6,8 +6,8 @@ import test from 'node:test';
 
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import { readBuildInputIdentity } from '../../../../../scripts/workspaces/buildInputConvergence.mjs';
-import { SOURCE_UI_ASSET_OUTPUT_PATHS, SOURCE_UI_ASSET_RECORD_FILENAME } from '../../../../ui/scripts/sourceUiAssetPaths.mjs';
 import { readSourceComponentBuildInputs, readSourcePluginUiBuildInputs, readSourcePluginUiBuildInputRecord, readWorkspaceBuildInputs, resolveWorkspaceBuildInputWatchPaths } from './workspaceBuildInputs.mjs';
+import { SOURCE_UI_ASSET_OUTPUT_PATHS, SOURCE_UI_ASSET_RECORD_FILENAME } from '../../../../ui/scripts/sourceUiAssetPaths.mjs';
 
 test('plugin UI inputs follow consumed workspace files instead of dependency package membership', async t => {
   const fixture = await createTempFixture(t, { prefix: 'happier-ui-graph-inputs-' });
@@ -111,32 +111,28 @@ test('plugin UI compiler identity follows the artifact compiler without inventor
   assert.notEqual(await readBuildInputIdentity({ sourceDir: fixture.root, files }), initial);
 });
 
-test('source web inputs retain dependency patches required by the captured UI preflight', async t => {
-  const fixture = await createTempFixture(t, { prefix: 'happier-source-web-patch-inputs-' });
+test('component inventory follows undeclared source imports without admitting unrelated packages', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-source-import-membership-' });
   await writeFile(fixture.path('package.json'), '{}');
-  await mkdir(fixture.path('patches'));
-  const patch = 'patches/dependency.patch';
-  await writeFile(fixture.path('pnpm-workspace.yaml'), `patchedDependencies:\n  dependency@1.0.0: ${patch}\n`);
-  await writeFile(fixture.path(patch), 'authored patch');
-  const inputs = await readSourceComponentBuildInputs({ repoDir: fixture.root, component: 'expo' });
-  assert.ok(inputs.files.includes(patch), 'the captured patch declaration must have its authored patch bytes');
-  assert.ok(inputs.watchPaths.includes(fixture.path('patches')), 'new patch membership must invalidate preparation');
-  const identity = await readBuildInputIdentity({ sourceDir: fixture.root, files: inputs.files });
-  await writeFile(fixture.path(patch), 'changed authored patch');
-  assert.notEqual(await readBuildInputIdentity({ sourceDir: fixture.root, files: inputs.files }), identity);
-});
-
-test('workspace observation retains manifest corrections while build input admission rejects malformed JSON', async t => {
-  const fixture = await createTempFixture(t, { prefix: 'happier-malformed-watch-inputs-' });
-  await mkdir(fixture.path('src'));
-  await writeFile(fixture.path('package.json'), '{');
-  assert.throws(() => readWorkspaceBuildInputs(fixture.root), SyntaxError);
-  const paths = resolveWorkspaceBuildInputWatchPaths(fixture.root);
-  assert.ok(paths.includes(fixture.path('src')));
-  assert.ok(paths.includes(fixture.path('package.json')));
-  await writeFile(fixture.path('package.json'), JSON.stringify({ scripts: { build: 'node ./build.mjs' } }));
-  await writeFile(fixture.path('build.mjs'), 'export {};');
-  assert.ok(resolveWorkspaceBuildInputWatchPaths(fixture.root).includes(fixture.path('build.mjs')));
+  for (const [directory, name, contents] of [
+    ['apps/server', '@happier-dev/server', 'export { marker } from "@happier-dev/added";'],
+    ['packages/added', '@happier-dev/added', 'export { marker } from "@happier-dev/transitive";'],
+    ['packages/transitive', '@happier-dev/transitive', 'export const marker = true;'],
+    ['packages/unrelated', '@happier-dev/unrelated', 'export const unused = true;'],
+  ]) {
+    await mkdir(fixture.path(`${directory}/src`), { recursive: true });
+    await writeFile(fixture.path(`${directory}/package.json`), JSON.stringify({ name,
+      exports: { '.': { 'happier-source': './src/index.ts' } } }));
+    await writeFile(fixture.path(`${directory}/src/index.ts`), contents, { mode: 0o600 });
+  }
+  await writeFile(fixture.path('packages/added/src/ignored.test.ts'), 'import "@happier-dev/unrelated";');
+  const inputs = await readSourceComponentBuildInputs({ repoDir: fixture.root, component: 'server' });
+  assert.ok(inputs.files.includes('packages/added/src/index.ts'));
+  assert.ok(inputs.files.includes('packages/transitive/src/index.ts'));
+  assert.equal(inputs.files.includes('packages/unrelated/src/index.ts'), false);
+  assert.equal(inputs.files.includes('packages/added/src/ignored.test.ts'), false);
+  assert.ok(inputs.workspaceDirs.includes('packages/added'));
+  assert.ok(inputs.watchPaths.includes(fixture.path('packages/added/src')));
 });
 
 test('source build inputs capture and watch pnpm dependency resolution and policy', async t => {
@@ -152,20 +148,70 @@ test('source build inputs capture and watch pnpm dependency resolution and polic
   }
 });
 
-test('source UI preparation captures its declaration projector and invalidates compiler reuse when it changes', async t => {
+test('workspace observation retains manifest corrections while build input admission rejects malformed JSON', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-malformed-watch-inputs-' });
+  await mkdir(fixture.path('src'));
+  await writeFile(fixture.path('package.json'), '{');
+  assert.throws(() => readWorkspaceBuildInputs(fixture.root), SyntaxError);
+  const paths = resolveWorkspaceBuildInputWatchPaths(fixture.root);
+  assert.ok(paths.includes(fixture.path('src')));
+  assert.ok(paths.includes(fixture.path('package.json')));
+  await writeFile(fixture.path('package.json'), JSON.stringify({ scripts: { build: 'node ./build.mjs' } }));
+  await writeFile(fixture.path('build.mjs'), 'export {};');
+  assert.ok(resolveWorkspaceBuildInputWatchPaths(fixture.root).includes(fixture.path('build.mjs')));
+});
+
+test('source web inputs retain dependency patches required by the captured UI preflight', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-source-web-patch-inputs-' });
+  await writeFile(fixture.path('package.json'), '{}');
+  await mkdir(fixture.path('patches'));
+  const patch = 'patches/dependency.patch';
+  await writeFile(fixture.path('pnpm-workspace.yaml'), `patchedDependencies:\n  dependency@1.0.0: ${patch}\n`);
+  await writeFile(fixture.path(patch), 'authored patch');
+  const inputs = await readSourceComponentBuildInputs({ repoDir: fixture.root, component: 'expo' });
+  assert.ok(inputs.files.includes(patch), 'the captured patch declaration must have its authored patch bytes');
+  assert.ok(inputs.watchPaths.includes(fixture.path('patches')), 'new patch membership must invalidate preparation');
+  const identity = await readBuildInputIdentity({ sourceDir: fixture.root, files: inputs.files });
+  await writeFile(fixture.path(patch), 'changed authored patch');
+  assert.notEqual(await readBuildInputIdentity({ sourceDir: fixture.root, files: inputs.files }), identity);
+});
+
+test('source UI input capture excludes prepared inventories while retaining their authored consumer', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-source-ui-asset-inputs-' });
+  await writeFile(fixture.path('package.json'), '{}');
+  await writeFile(fixture.path('pnpm-workspace.yaml'), 'packages:\n  - apps/*\n');
+  await mkdir(fixture.path('apps/ui'), { recursive: true });
+  await writeFile(fixture.path('apps/ui/package.json'), JSON.stringify({ name: 'fixture-ui' }));
+  const consumer = 'sources/text/localeBundleLoaders.web.ts';
+  const outputs = [...Object.values(SOURCE_UI_ASSET_OUTPUT_PATHS), `sources/${SOURCE_UI_ASSET_RECORD_FILENAME}`];
+  for (const path of [consumer, ...outputs]) {
+    await mkdir(dirname(fixture.path('apps/ui', path)), { recursive: true });
+    await writeFile(fixture.path('apps/ui', path), 'export {};\n');
+  }
+  const inputs = await readSourceComponentBuildInputs({ repoDir: fixture.root, component: 'expo' });
+  assert.ok(inputs.files.includes(`apps/ui/${consumer}`));
+  for (const output of outputs) assert.equal(inputs.files.includes(`apps/ui/${output}`), false,
+    'prepared references must be regenerated against the captured project before Expo resolves them');
+});
+
+test('source UI preparation captures compiler dependencies and invalidates reuse when they change', async t => {
   const fixture = await createTempFixture(t, { prefix: 'happier-ui-declaration-inputs-' });
   await writeFile(fixture.path('package.json'), '{}');
-  const owner = 'apps/cli/scripts/build-owned/bundledPlugins/uiDeclarations.mjs';
-  await mkdir(dirname(fixture.path(owner)), { recursive: true });
-  await writeFile(fixture.path(owner), 'export const declaration = true;\n');
-  const capture = await readSourceComponentBuildInputs({ repoDir: fixture.root, component: 'expo' });
-  assert.ok(capture.files.includes(owner), 'finite source UI captures its imported projection owner');
-  assert.ok(capture.watchPaths.includes(join(fixture.root, owner)), 'source UI observes projection owner changes');
-  const compiler = await readSourcePluginUiBuildInputs({ repoDir: fixture.root, compiler: true });
-  assert.ok(compiler.includes(owner), 'projection changes participate in the compiler input identity');
-  const identity = await readBuildInputIdentity({ sourceDir: fixture.root, files: compiler });
-  await writeFile(fixture.path(owner), 'export const declaration = false;\n');
-  assert.notEqual(await readBuildInputIdentity({ sourceDir: fixture.root, files: compiler }), identity);
+  for (const [owner, watchRoot] of [
+    ['apps/cli/scripts/build-owned/bundledPlugins/uiDeclarations.mjs', 'apps/cli/scripts/build-owned/bundledPlugins/uiDeclarations.mjs'],
+    ['scripts/workspaces/sourcePluginUiBuildOptions.mjs', 'scripts'],
+  ]) {
+    await mkdir(dirname(fixture.path(owner)), { recursive: true });
+    await writeFile(fixture.path(owner), 'export const input = true;\n');
+    const capture = await readSourceComponentBuildInputs({ repoDir: fixture.root, component: 'expo' });
+    assert.ok(capture.files.includes(owner), `finite source UI captures ${owner}`);
+    assert.ok(capture.watchPaths.includes(join(fixture.root, watchRoot)), `source UI observes ${owner} through ${watchRoot}`);
+    const compiler = await readSourcePluginUiBuildInputs({ repoDir: fixture.root, compiler: true });
+    assert.ok(compiler.includes(owner), `${owner} participates in the compiler input identity`);
+    const identity = await readBuildInputIdentity({ sourceDir: fixture.root, files: compiler });
+    await writeFile(fixture.path(owner), 'export const input = false;\n');
+    assert.notEqual(await readBuildInputIdentity({ sourceDir: fixture.root, files: compiler }), identity);
+  }
 });
 
 test('source plugin UI inputs admit shipped author Resources and exclude their generated publication outputs', async t => {
@@ -194,22 +240,4 @@ test('source plugin UI inputs admit shipped author Resources and exclude their g
   await writeFile(join(root, 'dist/happier-plugin-ui/locale.json.bundle'), 'generated-output-changed');
   await writeFile(join(root, '.happier-plugin/plugin.json'), 'generated-output-changed');
   assert.equal(await readBuildInputIdentity({ sourceDir: fixture.root, files }), changed);
-});
-
-test('source UI input capture excludes prepared inventories while retaining their authored consumer', async t => {
-  const fixture = await createTempFixture(t, { prefix: 'happier-source-ui-asset-inputs-' });
-  await writeFile(fixture.path('package.json'), '{}');
-  await writeFile(fixture.path('pnpm-workspace.yaml'), 'packages:\n  - apps/*\n');
-  await mkdir(fixture.path('apps/ui'), { recursive: true });
-  await writeFile(fixture.path('apps/ui/package.json'), JSON.stringify({ name: 'fixture-ui' }));
-  const consumer = 'sources/text/localeBundleLoaders.web.ts';
-  const outputs = [...Object.values(SOURCE_UI_ASSET_OUTPUT_PATHS), `sources/${SOURCE_UI_ASSET_RECORD_FILENAME}`];
-  for (const path of [consumer, ...outputs]) {
-    await mkdir(dirname(fixture.path('apps/ui', path)), { recursive: true });
-    await writeFile(fixture.path('apps/ui', path), 'export {};\n');
-  }
-  const inputs = await readSourceComponentBuildInputs({ repoDir: fixture.root, component: 'expo' });
-  assert.ok(inputs.files.includes(`apps/ui/${consumer}`));
-  for (const output of outputs) assert.equal(inputs.files.includes(`apps/ui/${output}`), false,
-    'prepared references must be regenerated against the captured project before Expo resolves them');
 });

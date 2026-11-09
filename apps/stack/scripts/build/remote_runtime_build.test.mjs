@@ -7,7 +7,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { buildRuntimeArtifactComponentsAtPlacement, withAdmittedRuntimeBuildPlacement } from './remote_runtime_build.mjs';
-import { buildNativeAdmissionFixtureEnv, installNativeAdmissionFixture } from '../testkit/core/native_admission_fixture.mjs';
+import { buildNativeAdmissionFixtureEnv, holdNativeAdmissionFixtureMemory, installNativeAdmissionFixture } from '../testkit/core/native_admission_fixture.mjs';
+import { writeFakeBin } from '../testkit/core/fake_bin_harness.mjs';
 import { renderNativeExecutionProjection } from '../utils/dev_targets/native_execution_projection.mjs';
 import { readHappierTempDirOwner } from '@happier-dev/cli-common/tempDirs';
 import { reapHistoricalTempRoots } from '../utils/dev_targets/historical_temp_roots.mjs';
@@ -206,10 +207,14 @@ test('runtime publication resolves explicit local placement and memory admission
   const binDir = join(root, 'bin');
   await mkdir(binDir);
   const probes = join(root, 'remote-probes');
+  // Synchronization and SSH are independent external boundaries. A ready
+  // mirror lets the unreachable SSH result exercise local fallback policy.
+  writeFakeBin({ root, name: 'mutagen', content: '#!/bin/sh\n[ "$1" != sync ] || printf "%s|Watching|false|true|1|0/0|0/0|true|1|0/0|0/0|active|7|ok|0|0\\n" "$3"\n' });
   await writeFile(join(binDir, 'ssh'), '#!/bin/sh\nprintf "probe\\n" >> "$FIXTURE_PROBES"\nexit 255\n');
   await chmod(join(binDir, 'ssh'), 0o755);
   const memory = join(root, 'memory');
   await writeFile(memory, '15728640 31457280');
+  const pressure = await holdNativeAdmissionFixtureMemory(t, fixture, { totalKiB: 31457280, availableKiB: 15728640 });
   await writeFile(join(binDir, 'awk'), '#!/bin/sh\ncase "$*" in */proc/meminfo*) /bin/cat "$FIXTURE_MEMORY" ;; */proc/loadavg*|*/proc/pressure/*) printf "0\\n" ;; *) exec /usr/bin/awk "$@" ;; esac\n');
   await chmod(join(binDir, 'awk'), 0o755);
   let enteredFlight = false;
@@ -241,7 +246,7 @@ test('runtime publication resolves explicit local placement and memory admission
     ]);
   } finally { observation.abort(); }
   assert.equal(enteredFlight, false);
-  await writeFile(memory, '28311552 31457280');
+  await pressure.release(() => writeFile(memory, '28311552 31457280'));
   assert.deepEqual(await publication, { admitted: true });
   assert.equal(enteredFlight, true);
   const readinessLine = readinessOutput.split('\n').find(line => line.startsWith('HAPPIER_RUNTIME_BUILD_READY='));

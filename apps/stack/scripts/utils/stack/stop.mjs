@@ -26,6 +26,7 @@ import {
 } from './runtime_state.mjs';
 import {
   getPsEnvLine,
+  isRecordedStackProcessRetired,
   killPidOwnedByStack,
   killProcessGroupOwnedByStack,
   listPsPidsForEnvQueries,
@@ -309,15 +310,21 @@ async function requestLifecycleOwnerShutdown(
   });
 }
 
-async function stopDaemonTrackedSessions({ cliHomeDir, serverUrl, env, stackName }) {
+async function stopDaemonTrackedSessions({ cliHomeDir, serverUrl, env, stackName, runtimeState }) {
   // Session drain has no deadline; its control proof must not impose the
   // shorter listener-observation budget before the lifecycle owner can stop it.
   const control = await pingDaemon({ cliHomeDir, serverUrl, env, stackName, timeoutMs: null });
+  const pid = Number(control.pid);
+  if (Number.isSafeInteger(pid) && pid > 1 && isRecordedStackProcessRetired(pid, {
+    processInstanceFingerprint: getStackRuntimeProcessInstanceFingerprint(runtimeState, 'daemonPid', pid)
+      ?? getStackRuntimeProcessInstanceFingerprint(runtimeState, 'daemonPids', pid),
+    recordedStartedAt: control.recordedStartedAt ?? control.state?.startedAt ?? (getStackRuntimeProcessEntries(runtimeState)
+      .some(entry => entry.pid === pid && isDaemonRuntimeProcessKey(entry.key)) ? runtimeState?.startedAt : null),
+  })) return { ok: true, skipped: true, reason: 'daemon_not_running', stoppedSessionIds: [] };
   if (!control.ok) {
-    return { ok: control.reason === 'missing_state' || control.reason === 'daemon_not_running', skipped: true, reason: control.reason, stoppedSessionIds: [] };
-  }
-  if (!isPidAlive(control.pid)) {
-    return { ok: true, skipped: true, reason: 'daemon_not_running', stoppedSessionIds: [] };
+    // A daemon that never published its control port has no tracked Sessions.
+    return { ok: control.reason === 'missing_state' || control.reason === 'missing_http_port',
+      skipped: true, reason: control.reason, stoppedSessionIds: [] };
   }
   const { httpPort, controlToken } = control.state;
   // The daemon quiesces spawn admission and awaits its canonical session-stop
@@ -328,7 +335,9 @@ async function stopDaemonTrackedSessions({ cliHomeDir, serverUrl, env, stackName
     ok: result?.status === 'stopping',
     skipped: false,
     ...(result?.status === 'stopping' ? {} : { reason: result?.status ?? 'session_cleanup_unavailable' }),
-    stoppedSessionIds: [],
+    stoppedSessionIds: (result?.sessionResults ?? [])
+      .filter(({ result }) => result.status === 'stopped').map(({ sessionId }) => sessionId),
+    ...(result?.sessionResults ? { sessionResults: result.sessionResults } : {}),
   };
 }
 
@@ -352,7 +361,8 @@ async function stopExpoStateDir({ stackName, baseDir, kind, stateFileName, envPa
 
     if (!Number.isFinite(pid) || pid <= 1) continue;
     if (confirmedCleanupPids?.has(pid)) continue;
-    if (!isPidAlive(pid)) continue;
+    if (isRecordedStackProcessRetired(pid, { processInstanceFingerprint: state.processInstanceFingerprint,
+      recordedStartedAt: state.startedAt })) continue;
 
     if (!json) {
       // eslint-disable-next-line no-console
@@ -573,7 +583,8 @@ async function stopStackWithEnvInternal({
   const runtimeStatePath = join(baseDir, 'stack.runtime.json');
   let runtimeState = runtimeStopTransaction?.runtimeState ?? await readStackRuntimeStateFile(runtimeStatePath);
   let expectedStopState = null;
-  if (runtimeStopTransaction || runtimeState || expectedOwnerPid != null) {
+  const hasExpectedOwner = expectedOwnerPid != null || expectedOwnerStartedAt != null;
+  if (runtimeStopTransaction || runtimeState || hasExpectedOwner) {
     let stopTransaction = runtimeStopTransaction;
     try {
       if (!stopTransaction) stopTransaction = await recordStackRuntimeStopRequest(runtimeStatePath, {
@@ -585,17 +596,17 @@ async function stopStackWithEnvInternal({
         expectedOwnerStartedAt,
       });
     } catch (error) {
-      if (expectedOwnerPid != null) {
+      if (hasExpectedOwner) {
         actions.stopAuthorization = { authorized: false, reason: 'authorization_failed' };
         actions.errors.push({ step: 'stop-authorization', error: error instanceof Error ? error.message : String(error) });
         return actions;
       }
     }
-    if (expectedOwnerPid != null && stopTransaction?.authorized !== true) {
+    if (hasExpectedOwner && stopTransaction?.authorized !== true) {
       actions.stopAuthorization = {
         authorized: false,
         reason: stopTransaction?.reason ?? 'authorization_failed',
-        expectedOwnerPid: Number(expectedOwnerPid),
+        expectedOwnerPid: expectedOwnerPid == null ? null : Number(expectedOwnerPid),
         expectedOwnerStartedAt: String(expectedOwnerStartedAt ?? '') || null,
         currentOwnerPid: stopTransaction?.currentOwnerPid ?? null,
         currentOwnerStartedAt: stopTransaction?.currentOwnerStartedAt ?? null,
@@ -656,19 +667,32 @@ async function stopStackWithEnvInternal({
         continue;
       }
       actions.errors.push({ step: 'remote-stop', target: name, error: error instanceof Error ? error.message : String(error) });
+      if (error.actions?.daemonSessionsStopped) actions.daemonSessionsStopped = error.actions.daemonSessionsStopped;
       actions.finalization = { finalized: false, reason: 'remote_cleanup_incomplete' };
       return actions;
     }
   }
 
   if (!preserveDaemon) {
+    let sessionCleanupError;
     try {
-      actions.daemonSessionsStopped = await stopDaemonTrackedSessions({ cliHomeDir, serverUrl: internalServerUrl, env, stackName });
+      actions.daemonSessionsStopped = await stopDaemonTrackedSessions({ cliHomeDir, serverUrl: internalServerUrl, env, stackName, runtimeState });
     } catch (e) {
-      actions.errors.push({ step: 'daemon-sessions', error: e instanceof Error ? e.message : String(e) });
+      sessionCleanupError = e instanceof Error ? e.message : String(e);
       actions.daemonSessionsStopped = { ok: false, skipped: false, reason: 'session_cleanup_failed', stoppedSessionIds: [] };
     }
     if (!actions.daemonSessionsStopped.ok) {
+      const failures = (actions.daemonSessionsStopped.sessionResults ?? [])
+        .filter(({ result }) => result.status !== 'stopped' && result.status !== 'not_found');
+      if (failures.length) {
+        actions.errors.push(...failures.map(({ sessionId, result }) => ({
+          step: 'daemon-sessions', sessionId, reason: result.reason ?? result.status,
+          error: `Session ${sessionId} cleanup incomplete: ${result.reason ?? result.status}`,
+        })));
+      } else {
+        actions.errors.push({ step: 'daemon-sessions', reason: actions.daemonSessionsStopped.reason,
+          error: sessionCleanupError ?? `daemon Session cleanup incomplete: ${actions.daemonSessionsStopped.reason}` });
+      }
       // Retain both the daemon and the runtime record for an observable retry;
       // killing the parent here would orphan the unconfirmed session runners.
       actions.finalization = { finalized: false, reason: 'session_cleanup_incomplete' };
@@ -679,7 +703,10 @@ async function stopStackWithEnvInternal({
   }
 
   actions.runner = { stopped: false, pid: Number.isFinite(runnerPid) ? runnerPid : null, reason: runtimeState ? 'not_running_or_not_owned' : 'missing_state' };
-  if (Number.isFinite(runnerPid) && runnerPid > 1 && isPidAlive(runnerPid)) {
+  if (Number.isFinite(runnerPid) && runnerPid > 1 && !isRecordedStackProcessRetired(runnerPid, {
+    processInstanceFingerprint: getStackRuntimeProcessInstanceFingerprint(runtimeState, 'ownerPid', runnerPid),
+    recordedStartedAt: runtimeState?.startedAt,
+  })) {
     const res = await requestLifecycleOwnerShutdownImpl(runnerPid, {
       stackName,
       envPath,
@@ -704,7 +731,7 @@ async function stopStackWithEnvInternal({
     if (seenProcessPids.has(pid)) continue;
     seenProcessPids.add(pid);
     if (!Number.isFinite(pid) || pid <= 1) continue;
-    if (!isPidAlive(pid)) continue;
+    if (isRecordedStackProcessRetired(pid, { processInstanceFingerprint, recordedStartedAt: runtimeState?.startedAt })) continue;
     // eslint-disable-next-line no-await-in-loop
     const res = await killProcessGroupOwnedByStackImpl(pid, {
       stackName, envPath, cliHomeDir, label: key, json,

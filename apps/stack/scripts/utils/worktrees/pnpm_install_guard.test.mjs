@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rm, stat, unlink, writeFile, utimes } from 'node:fs/promises';
+import { copyFile, mkdtemp, mkdir, readFile, rm, stat, unlink, writeFile, utimes } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 
-import { inspectDependencyRefresh } from '../proc/dependency_refresh.mjs';
+import { assertDependenciesReady, inspectDependencyRefresh } from '../proc/dependency_refresh.mjs';
 import { run } from '../proc/proc.mjs';
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import { buildStackFixtureEnv } from '../../testkit/core/env_scope.mjs';
@@ -28,6 +28,8 @@ test('workspace install guard restores UI patch and asset bytes before publishin
   const uiDir = join(root, 'apps', 'ui');
   await mkdir(join(uiDir, 'patches'), { recursive: true });
   await mkdir(join(uiDir, 'tools'), { recursive: true });
+  await copyFile(new URL('../../../../ui/tools/resolveUiPostinstallTasks.mjs', import.meta.url),
+    join(uiDir, 'tools/resolveUiPostinstallTasks.mjs'));
   await writeFile(join(uiDir, 'package.json'), JSON.stringify({
     name: '@happier-dev/app', scripts: { 'postinstall:real': 'node tools/postinstall.mjs' },
     happier: { installFreshnessInputs: ['patches', 'tools'] },
@@ -87,8 +89,8 @@ if (args[0] === 'install') {
 
   await writeFile(workerSource, 'recovered worker\n');
   await assert.rejects(install({ HAPPIER_TEST_UI_POSTINSTALL_FAIL: '1' }));
-  assert.equal((await inspectDependencyRefresh({ installDir: root })).required, true,
-    'failed UI preparation must not certify the re-extracted tree as ready');
+  await assert.rejects(assertDependenciesReady({ installDir: root, env }),
+    { code: 'HAPPIER_DEPENDENCIES_NEED_REFRESH', reason: 'stale-or-unadmitted' });
   await install();
   assert.equal(await readFile(workerOutput, 'utf8'), 'recovered worker\n');
 });
@@ -104,10 +106,9 @@ test('guarded installs keep first-party workspace builds out of the dependency w
   const gatePath = join(repoRoot, 'scripts', 'postinstall', 'shouldRunPostinstall.cjs');
   const dependencyRefreshUrl = new URL('../proc/dependency_refresh.mjs', import.meta.url).href;
 
-  // Pnpm is the process boundary. Its install runs a first-party workspace postinstall exactly like
-  // packages/protocol: the real scope gate decides, and an admitted build takes non-waiting read
-  // custody of the real dependency lock. While the guard holds that lock as writer, a build that
-  // reaches it would wait for the install that is waiting for it.
+  const buildOutput = join(root, 'explicit-postinstall-output');
+  // Pnpm is the process boundary. The real lifecycle gate excludes first-party
+  // builds by default, while an explicit scope permits its requested output.
   const { binDir } = writeFakeBin({ root, name: 'pnpm', content: `#!${process.execPath}
 const fs = require('node:fs');
 const path = require('node:path');
@@ -118,7 +119,10 @@ fs.mkdirSync(path.join(process.cwd(), 'node_modules'), { recursive: true });
 const gate = require(${JSON.stringify(gatePath)});
 if (!gate.shouldRunPostinstall({ workspace: 'protocol', scope: process.env.HAPPIER_INSTALL_SCOPE || '' })) process.exit(0);
 import(${JSON.stringify(dependencyRefreshUrl)})
-  .then(({ withDependencyConsumption }) => withDependencyConsumption({ installDir: process.cwd(), wait: false }, async () => {}))
+  .then(({ resolveDependencyRefreshLockPath }) => {
+    if (!fs.existsSync(resolveDependencyRefreshLockPath(process.cwd(), process.env))) throw new Error('missing active dependency writer');
+    fs.writeFileSync(${JSON.stringify(buildOutput)}, 'explicit lifecycle output');
+  })
   .then(() => process.exit(0), () => process.exit(45));
 ` });
   const env = buildStackHarnessEnv({ binDirs: [binDir], baseEnv: buildStackFixtureEnv({
@@ -131,11 +135,13 @@ import(${JSON.stringify(dependencyRefreshUrl)})
 
   assert.equal((await install({})).refreshed, true);
   assert.equal((await inspectDependencyRefresh({ installDir: root })).required, false);
+  await assert.rejects(stat(buildOutput), { code: 'ENOENT' });
 
-  // An explicit scope that admits the first-party build runs it inside the install's custody.
+  // An explicitly permitted lifecycle runs under the existing install writer.
   await writeFile(join(root, 'pnpm-lock.yaml'), '# changed workspace fixture\n');
   assert.equal((await install({ HAPPIER_INSTALL_SCOPE: 'protocol' })).refreshed, true);
   assert.equal((await inspectDependencyRefresh({ installDir: root })).required, false);
+  assert.equal(await readFile(buildOutput, 'utf8'), 'explicit lifecycle output');
 });
 
 test('shouldRunPnpmInstall returns true when node_modules is missing', async (t) => {
@@ -198,7 +204,7 @@ test('dependency readiness survives replacement of node_modules by the admitted 
   assert.equal(refreshes, 1);
 });
 
-test('dependency refresh publishes a superseded generation and schedules one successor', async (t) => {
+test('dependency refresh records its captured inputs and the next demand refreshes changed inputs once', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'hstack-pnpm-guard-successor-'));
   t.after(async () => rm(dir, { recursive: true, force: true }));
   const previousHome = process.env.HAPPIER_STACK_HOME_DIR;
@@ -214,6 +220,7 @@ test('dependency refresh publishes a superseded generation and schedules one suc
   await mkdir(join(dir, 'node_modules'), { recursive: true });
 
   let refreshes = 0;
+  const initial = await inspectDependencyRefresh({ installDir: dir, componentDir: dir });
   await withPnpmInstallGuard({ installDir: dir, componentDir: dir }, async () => {
     refreshes += 1;
     await writeFile(join(dir, 'pnpm-lock.yaml'), '# changed while installing\n', 'utf-8');
@@ -222,7 +229,7 @@ test('dependency refresh publishes a superseded generation and schedules one suc
   const superseded = await inspectDependencyRefresh({ installDir: dir, componentDir: dir });
   assert.equal(superseded.required, true);
   const marker = JSON.parse(await readFile(superseded.markerPath, 'utf-8'));
-  assert.equal(marker.superseded, true);
+  assert.equal(marker.identity, initial.installIdentity);
 
   await withPnpmInstallGuard({ installDir: dir, componentDir: dir }, async () => {
     refreshes += 1;
@@ -305,7 +312,7 @@ test('shouldRunPnpmInstall returns true when patches are newer than integrity', 
   assert.equal(await shouldRunPnpmInstall({ installDir: dir, componentDir: dir }), true);
 });
 
-test('canonical guard detects declared directory additions, changes, and deletions', async (t) => {
+test('canonical guard detects registered patch additions, changes, and deletions', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'hstack-pnpm-guard-declared-'));
   t.after(async () => rm(dir, { recursive: true, force: true }));
   const previousHome = process.env.HAPPIER_STACK_HOME_DIR;
@@ -317,14 +324,14 @@ test('canonical guard detects declared directory additions, changes, and deletio
 
   await writeFile(
     join(dir, 'package.json'),
-    JSON.stringify({ happier: { installFreshnessInputs: ['install-inputs'] } }) + '\n',
+    '{}\n',
     'utf-8',
   );
   await writeFile(join(dir, 'pnpm-lock.yaml'), '# pnpm\n', 'utf-8');
-  await writeFile(join(dir, 'pnpm-workspace.yaml'), "packages:\n");
+  await writeFile(join(dir, 'pnpm-workspace.yaml'), "packages:\npatchedDependencies:\n  example@1.0.0: install-inputs/a.patch\n  example@2.0.0: install-inputs/b.patch\n");
   await mkdir(join(dir, 'node_modules'), { recursive: true });
   await writeFile(join(dir, 'node_modules', '.modules.yaml'), 'old\n', 'utf-8');
-  const input = join(dir, 'install-inputs', 'a.txt');
+  const input = join(dir, 'install-inputs', 'a.patch');
 
   let refreshes = 0;
   const refresh = async () => {
@@ -342,7 +349,7 @@ test('canonical guard detects declared directory additions, changes, and deletio
   assert.equal(await shouldRunPnpmInstall({ installDir: dir, componentDir: dir }), true);
   await withPnpmInstallGuard({ installDir: dir, componentDir: dir }, refresh);
 
-  const added = join(dir, 'install-inputs', 'b.txt');
+  const added = join(dir, 'install-inputs', 'b.patch');
   await writeFile(added, 'b\n', 'utf-8');
   assert.equal(await shouldRunPnpmInstall({ installDir: dir, componentDir: dir }), true);
   await withPnpmInstallGuard({ installDir: dir, componentDir: dir }, refresh);

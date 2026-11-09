@@ -49,6 +49,27 @@ async function withTempStackEnvFixture(fn, { includeServerPort = true } = {}) {
   }
 }
 
+test('retained relay TLS URL reaches daemon/service consumers without turning startup projection into an override', async () => {
+  await withTempStackEnvFixture(async ({ stackName, storageDir }) => {
+    await writeFile(join(storageDir, stackName, 'stack.runtime.json'), JSON.stringify({
+      processes: {}, irohRelay: { status: 'ready', httpsUrl: 'https://relay.example.ts.net:8443' },
+    }));
+    const query = { stackName, includeRuntimeRelay: true, reconcileDaemonRuntimeState: false,
+      extraEnv: { HAPPIER_STACK_IROH_RELAY: '1', HAPPIER_IROH_RELAY_URLS: '', HAPPIER_IROH_RELAY_POLICY: '' },
+      fn: ({ env }) => env };
+    const projected = await withStackEnv(query);
+    const daemon = await getDaemonEnv({ baseEnv: projected, cliHomeDir: join(storageDir, stackName, 'cli'),
+      internalServerUrl: 'http://127.0.0.1:3555', publicServerUrl: 'http://happier-sanitize.localhost:3555', stackName });
+    assert.equal(daemon.HAPPIER_IROH_RELAY_URLS, 'https://relay.example.ts.net:8443');
+    assert.equal(daemon.HAPPIER_IROH_RELAY_POLICY, 'automatic');
+    assert.equal((await withStackEnv({ ...query, includeRuntimeRelay: false })).HAPPIER_IROH_RELAY_URLS, '');
+    const disabled = await withStackEnv({ ...query,
+      extraEnv: { ...query.extraEnv, HAPPIER_STACK_IROH_RELAY: '0' } });
+    assert.equal(disabled.HAPPIER_IROH_RELAY_URLS, undefined);
+    assert.equal(disabled.HAPPIER_IROH_RELAY_POLICY, 'disabled');
+  });
+});
+
 test('withStackEnv restores the selected borrowed UI origin for CLI and daemon preflight', async () => {
   await withTempStackEnvFixture(async ({ stackName, storageDir }) => {
     const producerStackName = 'repo-expo-producer';
@@ -70,7 +91,7 @@ test('withStackEnv restores the selected borrowed UI origin for CLI and daemon p
     };
     const env = await withStackEnv(query);
     assert.equal(env.HAPPIER_WEBAPP_URL, 'http://happier-sanitize.localhost:19364');
-    const daemonEnv = getDaemonEnv({
+    const daemonEnv = await getDaemonEnv({
       baseEnv: env,
       cliHomeDir: join(storageDir, stackName, 'cli'),
       internalServerUrl: 'http://127.0.0.1:3555',

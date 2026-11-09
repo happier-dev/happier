@@ -9,6 +9,65 @@ import { installStubDaemonSourceBuildInputs } from '../testkit/core/source_runti
 import { prepareStubHappierCliDependencies } from '../testkit/core/stub_happier_cli_files.mjs';
 import { resolveStackDaemonCommandContext } from './stack_daemon_command.mjs';
 import { sanitizeStackTestRunnerEnv } from '../utils/test/test_env.mjs';
+import { stopLocalDaemon } from '../daemon.mjs';
+import { recordStackRuntimeStart } from '../utils/stack/runtime_state.mjs';
+
+for (const evidence of ['absent', 'previous-boot', 'live']) {
+  test(`stale source daemon cleanup preserves process authority (${evidence})`, async t => {
+    const fixture = await createTempFixture(t, { prefix: 'hstack-stale-source-retirement-' });
+    const bundleDir = fixture.path('retained-source');
+    const cliDir = join(bundleDir, 'apps', 'cli');
+    await mkdir(join(cliDir, 'src'), { recursive: true });
+    const entrypoint = join(cliDir, 'src', 'index.mjs');
+    await writeFile(entrypoint, 'throw new Error("retired source must not be launched");\n');
+    await writeFile(join(bundleDir, 'source-bundle.json'), JSON.stringify({ dependencyPublication: null }));
+    const stackName = 'stale-source-retirement';
+    const runtimeStatePath = fixture.path('stack.runtime.json');
+    const pid = evidence === 'absent' ? 2147483647 : process.pid;
+    const state = await recordStackRuntimeStart(runtimeStatePath, {
+      stackName, ownerPid: pid, processes: { daemonPid: pid },
+      sourceRuntimeLaunch: { entrypoint, cliDir, env: {} },
+    });
+    if (evidence === 'previous-boot') {
+      await writeFile(runtimeStatePath, JSON.stringify({ ...state, startedAt: '2000-01-01T00:00:00.000Z' }));
+    }
+    // Keep the genuine identity checks; intercept only an OS signal to this test process.
+    const kill = process.kill.bind(process);
+    t.mock.method(process, 'kill', (target, signal) => {
+      if (target === process.pid) assert.equal(signal, 0, 'cleanup must not signal the live replacement');
+      return kill(target, signal);
+    });
+    const stop = () => stopLocalDaemon({ cliBin: fixture.path('missing-cli'),
+      cliHomeDir: fixture.path('cli'), internalServerUrl: '', runtimeStatePath, stackName,
+      env: { ...sanitizeStackTestRunnerEnv(process.env, { isolatedStackRoot: fixture.root }),
+        HAPPIER_STACK_REPO_DIR: '', HAPPIER_STACK_STACK: stackName } });
+    if (evidence === 'live') await assert.rejects(stop, { code: 'daemon_stop_incomplete' });
+    else await stop();
+    assert.doesNotThrow(() => kill(process.pid, 0));
+  });
+}
+
+test('daemon stop reaches retained cleanup while stale source status stays refused', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-stale-source-stop-' });
+  const bundleDir = fixture.path('retained-source');
+  const cliDir = join(bundleDir, 'apps', 'cli');
+  await mkdir(join(cliDir, 'src'), { recursive: true });
+  const entrypoint = join(cliDir, 'src', 'index.mjs');
+  await writeFile(entrypoint, 'throw new Error("retired source must not be launched");\n');
+  await writeFile(join(bundleDir, 'source-bundle.json'), JSON.stringify({ dependencyPublication: null }));
+  const repoDir = fileURLToPath(new URL('../../../../', import.meta.url));
+  const runtimePath = fixture.path('stack.runtime.json');
+  const input = { rootDir: join(repoDir, 'apps/stack'), stackName: 'stale-source-stop', identity: 'default',
+    env: { ...sanitizeStackTestRunnerEnv(process.env, { isolatedStackRoot: fixture.root, repoDir }),
+      HAPPIER_STACK_CLI_HOME_DIR: fixture.path('cli'), HAPPIER_STACK_RUNTIME_STATE_PATH: runtimePath },
+    activeRuntimeState: { sourceRuntimeLaunch: { entrypoint, cliDir, env: {} },
+      sourceRuntimeIdentities: { daemon: { selected: 'prior-boot', loaded: 'prior-boot' } } } };
+  const stop = await resolveStackDaemonCommandContext({ ...input, argv: ['stop'] });
+  assert.equal(stop.cliHomeDir, fixture.path('cli'));
+  assert.equal(stop.runtimePath, runtimePath);
+  await assert.rejects(() => resolveStackDaemonCommandContext({ ...input, argv: ['status'] }),
+    { code: 'SOURCE_RUNTIME_RELOAD_REQUIRED' });
+});
 
 for (const action of ['start', 'restart']) {
 test(`explicit source daemon ${action} prepares current source while status retains the incumbent launch`, async t => {

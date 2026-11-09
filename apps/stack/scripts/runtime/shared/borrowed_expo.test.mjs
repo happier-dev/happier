@@ -3,7 +3,12 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
+import { resolveHomeTarget } from '@happier-dev/cli-common/homeTarget';
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
+import { buildStackFixtureEnv } from '../../testkit/core/env_scope.mjs';
+import { resolveBestExpoWebappUrlForAuth, resolveStackWebappTargetForAuth, buildStackAuthLoginInvocation } from '../../utils/auth/stack_guided_login.mjs';
 import { prepareSourceRuntimeReload } from '../launch/prepareSourceRuntimeReload.mjs';
 import { getDaemonEnv } from '../../daemon.mjs';
 import { buildServerRuntimeEnv } from '../../utils/server/server_env.mjs';
@@ -92,7 +97,7 @@ test('borrowed Expo projects the consumer UI origin without replacing an explici
     serverPort: 43005,
     publicServerUrl: 'http://happier-agent-qa-embed.localhost:43005',
   });
-  const daemonEnv = getDaemonEnv({
+  const daemonEnv = await getDaemonEnv({
     baseEnv: projected,
     cliHomeDir: join(query.env.HAPPIER_STACK_STORAGE_DIR, 'agent-qa-embed', 'cli'),
     internalServerUrl: 'http://127.0.0.1:43005',
@@ -131,6 +136,58 @@ test('borrowed Expo rejects non-canonical producer names before resolving manage
     }),
     /invalid borrowed Expo producer stack name/i,
   );
+});
+
+test('borrowed Expo login resolves and publishes the web app origin without browser bootstrap parameters', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-borrowed-auth-origin-' });
+  // Real HTTP and stack-state boundaries keep the guided-auth production resolver composed.
+  const metro = createServer((req, res) => res.end('packager-status:running'));
+  metro.listen(0, '127.0.0.1');
+  await once(metro, 'listening');
+  t.after(() => new Promise(resolve => metro.close(resolve)));
+  const port = metro.address().port;
+  const producer = 'repo-auth-producer';
+  const consumer = 'qa-auth-origin';
+  const storageDir = fixture.path('stacks');
+  await mkdir(join(storageDir, producer), { recursive: true });
+  await mkdir(join(storageDir, consumer), { recursive: true });
+  const envPath = join(storageDir, consumer, 'env');
+  await writeFile(envPath, `HAPPIER_STACK_EXPO_SOURCE_STACK=${producer}\n`);
+  await writeFile(join(storageDir, producer, 'stack.runtime.json'), JSON.stringify({
+    expo: { webPort: port, mobilePort: port },
+    placement: { expo: 'mac' },
+    remoteTargets: { mac: { status: 'running', services: { expo: true } } },
+    processes: { expoPid: null },
+  }));
+  const input = { rootDir: process.cwd(), stackName: consumer, timeoutMs: 1, env: buildStackFixtureEnv({
+    storageDir, stackName: consumer, envPath, stripStackEnv: true,
+    extraEnv: { HAPPIER_STACK_RUNTIME_MODE: 'source', HAPPIER_STACK_SERVER_PORT: '43005' },
+  }) };
+  const expectedOrigin = `http://happier-${consumer}.localhost:${port}`;
+  const webappUrl = await resolveBestExpoWebappUrlForAuth(input);
+  assert.equal(webappUrl, expectedOrigin);
+  const target = await resolveStackWebappTargetForAuth(input);
+  assert.deepEqual(target, { webappUrl: expectedOrigin, kind: 'expo' });
+  const invocation = await buildStackAuthLoginInvocation({ ...input, webappUrl });
+  assert.equal(invocation.env.HAPPIER_WEBAPP_URL, expectedOrigin);
+  const home = await resolveHomeTarget({
+    input: { kind: 'https_url', url: 'http://127.0.0.1:43005', webappUrl: invocation.env.HAPPIER_WEBAPP_URL },
+    readSavedProfile: async () => null,
+  });
+  assert.equal(home.webappUrl, expectedOrigin);
+  // The controlled source-runtime branch reaches the same producer without building or launching a CLI.
+  const entrypoint = fixture.path('retained-cli.mjs');
+  await writeFile(entrypoint, 'export {};\n');
+  await writeFile(join(storageDir, consumer, 'stack.runtime.json'), JSON.stringify({
+    sourceRuntimeLaunch: { entrypoint, cliDir: fixture.root },
+  }));
+  assert.deepEqual(await resolveStackWebappTargetForAuth({ ...input, env: {
+    ...input.env, HAPPIER_STACK_RUNTIME_MODE: 'source-snapshot',
+  } }), { webappUrl: expectedOrigin, kind: 'expo' });
+  const browserUrl = new URL(buildBorrowedExpoUiUrl({ consumerHost: `happier-${consumer}.localhost`, expoPort: port, serverPort: 43005 }));
+  assert.equal(browserUrl.origin, expectedOrigin);
+  assert.equal(browserUrl.searchParams.get('server'), `http://happier-${consumer}.localhost:43005`);
+  assert.equal(browserUrl.searchParams.get('happier_hmr'), '0');
 });
 
 test('buildBorrowedExpoUiUrl routes the consumer origin to its own server with HMR disabled', () => {

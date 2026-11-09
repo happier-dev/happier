@@ -628,6 +628,7 @@ async function withTempServerDir(t, fn) {
 }
 
 test('startDevServer prepares dependencies before full-server infrastructure and migration side effects', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => Response.json({ status: 'ok', service: 'happier-server' }));
   await withTempServerDir(t, async (serverDir) => {
     const sideEffects = [];
     await startDevServer(
@@ -640,6 +641,7 @@ test('startDevServer prepares dependencies before full-server infrastructure and
           HAPPIER_STACK_PRISMA_MIGRATE: '1',
         },
         serverPort: 34567,
+        internalServerUrl: 'http://127.0.0.1:34567',
         internalServerUrl: 'http://127.0.0.1:34567',
         publicServerUrl: 'http://localhost:34567',
         envPath: join(serverDir, 'env'),
@@ -665,6 +667,7 @@ test('startDevServer prepares dependencies before full-server infrastructure and
 });
 
 test('startDevServer admits migrations from the resolved server env, including shared database ownership', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => Response.json({ status: 'ok', service: 'happier-server' }));
   await withTempServerDir(t, async (serverDir) => {
     const sourceEnvPath = join(serverDir, 'source.env');
     await writeFile(sourceEnvPath, 'HAPPIER_DB_PROVIDER=postgres\nDATABASE_URL=postgresql://fixture@host/dev\nHANDY_MASTER_SECRET=fixture-only-secret\n');
@@ -675,6 +678,7 @@ test('startDevServer admits migrations from the resolved server env, including s
       const migrations = [];
       await startDevServer({
         serverComponentName: 'happier-server', serverDir,
+        internalServerUrl: 'http://127.0.0.1:34567',
         autostart: { stackName: 'start-test', baseDir: serverDir },
         baseEnv: { HAPPIER_STACK_MANAGED_INFRA: '0', HAPPIER_STACK_PRISMA_MIGRATE: '1', ...overrides },
         serverPort: 34567, internalServerUrl: 'http://127.0.0.1:34567',

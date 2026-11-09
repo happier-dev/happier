@@ -8,11 +8,61 @@ import test from 'node:test';
 import { runNodeCapture as runNode } from './testkit/core/run_node_capture.mjs';
 import { sanitizeStackTestRunnerEnv } from './utils/test/test_env.mjs';
 import { writeFakeBin } from './testkit/core/fake_bin_harness.mjs';
+import { createTempFixture } from './testkit/core/temp_fixture.mjs';
 
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = dirname(dirname(dirname(scriptsDir)));
 const runScript = join(scriptsDir, 'run.mjs');
 const devScript = join(scriptsDir, 'dev.mjs');
+// docs/testing.md:214–218: cold preparation/launch failures recover through
+// the existing Expo supervisor while the Stack remains running.
+const retryingExpoFailure = /\[expo\] Expo startup failed \([\s\S]*?\); retrying in /;
+const isolatedExpoFailure = /expo startup failed; keeping other components running/;
+
+test('dev fails before daemon readiness when its requested server cannot start', { timeout: 15000 }, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-dev-server-failure-' });
+  const fakeRepo = fixture.path('repo');
+  for (const app of ['cli', 'ui']) {
+    await mkdir(join(fakeRepo, 'apps', app), { recursive: true });
+    await writeFile(join(fakeRepo, 'apps', app, 'package.json'), JSON.stringify({ name: `fixture-${app}` }));
+  }
+  await writeFile(join(fakeRepo, 'package.json'), '{"private":true}');
+  await mkdir(join(fakeRepo, 'node_modules'), { recursive: true });
+  await writeFile(join(fakeRepo, 'pnpm-lock.yaml'), '# fixture');
+  await writeFile(join(fakeRepo, 'pnpm-workspace.yaml'), 'packages:\n  - "apps/*"\n');
+  const fakePm = writeFakeBin({ root: fixture.root, name: 'pnpm', content: '#!/bin/sh\nexit 0\n' });
+  const child = spawn(process.execPath, [devScript, '--no-ui', '--no-mobile', '--no-watch', '--no-dev-targets', '--no-browser'], {
+    cwd: repoRoot, detached: true, stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...sanitizeStackTestRunnerEnv(process.env, { isolatedStackRoot: fixture.root, repoDir: fakeRepo }),
+      PATH: `${fakePm.binDir}:${process.env.PATH}`, CI: '1',
+      HAPPIER_STACK_SKIP_REFRESH_DEPS: '1', HAPPIER_STACK_RUNTIME_MODE: 'source',
+      HAPPIER_STACK_REPO_DIR: fakeRepo, HAPPIER_STACK_STACK: 'server-start-failure',
+      HAPPIER_STACK_STORAGE_DIR: fixture.path('stacks'), HAPPIER_STACK_RUNTIME_STATE_PATH: fixture.path('runtime.json'),
+      HAPPIER_STACK_ENV_FILE: fixture.path('env'), HAPPIER_STACK_SERVER_COMPONENT: 'happier-server',
+      HAPPIER_STACK_MANAGED_INFRA: '0', HAPPIER_STACK_AUTH_FLOW: '0',
+    },
+  });
+  t.after(() => stopProcess(child));
+  let output = '';
+  child.stdout.on('data', chunk => { output += chunk; });
+  child.stderr.on('data', chunk => { output += chunk; });
+  const result = await new Promise((resolve, reject) => {
+    const onAbort = () => {
+      t.diagnostic(`Requested server failure observed: ${/server startup failed/.test(output)}`);
+      reject(new Error('Dev kept running after the requested server failed'));
+    };
+    t.signal.addEventListener('abort', onAbort, { once: true });
+    child.once('error', reject);
+    child.once('exit', (code, signal) => {
+      t.signal.removeEventListener('abort', onAbort);
+      resolve({ code, signal });
+    });
+  });
+  assert.equal(result.code, 1, output);
+  assert.equal(result.signal, null, output);
+  assert.match(output, /happier-server/);
+  assert.doesNotMatch(output, /daemon is still starting|daemon startup failed/);
+});
 
 for (const failure of ['preflight', 'missing-directory']) {
 test(`dev isolates a cold Expo ${failure} failure instead of terminating the disposable stack`, { timeout: 15000 }, async t => {
@@ -54,33 +104,46 @@ test(`dev isolates a cold Expo ${failure} failure instead of terminating the dis
       HAPPIER_STACK_EXPO_TAILSCALE: '0', HAPPIER_STACK_EXPO_SOURCE_STACK: '',
     },
   });
-  const observed = await waitForExpoStartupFailure(child, t.signal);
-  assert.match(observed.output, /expo startup failed; keeping other components running/);
+  const expectedFailure = failure === 'preflight' ? retryingExpoFailure : isolatedExpoFailure;
+  const observed = await waitForExpoStartupFailure(child, t, expectedFailure);
+  assert.match(observed.output, expectedFailure);
   assert.equal(child.exitCode, null, observed.output);
   assert.match(observed.output, failure === 'preflight' ? /fixture preflight permission denied/ : /happier-ui/);
 });
 }
 
-function waitForExpoStartupFailure(child, signal) {
-  return new Promise(resolve => {
+function waitForExpoStartupFailure(child, t, expectedFailure) {
+  const signal = t.signal;
+  return new Promise((resolve, reject) => {
     let output = '';
-    const finish = result => {
+    const finish = error => {
       signal.removeEventListener('abort', onAbort);
       child.stdout.off('data', receive);
       child.stderr.off('data', receive);
       child.off('exit', onExit);
-      resolve(result);
+      child.off('error', onError);
+      if (error) reject(error);
+      else resolve({ output });
     };
-    const onAbort = () => finish({ output, timedOut: true });
+    const onAbort = () => {
+      t.diagnostic(`Dev output before cancellation:\n${output}`);
+      finish(new Error(`Expo startup failure was not observed before test cancellation.\n${output}`,
+        { cause: signal.reason }));
+    };
     const receive = chunk => {
       output += chunk;
-      if (output.includes('expo startup failed; keeping other components running')) finish({ output });
+      if (expectedFailure.test(output)) finish();
     };
-    const onExit = code => finish({ output, code });
+    const onExit = (code, exitSignal) => finish(new Error(
+      `Dev exited before the expected Expo startup failure (code=${code}, signal=${exitSignal}).\n${output}`));
+    const onError = error => finish(error);
     signal.addEventListener('abort', onAbort, { once: true });
     child.stdout.on('data', receive);
     child.stderr.on('data', receive);
     child.once('exit', onExit);
+    child.once('error', onError);
+    if (signal.aborted) onAbort();
+    else if (child.exitCode !== null || child.signalCode !== null) onExit(child.exitCode, child.signalCode);
   });
 }
 
@@ -139,7 +202,9 @@ async function spawnForeignHealthServer({ stackName, envPath, healthStatus = 200
   return { child, port };
 }
 
-test('run proves a projected proxy PID when proxy metadata is missing and never publishes it as serverPid', async (t) => {
+// The run → dev journey measured 19.9s on AUTO/nl3 (cold Expo alone 10.1–11.6s).
+// Allow 30s for the two-process fixture; missing outcomes abort its own children.
+test('run proves a projected proxy PID when proxy metadata is missing and never publishes it as serverPid', { timeout: 30_000 }, async (t) => {
   const tempRoot = await mkdtemp(join(tmpdir(), 'hstack-run-topology-gate-'));
   const fakeRepo = join(tempRoot, 'repo');
   const storageDir = join(tempRoot, 'storage');
@@ -244,8 +309,8 @@ esac
       HAPPIER_STACK_PRISMA_MIGRATE: '0', HAPPIER_STACK_DOCKER_AUTOSTART: '0', HAPPIER_STACK_SERVE_UI: '0',
     },
   });
-  const devResult = await waitForExpoStartupFailure(dev, t.signal);
-  assert.match(devResult.output, /expo startup failed; keeping other components running/);
+  const devResult = await waitForExpoStartupFailure(dev, t, retryingExpoFailure);
+  assert.match(devResult.output, retryingExpoFailure);
   assert.equal(dev.exitCode, null, devResult.output);
   const afterDevRuntime = JSON.parse(await readFile(runtimeStatePath, 'utf8'));
   assert.equal(afterDevRuntime.processes.proxyPid, server.child.pid);

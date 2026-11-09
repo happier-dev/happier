@@ -18,7 +18,7 @@ function resolveMetroStatusTimeoutMsFromEnv(env = process.env) {
   return STACK_LISTENER_OBSERVATION_TIMEOUT_MS;
 }
 
-export async function looksLikeExpoMetro({ port, timeoutMs = null, statusOnly = false } = {}) {
+export async function looksLikeExpoMetro({ port, timeoutMs = null, statusOnly = false, signal = null } = {}) {
   const p = Number(port);
   if (!Number.isFinite(p) || p <= 0) return false;
   const ms = Number.isFinite(Number(timeoutMs)) && Number(timeoutMs) > 0 ? Number(timeoutMs) : resolveMetroStatusTimeoutMsFromEnv();
@@ -29,9 +29,15 @@ export async function looksLikeExpoMetro({ port, timeoutMs = null, statusOnly = 
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) throw new Error('Metro observation deadline expired');
     const timeout = setTimeout(() => controller?.abort(), remainingMs);
+    const cancel = () => controller?.abort(signal.reason);
     try {
+      signal?.addEventListener('abort', cancel, { once: true });
+      if (signal?.aborted) cancel();
       const res = await fetch(url, { signal: controller?.signal });
-      const txt = await res.text().catch(() => '');
+      const txt = await res.text().catch(error => {
+        if (signal?.aborted) throw error;
+        return '';
+      });
       return {
         ok: res.ok,
         contentType: String(res.headers?.get?.('content-type') ?? '').toLowerCase(),
@@ -40,10 +46,12 @@ export async function looksLikeExpoMetro({ port, timeoutMs = null, statusOnly = 
       };
     } finally {
       clearTimeout(timeout);
+      signal?.removeEventListener('abort', cancel);
     }
   }
 
   for (const host of probeHosts) {
+    if (signal?.aborted) return false;
     try {
       const statusResponse = await fetchText(`http://${host}:${p}/status`);
       if (
@@ -63,6 +71,7 @@ export async function looksLikeExpoMetro({ port, timeoutMs = null, statusOnly = 
   if (statusOnly) return false;
 
   for (const host of probeHosts) {
+    if (signal?.aborted) return false;
     try {
       const rootResponse = await fetchText(`http://${host}:${p}/`);
       if (!rootResponse.ok) {
@@ -138,7 +147,7 @@ export async function waitForExpoMetroRunning(
       elapsedMs = 0;
     }
     // eslint-disable-next-line no-await-in-loop
-    const ok = await looksLikeExpoMetroImpl({ port: p, timeoutMs: Math.min(STACK_LISTENER_OBSERVATION_TIMEOUT_MS, Math.max(1, resolvedTimeoutMs - elapsedMs)) });
+    const ok = await looksLikeExpoMetroImpl({ port: p, timeoutMs: Math.min(STACK_LISTENER_OBSERVATION_TIMEOUT_MS, Math.max(1, resolvedTimeoutMs - elapsedMs)), signal });
     probes += 1;
     if (ok) {
       return { ok: true, probes };

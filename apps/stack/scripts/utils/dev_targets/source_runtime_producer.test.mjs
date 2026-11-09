@@ -102,7 +102,7 @@ test('source producer transport leaves finite compiler admission at the producer
   assert.equal(native.stdout, 'source-test,1');
 });
 
-test('rolling source production coalesces edits while one compiler is running', async t => {
+test('source changes start rolling production and coalesce 24 edits to the latest capture', async t => {
   const fixture = await createTempFixture(t, { prefix: 'source-runtime-producer-watch-' });
   const source = fixture.path('entry.ts');
   await fs.writeFile(source, 'export const value = 0;');
@@ -112,27 +112,47 @@ test('rolling source production coalesces edits while one compiler is running', 
   let entered;
   const started = new Promise(resolve => { entered = resolve; });
   let builds = 0;
+  let active = 0;
+  let maxActive = 0;
+  let timers = 0;
+  const captured = [];
   const failures = [];
   const coordinator = startDevReloadCoordinator({
     descriptors: [{ id: 'runtime-source', target: 'source-runtime', paths: [source] }],
     // The compiler is the system boundary. Source observation and scheduling stay real.
     executors: [{ target: 'source-runtime', async build() {
       builds += 1;
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      captured.push(await fs.readFile(source, 'utf8'));
       entered();
       if (builds === 1) await held;
+      active -= 1;
     } }],
     logger: { log() {}, warn() {}, error(message) { failures.push(message); } },
-  }, { watchDebouncedImpl(options) { watchOptions = options; return { close() {} }; } });
+  }, {
+    watchDebouncedImpl(options) { watchOptions = options; return { close() {} }; },
+    setTimeoutImpl(...args) { timers += 1; return setTimeout(...args); },
+  });
   t.after(async () => { release(); await coordinator.close(); });
-  const initial = coordinator.requestReload('source-runtime');
+  const event = { eventType: 'change', watchPath: source, filename: 'entry.ts' };
+  await watchOptions.onChange(event);
+  assert.equal(builds, 0, 'an unchanged source notification does not compile');
+  await fs.writeFile(source, 'export const value = 1;');
+  const initial = watchOptions.onChange(event);
   await Promise.race([started, initial]);
   assert.equal(builds, 1, 'the dev owner starts production for the source-runtime target');
-  for (let value = 1; value <= 24; value += 1) {
+  for (let value = 2; value <= 25; value += 1) {
     await fs.writeFile(source, `export const value = ${value};`);
     watchOptions.onObservation({ eventType: 'change', watchPath: source, filename: 'entry.ts' });
   }
   release();
   await initial;
   assert.equal(builds, 2, 'one latest-source trailing pass replaces 24 queued source edits');
+  assert.equal(maxActive, 1, 'rolling compilation stays serial');
+  assert.deepEqual(captured, ['export const value = 1;', 'export const value = 25;']);
+  await watchOptions.onChange(event);
+  assert.equal(builds, 2, 'settled unchanged notifications do not rebuild');
+  assert.equal(timers, 0, 'source events and completion need no extra coordinator timer');
   assert.deepEqual(failures, []);
 });

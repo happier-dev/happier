@@ -7,7 +7,8 @@ import { extname, join, relative, resolve, sep } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 
-import { runQaBrowserWorker } from '../../utils/dev_targets/qa_browser.mjs';
+import { runQaBrowserSession, runQaBrowserWorker } from '../../utils/dev_targets/qa_browser.mjs';
+import { resolveControlledQaBrowserTarget } from '../../utils/dev_targets/service_placement.mjs';
 import { pickNextFreeTcpPort } from '../../utils/net/ports.mjs';
 import { killProcessTree, runCapture } from '../../utils/proc/proc.mjs';
 import { buildServerRuntimeEnv } from '../../utils/server/server_env.mjs';
@@ -17,6 +18,7 @@ import { fetchHappierHealth, waitForServerReady } from '../../utils/server/serve
 import { resolveServerRuntimeLaunchSpec } from './resolveServerRuntimeLaunchSpec.mjs';
 import { spawnRuntimeServerAfterMigration } from './runServerRuntimeMigration.mjs';
 import { assertWebArtifactPayload } from '../shared/web_payload.mjs';
+import { diagnoseSourceReloadFailure, emitSourceReloadRefusal } from '../shared/source_reload_refusal.mjs';
 
 /** Probe the emitted graph, never the live Stack database, daemon lock or
  * Machine identity. Resource admission belongs to the calling source worker.
@@ -42,6 +44,7 @@ export async function smokeSourceRuntimeReload({ components, ui, env = process.e
     for (const child of children) void killProcessTree(child, 'SIGTERM').catch(() => {});
   };
   signal?.addEventListener('abort', cancel, { once: true });
+  let smokeComponent = 'server';
   try {
     // Reuse port allocation/availability policy; never stop an occupant.
     const port = await pickNextFreeTcpPort(40_000);
@@ -69,6 +72,7 @@ export async function smokeSourceRuntimeReload({ components, ui, env = process.e
       signal?.throwIfAborted();
       logger.log('[reload] PostgreSQL server imports passed; skipping its database-backed migration and health smoke because the shared DATABASE_URL is forbidden');
       if (ui) {
+        smokeComponent = 'ui';
         await assertWebArtifactPayload({ payloadDir: ui.uiDir, entrypoint: ui.entrypoint ?? 'index.html' });
         await serveSourceWebArtifactForSmoke({ ui, env: isolated, signal: cancellation.signal });
       }
@@ -91,6 +95,7 @@ export async function smokeSourceRuntimeReload({ components, ui, env = process.e
       const health = await fetchHappierHealth(url, { signal: cancellation.signal });
       if (!health.ok) throw new Error('[reload] replacement server did not expose canonical /health');
       if (ui) {
+        smokeComponent = 'ui';
         await assertWebArtifactPayload({ payloadDir: ui.uiDir, entrypoint: ui.entrypoint ?? 'index.html' });
         await smokeSourceWebBoot({ repoDir: env.HAPPIER_STACK_REPO_DIR, url, env: isolated, signal: cancellation.signal });
       }
@@ -98,6 +103,10 @@ export async function smokeSourceRuntimeReload({ components, ui, env = process.e
     } finally {
       cancellation.signal.removeEventListener('abort', cancelChild);
     }
+  } catch (error) {
+    await diagnoseSourceReloadFailure(error, { component: smokeComponent,
+      repoDir: env.HAPPIER_STACK_REPO_DIR, env, signal });
+    throw error;
   } finally {
     signal?.removeEventListener('abort', cancel);
     for (const child of children) {
@@ -146,7 +155,7 @@ async function serveSourceWebArtifactForSmoke({ ui, env, signal }) {
   }
 }
 
-export async function smokeSourceWebBoot({ repoDir, url, env = process.env, signal }) {
+export async function smokeSourceWebBoot({ repoDir, url, stackName, env = process.env, signal }) {
   // The source checkout's browser test tooling owns Playwright. Chromium
   // launch policy/profile cleanup remain with the existing QA browser owner.
   const { chromium } = createRequire(join(repoDir, 'packages/tests/package.json'))('@playwright/test');
@@ -154,8 +163,12 @@ export async function smokeSourceWebBoot({ repoDir, url, env = process.env, sign
   const signalSource = new EventEmitter();
   let ready;
   const readyPromise = new Promise(resolve => { ready = resolve; });
-  const worker = runQaBrowserWorker({ sessionName: `reload-${process.pid}`, input, env, writeReady: ready },
-    { signalSource });
+  const controlled = stackName ? await resolveControlledQaBrowserTarget({ stackName, sourceDir: repoDir, env }) : null;
+  const sessionName = `reload-${process.pid}`;
+  const worker = controlled
+    ? runQaBrowserSession({ target: controlled.target, stackName,
+      stackBaseDir: controlled.authority.producerStackBaseDir, sessionName, url, env, onReady: ready }, { signalSource })
+    : runQaBrowserWorker({ sessionName, input, env, writeReady: ready }, { signalSource });
   let browser;
   let context;
   const cancel = () => signalSource.emit('SIGTERM');
@@ -163,7 +176,7 @@ export async function smokeSourceWebBoot({ repoDir, url, env = process.env, sign
   try {
     signal?.throwIfAborted();
     const endpoint = await Promise.race([readyPromise, worker.then(() => { throw new Error('[reload] smoke browser closed before readiness'); })]);
-    browser = await chromium.connectOverCDP(`http://127.0.0.1:${endpoint.port}`, { timeout: 0 });
+    browser = await chromium.connectOverCDP(endpoint.cdpUrl ?? `http://127.0.0.1:${endpoint.port}`, { timeout: 0 });
     context = await browser.newContext();
     const page = await context.newPage();
     page.setDefaultTimeout(0);
@@ -182,7 +195,7 @@ export async function smokeSourceWebBoot({ repoDir, url, env = process.env, sign
     const closePage = () => { void page.close().catch(() => {}); };
     signal?.addEventListener('abort', closePage, { once: true });
     try {
-      const response = await Promise.race([page.goto(url, { waitUntil: 'load' }), bootError]);
+      const response = await Promise.race([page.goto(endpoint.url ?? url, { waitUntil: 'load' }), bootError]);
       if (!response?.ok()) throw new Error('[reload] UI root request failed');
       await Promise.race([page.waitForFunction(() => document.scripts.length > 0 && document.body.innerText.trim().length > 0), bootError]);
       await Promise.race([page.evaluate(async () => {
@@ -198,7 +211,8 @@ export async function smokeSourceWebBoot({ repoDir, url, env = process.env, sign
       await context?.close();
       await browser?.close();
     } finally {
-      input.write('close\n');
+      if (controlled) signalSource.emit('SIGTERM');
+      else input.write('close\n');
       try { await worker; } finally { input.destroy(); }
     }
   }
@@ -212,6 +226,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try {
     await smokeSourceRuntimeReload({ ...JSON.parse(process.argv[2]), signal: cancellation.signal });
   } catch (error) {
+    emitSourceReloadRefusal(error);
     console.error(error);
     process.exitCode = 1;
   } finally {

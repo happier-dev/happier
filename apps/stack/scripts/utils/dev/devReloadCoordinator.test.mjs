@@ -22,10 +22,71 @@ import {
 } from './devReloadCoordinator.mjs';
 import { watchDebounced } from '../proc/watch.mjs';
 import { createHappyCliReloadDescriptors, createHappyCliReloadExecutor, prepareDevDaemonSourceRuntime } from './daemon.mjs';
-import { createDevServerReloadDescriptors, createDevServerReloadExecutor } from './server.mjs';
+import { createDevServerReloadDescriptors, createDevServerReloadExecutor, createDevServerReloadPlan } from './server.mjs';
 import { readHappyCliRuntimeInputFreshness } from '../proc/cli_runtime_inputs.mjs';
 import { inspectDependencyRefresh, withDependencyRefresh } from '../proc/dependency_refresh.mjs';
 import { sanitizeStackTestRunnerEnv } from '../test/test_env.mjs';
+
+test('dependency reload descriptor ignores non-install edits and consumes real install changes once', async t => {
+  const fixture = await createMinimalMonorepoFixture(t, { prefix: 'hstack-dependency-descriptor-' });
+  const manifest = { private: true, workspaces: ['apps/*'], scripts: { 'test:unit': 'first' } };
+  await fs.writeFile(fixture.path('package.json'), JSON.stringify(manifest));
+  await fs.writeFile(fixture.path('pnpm-lock.yaml'), '# initial\n');
+  await fs.writeFile(fixture.path('pnpm-workspace.yaml'), 'packages:\n  - apps/*\n');
+  await fs.mkdir(fixture.path('node_modules'));
+  await fs.mkdir(fixture.path('patches'));
+  const installed = fixture.path('installed');
+  const pnpm = fixture.path('pnpm.cjs');
+  await fs.writeFile(pnpm, [
+    "const fs = require('node:fs');",
+    "if (process.argv[2] === '--version') console.log('12.14.0');",
+    `else fs.appendFileSync(${JSON.stringify(installed)}, 'install\\n');`,
+  ].join('\n'));
+  const env = { ...sanitizeStackTestRunnerEnv(process.env, { isolatedStackRoot: fixture.root }),
+    npm_execpath: pnpm, HAPPIER_STACK_DEV_AUTO_REFRESH_DEPS: '1' };
+  await withDependencyRefresh({ installDir: fixture.root, env }, async () => {});
+  const reload = await createDevDependencyReload({ repoDir: fixture.root, env });
+  let watcher;
+  const admissions = [], failures = [];
+  const coordinator = startDevReloadCoordinator({ descriptors: [reload.descriptor],
+    executors: [{ ...reload.executor, emitTransitionEvent(event, detail) {
+      if (event === 'source_generation_admitted') admissions.push(detail);
+    } }], logger: { log() {}, warn() {}, error(message) { failures.push(message); } },
+  }, { watchDebouncedImpl(options) { watcher = options; return { close() {} }; } });
+  t.after(() => coordinator.close());
+  await coordinator.requestReload('dependencies');
+  admissions.length = 0;
+  manifest.scripts['test:unit'] = 'second';
+  await fs.writeFile(fixture.path('package.json'), JSON.stringify(manifest, null, 2));
+  await watcher.onChange({ eventType: 'change', watchPath: fixture.path('package.json'), filename: 'package.json' });
+  await fs.writeFile(fixture.path('patches', 'unregistered.patch'), 'not an install input');
+  await watcher.onChange({ eventType: 'rename', watchPath: fixture.path('patches'), filename: 'unregistered.patch' });
+  assert.equal(admissions.length, 0, 'non-install edits must admit zero dependency generations');
+  await fs.writeFile(fixture.path('pnpm-lock.yaml'), '# real change\n');
+  await watcher.onChange({ eventType: 'change', watchPath: fixture.path('pnpm-lock.yaml'), filename: 'pnpm-lock.yaml' });
+  await watcher.onChange({ eventType: 'change', watchPath: fixture.path('pnpm-lock.yaml'), filename: 'pnpm-lock.yaml' });
+  assert.equal(admissions.length, 1, 'a real install input change admits one dependency generation');
+  assert.equal((await fs.readFile(installed, 'utf8')).trim(), 'install');
+  assert.equal((await inspectDependencyRefresh({ installDir: fixture.root, env })).required, false);
+  assert.deepEqual(failures, []);
+});
+
+test('dependency publication exhausted trailing pass is terminal for source startup', () => {
+  const error = new BuildInputDriftError('dependencies changed during both attempts', { trailingPassExhausted: true });
+  assert.equal(isDevStartupSourceDrift(error, 'expo'), false);
+  assert.equal(isDevStartupSourceDrift(error, 'daemon'), false);
+});
+
+test('failure diagnostic publication cannot replace the compiler refusal', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-refusal-publication-' });
+  const stackBaseDir = fixture.path('not-a-directory');
+  await fs.writeFile(stackBaseDir, 'obstructed diagnostic output');
+  const original = Object.assign(new Error('compiler module failed'), { firstFailingModule: fixture.path('authored-module.ts') });
+  await assert.rejects(prepareSourceComponent({ repoDir: fixture.root, stackBaseDir, target: 'daemon',
+    waitForSourceChanges: false,
+    // The compiler is a system boundary; the real preparation/refusal owners remain active.
+    prepare: async () => { throw original; } }), error => error === original);
+});
 
 test('development input changes refresh installed dependencies before source builds through the reload owner', async t => {
   const fixture = await createMinimalMonorepoFixture(t, { prefix: 'hstack-dev-auto-deps-' });
@@ -78,7 +139,8 @@ test('development input changes refresh installed dependencies before source bui
   }
   assert.deepEqual(failures, []);
   assert.equal(sourceBuilds, 5);
-  assert.equal((await fs.readFile(installed, 'utf8')).trim().split('\n').filter(line => line.startsWith('install')).length, 5);
+  assert.equal((await fs.readFile(installed, 'utf8')).trim().split('\n').filter(line => line.startsWith('install')).length, 4,
+    'an unregistered patch file does not change the install identity');
   await watcher.onChange({ eventType: 'poll', filename: null });
   assert.equal(sourceBuilds, 5, 'unchanged inputs do not trigger another refresh');
   await coordinator.close();
@@ -246,7 +308,7 @@ test('Metro losing a source file mid-bundle is startup source drift, unlike conf
     'an owner that compared input bytes can reject heuristic source-drift classification');
   assert.equal(isDevStartupSourceDrift({ code: 1, message: 'Error: listen EADDRINUSE' }, 'expo'), false);
   const exhausted = Object.assign(new Error('[workspace-build] inputs changed while building @happier-dev/plugin-sdk; retained the last coherent output; rerun the phase'), { code: 'BUILD_INPUTS_CHANGED', trailingPassExhausted: true });
-  assert.equal(isDevStartupSourceDrift(exhausted, 'server'), true);
+  assert.equal(isDevStartupSourceDrift(exhausted, 'server'), false);
   const missingDeclaredExport = Object.assign(new Error('/bin/yarn failed (code=1, sig=null)\n\nChild output:\n[stderr]\nError: Staged TypeScript package build is missing declared package export files:\n- ./src/voice/modelPacks/artifactBindingV1.ts'), { code: 'EEXIT', exitCode: 1 });
   assert.equal(isDevStartupSourceDrift(missingDeclaredExport, 'server'), true);
   assert.equal(isDevStartupSourceDrift(missingDeclaredExport, 'expo'), true);
@@ -296,6 +358,7 @@ test('startup preparation survives a source build failure and retries only after
   assert.equal(attempts, 2, 'a successful startup must not run twice when its inputs advance');
 
   const environmentErrors = [
+    new BuildInputDriftError('producer exhausted its trailing rebuild', { trailingPassExhausted: true }),
     Object.assign(new Error('port occupied'), { code: 'EADDRINUSE' }),
     Object.assign(new Error('dependency installation failed'), { code: 'EEXIT' }),
     Object.assign(new Error('preflight failed', { cause: new Error('Invalid installFreshnessInputs') }), {
@@ -330,6 +393,94 @@ test('startup preparation survives a source build failure and retries only after
   cancelled.abort();
   await rejection;
 });
+
+for (const retryFails of [false, true]) {
+test(`failed captured source gets one immediate lifecycle retry, retry failure=${retryFails}`, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-captured-failure-retry-' });
+  const source = fixture.path('input.mjs');
+  const capture = fixture.path('captured.mjs');
+  await fs.writeFile(source, 'export const value = ;');
+  let attempts = 0;
+  let selected = 0;
+  const coordinator = startDevReloadCoordinator({ observeChanges: false,
+    descriptors: [{ id: 'daemon:inputs', target: 'daemon', paths: [source] }],
+    executors: [{ target: 'daemon',
+      async build() {
+        attempts++;
+        // The real producer captures first. Its input moves before the
+        // captured bytes fail in the real compiler, without another event.
+        await fs.copyFile(source, capture);
+        if (attempts === 1 || (retryFails && attempts === 2)) {
+          await fs.writeFile(source, retryFails && attempts === 1
+            ? 'export const replacement = ;' : 'export const value = true;');
+        }
+        await run(process.execPath, ['--check', capture], { captureFailureDiagnostic: true, stdio: 'ignore' });
+      },
+      async restart() { selected++; },
+    }],
+    logger: { log() {}, warn() {}, error() {} },
+  });
+  t.after(() => coordinator.close());
+  await coordinator.requestReload('daemon');
+  assert.equal(attempts, 2, 'an input already corrected during capture earns exactly one immediate retry');
+  assert.equal(selected, retryFails ? 0 : 1, 'failed captured bytes must never activate');
+  if (retryFails) {
+    await fs.writeFile(source, 'export const value = "next-edit";');
+    await coordinator.requestReload('daemon');
+    assert.equal(attempts, 3, 'after the bounded retry fails the next edit still recovers');
+    assert.equal(selected, 1);
+  }
+});
+}
+
+for (const changedInput of ['source', 'auxiliary']) {
+test(`terminal failed capture preserves a mid-build ${changedInput} edit for the next observation`, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-terminal-capture-baseline-' });
+  const source = fixture.path('input.mjs');
+  const auxiliary = fixture.path('auxiliary.mjs');
+  const capture = fixture.path('captured.mjs');
+  const auxiliaryCapture = fixture.path('captured-auxiliary.mjs');
+  await fs.writeFile(source, 'export const value = ;');
+  await fs.writeFile(auxiliary, changedInput === 'auxiliary' ? 'export const value = ;' : 'export const value = "A";');
+  let watcher;
+  let attempts = 0;
+  let selected = 0;
+  const coordinator = startDevReloadCoordinator({
+    descriptors: [
+      { id: 'daemon:source', target: 'daemon', paths: [source] },
+      { id: 'daemon:auxiliary', target: 'daemon', paths: [auxiliary], invalidatesGeneration: false },
+    ],
+    executors: [{ target: 'daemon',
+      async build() {
+        attempts++;
+        await fs.copyFile(source, capture);
+        await fs.copyFile(auxiliary, auxiliaryCapture);
+        if (attempts === 1) {
+          await fs.writeFile(source, changedInput === 'source' ? 'export const replacement = ;' : 'export const value = "A";');
+        } else if (attempts === 2) {
+          await fs.writeFile(changedInput === 'source' ? source : auxiliary, 'export const value = "B";');
+        }
+        // Real compiler rejection after the edit reproduces the failed
+        // capture window for both generation and auxiliary inputs.
+        await run(process.execPath, ['--check', capture], { captureFailureDiagnostic: true, stdio: 'ignore' });
+        await run(process.execPath, ['--check', auxiliaryCapture], { captureFailureDiagnostic: true, stdio: 'ignore' });
+      },
+      async restart() { selected++; },
+    }],
+    logger: { log() {}, warn() {}, error() {} },
+  }, { watchDebouncedImpl(options) { watcher = options; return { close() {} }; } });
+  t.after(() => coordinator.close());
+  await coordinator.requestReload('daemon');
+  assert.equal(attempts, 2, 'the immediate retry episode remains bounded');
+  assert.equal(selected, 0, 'neither failed capture may activate');
+  await watcher.onChange({ eventType: 'poll', filename: null });
+  assert.equal(attempts, 3, 'an edit already on disk when the retry failed must remain eligible');
+  assert.equal(selected, 1);
+  await watcher.onChange({ eventType: 'poll', filename: null });
+  await watcher.onChange({ eventType: 'change', filename: changedInput === 'source' ? source : auxiliary });
+  assert.equal(attempts, 3, 'unchanged observations must not re-arm another attempt');
+});
+}
 
 test('reload coordinator watches and samples only inputs with an active consumer', async (t) => {
   const root = await fs.mkdtemp(join(tmpdir(), 'dev-reload-active-inputs-'));
@@ -421,7 +572,7 @@ test('overlapping reload consumers share one filesystem sweep and observe subseq
   assert.deepEqual(reloads, ['server:build:1', 'server:restart:1', 'daemon:build:1', 'daemon:restart:1']);
 });
 
-test('a pending build suspends recovery scans and revalidates missed edits before activation', async (t) => {
+test('a pending build suspends recovery scans and catches up missed edits after activation', async (t) => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-pending-build-scan-' });
   const source = fixture.path('source.ts');
   await fs.writeFile(source, 'export const value = 1;');
@@ -477,8 +628,8 @@ test('a pending build suspends recovery scans and revalidates missed edits befor
   await poll();
   await poll();
   assert.equal(sourceStats, 0, 'admission/build waits must not traverse source on recovery ticks');
-  // Deliberately omit the native event: completion must still reject stale
-  // prepared inputs before activating, then build the current generation.
+  // Deliberately omit the native event: completion must apply the prepared
+  // generation and still discover the edit for the trailing build.
   await fs.writeFile(source, 'export const value = 2;');
   // Recovery checks known metadata. Establish an observable same-size edit
   // without assuming two awaited writes cross the filesystem's timestamp tick.
@@ -489,7 +640,7 @@ test('a pending build suspends recovery scans and revalidates missed edits befor
   releaseBuild();
   await preparing;
   assert.deepEqual(builds, [1, 2]);
-  assert.deepEqual(activations, [2]);
+  assert.deepEqual(activations, [1, 2]);
   sourceStats = 0;
   await poll();
   assert.equal(sourceStats, 1, 'idle missed-event recovery resumes after the build');
@@ -1640,7 +1791,7 @@ test('a pathless no-delta observation does not supersede an active forced reload
   await onChange.watcher.close();
 });
 
-test('a pathless observation supersedes an active reload when its descriptor signature changed', async () => {
+test('a pathless changed signature queues catch-up without discarding the completed reload', async () => {
   const calls = [];
   const server = descriptor({ id: 'server:app', target: 'server' });
   let unexpectedExitHandler = null;
@@ -1673,7 +1824,7 @@ test('a pathless observation supersedes an active reload when its descriptor sig
 
   assert.deepEqual(
     calls.filter((call) => typeof call === 'string' && /:(?:build|restart):/.test(call)),
-    ['server:build:1', 'server:build:2', 'server:restart:2'],
+    ['server:build:1', 'server:restart:1', 'server:build:2', 'server:restart:2'],
   );
 
   await onChange.watcher.close();
@@ -1949,22 +2100,25 @@ test('closing during executor-facing generation revalidation revokes activation 
   assert.equal(revalidationResult, false);
 });
 
-test('a changed signature fences a stale generation before destructive restart activation', async () => {
+// Brief dev-reload-starvation-1031.md task 2: "latest complete wins; never starve".
+test('each completed generation applies despite multiple source edits during every preparation', async () => {
   const calls = [];
   const server = descriptor({ id: 'server:app', target: 'server' });
-  let releaseBuild;
-  let markBuildStarted;
-  const buildStarted = new Promise((resolve) => { markBuildStarted = resolve; });
-  const buildBlocked = new Promise((resolve) => { releaseBuild = resolve; });
+  const prepared = [];
   const activations = [];
+  const messages = [];
+  let observe;
   const onChange = startCoordinator({
     descriptors: [server],
     executors: [executor('server', calls, {
       async build(context) {
-        if (context.generation === 1) {
-          markBuildStarted();
-          await buildBlocked;
+        if (context.generation <= 3) {
+          for (let edit = 1; edit <= 5; edit++) {
+            server.set(`${context.generation}:${edit}`);
+            observe({ eventType: 'change', filename: 'app.ts', watchPath: server.paths[0] });
+          }
         }
+        prepared.push(context.generation);
       },
       async restart(context) {
         assert.equal(await context.revalidateGeneration(), true);
@@ -1972,17 +2126,17 @@ test('a changed signature fences a stale generation before destructive restart a
       },
     })],
     calls,
+    logger: { log(message) { messages.push(message); }, error(message) { assert.fail(message); } },
   });
+  observe = onChange.observe;
 
   server.set('1');
-  const first = onChange({ eventType: 'change', filename: 'first.ts' });
-  await buildStarted;
-  server.set('2');
-  const trailing = onChange({ eventType: 'change', filename: 'second.ts' });
-  releaseBuild();
-  await Promise.all([first, trailing]);
+  await onChange({ eventType: 'change', filename: 'first.ts' });
 
-  assert.deepEqual(activations, [2]);
+  assert.deepEqual(prepared, [1, 2, 3, 4]);
+  assert.deepEqual(activations, prepared, 'one activation per completed preparation');
+  assert.equal(messages.filter(message => message.includes('became stale')).length, 0);
+  await onChange.watcher.close();
 });
 
 test('unrelated service edits preserve completed builds and coalesce only the affected trailing reload', async () => {
@@ -2015,10 +2169,86 @@ test('unrelated service edits preserve completed builds and coalesce only the af
   daemon.set('1');
   await onChange({ eventType: 'change', filename: 'server.ts', watchPath: server.paths[0] });
   assert.deepEqual(builds, ['server:1', 'daemon:1', 'daemon:2']);
-  assert.deepEqual(activations, ['server:1', 'daemon:2']);
+  assert.deepEqual(activations, ['server:1', 'daemon:1', 'daemon:2']);
 });
 
-test('shared input edits still revoke every affected service activation', async () => {
+test('CLI-only changes never prepare or invalidate the server target', async () => {
+  const calls = [];
+  const daemon = descriptor({ id: 'daemon:cli', target: 'daemon' });
+  const server = descriptor({ id: 'server:app', target: 'server' });
+  const onChange = startCoordinator({
+    descriptors: [daemon, server],
+    executors: [executor('server', calls), executor('daemon', calls)],
+    calls,
+  });
+  daemon.set('1');
+  await onChange({ eventType: 'change', filename: 'index.ts', watchPath: daemon.paths[0] });
+  assert.deepEqual(calls.slice(1), ['daemon:build:1', 'daemon:restart:1']);
+  await onChange.watcher.close();
+});
+
+test('an explicit forced target still revokes a completed generation before activation', async () => {
+  const calls = [];
+  const server = descriptor({ id: 'server:app', target: 'server' });
+  let onChange;
+  onChange = startCoordinator({
+    descriptors: [server],
+    executors: [executor('server', calls, {
+      async build(context) {
+        if (context.generation === 1) {
+          await onChange.watcher.requestReload('server');
+          return { ok: true, allowSupersededActivation: true };
+        }
+      },
+    })],
+    calls,
+  });
+  server.set('1');
+  await onChange({ eventType: 'change', filename: 'app.ts' });
+  assert.deepEqual(calls.slice(1), ['server:build:1', 'server:build:2', 'server:restart:2']);
+  await onChange.watcher.close();
+});
+
+test('the server descriptor producer preserves migration-plan safety during source capture', async t => {
+  const fixture = await createMinimalMonorepoFixture(t, { prefix: 'hstack-reload-migration-safety-' });
+  const serverDir = fixture.path('apps/server');
+  await fs.mkdir(join(serverDir, 'src'), { recursive: true });
+  await fs.mkdir(join(serverDir, 'prisma'), { recursive: true });
+  const source = join(serverDir, 'src/index.ts');
+  const schema = join(serverDir, 'prisma/schema.prisma');
+  await fs.writeFile(source, 'export const value = 0;');
+  await fs.writeFile(schema, 'model Initial {}');
+  const descriptors = await createDevServerReloadDescriptors({ serverDir });
+  const calls = [];
+  const plans = [];
+  const activations = [];
+  let onChange;
+  onChange = startCoordinator({
+    descriptors,
+    executors: [executor('server', calls, {
+      createPlan(context) {
+        const plan = createDevServerReloadPlan(context);
+        plans.push(plan.migrationMode);
+        return plan;
+      },
+      async build(context) {
+        if (context.generation !== 1) return;
+        await fs.writeFile(schema, 'model ChangedWithNewFields {}');
+        onChange.observe({ eventType: 'change', filename: 'schema.prisma', watchPath: join(serverDir, 'prisma') });
+      },
+      restart(context) { activations.push(context.generation); },
+    })],
+    calls,
+  });
+  t.after(() => onChange.watcher.close());
+  await onChange.readSignature();
+  await fs.writeFile(source, 'export const value = 1;');
+  await onChange({ eventType: 'change', filename: 'index.ts', watchPath: join(serverDir, 'src') });
+  assert.deepEqual(plans, ['skip', 'apply']);
+  assert.deepEqual(activations, [2], 'a capture with changed migration evidence cannot use the app-only plan');
+});
+
+test('shared source edits apply each completed service generation before catch-up', async () => {
   const calls = [];
   const shared = descriptor({ id: 'shared:protocol', target: 'shared' });
   let observe;
@@ -2041,7 +2271,7 @@ test('shared input edits still revoke every affected service activation', async 
   observe = onChange.observe;
   shared.set('1');
   await onChange({ eventType: 'change', filename: 'protocol.ts', watchPath: shared.paths[0] });
-  assert.deepEqual(activations, ['server:2', 'daemon:2']);
+  assert.deepEqual(activations, ['server:1', 'daemon:1', 'server:2', 'daemon:2']);
 });
 
 test('an executor-owned publication update does not supersede the source generation that produced it', async () => {
@@ -2108,7 +2338,7 @@ test('an external publication update remains actionable when no generation owns 
   ]);
 });
 
-test('a stale captured daemon generation activates only without a running incumbent, then replans', async t => {
+test('a completed captured daemon generation activates with or without a healthy incumbent, then replans', async t => {
   for (const scenario of [
     { name: 'crashed daemon with retained loaded identity', running: false, loaded: 'old', reason: 'daemon_not_running' },
     { name: 'never started daemon', running: false, loaded: null, reason: 'missing_state' },
@@ -2168,7 +2398,7 @@ test('a stale captured daemon generation activates only without a running incumb
     assert.deepEqual(events, scenario.running
       ? scenario.reason
         ? ['build:1', 'build:2']
-        : ['build:1', 'build:2', 'activate:gen-2']
+        : ['build:1', 'activate:gen-1', 'build:2', 'activate:gen-2']
       : ['build:1', 'activate:gen-1', 'build:2', 'activate:gen-2']);
   });
 });
@@ -2210,6 +2440,7 @@ test('a named Prisma observation during the pre-activation sampling gap revokes 
     const prisma = {
       id: 'server:prisma',
       target: 'server',
+      invalidatesGeneration: true,
       paths: ['/tmp/server:prisma'],
       set(value) {
         prismaSignature = value;
@@ -2288,6 +2519,7 @@ test('a handled debounce delivery cannot suppress a distinct edit during the rep
   const prisma = {
     id: 'server:prisma',
     target: 'server',
+    invalidatesGeneration: true,
     paths: ['/tmp/server:prisma'],
     set(value) {
       prismaSignature = value;
@@ -2393,6 +2625,36 @@ test('shared edits refresh server and daemon independently in restart order', as
     'daemon:build:1',
     'daemon:restart:1',
   ]);
+});
+
+test('shared source edits preserve Expo while explicit Expo inputs still restart it', async () => {
+  const calls = [];
+  const shared = descriptor({ id: 'shared:protocol', target: 'shared' });
+  const dependencies = descriptor({ id: 'expo:dependencies', target: 'expo' });
+  const config = descriptor({ id: 'expo:metro-config', target: 'expo' });
+  const onChange = startCoordinator({
+    descriptors: [shared, dependencies, config],
+    executors: [executor('server', calls), executor('daemon', calls), executor('expo', calls)],
+    calls,
+  });
+
+  shared.set('1');
+  await onChange({ eventType: 'change', filename: 'index.ts' });
+  assert.deepEqual(calls.slice(1), [
+    'server:build:1', 'server:restart:1',
+    'daemon:build:1', 'daemon:restart:1',
+  ]);
+
+  calls.length = 0;
+  dependencies.set('1');
+  await onChange({ eventType: 'change', filename: 'publication.generation' });
+  assert.deepEqual(calls, ['expo:build:2', 'expo:restart:2']);
+
+  calls.length = 0;
+  config.set('1');
+  await onChange({ eventType: 'change', filename: 'metro.config.js' });
+  assert.deepEqual(calls, ['expo:build:3', 'expo:restart:3']);
+  await onChange.watcher.close();
 });
 
 test('a skipped build is not admitted for restart', async () => {
@@ -2587,7 +2849,7 @@ test('a superseded generation clears its server lifecycle plan before the traili
         async build(context) {
           if (context.cycle === 1) {
             server.set('2');
-            await onChange({ eventType: 'change', filename: 'second.ts' });
+            await onChange({ eventType: 'change', filename: 'second.ts', forcedTarget: 'server' });
             return { skipped: true, reason: 'superseded-preflight' };
           }
         },
@@ -2620,7 +2882,7 @@ test('a failed idle projection does not suppress the trailing superseding genera
         async build(context) {
           if (context.cycle === 1) {
             server.set('2');
-            await onChange({ eventType: 'change', filename: 'second.ts' });
+            await onChange({ eventType: 'change', filename: 'second.ts', forcedTarget: 'server' });
             return { skipped: true, reason: 'superseded-preflight' };
           }
         },
@@ -2667,7 +2929,7 @@ test('a superseded activation-capable build reaches its executor while exactly o
   assert.deepEqual(calls.slice(1), [
     'daemon:build:1',
     'daemon:restart:1',
-    'generation-current:1:false',
+    'generation-current:1:true',
     'daemon:build:2',
     'daemon:restart:2',
     'generation-current:2:true',

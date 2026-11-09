@@ -82,8 +82,18 @@ test('QA provisioning refreshes the worker catalog before importing its installe
   // only its native process/OS boundary; build, leases and imports stay real.
   const native = await installWorkspaceAdmissionProcessFixture(t, root);
   const moduleUrl = pathToFileURL(join(directory, 'provision.mjs')).href;
-  const { provisionQaHostDependencies } = await import(moduleUrl);
-  await assert.rejects(provisionQaHostDependencies({ ...native.env, HAPPIER_HOME_DIR: join(root, 'qa-home') }), error => {
+  // A fresh worker resolves its own packages; the containing suite's source
+  // loader is registered globally and would redirect these imports elsewhere.
+  const source = `const { provisionQaHostDependencies } = await import(${JSON.stringify(moduleUrl)});
+await provisionQaHostDependencies(process.env);`;
+  const nodeOptions = [
+    '--conditions=happier-source',
+    `--import=${import.meta.resolve('tsx')}`,
+    ...(native.preloadPath ? [`--import=${pathToFileURL(native.preloadPath).href}`] : []),
+  ].join(' ');
+  await assert.rejects(promisify(execFile)(process.execPath, ['--input-type=module', '--eval', source], {
+    env: { ...native.env, NODE_OPTIONS: nodeOptions, HAPPIER_HOME_DIR: join(root, 'qa-home') },
+  }), error => {
     assert.match(error.message, /catalog-budget=536870912/);
     assert.doesNotMatch(error.message, /catalog-budget=402653184/);
     return true;
@@ -241,6 +251,32 @@ async function onboardingFixture(t) {
   };
   return { root, config, target, scripts, probes, boundary };
 }
+
+test('host toolchain onboarding installs resource slices as the final worker account', async t => {
+  const fixture = await onboardingFixture(t);
+  const workerHome = join(fixture.root, 'worker-home');
+  await mkdir(workerHome);
+  const osBoundary = join(fixture.root, 'resource-os-boundary.sh');
+  await writeFile(osBoundary, 'systemctl() { return 0; }\n');
+  await prepareDevTargetHost({ target: fixture.target, toolchain: true, createUser: 'happier' }, {
+    ...fixture.boundary,
+    runInteractive: async request => {
+      await fixture.boundary.runInteractive(request);
+      if (!request.args.at(-1).includes('--profile=resources')) return;
+      const config = await readFile(request.args[request.args.indexOf('-F') + 1], 'utf8');
+      assert.match(config, /^\s*User happier$/mu);
+      assert.ok(request.args.includes('ControlPath=none'), 'policy must use fresh final-account authentication');
+      // SSH is the system boundary. Run the real streamed installer in that
+      // account's home, while earlier privileged OS setup stays outside it.
+      await promisify(execFile)('bash', ['-c', request.args.at(-1)], {
+        env: { ...request.env, HOME: workerHome, DBUS_SESSION_BUS_ADDRESS: '', BASH_ENV: osBoundary },
+      });
+    },
+  });
+  const units = join(workerHome, '.config/systemd/user');
+  assert.match(await readFile(join(units, 'happier-jobs.slice'), 'utf8'), /^IOWeight=50$/mu);
+  assert.match(await readFile(join(units, 'happier-critical.slice'), 'utf8'), /^MemoryLow=4G$/mu);
+});
 
 test('host toolchain preparation streams the Iroh pin to the selected worker account without elevation', async t => {
   const fixture = await onboardingFixture(t);

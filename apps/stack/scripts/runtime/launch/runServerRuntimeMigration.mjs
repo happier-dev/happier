@@ -2,9 +2,10 @@ import { lstat, realpath } from 'node:fs/promises';
 import { basename, dirname, resolve } from 'node:path';
 
 import { spawnProc } from '../../utils/proc/proc.mjs';
+import { assertSharedDatabaseMigrationsApplied } from '../../utils/server/shared_database_migration_gate.mjs';
 
 export class RuntimeServerMigrationError extends Error {
-  constructor(message, { code, reason, command = null, cwd = null, exitCode = null, signal = null, cause } = {}) {
+  constructor(message, { code, reason, command = null, cwd = null, exitCode = null, signal = null, failedMigration = null, cause } = {}) {
     super(message, cause ? { cause } : undefined);
     this.name = 'RuntimeServerMigrationError';
     this.code = code;
@@ -13,6 +14,7 @@ export class RuntimeServerMigrationError extends Error {
     this.cwd = cwd;
     this.exitCode = exitCode;
     this.signal = signal;
+    this.failedMigration = failedMigration;
   }
 }
 
@@ -70,12 +72,16 @@ export async function runServerRuntimeMigration({
   isCancellationRequested,
   spawnProcImpl = spawnProc,
 }) {
+  const shared = await assertSharedDatabaseMigrationsApplied({ serverDir: serverLaunchSpec?.serverDir, env });
+  // Shared consumers can only inspect the ledger, regardless of a stale launch spec.
+  if (shared) return;
   if (serverLaunchSpec?.migration?.mode === 'disabled' || serverLaunchSpec?.migration?.mode === 'in-process') {
     return;
   }
   throwIfStartupCancelled(isCancellationRequested, serverLaunchSpec?.migration);
   const migration = await validateRuntimeServerMigration(serverLaunchSpec);
   throwIfStartupCancelled(isCancellationRequested, migration);
+  let failedMigration = null;
   let child;
   try {
     child = spawnProcImpl(
@@ -83,7 +89,13 @@ export async function runServerRuntimeMigration({
       migration.sourceSidecar ? process.execPath : migration.command,
       migration.sourceSidecar ? [migration.command, ...migration.args] : migration.args,
       env,
-      { cwd: migration.cwd },
+      { cwd: migration.cwd, onLine(event) {
+        // Retain only the canonical identifier, never driver output or connection values.
+        // SQLite tags the executed SQL failure; Prisma's P3018 diagnostic
+        // names the failed migration. Progress/success lines are not failures.
+        const match = String(event?.line ?? '').match(/(?:migrationName=|^\s*Migration name:\s*)(\d{14}_[a-z0-9_]+)\b/);
+        if (match) failedMigration = match[1];
+      } },
     );
   } catch (error) {
     throw migrationError('ERUNTIMESERVERMIGRATIONUNAVAILABLE', 'spawn_error', migration, { cause: error });
@@ -106,6 +118,14 @@ export async function runServerRuntimeMigration({
       const reason = Number.isInteger(completion?.code) ? 'nonzero_exit' : 'abnormal_completion';
       throw migrationError('ERUNTIMESERVERMIGRATIONFAILED', reason, migration, { exitCode: completion?.code ?? null });
     }
+  } catch (error) {
+    if (error instanceof RuntimeServerMigrationError && error.code === 'ERUNTIMESERVERMIGRATIONFAILED') {
+      if (failedMigration) {
+        error.failedMigration = failedMigration;
+        error.message += ` (${failedMigration})`;
+      }
+    }
+    throw error;
   } finally {
     const index = children?.indexOf(child) ?? -1;
     if (index >= 0) children.splice(index, 1);

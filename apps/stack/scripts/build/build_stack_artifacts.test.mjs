@@ -33,6 +33,7 @@ test('server artifact identity includes a workspace dependency build script', ()
 });
 import { resolveRuntimeBuildRequestIdentity } from './runtime_build_request_identity.mjs';
 import { collectBuildSourceMetadata } from './collect_build_source_metadata.mjs';
+import { readBuildInputDependencies } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
 
 import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
 import { writeManagedRuntimeSnapshotLayout } from '../testkit/core/runtime_snapshot_layout.mjs';
@@ -217,6 +218,7 @@ test('matching component inputs reuse artifacts before preparation, while missin
   writeFileSync(join(artifactDir, 'manifest.json'), JSON.stringify({
     version: 1, component: 'web', artifactFingerprint: identity.artifactFingerprints.web,
     sourceFingerprint: sourceMetadata.sourceFingerprint, payloadDir: 'payload', entrypoint: 'index.html',
+    dependencyPublication: await readBuildInputDependencies({ sourceDir: repoDir, env }),
   }));
   // The preparation callback is the compiler/publisher process boundary.
   // Identity resolution, artifact validation and the real web builder stay real.
@@ -311,6 +313,7 @@ test('matching component inputs reuse artifacts before preparation, while missin
       writeFileSync(join(preparedArtifactDir, 'manifest.json'), JSON.stringify({
         version: 1, component: 'web', artifactFingerprint: finalIdentity.artifactFingerprints.web,
         sourceFingerprint: metadata.sourceFingerprint, payloadDir: 'payload', entrypoint: 'index.html',
+        dependencyPublication: await readBuildInputDependencies({ sourceDir: repoDir, env }),
       }));
     },
   });

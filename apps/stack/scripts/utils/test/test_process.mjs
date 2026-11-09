@@ -56,3 +56,14 @@ export async function runNodeTestFiles(testFiles, {
     spawnOptions: { cwd, env: sanitizeDefinedEnv(env), stdio, detached: false },
   });
 }
+
+export async function runStackTestFiles(testFiles, { admission, ...options } = {}) {
+  return await runNodeTestFiles(testFiles, {
+    ...options,
+    serial: true,
+    // Both complete Stack suites execute real server/daemon source bundles.
+    // Reserve their existing source-bundle resource contract before the reader;
+    // nested source builders can then reuse it even under contention.
+    admission: { ...admission, admissionClass: 'source-bundle' },
+  });
+}

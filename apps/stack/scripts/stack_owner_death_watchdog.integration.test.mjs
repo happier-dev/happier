@@ -146,6 +146,60 @@ test('owner watchdog waits for its parent lifetime event without polling runtime
   assert.equal(JSON.parse(await readFile(runtimeStatePath, 'utf8')).ownerPid, process.pid);
 });
 
+test('owner-death cleanup loads one current dependency graph after source changes while watching', async t => {
+  const fixture = await setupStackStopSweepFixture({ importMetaUrl: import.meta.url, t,
+    tmpPrefix: 'hstack-owner-watchdog-source-change-' });
+  t.after(() => fixture.cleanup());
+  const runtimeStatePath = join(fixture.baseDir, 'stack.runtime.json');
+  const watchdogLogPath = join(fixture.baseDir, 'logs', 'owner-death-watchdog.log');
+  const updated = join(fixture.tmp, 'source-updated');
+  const preload = join(fixture.tmp, 'observe-source-update.mjs');
+  // Genuine module-filesystem boundary: model the pre-update export surface
+  // until the watched owner is ready. Every domain function and the actual
+  // stop path remain real; only the bytes a new module load observes change.
+  await writeFile(preload, [
+    "import fs, { existsSync } from 'node:fs';",
+    "import { registerHooks, syncBuiltinESMExports } from 'node:module';",
+    // The host has thousands of unrelated fleet processes. Scope the genuine
+    // OS inventory to this fixture; process identity, signals and exit stay real.
+    'const readdir = fs.promises.readdir;',
+    "const visible = new Set([String(process.pid), ...process.env.WATCHDOG_FIXTURE_PIDS.split(',')]);",
+    'fs.promises.readdir = async function(path, ...args) {',
+    '  const rows = await readdir.call(this, path, ...args);',
+    "  return String(path) === '/proc' ? rows.filter(row => visible.has(String(row.name ?? row))) : rows;",
+    '};',
+    'syncBuiltinESMExports();',
+    'registerHooks({ load(url, context, nextLoad) {',
+    '  const result = nextLoad(url, context);',
+    `  if (existsSync(${JSON.stringify(updated)}) || result.source == null) return result;`,
+    '  let source = Buffer.from(result.source).toString();',
+    "  if (url.endsWith('/proc/dependency_refresh.mjs')) source = source.replace('export async function markDependencyMutation', 'async function markDependencyMutation');",
+    "  if (url.endsWith('/proc/ui_postinstall.mjs')) source = source.replace('markDependencyMutation, ', '');",
+    '  return { ...result, source };',
+    '} });',
+  ].join('\n'));
+  const owner = fixture.trackChild(spawnOwnedSleep({ env: fixture.baseEnv }));
+  const infra = fixture.trackChild(spawnOwnedSleep({ env: { ...fixture.baseEnv,
+    HAPPIER_STACK_STACK: fixture.stackName, HAPPIER_STACK_ENV_FILE: fixture.envPath,
+    HAPPIER_STACK_PROCESS_KIND: 'infra' } }));
+  const runtime = await recordStackRuntimeStart(runtimeStatePath, {
+    stackName: fixture.stackName, script: 'watchdog-source-update', ephemeral: true,
+    ownerPid: owner.pid, ports: {}, processes: { serverPid: infra.pid },
+  });
+  fixture.trackChild(spawnStackOwnerDeathWatchdog({ rootDir: fixture.rootDir,
+    stackName: fixture.stackName, baseDir: fixture.baseDir, envPath: fixture.envPath,
+    runtimeStatePath, ownerPid: owner.pid, ownerStartedAt: runtime.startedAt,
+    env: { ...fixture.baseEnv, NODE_OPTIONS: `--import=${preload}`,
+      WATCHDOG_FIXTURE_PIDS: `${owner.pid},${infra.pid}` }, pollMs: 25 }));
+  await waitForLogMatch(watchdogLogPath, /watching owner pid=/);
+  await writeFile(updated, 'current source exports markDependencyMutation\n');
+  owner.kill('SIGTERM');
+  const log = await waitForLogMatch(watchdogLogPath, /sweep (?:complete|failed)/);
+  assert.match(log, /owner_death_sweep_complete/, log);
+  await waitForProcessExit({ pid: infra.pid, label: 'infra after source update' });
+  assert.equal(isAlive(infra.pid), false);
+});
+
 test('owner-death sweep no-ops when a successor publishes after the watched owner was observed', async (t) => {
   const fixture = await setupStackStopSweepFixture({
     importMetaUrl: import.meta.url,

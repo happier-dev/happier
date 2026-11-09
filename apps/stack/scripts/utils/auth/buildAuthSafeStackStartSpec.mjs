@@ -7,6 +7,7 @@ export function buildAuthSafeStackStartSpec({
   runtimeMode = '',
   effectiveWebappMode = 'auto',
   shouldStartDevForAutoAuth = false,
+  startDaemon = false,
   baseEnv = process.env,
 } = {}) {
   const name = String(stackName ?? '').trim() || 'main';
@@ -26,14 +27,14 @@ export function buildAuthSafeStackStartSpec({
         name,
         '--background',
         ...(shouldUseRuntimeStart ? [sourceSnapshot ? '--runtime=source' : '--runtime'] : []),
-        '--no-daemon',
+        ...(!startDaemon ? ['--no-daemon'] : []),
         '--no-browser',
       ],
     ],
     env: {
       ...baseEnv,
       HAPPIER_STACK_SKIP_REFRESH_DEPS: '1',
-      ...(useDevCommand ? { HAPPIER_STACK_AUTH_FLOW: '1' } : {}),
+      HAPPIER_STACK_AUTH_FLOW: '1',
     },
   };
 }

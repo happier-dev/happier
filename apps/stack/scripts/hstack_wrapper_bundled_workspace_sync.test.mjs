@@ -188,6 +188,26 @@ function createStackManagementFixture(fixtureDir, stackName = 'qa-stack') {
   return { envPath, stackName, storageDir };
 }
 
+async function createCompiledStackEntryFixture(fixtureDir) {
+  const sourceStackDir = stackRootDirFromMeta(import.meta.url);
+  const repoRoot = join(fixtureDir, 'compiled-checkout');
+  await ensureMinimalMonorepoLayout(repoRoot);
+  writeFileSync(join(repoRoot, 'package.json'), JSON.stringify({ private: true }));
+  writeFileSync(join(repoRoot, 'pnpm-lock.yaml'), '# fixture\n');
+  const rootDir = join(repoRoot, 'apps', 'stack');
+  mkdirSync(join(rootDir, 'bin'), { recursive: true });
+  copyFileSync(join(sourceStackDir, 'package.json'), join(rootDir, 'package.json'));
+  // Keep the real entry/preflight/bootstrap together, without a source-runtime
+  // registration leaf. The existing loader supplies only these tests' boundaries.
+  for (const name of ['hstack.mjs', 'happier.mjs', 'localSourceRuntimeBootstrap.mjs', 'localBundledWorkspacePreflight.mjs']) {
+    copyFileSync(join(sourceStackDir, 'bin', name), join(rootDir, 'bin', name));
+  }
+  const linkType = process.platform === 'win32' ? 'junction' : 'dir';
+  symlinkSync(join(sourceStackDir, 'scripts'), join(rootDir, 'scripts'), linkType);
+  symlinkSync(join(sourceStackDir, '..', '..', 'scripts'), join(repoRoot, 'scripts'), linkType);
+  return { rootDir, repoRoot };
+}
+
 test('runtime activation publishes stored components without preparing source workspaces', async (t) => {
   const rootDir = stackRootDirFromMeta(import.meta.url);
   const repoRoot = coerceHappyMonorepoRootFromPath(rootDir);
@@ -300,6 +320,37 @@ function createSourceWorkspaceReadBoundary(fixtureDir, repoRoot, { rejectPublica
   ].join('\n'), 'utf8');
   return { loaderPath, markerPath };
 }
+
+test('authored Stack entries run ordinary commands without reading or publishing workspace dist', async (t) => {
+  const rootDir = stackRootDirFromMeta(import.meta.url);
+  const repoRoot = coerceHappyMonorepoRootFromPath(rootDir);
+  const fixture = await createTempFixture(t, { prefix: 'hstack-authored-command-' });
+  const { loaderPath, markerPath } = createSourceWorkspaceReadBoundary(fixture.root, repoRoot, {
+    rejectPublicationLock: true,
+  });
+  const env = {
+    ...bundledWorkspaceFailureEnv({ fixtureDir: fixture.root, loaderPath, storageDir: fixture.path('storage') }),
+    HAPPIER_STACK_SKIP_REFRESH_DEPS: '1',
+    HAPPIER_STACK_DISABLE_REFRESH_DEPS: '1',
+  };
+  for (const [entry, args] of [
+    ['hstack.mjs', ['where', '--json']],
+    ['happier.mjs', ['--stack-help']],
+  ]) {
+    await t.test(entry, async () => {
+      rmSync(markerPath, { force: true });
+      const result = await runNodeCapture([join(rootDir, 'bin', entry), ...args], { cwd: rootDir, env });
+      assert.equal(result.code, 0, result.stderr);
+      assert.equal(existsSync(markerPath), false,
+        'authored commands must not consume dist or acquire its publication lease');
+      if (entry === 'hstack.mjs') {
+        assert.equal(JSON.parse(result.stdout).homeDir, fixture.path('home'));
+      } else {
+        assert.ok(result.stdout.trim(), 'the source wrapper must reach its command');
+      }
+    });
+  }
+});
 
 test('shared-db preset stays metadata-only after runtime selection and on repeat invocation', async (t) => {
   const rootDir = stackRootDirFromMeta(import.meta.url);
@@ -456,12 +507,10 @@ test('source snapshot CLI and auth wrappers bypass native workspace publication 
   });
 });
 
-test('hstack wrapper refreshes bundled workspace packages for normal commands without replacing existing directories', async () => {
-  const rootDir = stackRootDirFromMeta(import.meta.url);
-  const repoRoot = coerceHappyMonorepoRootFromPath(rootDir);
-  assert.ok(repoRoot, `expected monorepo root for ${rootDir}`);
+test('compiled hstack wrapper refreshes bundled workspace packages for normal commands without replacing existing directories', async () => {
   const fixtureDir = mkdtempSync(join(tmpdir(), 'hstack-wrapper-bundled-sync-'));
   try {
+    const { rootDir, repoRoot } = await createCompiledStackEntryFixture(fixtureDir);
     const { loaderPath, syncMarkerPath } = createBundledWorkspaceSyncLoaderFixture(fixtureDir, {
       simulateMissingUpdateUntilSync: true,
     });
@@ -471,7 +520,7 @@ test('hstack wrapper refreshes bundled workspace packages for normal commands wi
       env: {
         ...process.env,
         HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
-        NODE_OPTIONS: `--experimental-loader=${loaderPath}`,
+        NODE_OPTIONS: sourceProbeNodeOptions(loaderPath),
       },
     });
 
@@ -1015,10 +1064,10 @@ test('hstack wrapper creates a controlled no-copy-auth stack without waiting for
   }
 });
 
-test('hstack wrapper keeps auth-copying stack creation behind bundled workspace preflight', async () => {
-  const rootDir = stackRootDirFromMeta(import.meta.url);
+test('compiled hstack wrapper keeps auth-copying stack creation behind bundled workspace preflight', async () => {
   const fixtureDir = mkdtempSync(join(tmpdir(), 'hstack-wrapper-stack-new-copy-auth-preflight-'));
   try {
+    const { rootDir } = await createCompiledStackEntryFixture(fixtureDir);
     const { bundleMarkerPath, loaderPath, syncMarkerPath } = createBundledWorkspaceSyncLoaderFixture(fixtureDir, {
       failPreflight: true,
       healthResults: [false],
@@ -1279,10 +1328,10 @@ test('hstack stack-name shorthand delegates source CLI preparation to the select
   }
 });
 
-test('hstack wrapper keeps dependency-consuming and mutating stack paths behind bundled workspace preflight', async () => {
-  const rootDir = stackRootDirFromMeta(import.meta.url);
+test('compiled hstack wrapper keeps dependency-consuming and mutating stack paths behind bundled workspace preflight', async () => {
   const fixtureDir = mkdtempSync(join(tmpdir(), 'hstack-wrapper-stack-management-retained-preflight-'));
   try {
+    const { rootDir } = await createCompiledStackEntryFixture(fixtureDir);
     const { bundleMarkerPath, loaderPath } = createBundledWorkspaceSyncLoaderFixture(fixtureDir, {
       failPreflight: true,
       healthResults: [false],

@@ -14,6 +14,8 @@ import {
 import { ensureDir } from '../utils/fs/ops.mjs';
 import { readLastLines } from '../utils/fs/tail.mjs';
 import { isTcpPortFree, pickNextFreeTcpPort } from '../utils/net/ports.mjs';
+import { readStackPortAllocations, selectStackServicePort } from '../utils/stack/runtime_ports.mjs';
+export { selectStackServicePort as allocateFreshEphemeralServerPort } from '../utils/stack/runtime_ports.mjs';
 import { getComponentDir, getRepoDir, resolveStackEnvPath } from '../utils/paths/paths.mjs';
 import { resolveLocalhostHost } from '../utils/paths/localhost_host.mjs';
 import { killProcessTree, redactFailureDiagnostic, run, runCaptureResult } from '../utils/proc/proc.mjs';
@@ -50,6 +52,7 @@ import { openUrlInBrowser } from '../utils/ui/browser.mjs';
 import { collectReservedStackPorts, getDefaultPortStart } from './port_reservation.mjs';
 import { withStackEnv } from './stack_environment.mjs';
 import { readBackgroundServicePublication } from './background_server_publication.mjs';
+import { spawnBackgroundStackRunner } from './background_runner.mjs';
 import { resolveStackRuntimeLaunchContext } from '../runtime/launch/resolveStackRuntimeLaunchContext.mjs';
 import { prepareSourceRuntimeReload } from '../runtime/launch/prepareSourceRuntimeReload.mjs';
 import { SOURCE_START_SUPERSEDED_MARKER, supersededError } from '../runtime/shared/pending_source_start.mjs';
@@ -333,8 +336,8 @@ export async function waitForBackgroundStackReadiness({
         !observedProcessInstanceFingerprint
         || observedProcessInstanceFingerprint === runtimeDaemonProcessInstanceFingerprint
       )
-      && Boolean(observedFingerprint)
-      && runtimeDaemonDistClosureFingerprint === observedFingerprint
+      // Source daemons authenticate their new owned process incarnation.
+      // An explicitly expected immutable build is checked separately below.
       && !incumbentStillObserved
     );
     lastObservation = {
@@ -411,33 +414,6 @@ export function shouldReuseRuntimePortsOnRestart({ wantsRestart = false, runtime
   return Boolean(wantsRestart && (wasRunning || hasRecordedRuntimePortsForRestart(runtimeState)));
 }
 
-// A runtime-state port belongs to the previous lifecycle. A distinct non-restart launch must
-// select anew rather than treating that record as a pin. The second check closes the normal
-// bind-probe race without ever claiming or terminating a foreign listener.
-export async function allocateFreshEphemeralServerPort({
-  startPort,
-  staleRuntimeServerPort = null,
-  reservedPorts = new Set(),
-  isTcpPortFreeImpl = isTcpPortFree,
-  pickNextFreeTcpPortImpl = pickNextFreeTcpPort,
-} = {}) {
-  const stalePort = coercePort(staleRuntimeServerPort);
-  if (stalePort) reservedPorts.add(stalePort);
-
-  let selectedPort = null;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    // eslint-disable-next-line no-await-in-loop
-    selectedPort = await pickNextFreeTcpPortImpl(startPort, { reservedPorts });
-    // eslint-disable-next-line no-await-in-loop
-    if (await isTcpPortFreeImpl(selectedPort)) return selectedPort;
-    reservedPorts.add(selectedPort);
-  }
-
-  throw new Error(
-    `[stack] unable to allocate a free server port after a bounded retry (last candidate ${selectedPort ?? 'unknown'})`,
-  );
-}
-
 export function resolveRequestedStackServeUi({ args = [], env = {} } = {}) {
   return !args.includes('--no-ui') && String(env.HAPPIER_STACK_SERVE_UI ?? '1').trim() !== '0';
 }
@@ -448,7 +424,7 @@ function resolveBackgroundReadinessServerUrl({
   env = {},
   localServerUrl,
 } = {}) {
-  if (scriptPath !== 'dev.mjs') return localServerUrl;
+  if (scriptPath !== 'dev.mjs' && scriptPath !== 'run.mjs') return localServerUrl;
   const { flags, kv } = parseArgs(args);
   return resolveDevServerConnection({
     flags,
@@ -468,6 +444,7 @@ export function createOuterStackRuntimeStartPublication({
   ephemeral,
   ownerPid,
   ports,
+  portAllocations,
   runtimeSnapshotId,
   args = [],
   env = {},
@@ -479,6 +456,7 @@ export function createOuterStackRuntimeStartPublication({
     ephemeral: Boolean(ephemeral),
     ownerPid,
     ports,
+    ...(portAllocations ? { portAllocations } : {}),
     runtimeSnapshotId,
     serveUi: resolveRequestedStackServeUi({ args, env }),
     // Recovery must carry the prior execution evidence through this outer
@@ -907,6 +885,8 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
         // - Never kill arbitrary port listeners
         // - Preserve previous runtime ports in memory so a true restart can reuse them
         if (wantsRestart && !wantsJson) {
+          // Recovery explicitly selects the already-recorded source. Only an
+          // owner-requested fresh restart may capture and select current source.
           if (scriptPath === 'run.mjs' && !args.includes('--reuse-source-runtime') && runtimeLaunchContext.runtimeMode?.mode === 'source-snapshot'
               && env.HAPPIER_STACK_PREPARED_SOURCE_RELOAD !== '1') {
             const prepared = await prepareSourceRuntimeReload({ stackName, stackBaseDir: baseDir,
@@ -1021,12 +1001,17 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
           return Number.isFinite(n) && n > 0 ? n : null;
         };
         // Port reuse:
-        // - Hard reuse: `--restart` (fail-closed if ports are occupied unless we can prove stack ownership).
+        // - Restart keeps auxiliary ports fail closed; automatic controller ports may move around a foreign listener.
         // - Recovery reuse: retain a proven stack-owned server while only its requested UI/mobile
-        //   companion is missing. A stopped runtime record is not a pin for a new launch.
+        //   companion is missing. Remembered choices are preferences, never ownership.
         const wantsHardReuse = isTrueRestart;
         const adoptOccupiedRuntimePorts = shouldAdoptOccupiedRuntimePortsForRecovery(existingRuntimeStatus);
         const wantsRecoveryReuse = !wantsRestart && adoptOccupiedRuntimePorts;
+        let controllerAllocation = readStackPortAllocations(runtimeState)?.controller ?? null;
+        const selectControllerPort = preferredServerPort => selectStackServicePort({
+          startPort, preferredServerPort, reservedPorts: reserved,
+          onPortChange: allocation => { controllerAllocation = allocation; },
+        });
 
         const candidatePorts =
           (wantsHardReuse || wantsRecoveryReuse) && existingPorts
@@ -1058,6 +1043,12 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
             }
           }
 
+          // A replacement controller must not take one of this same stack's
+          // retained auxiliary ports while its services are stopped.
+          for (const [portName, port] of Object.entries(ports)) {
+            if (portName !== 'server') reserved.add(port);
+          }
+
           // Fail-closed if any of the reused ports are unexpectedly occupied (prevents cross-stack collisions).
           const toCheck = Object.entries(ports)
             .map(([portName, value]) => ({ portName, port: Number(value) }))
@@ -1075,6 +1066,10 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
                     port: p,
                   });
                 }
+                continue;
+              }
+              if (portName === 'server') {
+                ports.server = await selectControllerPort(p);
                 continue;
               }
               if (isTrueRestart && !wantsJson) {
@@ -1102,11 +1097,7 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
             }
           }
         } else {
-          ports.server = await allocateFreshEphemeralServerPort({
-            startPort,
-            reservedPorts: reserved,
-            staleRuntimeServerPort: wantsHardReuse ? null : existingPorts?.server,
-          });
+          ports.server = await selectControllerPort(controllerAllocation?.port ?? existingPorts?.server);
           reserved.add(ports.server);
 
           if (serverComponent === 'happier-server') {
@@ -1195,13 +1186,16 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
               }).catch(() => null);
             }
             const logHandle = background ? await open(logPath, 'a') : null;
-            const outFd = logHandle?.fd ?? null;
-            const child = spawn(process.execPath, [join(rootDir, 'scripts', scriptPath), ...resolveChildArgs()], {
+            const runner = background ? spawnBackgroundStackRunner(join(rootDir, 'scripts', scriptPath), resolveChildArgs(), {
+              rootDir,
+              env: { ...childEnv, HAPPIER_STACK_RUNNER_LOG_PATH: logPath },
+              logFd: logHandle.fd,
+            }) : null;
+            const child = runner?.child ?? spawn(process.execPath, [join(rootDir, 'scripts', scriptPath), ...resolveChildArgs()], {
               cwd: rootDir,
-              env: { ...childEnv, ...(background ? { HAPPIER_STACK_RUNNER_LOG_PATH: logPath } : {}) },
-              stdio: background ? ['ignore', outFd ?? 'ignore', outFd ?? 'ignore'] : 'inherit',
+              env: childEnv,
+              stdio: 'inherit',
               shell: false,
-              detached: background && process.platform !== 'win32',
             });
             let startedRuntime = null;
             try {
@@ -1211,6 +1205,7 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
                 ephemeral: true,
                 ownerPid: child.pid,
                 ports,
+                portAllocations: controllerAllocation ? { controller: controllerAllocation } : null,
                 runtimeSnapshotId,
                 args,
                 env: childEnv,
@@ -1223,10 +1218,10 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
             } finally {
               await logHandle?.close().catch(() => {});
             }
-            return { child, logPath, expectedRuntimeState: startedRuntime };
+            return { child, release: runner?.release, logPath, expectedRuntimeState: startedRuntime };
           },
         );
-        const { child, logPath, expectedRuntimeState } = launched;
+        const { child, release, logPath, expectedRuntimeState } = launched;
         restartCleanupExpectedRuntimeState = expectedRuntimeState;
 
         if (background) {
@@ -1271,8 +1266,8 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
                 args,
                 env: childEnv,
                 runtimeStatePath,
-                internalServerUrl,
                 expectedRuntimeState,
+                internalServerUrl,
                 expectedDaemonDistClosureFingerprint: runtimeLaunchContext.snapshot?.daemonDistClosureFingerprint ?? null,
                 sourceDaemonLaunchAttempt: createSourceDaemonLaunchAttempt({
                   runtimeSnapshotId,
@@ -1326,11 +1321,7 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
           if (!wantsJson) {
             console.log(`[stack] ${stackName}: logs: ${logPath}`);
           }
-          try {
-            child.unref();
-          } catch {
-            // ignore
-          }
+          release();
           return;
         }
 
@@ -1383,7 +1374,7 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
 
         const stackBaseDir = resolveStackEnvPath(stackName).baseDir;
         const logsDir = join(stackBaseDir, 'logs');
-        const { child, logPath, expectedRuntimeState } = await withStackRuntimeStartClaim(
+        const { child, release, logPath, expectedRuntimeState } = await withStackRuntimeStartClaim(
           runtimeStatePath,
           { stackName },
           async ({ recordStart }) => {
@@ -1394,12 +1385,10 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
               preservePaths: [runtimeState?.logs?.runner],
             }).catch(() => null);
             const logHandle = await open(logPath, 'a');
-            const child = spawn(process.execPath, [join(rootDir, 'scripts', scriptPath), ...resolveChildArgs()], {
-              cwd: rootDir,
+            const { child, release } = spawnBackgroundStackRunner(join(rootDir, 'scripts', scriptPath), resolveChildArgs(), {
+              rootDir,
               env: { ...env, HAPPIER_STACK_RUNNER_LOG_PATH: logPath },
-              stdio: ['ignore', logHandle.fd, logHandle.fd],
-              shell: false,
-              detached: process.platform !== 'win32',
+              logFd: logHandle.fd,
             });
             let startedRuntime = null;
             try {
@@ -1421,7 +1410,7 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
             } finally {
               await logHandle.close().catch(() => {});
             }
-            return { child, logPath, expectedRuntimeState: startedRuntime };
+            return { child, release, logPath, expectedRuntimeState: startedRuntime };
           },
         );
         restartCleanupExpectedRuntimeState = expectedRuntimeState;
@@ -1458,8 +1447,8 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
               args,
               env,
               runtimeStatePath,
-              internalServerUrl,
               expectedRuntimeState,
+              internalServerUrl,
               expectedDaemonDistClosureFingerprint: runtimeLaunchContext.snapshot?.daemonDistClosureFingerprint ?? null,
               sourceDaemonLaunchAttempt: createSourceDaemonLaunchAttempt({
                 runtimeSnapshotId,
@@ -1489,7 +1478,7 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
           }
         } catch (e) {
           e = await readBackgroundRunnerFailure(e, { logPath, env,
-              sourceSnapshot: runtimeLaunchContext.runtimeMode?.mode === 'source-snapshot' });
+            sourceSnapshot: runtimeLaunchContext.runtimeMode?.mode === 'source-snapshot' });
           if (shouldPreserveBackgroundRunnerAfterReadinessFailure(e, {
             runnerAlive: isPidAlive(child.pid),
           })) {
@@ -1509,11 +1498,7 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
         if (!wantsJson) {
           console.log(`[stack] ${stackName}: logs: ${logPath}`);
         }
-        try {
-          child.unref();
-        } catch {
-          // ignore
-        }
+        release();
         return;
         }
         if (isTrueRestart && !wantsJson) {

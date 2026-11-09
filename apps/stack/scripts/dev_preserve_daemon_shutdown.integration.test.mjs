@@ -8,6 +8,8 @@ import { fileURLToPath } from 'node:url';
 
 import { createTempFixture } from './testkit/core/temp_fixture.mjs';
 import { writeStubHappierCliFiles } from './testkit/core/stub_happier_cli_files.mjs';
+import { buildStubHappierServerSetSource } from './testkit/core/stub_happier_cli_server_set.mjs';
+import { installStubDaemonSourceBuildInputs } from './testkit/core/source_runtime_fixture.mjs';
 import { resolvePreferredStackDaemonStatePaths } from './utils/auth/credentials_paths.mjs';
 import { applyStackActiveServerScopeEnv } from './utils/auth/stable_scope_id.mjs';
 import {
@@ -91,11 +93,14 @@ process.on('SIGTERM', shutdown);
 import { spawn } from 'node:child_process';
 import { appendFileSync, readFileSync } from 'node:fs';
 
-const [command, subcommand] = process.argv.slice(2);
+const args = process.argv.slice(2);
+${buildStubHappierServerSetSource()}
+const [command, subcommand] = args;
 const statePath = process.env.HAPPIER_TEST_DAEMON_STATE_PATH;
 const stopMarkerPath = process.env.HAPPIER_TEST_DAEMON_STOP_MARKER_PATH;
 
 if (command !== 'daemon') process.exit(0);
+if (subcommand === '--help') process.exit(0);
 if (subcommand === 'status') process.exit(0);
 if (subcommand === 'stop') {
   appendFileSync(stopMarkerPath, 'stop\\n');
@@ -134,8 +139,10 @@ test('dev lifecycle-owner shutdown consumes a fresh preserveDaemon request', { t
   await writeStubHappierCliFiles(repoDir, {
     packageJsonContent: JSON.stringify({ name: '@fixture/cli', version: '0.0.0' }),
     distIndexScript: createDaemonCliSource(),
+    srcIndexScript: createDaemonCliSource(),
     binHappierScript: "import '../dist/index.mjs';\n",
   });
+  await installStubDaemonSourceBuildInputs(repoDir);
   await mkdir(cliHomeDir, { recursive: true });
   await writeFile(join(cliHomeDir, 'access.key'), 'test-token\n', 'utf8');
   await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf8');
@@ -286,13 +293,14 @@ test('run lifecycle owner admits an early stop once and preserves the daemon', {
   await writeFile(join(repoDir, 'apps', 'server', 'package.json'), JSON.stringify({
     name: '@fixture/server',
     private: true,
-    scripts: { start: 'node server.mjs' },
   }) + '\n', 'utf8');
   await writeStubHappierCliFiles(repoDir, {
     packageJsonContent: JSON.stringify({ name: '@fixture/cli', version: '0.0.0' }),
     distIndexScript: createDaemonCliSource(),
+    srcIndexScript: createDaemonCliSource(),
     binHappierScript: "import '../dist/index.mjs';\n",
   });
+  await installStubDaemonSourceBuildInputs(repoDir);
   await mkdir(cliHomeDir, { recursive: true });
   await writeFile(join(cliHomeDir, 'access.key'), 'test-token\n', 'utf8');
   await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf8');
@@ -324,7 +332,10 @@ test('run lifecycle owner admits an early stop once and preserves the daemon', {
   });
   baseEnv.HAPPIER_TEST_DAEMON_STATE_PATH = daemonStatePath;
 
-  const owner = spawn(process.execPath, [join(stackRootDir, 'scripts', 'run.mjs'), '--source', '--no-ui'], {
+  // Supply the fixture's real HTTP server through the public connection option;
+  // this test exercises the run owner's stop handshake, not server publication.
+  const owner = spawn(process.execPath, [join(stackRootDir, 'scripts', 'run.mjs'), '--source', '--no-ui',
+    '--no-server', `--server-url=http://127.0.0.1:${server.port}`], {
     cwd: repoDir,
     env: baseEnv,
     stdio: ['ignore', 'pipe', 'pipe'],

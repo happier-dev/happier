@@ -77,6 +77,7 @@ test('hstack setup respects the current stack CLI home when deciding auth defaul
 
     const env = {
       ...process.env,
+      HAPPIER_HOME_DIR: '',
       HAPPIER_STACK_CLI_HOME_DIR: cliHomeDir,
     };
     const { findSetupAuthCredentialPath } = await import('./utils/auth/setup_auth.mjs');

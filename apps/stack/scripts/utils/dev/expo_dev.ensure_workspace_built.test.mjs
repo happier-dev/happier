@@ -7,9 +7,9 @@ import { delimiter, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 
-import { ensureDevExpoServer } from './expo_dev.mjs';
+import { ensureDevExpoServer, resolveMetroConfigFingerprint } from './expo_dev.mjs';
 import { getExpoStatePaths, writePidState } from '../expo/expo.mjs';
-import { inspectDependencyRefresh, withDependencyConsumption, withDependencyRefresh, withDependencyRefreshLock } from '../proc/dependency_refresh.mjs';
+import { inspectDependencyRefresh, withDependencyRefresh } from '../proc/dependency_refresh.mjs';
 import { beginPendingSourceStart } from '../../runtime/shared/pending_source_start.mjs';
 import { writeFakeBin } from '../../testkit/core/fake_bin_harness.mjs';
 import { sanitizeStackTestRunnerEnv } from '../test/test_env.mjs';
@@ -92,7 +92,8 @@ async function createExpoWorkspaceFixture({ workspaceBuildFails = false } = {}) 
   // The external installer produces metadata after the real dependency owner
   // clears an unadmitted worker tree, then that owner publishes admission.
   await withDependencyRefresh({
-    installDir: tmp, componentDir: uiDir, env: createExpoBaseEnv(tmp),
+    installDir: tmp, componentDir: uiDir,
+    env: { ...createExpoBaseEnv(tmp), HAPPIER_STACK_SKIP_REFRESH_DEPS: '0' },
   }, async () => {
     await mkdir(join(tmp, 'node_modules'), { recursive: true });
     await writeFile(join(tmp, 'node_modules', '.modules.yaml'),
@@ -146,7 +147,7 @@ test('ensureDevExpoServer rejects a fresh workspace build failure before startin
   }
 });
 
-for (const ownStart of [false, true]) test(`Expo dependency refresh waits only for a foreign pending start (ownStart=${ownStart})`, { timeout: 20_000 }, async t => {
+for (const ownStart of [false, true]) test(`Expo dependency refresh proceeds during a pending start (ownStart=${ownStart})`, { timeout: 20_000 }, async t => {
   const fixture = await createExpoWorkspaceFixture();
   let pending;
   let startup;
@@ -185,33 +186,10 @@ for (const ownStart of [false, true]) test(`Expo dependency refresh waits only f
     await writeFile(join(fixture.tmp, 'pnpm-lock.yaml'), '# changed dependency inputs\n');
     const admissionPath = join(fixture.tmp, 'node_modules', '.happier-stack-dependencies-ready');
     const before = await readFile(admissionPath, 'utf8');
-    let notice;
-    const waiting = new Promise(resolve => { notice = resolve; });
-    const stderr = t.mock.method(process.stderr, 'write', chunk => {
-      if (String(chunk).includes('Stack qa-starting readiness before dependency refresh')) notice();
-      return true;
-    });
     startup = startFixtureExpo({ ...fixture, baseEnv: env });
-    void startup.catch(() => {});
-    if (ownStart) {
-      await assert.rejects(startup, { code: 'HAPPIER_DEPENDENCY_STACK_START_IN_PROGRESS' });
-      assert.equal(await readFile(admissionPath, 'utf8'), before);
-      await assert.rejects(readFile(installMarker), { code: 'ENOENT' });
-      await assert.rejects(readFile(fixture.expoStartedMarker), { code: 'ENOENT' });
-      return;
-    }
-    await Promise.race([waiting, startup.then(() => assert.fail('Expo started before foreign readiness'))]);
-    stderr.mock.restore();
-    assert.equal(await readFile(admissionPath, 'utf8'), before, 'waiting must preserve admitted bytes');
-    await assert.rejects(readFile(installMarker), { code: 'ENOENT' });
-    await assert.rejects(readFile(fixture.expoStartedMarker), { code: 'ENOENT' });
-    // A non-waiting reader proves both custody and writer priority were
-    // released. That start can still read its tree to reach readiness.
-    await withDependencyConsumption({ installDir: fixture.tmp, env, wait: false, signal: t.signal }, async () => {
-      await pending.publish(async () => {});
-    });
     const result = await startup;
     assert.equal(result.ok, true);
+    assert.notEqual(await readFile(admissionPath, 'utf8'), before);
     assert.equal(await readFile(installMarker, 'utf8'), 'installed\n');
     assert.equal(await readFile(fixture.expoStartedMarker, 'utf8'), 'started\n');
     assert.equal((await inspectDependencyRefresh({ installDir: fixture.tmp, componentDir: fixture.uiDir, env })).required, false);
@@ -419,9 +397,6 @@ test('Expo recovers from retained output while canonical source preparation is p
     await writeFile(releasePath, 'go\n').catch(() => {});
     await result?.close?.();
     await Promise.all(preparations);
-    // children is populated before PID publication finishes. Join that real
-    // admission boundary before removing files its callback still writes.
-    await withDependencyRefreshLock({ installDir: fixture.tmp, env: createExpoBaseEnv(fixture.tmp) }, async () => {});
     for (const child of children) child.kill('SIGTERM');
     await Promise.all(children.map(child => child.completion));
     await rm(fixture.tmp, { recursive: true, force: true });
@@ -548,7 +523,7 @@ test('ensureDevExpoServer adopts an existing Expo process while canonical refres
       devClientEnabled: false,
       host: 'lan',
       apiServerUrl: 'http://127.0.0.1:1',
-      metroConfigFingerprint: 'missing',
+      metroConfigFingerprint: await resolveMetroConfigFingerprint({ projectDir: fixture.uiDir, env: createExpoBaseEnv(fixture.tmp) }),
     });
 
     startPromise = ensureDevExpoServer({

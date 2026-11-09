@@ -310,7 +310,8 @@ async function main() {
   if (sshShortcut && (positionals.length !== 2 || positionals[1] === 'auto')) throw new Error('[dev-targets] ssh requires one exact target name');
   const stackName =
     String(kv.get('--stack') ?? process.env.HAPPIER_STACK_STACK ?? 'main').trim() || 'main';
-  let path = resolveDevTargetsConfigPath({ stackName, env: process.env });
+  let path = resolveDevTargetsConfigPath({ stackName, env: process.env,
+    explicitStack: kv.has('--stack') || flags.has('--stack') });
   const executorRepoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
   const commandRepoRoot = kv.get('--repo') ? resolve(kv.get('--repo')) : executorRepoRoot;
 
@@ -381,7 +382,7 @@ async function main() {
 
   let loaded = command === 'exec'
     ? await loadDevTargetExecutionConfig({ stackName, env: process.env })
-    : await loadDevTargetsConfig({ stackName, env: process.env, allowMissing: true });
+    : await loadDevTargetsConfig({ path, env: process.env, allowMissing: !process.env.HAPPIER_EXEC_CONFIG_PATH });
   if (command === 'exec') path = loaded.path;
   if (commandRepoRoot !== executorRepoRoot) {
     if (!['placement', 'status', 'sync', 'path', 'list', 'show'].includes(command)
@@ -826,7 +827,7 @@ async function main() {
         lockdown: kv.has('--lockdown') ? kv.get('--lockdown') : flags.has('--lockdown') ? 'tailscale-only' : null,
         autoUpdates: flags.has('--auto-updates') });
       if (prepared !== target) {
-        const current = await loadDevTargetsConfig({ stackName, env: process.env });
+        const current = await loadDevTargetsConfig({ path, env: process.env });
         await writeConfig(path, withTargets(current.config, current.config.targets.map(entry => entry.name === target.name ? prepared : entry)));
       }
     }

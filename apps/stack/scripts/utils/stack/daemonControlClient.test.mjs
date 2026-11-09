@@ -17,6 +17,7 @@ import {
 } from './daemonControlClient.mjs';
 import { resolvePreferredStackDaemonStatePaths } from '../auth/credentials_paths.mjs';
 import { applyStackDaemonLifecycleScopeEnv } from '../auth/stable_scope_id.mjs';
+import { createStackRuntimeCleanupIncompleteError, stopStackServiceWithEnv } from './stop.mjs';
 
 async function withServer(handler, fn) {
   const server = http.createServer(handler);
@@ -33,6 +34,82 @@ async function writeDaemonState({ cliHomeDir, serverUrl, env, state }) {
   const { statePath } = resolvePreferredStackDaemonStatePaths({ cliHomeDir, serverUrl, env });
   await mkdir(dirname(statePath), { recursive: true });
   await writeFile(statePath, JSON.stringify(state), 'utf8');
+}
+
+test('Session cleanup recovery preserves Sessions before retiring the daemon', () => {
+  for (const restart of [false, true]) {
+    const error = createStackRuntimeCleanupIncompleteError({ stackName: 'session-failure',
+      finalization: { finalized: false, reason: 'session_cleanup_incomplete' } }, { restart });
+    assert.match(error.recovery, /stack stop session-failure --yes --no-docker --preserve-daemon/);
+    assert.match(error.recovery, /&& hstack stack daemon session-failure stop --json/);
+    assert.equal(error.recovery.includes('stack start'), restart);
+  }
+});
+
+for (const sessionResults of [undefined, [], [
+  { sessionId: 'session-a', result: { status: 'incomplete', reason: 'runner_exit_timeout' } },
+  { sessionId: 'session-b', result: { status: 'incomplete', reason: 'explicit_stop_failed' } },
+  { sessionId: 'session-c', result: { status: 'stopped' } },
+  { sessionId: 'session-d', result: { status: 'not_found' } },
+]]) {
+test(`incomplete daemon Session cleanup reaches the typed Stack failure (${sessionResults?.length ? 'per-Session' : sessionResults ? 'empty' : 'legacy'})`, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-session-failure-' });
+  const stackName = 'session-failure';
+  const cliHomeDir = fixture.path('cli');
+  const env = applyStackDaemonLifecycleScopeEnv({ env: {
+    HAPPIER_STACK_REPO_DIR: fixture.root,
+    HAPPIER_STACK_CLI_HOME_DIR: cliHomeDir,
+    HAPPIER_STACK_ENV_FILE: fixture.path('env'),
+  }, stackName, cliIdentity: 'default' });
+  const daemon = spawnTestProcess(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+    env: { ...process.env, ...env, HAPPIER_STACK_STACK: stackName, HAPPIER_HOME_DIR: cliHomeDir },
+  });
+  t.after(async () => {
+    if (daemon.exitCode !== null || daemon.signalCode !== null) return;
+    const exited = once(daemon, 'exit');
+    daemon.kill();
+    await exited;
+  });
+  const requests = [];
+  await withServer((req, res) => {
+    requests.push(req.url);
+    res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({
+      status: req.url === '/ping' ? 'ok' : 'session_cleanup_incomplete',
+      ...(req.url === '/stop' && sessionResults ? { sessionResults } : {}),
+    }));
+  }, async ({ port }) => {
+    await writeDaemonState({ cliHomeDir, serverUrl: '', env,
+      state: { pid: daemon.pid, httpPort: port, startedAt: Date.now() } });
+    await assert.rejects(stopStackServiceWithEnv({ rootDir: fixture.root, baseDir: fixture.root,
+      stackName, env, json: true, noDocker: true, autoSweep: false }, async () => {}), error => {
+      assert.equal(error.code, 'ESTACKRUNTIMECLEANUPINCOMPLETE');
+      assert.equal(error.phase, 'stop');
+      assert.equal(error.retryable, false);
+      assert.equal(error.actions.finalization.reason, 'session_cleanup_incomplete');
+      assert.equal(error.actions.daemonSessionsStopped.reason, 'session_cleanup_incomplete');
+      if (sessionResults?.length) {
+        assert.deepEqual(error.actions.daemonSessionsStopped.sessionResults, sessionResults);
+        assert.deepEqual(error.actions.daemonSessionsStopped.stoppedSessionIds, ['session-c']);
+        assert.deepEqual(error.actions.errors.map(({ step, sessionId, reason }) => ({ step, sessionId, reason })), [
+          { step: 'daemon-sessions', sessionId: 'session-a', reason: 'runner_exit_timeout' },
+          { step: 'daemon-sessions', sessionId: 'session-b', reason: 'explicit_stop_failed' },
+        ]);
+        assert.match(error.message, /session-a.*runner_exit_timeout/);
+        assert.match(error.message, /session-b.*explicit_stop_failed/);
+      } else {
+        assert.ok(error.actions.errors.some(item => item.step === 'daemon-sessions'
+          && item.reason === 'session_cleanup_incomplete'));
+        assert.deepEqual(error.actions.daemonSessionsStopped.sessionResults, sessionResults,
+          'acknowledgements without Session outcomes must not invent them');
+      }
+      assert.match(error.recovery, /stack stop session-failure --yes --no-docker --preserve-daemon/);
+      assert.match(error.recovery, /&& hstack stack daemon session-failure stop --json/);
+      assert.doesNotMatch(error.recovery, /stack start/);
+      return true;
+    });
+  });
+  assert.deepEqual(requests, ['/ping', '/stop'], 'terminal refusal must settle without re-polling');
+});
 }
 
 test('daemon control does not contact a reused endpoint from a previous boot', async t => {

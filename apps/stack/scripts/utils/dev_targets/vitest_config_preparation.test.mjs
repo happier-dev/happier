@@ -13,6 +13,7 @@ const policyOwner = fileURLToPath(new URL('./remote_commands.mjs', import.meta.u
 async function siblingFixture(t) {
   const fixture = await createTempFixture(t, { prefix: 'vitest-sibling-policy-' });
   for (const file of [
+    'package.json', 'pnpm-workspace.yaml',
     'apps/cli/package.json', 'apps/ui/package.json', 'apps/server/package.json',
     'apps/cli/vitest.config.ts', 'apps/cli/vitest.inMemory.config.ts',
     'apps/cli/vitest.integration.config.ts',
@@ -26,13 +27,13 @@ async function siblingFixture(t) {
   return fixture;
 }
 
-function probe(root, component, config) {
+function probe(root, component, config, { skipBuild = '' } = {}) {
   const result = spawnSync(process.execPath, [policyOwner, '--vitest-policy', root,
     join(root, component), 'vitest', 'run', '--config', config, 'src/plain.test.ts'], {
     encoding: 'utf8',
-    env: { ...process.env, NODE_OPTIONS: '', HAPPIER_CLI_TEST_SKIP_BUILD: '' },
+    env: { ...process.env, NODE_OPTIONS: '', HAPPIER_CLI_TEST_SKIP_BUILD: skipBuild },
   });
-  assert.equal(result.status, 0, 'the real policy command must complete');
+  assert.equal(result.status, 0, `the real policy command must complete: ${result.stderr}`);
   return Object.fromEntries([...result.stdout.matchAll(/^policy_(\w+)='([^']*)'$/gmu)]
     .map(([, key, value]) => [key, value]));
 }
@@ -83,4 +84,15 @@ test('UI and server focused policies agree between primary and sibling checkouts
     assert.deepEqual(probe(fixture.root, component, config), primary, component);
     assert.equal(probe(fixture.root, component, 'vitest.unknown.config.ts').kind, 'runtime', component);
   }
+});
+
+// The 0.2 predecessor retains shared-only setup; targeted debugging can skip it.
+test('shared-only sibling setup honors the existing explicit skip-build contract', async t => {
+  const fixture = await siblingFixture(t);
+  await writeFile(fixture.path('apps/cli/src/test-setup.unit.ts'),
+    `import { setup } from './test-setup'; export default () => setup({ buildMode: 'shared-only' });`);
+  assert.equal(probe(fixture.root, 'apps/cli', 'vitest.config.ts').kind, 'runtime');
+  const skipped = probe(fixture.root, 'apps/cli', 'vitest.config.ts', { skipBuild: '1' });
+  assert.equal(skipped.kind, 'source-test');
+  assert.equal(skipped.workspaceLock, '');
 });

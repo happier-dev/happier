@@ -177,3 +177,6 @@ process.exit(result.status ?? 1);
     env: { ...options.env, npm_execpath: wrapper } }, install), { code: 'HAPPIER_DEPENDENCY_REFRESH_FAILED' });
   assert.equal(await readFile(fixture.path('pnpm-lock.yaml'), 'utf8'), lockfile);
 });
+
+
+

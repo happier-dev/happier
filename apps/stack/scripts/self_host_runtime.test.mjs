@@ -23,6 +23,7 @@ import {
   renderUpdaterSystemdUnit,
   renderUpdaterSystemdTimerUnit,
   buildUpdaterScheduledTaskCreateArgs,
+  planUpdaterScheduledTaskCreate,
   renderServerEnvFile,
   renderServerServiceUnit,
   renderSelfHostStatusText,
@@ -35,6 +36,98 @@ import {
   installUiWebFromEmbeddedRuntime,
 } from './self_host_runtime.mjs';
 import { buildServiceDefinition, resolveServiceBackend } from './utils/service/service_manager.mjs';
+
+import { buildStackHarnessEnv, writeFakeBin } from './testkit/core/fake_bin_harness.mjs';
+import { runNodeCaptureSync } from './testkit/core/run_node_capture.mjs';
+import { createTempFixture } from './testkit/core/temp_fixture.mjs';
+
+for (const failureTarget of ['service', 'updater']) {
+test(`self-host uninstall preserves payload and retained data when ${failureTarget} teardown fails`, async (t) => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-self-host-uninstall-refusal-' });
+  const installRoot = fixture.path('install');
+  const configDir = fixture.path('config');
+  const dataDir = fixture.path('data');
+  const logDir = fixture.path('logs');
+  const serverBinaryName = process.platform === 'win32' ? 'happier-server.exe' : 'happier-server';
+  const statePath = join(installRoot, 'self-host-state.json');
+  const stateText = `${JSON.stringify({ channel: 'stable', mode: 'user', version: '0.3.0', purpose: { kind: 'generic' } })}\n`;
+  const retainedFiles = [
+    join(installRoot, 'bin', serverBinaryName),
+    statePath,
+    join(configDir, 'server.env'),
+    join(dataDir, 'retained-data'),
+    join(logDir, 'server.err.log'),
+  ];
+  for (const file of retainedFiles) {
+    await mkdir(dirname(file), { recursive: true });
+    await writeFile(file, file === statePath ? stateText : 'retained\n', 'utf8');
+  }
+  const command = process.platform === 'win32' ? 'powershell.exe' : process.platform === 'darwin' ? 'launchctl' : 'systemctl';
+  const { binDir } = writeFakeBin({ root: fixture.path('commands'), name: command, content: '' });
+  const serviceName = 'happier-self-host-uninstall-refusal';
+  const refusedLabel = failureTarget === 'updater' ? `${serviceName}-updater` : serviceName;
+  const moduleUrl = new URL('./self_host_runtime.mjs', import.meta.url).href;
+  const result = runNodeCaptureSync(['--input-type=module', '--eval', [
+    'import childProcess from "node:child_process";',
+    'import os from "node:os";',
+    'import { syncBuiltinESMExports } from "node:module";',
+    // Only OS command execution and the OS home-directory adapter are replaced.
+    // The CLI dispatcher, service registration inspection, teardown and filesystem stay real.
+    'os.homedir = () => process.env.HAPPIER_TEST_SELF_HOST_HOME;',
+    'const spawnSync = childProcess.spawnSync;',
+    'childProcess.spawnSync = (command, args, options) => {',
+    '  if (command === "sh" && args[0] === "-lc" && args[1]?.startsWith("command -v ")) return spawnSync(command, args, options);',
+    `  if (command !== ${JSON.stringify(command)} && command !== "schtasks") throw new Error("Unexpected OS command: " + command);`,
+    '  const raw = args.join(" ");',
+    `  const serverTarget = args.includes(${JSON.stringify(`${refusedLabel}.service`)}) || args.includes(${JSON.stringify(`${refusedLabel}.timer`)}) || raw.includes(${JSON.stringify(`/${refusedLabel}`)}) || raw.includes(${JSON.stringify(`$taskName = "${refusedLabel}"`)});`,
+    '  const inspecting = args.includes("show") || args[0] === "print" || (raw.includes("Get-ScheduledTaskInfo") && !raw.includes("Stop-ScheduledTask"));',
+    '  if (serverTarget && !inspecting) return { status: 1, stdout: "", stderr: "self-host teardown denied sentinel" };',
+    '  return { status: 0, stdout: command === "powershell.exe" ? JSON.stringify({ exists: true }) : "loaded", stderr: "" };',
+    '};',
+    'syncBuiltinESMExports();',
+    `const { runSelfHostCli } = await import(${JSON.stringify(moduleUrl)});`,
+    'await runSelfHostCli(["uninstall", "--mode=user", "--yes", "--json"]);',
+  ].join('\n')], {
+    env: buildStackHarnessEnv({
+      binDirs: [binDir],
+      extraEnv: {
+        HAPPIER_TEST_SELF_HOST_HOME: fixture.path('home'),
+        HAPPIER_STACK_SELF_HOST_FORWARD: '0',
+        HAPPIER_SELF_HOST_INSTALL_ROOT: installRoot,
+        HAPPIER_SELF_HOST_BIN_DIR: fixture.path('exposed-bin'),
+        HAPPIER_SELF_HOST_CONFIG_DIR: configDir,
+        HAPPIER_SELF_HOST_DATA_DIR: dataDir,
+        HAPPIER_SELF_HOST_LOG_DIR: logDir,
+        HAPPIER_SELF_HOST_SERVICE_NAME: serviceName,
+      },
+    }),
+  });
+
+  assert.equal(result.status, 1, result.stderr || result.stdout);
+  assert.match(result.stderr, /self-host teardown denied sentinel/);
+  assert.doesNotMatch(result.stdout, /"ok"\s*:\s*true/);
+  for (const file of retainedFiles) {
+    assert.equal(await readFile(file, 'utf8'), file === statePath ? stateText : 'retained\n');
+  }
+});
+}
+
+test('self-host forwarding hides both the capability probe and forwarded child windows', async () => {
+  const moduleUrl = new URL('./self_host_runtime.mjs', import.meta.url).href;
+  const result = runNodeCaptureSync(['--input-type=module', '--eval', [
+    'import childProcess from "node:child_process";',
+    'import { syncBuiltinESMExports } from "node:module";',
+    'const observed = [];',
+    'childProcess.spawnSync = (command, args, options) => { observed.push({ command, args, windowsHide: options.windowsHide }); return { status: 0 }; };',
+    'syncBuiltinESMExports();',
+    `const { runSelfHostCli } = await import(${JSON.stringify(moduleUrl)});`,
+    'await runSelfHostCli(["status"]);',
+    'console.log(JSON.stringify(observed));',
+  ].join('\n')], { env: buildStackHarnessEnv({ extraEnv: { HAPPIER_STACK_SELF_HOST_FORWARD: '1' } }) });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const commands = JSON.parse(result.stdout.trim());
+  assert.deepEqual(commands.map(({ windowsHide }) => windowsHide), [true, true]);
+});
 
 function b64(buf) {
   return Buffer.from(buf).toString('base64');
@@ -1754,19 +1847,28 @@ test('buildUpdaterScheduledTaskCreateArgs uses DAILY schedule when at is provide
     taskName: 'Happier\\\\happier-server-updater',
     definitionPath: 'C:\\\\Users\\\\me\\\\.happier\\\\self-host\\\\services\\\\happier-server-updater.ps1',
     at: '03:15',
+    windowsLauncher: { sourcePath: 'C:\\package\\happier-service-launcher.exe', version: 'test' },
   });
   assert.ok(args.includes('DAILY'));
   assert.ok(args.includes('03:15'));
   assert.equal(args.includes('MINUTE'), false);
 });
 
-test('buildUpdaterScheduledTaskCreateArgs uses hidden non-interactive PowerShell on Windows', () => {
-  const args = buildUpdaterScheduledTaskCreateArgs({
+test('buildUpdaterScheduledTaskCreateArgs uses the native windowless launcher for user tasks', () => {
+  const plan = planUpdaterScheduledTaskCreate({
     backend: 'schtasks-user',
     taskName: 'Happier\\\\happier-server-updater',
     definitionPath: 'C:\\\\Users\\\\me\\\\.happier\\\\self-host\\\\services\\\\happier-server-updater.ps1',
+    windowsLauncher: { sourcePath: 'C:\\package\\happier-service-launcher.exe', version: 'test' },
   });
-  assert.equal(args[args.indexOf('/TR') + 1], 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "C:\\\\Users\\\\me\\\\.happier\\\\self-host\\\\services\\\\happier-server-updater.ps1"');
+  const args = plan.args;
+  const action = args[args.indexOf('/TR') + 1];
+  assert.equal(plan.copies.length, 1);
+  assert.equal(plan.copies[0].validation, 'windows-service-launcher-x64-v1');
+  assert.ok(action.includes(plan.copies[0].destinationPath));
+  assert.match(action, /^".*happier-service-launcher\.exe" --wrapper /);
+  assert.match(action, /--diagnostic-log /);
+  assert.doesNotMatch(action, /powershell\.exe/);
 });
 
 test('mergeEnvTextWithDefaults preserves overrides while backfilling new default keys', () => {
@@ -1927,4 +2029,32 @@ test('decideSelfHostAutoUpdateReconcile maps configured state to an install/unin
     decideSelfHostAutoUpdateReconcile({}, { fallbackIntervalMinutes: 1440 }),
     { action: 'uninstall', enabled: false, intervalMinutes: 1440, at: '' },
   );
+});
+
+
+test('self-host rejects a missing Windows task launcher before entering runtime mutation', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-self-host-launcher-preflight-'));
+  const priorExecPath = process.execPath;
+  try {
+    // Process executable identity is the native asset filesystem boundary.
+    process.execPath = join(root, 'hstack.exe');
+    const config = {
+      ...resolveSelfHostDefaults({ platform: 'win32', mode: 'user', channel: 'preview', homeDir: root }),
+      platform: 'win32', mode: 'user', channel: 'preview',
+      configEnvPath: join(root, 'config', 'server.env'),
+      installRoot: join(root, 'runtime'),
+      serverBinaryPath: join(root, 'runtime', 'happier-server.exe'),
+      serverStdoutLogPath: join(root, 'server.out.log'),
+      serverStderrLogPath: join(root, 'server.err.log'),
+    };
+    let mutationStarted = false;
+    await assert.rejects(selfHostRuntimeModule.runSelfHostRuntimeMutationWithServiceRecovery({
+      config,
+      mutateRuntime: async () => { mutationStarted = true; return {}; },
+    }), /launcher is unavailable/u);
+    assert.equal(mutationStarted, false);
+  } finally {
+    process.execPath = priorExecPath;
+    await rm(root, { recursive: true, force: true });
+  }
 });
