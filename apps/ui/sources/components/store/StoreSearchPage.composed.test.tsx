@@ -24,12 +24,14 @@ const { StoreKindPage, StoreKindFrame, Directory } = await import('./StoreKindPa
 const { StoreDirectory: StoreQueryDirectory } = await import('./StoreSearch');
 const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
 
-it.each(['populated', 'empty', 'failed'] as const)('holds the initial Apps layout until curation settles %s', async outcome => {
+it.each(['populated', 'empty', 'failed', 'partial'] as const)('holds the initial Apps layout until curation settles %s', async outcome => {
     const { BUILT_IN_REGISTRY_SOURCES_V1 } = await import('@happier-dev/protocol/registries');
     const { MarketplaceIndexSourceSnapshotV1Schema, deriveMarketplaceSourceId } = await import('@happier-dev/protocol/marketplace');
     const serverUrl = `https://store-apps-layout-${outcome}.test`;
     const sourceUrl = `https://store-apps-curation-${outcome}.test/catalog.json`;
     const sourceId = deriveMarketplaceSourceId(sourceUrl);
+    const failedUrls = ['https://unavailable-one.test/catalog.json', 'https://unavailable-two.test/catalog.json'];
+    const failedSourceIds = failedUrls.map(deriveMarketplaceSourceId);
     const appSourceId = 'builtin:compose-catalog';
     let releaseCuration!: () => void;
     let pending = new Promise<void>(resolve => { releaseCuration = resolve; });
@@ -47,7 +49,9 @@ it.each(['populated', 'empty', 'failed'] as const)('holds the initial Apps layou
         key: 'registry-sources', value: { v: 2,
             disabledSourceIds: BUILT_IN_REGISTRY_SOURCES_V1.filter(source => source.id !== appSourceId).map(source => source.id),
             sources: [{ id: sourceId, title: 'Curated apps', url: sourceUrl, format: 'happier-catalog',
-                kinds: ['plugin'], enabled: true, addedAt: 1 }],
+                kinds: ['plugin'], enabled: true, addedAt: 1 }, ...(outcome === 'partial' ? failedUrls.map((url, index) => ({
+                    id: failedSourceIds[index]!, title: `Unavailable ${index}`, url, format: 'happier-catalog' as const,
+                    kinds: ['plugin' as const], enabled: true, addedAt: 1 })) : [])],
         },
     }, 'updated', { handleExternalRequest: async url => {
         if (url === sourceUrl) {
@@ -122,6 +126,8 @@ it.each(['populated', 'empty', 'failed'] as const)('holds the initial Apps layou
     await waitForHomeGovernance(() => expect(screen.findAllByType(Directory).flatMap(node => node.props.rows)).toHaveLength(2));
     const directory = screen.findAllByType(Directory)[0]!;
     expect(directory.props.rows).toHaveLength(2);
+    if (outcome === 'partial') expect(directory.props.list.sourceFailures.map((failure: { sourceId: string }) => failure.sourceId))
+        .toEqual(failedSourceIds);
     expect(directory.props.groups.map((group: { key: string }) => group.key)).toEqual(outcome !== 'empty'
         ? [`category:${JSON.stringify([sourceId, 'monitoring'])}`, `source:${appSourceId}`]
         : [`source:${appSourceId}`]);
@@ -244,7 +250,7 @@ async function setup(qualifier = 'cursors', withFailure = false) {
 
 it('keeps loaded Search coverage in place through a warm native loading phase', async () => {
     const { Page, pauseReads } = await setup('continuity', true);
-    const screen = await renderScreen(<Page />);
+    const screen = await renderWindowedScreen(<Page />);
     await waitForHomeGovernance(() => expect(screen.findAllByTestId('store.kind.search.moreNote').length).toBeGreaterThan(0));
     const note = screen.findAllByTestId('store.kind.search.moreNote')[0];
     // The real Retry forces the same warm loading publication as the live Back trace;
@@ -281,7 +287,7 @@ it('uses the current native cursor after each actual Search page load', async ()
 
 it('mounts the shared kind controller and composes exclusions before native acquisition', async () => {
     const { Page, sourceId } = await setup();
-    const screen = await renderScreen(<Page kind="mcpServer" />);
+    const screen = await renderWindowedScreen(<Page kind="mcpServer" />);
     const scope = storage.getState().settingsScope!;
     const executor = createDefaultActionExecutor();
     await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Page 1'));
@@ -331,7 +337,7 @@ it('previews each kind in an all-kind search and opens the rest behind that kind
 
 it('leaves a kind page\'s query and rows still when Discover re-renders without new curation facts', async () => {
     const { Page } = await setup('curation-locality');
-    const screen = await renderScreen(<Page kind="mcpServer" />);
+    const screen = await renderWindowedScreen(<Page kind="mcpServer" />);
     await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Page 1'));
     const query = () => screen.root.findByType(StoreQueryDirectory).props;
     // The curated source is unreachable here: its read settles failed, and the page's catalog facts stay the same.

@@ -17,15 +17,17 @@ export function useRegistryCuration(input: Readonly<{ sourceIds?: readonly strin
     const sources = useRegistrySources(undefined, presented);
     const requested = input.sourceIds;
     const sourceIds = React.useMemo(() => sources.sources.filter(source => source.enabled
-        && source.format === 'happier-catalog' && (requested === undefined || requested.includes(source.id))).map(source => source.id),
+        && source.format === 'happier-catalog' && source.kinds.includes('plugin')
+        && (requested === undefined || requested.includes(source.id))).map(source => source.id),
     [sources.sources, JSON.stringify(requested)]);
     const catalog = useRegistryItems({ kind: 'plugin', sourceIds }, presented && sources.hasValue && sourceIds.length > 0);
     // Presentation owns acquisition, not the admitted facts already held by a retained page.
     const admitted = sourceIds.length > 0 && !catalog.stale;
     const pages = React.useMemo(() => admitted ? catalog.pages : [], [admitted, catalog.pages]);
-    // The catalog read settles all sources before publishing their editorial positions. Failed cold
-    // sources cannot block healthy pages; refresh failures can still carry admitted discovery.
+    // A page carries a settled success or failure. Wait for every admitted source's editorial
+    // positions, while failed cold sources cannot veto healthy or retained discovery.
     const hasValue = sources.hasValue && (sourceIds.length === 0 || admitted && catalog.hasValue
+        && sourceIds.every(sourceId => catalog.pages.some(page => page.sourceId === sourceId))
         && catalog.pages.some(page => page.status.state === 'ok' || page.discovery !== undefined));
     const error = sources.error ?? catalog.error;
     const status = sources.error ? sources.failureStatus : catalog.status;
@@ -34,8 +36,8 @@ export function useRegistryCuration(input: Readonly<{ sourceIds?: readonly strin
     const layout = React.useMemo(() => ({ hasValue, loading, error, status, refresh, sourceFailures: catalog.sourceFailures }),
         [hasValue, loading, error, status, refresh, catalog.sourceFailures]);
     return React.useMemo(() => ({ ...catalog, pages, ...layout, layout,
-        curation: admitted ? catalog.curation : EMPTY_CURATION, sources: sources.sources,
-    }), [catalog, pages, layout, admitted, sources.sources]);
+        curation: hasValue ? catalog.curation : EMPTY_CURATION, sources: sources.sources,
+    }), [catalog, pages, layout, hasValue, sources.sources]);
 }
 export type RegistryCuration = ReturnType<typeof useRegistryCuration>;
 

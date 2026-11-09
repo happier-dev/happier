@@ -4,7 +4,7 @@ import { REGISTRY_ACTION_OUTPUT_SCHEMAS_V1, type RegistryKindV1, type RegistryLi
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { useRegistryActionRead } from './useRegistryActionRead';
 import { describeRegistrySourceStatus } from './describeRegistrySourceStatus';
-import { useRegistrySourceRevision } from './useRegistrySourceRevision';
+import { useRegistryListSourceSelection } from './useRegistrySourceRevision';
 import { admitRegistrySummaryMark, type RegistryCatalogItemSummary } from './registryBrandMark';
 import type { RegistryContributionFamilyV1 } from '@happier-dev/protocol/registries';
 
@@ -47,9 +47,11 @@ const parse = (value: unknown, previous: readonly DisplayPage[] = [], previousCu
 };
 const EMPTY_PAGES: readonly DisplayPage[] = [];
 const EMPTY_CURATION: readonly CurationPage[] = [];
-export function useRegistryItems(input: { kind: RegistryKindV1; sourceIds?: readonly string[]; query?: string;
+export function useRegistryItems(request: { kind: RegistryKindV1; sourceIds?: readonly string[]; query?: string;
     contributionFamily?: RegistryContributionFamilyV1 }, enabled = true) {
-    const revision = useRegistrySourceRevision(enabled, input.sourceIds);
+    const selection = useRegistryListSourceSelection(request.kind, enabled, request.sourceIds);
+    const input = { ...request, sourceIds: selection.sourceIds };
+    const revision = selection.revision;
     const [more, setMore] = React.useState<{ first: ReturnType<typeof parse> | null; pages: readonly DisplayPage[] } | null>(null);
     const pagesFor = (value: ReturnType<typeof parse> | null) => value && more?.first === value ? more.pages : value?.pages;
     const read = useRegistryActionRead('registries.items.list', input, (value, previous: ReturnType<typeof parse> | null) => {

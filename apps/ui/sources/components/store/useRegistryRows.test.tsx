@@ -69,8 +69,31 @@ it('leads an unfiltered page with its curated sections, even for items the first
 it('keeps one row for a curated item once its catalog page arrives, and adds none while a search narrows the list', async () => {
     const curation = discovery(['a']);
     const paged = await renderHook(() => useRegistryRows({ items: [item('a')], curation, curatedKind: 'mcpServer' }, () => {}, sourceTitle));
-    expect(paged.getCurrent().rows.map(row => row.title)).toEqual(['Server a']);
+    expect(paged.getCurrent().rows.map(row => row.title)).toEqual(['Curated a']);
     expect(paged.getCurrent().groups.map(group => group.title)).toEqual(['Monitoring']);
     const narrowed = await renderHook(() => useRegistryRows({ items: [], curation }, () => {}, sourceTitle));
     expect(narrowed.getCurrent().rows).toEqual([]);
+});
+
+
+it('keeps editorial category and row positions when catalog summaries arrive in a different order', async () => {
+    const curation = [{ sourceId: 'curated', discovery: {
+        items: ['uptime', 'glitchtip', 'healthchecks'].map(id => ({ id, title: `Curated ${id}`,
+            reference: { type: 'registryItem' as const, kind: 'mcpServer' as const, sourceId: 'catalog', itemId: id } })),
+        categories: [{ id: 'monitoring', title: 'Monitoring', items: ['uptime', 'healthchecks'] },
+            { id: 'errors', title: 'Error tracking', items: ['glitchtip'] }], jobs: [],
+    } }];
+    const hook = await renderHook((items: readonly RegistryCatalogItemSummary[]) => useRegistryRows(
+        { items, curation, curatedKind: 'mcpServer' }, () => {}, sourceTitle), { initialProps: [] });
+    const positions = () => ({ groups: hook.getCurrent().groups.map(group => group.title),
+        rows: hook.getCurrent().rows.map(row => row.key) });
+    const before = positions();
+    expect(before.groups).toEqual(['Monitoring', 'Error tracking']);
+    await hook.rerender([item('glitchtip')]);
+    expect(positions()).toEqual(before);
+    // Editorial words determine row height; native hydration must not replace them mid-read.
+    expect(hook.getCurrent().rows.map(row => row.title)).toEqual(['Curated uptime', 'Curated glitchtip', 'Curated healthchecks']);
+    await hook.rerender([item('glitchtip'), item('healthchecks'), item('uptime'), item('wordpress')]);
+    expect(positions()).toEqual({ groups: [...before.groups, 'From Catalog'],
+        rows: [...before.rows, 'mcpServer|catalog|wordpress'] });
 });

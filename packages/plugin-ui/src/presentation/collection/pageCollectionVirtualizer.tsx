@@ -93,7 +93,8 @@ export function PageCollectionVirtualizer<Item>({ request, geometry, tracker, ta
   const content: ReactNode[] = [];
   let renderedEnd = 0;
   for (const cell of cells) {
-    const pinned = !cell.header && tabStopKey !== null && cell.keys.includes(tabStopKey);
+    // Initial rows and headers enter together once their physical page position is known.
+    const pinned = span !== null && window !== null && !cell.header && tabStopKey !== null && cell.keys.includes(tabStopKey);
     const inWindow = span !== null && window !== null
       && span.top + cell.offset + cell.height >= window.top && span.top + cell.offset <= window.bottom;
     if (!pinned && !inWindow) continue;

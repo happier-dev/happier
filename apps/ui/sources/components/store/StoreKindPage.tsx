@@ -36,6 +36,8 @@ import { useStoreOpenReference } from './catalog/useStoreOpenReference';
 import { StoreItemMark } from './catalog/StoreItemMark';
 import { StoreRegistryIdentityProvider } from './catalog/StoreRegistryIdentity';
 import { StoreListingPaneHost, useOpenStoreListing, useStoreListingSelection } from './StoreListing';
+import { StoreBrowserExtensionLinkResult } from './StoreBrowserExtensionLinkResult';
+import { readWebStoreExtensionId } from './catalog/storeBrowserExtensions';
 import type { StoreListingReference } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import {
   storeKinds,
@@ -145,23 +147,32 @@ function KindResults(props: Readonly<{ kind: StoreDirectoryKind; presented: bool
     : <Directory kind={props.kind} rows={[]} groups={[]} list={{ ...props.curationRead, hasNextPage: false }} query={state.query} sourceTitle={null} />);
   switch (props.kind) {
     case 'browserExtension':
-      if (state.lists.browserExtension) return frame(<RegistryDirectory kind="browserExtension" list={{ ...state.lists.browserExtension, curation: props.curation,
-        items: state.lists.browserExtension.items.filter(item => visible.has(item)) }} query={state.query} browsing={browsing} />);
-      break;
+      // A pasted Chrome Web Store link or ID installs that extension, whether or not the catalog lists it or is reachable.
+      return frame(<><StoreBrowserExtensionLinkResult query={state.query} />{state.lists.browserExtension
+        ? <RegistryDirectory kind="browserExtension" list={{ ...state.lists.browserExtension, curation: props.curation,
+          sourceFailures: [...props.curationRead.sourceFailures, ...state.lists.browserExtension.sourceFailures],
+          items: state.lists.browserExtension.items.filter(item => visible.has(item)) }} query={state.query} browsing={browsing}
+          showEmptyState={readWebStoreExtensionId(state.query) === null} />
+        : <Directory kind={props.kind} rows={[]} groups={[]} list={{ loading: false, hasNextPage: false }} query={state.query} sourceTitle={null}
+          showEmptyState={readWebStoreExtensionId(state.query) === null} />}</>);
     case 'app':
       if (state.lists.app) return frame(<RegistryDirectory kind="app" list={{ ...state.lists.app, curation: props.curation,
+          sourceFailures: [...props.curationRead.sourceFailures, ...state.lists.app.sourceFailures],
         items: state.lists.app.items.filter(item => visible.has(item)) }} query={state.query} browsing={browsing} />);
       break;
     case 'mcpServer':
       if (state.lists.mcpServer) return frame(<McpDirectory list={{ ...state.lists.mcpServer, curation: props.curation,
+          sourceFailures: [...props.curationRead.sourceFailures, ...state.lists.mcpServer.sourceFailures],
         items: state.lists.mcpServer.items.filter(item => visible.has(item)) }} query={state.query} presented={props.presented} browsing={browsing} />);
       break;
     case 'skill':
       if (state.lists.skill) return frame(<SkillDirectory list={{ ...state.lists.skill, curation: props.curation,
+          sourceFailures: [...props.curationRead.sourceFailures, ...state.lists.skill.sourceFailures],
         items: state.lists.skill.items.filter(item => visible.has(item)) }} query={state.query} presented={props.presented} browsing={browsing} />);
       break;
     case 'agent':
       if (state.lists.agent) return frame(<AgentDirectory list={{ ...state.lists.agent, curation: props.curation,
+          sourceFailures: [...props.curationRead.sourceFailures, ...state.lists.agent.sourceFailures],
         items: state.lists.agent.items.filter(item => visible.has(item)) }} query={state.query} presented={props.presented} browsing={browsing} />);
       break;
     case 'provider':
@@ -316,7 +327,7 @@ export function useRegistryRows(
   const curatedItems = React.useMemo(() => list.curatedKind ? curatedSummaries(list.curation, list.curatedKind) : EMPTY_CURATED,
     [list.curation, list.curatedKind]);
   return React.useMemo(() => {
-    const curatedIdentities = new Set(curatedItems.map(curatedIdentity));
+    const curatedByIdentity = new Map(curatedItems.map(item => [curatedIdentity(item), item]));
     const categories = new Map<
       string,
       Readonly<{ title: string; description?: string; members: Set<string> }>
@@ -345,8 +356,10 @@ export function useRegistryRows(
     const next = new Map<string, Readonly<{
       item: RegistryCatalogItemSummary; group: string; added: boolean; addable: boolean; row: DirectoryRow;
     }>>();
-    const loaded = new Set(list.items.map(curatedIdentity));
-    const items = [...curatedItems.filter(item => !loaded.has(curatedIdentity(item))), ...list.items];
+    const loaded = new Map(list.items.map(item => [curatedIdentity(item), item]));
+    // Hydration replaces a curated summary in its editorial slot; it never appends that row elsewhere.
+    const items = [...curatedItems.map(item => loaded.get(curatedIdentity(item)) ?? item),
+      ...list.items.filter(item => !curatedByIdentity.has(curatedIdentity(item)))];
     const rows = items.map((item): DirectoryRow => {
       const identity = JSON.stringify([item.sourceId, item.itemId]);
       const category =
@@ -354,7 +367,7 @@ export function useRegistryRows(
           ? null
           : [...categories].find(([, value]) => value.members.has(identity));
       const group: DirectoryGroup =
-        item.sourceId === HAPPIER_PICKS_SOURCE_ID || (!category && curatedIdentities.has(identity))
+        item.sourceId === HAPPIER_PICKS_SOURCE_ID || (!category && curatedByIdentity.has(identity))
           ? {
               key: 'picks',
               title: t('capabilities.store.picksTitle'),
@@ -378,12 +391,16 @@ export function useRegistryRows(
       const key = `${item.kind}|${item.sourceId}|${item.itemId}`;
       const added = isAdded?.(item) ?? false;
       const addable = add !== undefined;
+      // Curation owns the visible words as well as their positions; hydration supplies native facts and artwork.
+      const presentation = curatedByIdentity.get(identity) ?? item;
+      const description = presentation.description?.trim() || null;
       const previous = held.current.get(key);
       const row: DirectoryRow = previous && previous.item === item && previous.group === group.key
-        && previous.added === added && previous.addable === addable ? previous.row : {
+        && previous.added === added && previous.addable === addable
+        && previous.row.title === presentation.title && previous.row.description === description ? previous.row : {
         key,
-        title: item.title,
-        description: item.description?.trim() || null,
+        title: presentation.title,
+        description,
         group: group.key,
         open: () => latest.current.open(item),
         ...(addable ? { add: () => latest.current.add?.(item) } : {}),
@@ -399,11 +416,11 @@ export function useRegistryRows(
       return row;
     });
     held.current = next;
-    const order = (key: string) =>
-      key === 'picks' ? 0 : key.startsWith('category:') ? 1 : 2;
-    const orderedGroups = [...groups.values()].sort(
-      (left, right) => order(left.key) - order(right.key),
-    );
+    // Category order comes from curation, independently of catalog pagination or hydration order.
+    const editorialOrder = new Map(['picks', ...[...categories.keys()].map(key => `category:${key}`)]
+      .map((key, index) => [key, index]));
+    const orderedGroups = [...groups.values()].sort((left, right) =>
+      (editorialOrder.get(left.key) ?? editorialOrder.size) - (editorialOrder.get(right.key) ?? editorialOrder.size));
     const before = published.current;
     const same = before !== null && before.rows.length === rows.length && before.rows.every((row, index) => row === rows[index])
       && before.groups.length === orderedGroups.length
@@ -434,6 +451,7 @@ function RegistryDirectory(
     query: string;
     browsing: boolean;
     isAdded?: (item: RegistryCatalogItemSummary) => boolean;
+    showEmptyState?: boolean;
   }>,
 ): React.ReactNode {
   const open = useOpenRegistryItem();
@@ -450,6 +468,7 @@ function RegistryDirectory(
       list={props.list}
       query={props.query}
       sourceTitle={sourceTitle}
+      showEmptyState={props.showEmptyState}
     />
   );
 }

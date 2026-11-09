@@ -602,12 +602,16 @@ describe('registry item last-known reads through the Account and HTTP owners', (
                     type: 'registryItem', kind: 'app', sourceId, itemId: id } })),
                 categories: ['monitoring', 'publishing'].map(id => ({ id, title: id, items: [id] })), jobs: [],
             } });
+        // App-only catalogs cannot answer the plugin read that supplies editorial discovery.
+        // Their late arrival must not become an eternally pending editorial source.
+        const appOnlySource = { ...source, id: 'app-only-catalog', title: 'App-only catalog',
+            url: 'https://app-only-curation.test/catalog.json', kinds: ['app'] } satisfies RegistrySourceV1;
         let release!: () => void;
         const pending = new Promise<void>(resolve => { release = resolve; });
         let healthyReads = 0;
         let unavailable = allFailed;
         const fixture = await createPlainPromptLibraryCatalogHomeFixture(`https://curation-layout-${allFailed}.test`, {
-            key: 'registry-sources', value: { v: 2, sources: [source], disabledSourceIds: [] },
+            key: 'registry-sources', value: { v: 2, sources: [source, appOnlySource], disabledSourceIds: [] },
         }, 'updated', { handleExternalRequest: async url => {
             if (url === DEFAULT_CURATED_MARKETPLACE_SOURCE_URL) {
                 await pending;
@@ -621,7 +625,8 @@ describe('registry item last-known reads through the Account and HTTP owners', (
         } });
         onTestFinished(async () => { release(); await standardCleanup(); await fixture.dispose(); });
         const sourceIds = [HAPPIER_PICKS_SOURCE_ID, sourceId];
-        const hook = await renderHook(() => useRegistryCuration({ sourceIds }));
+        const requested = [...sourceIds, appOnlySource.id];
+        const hook = await renderHook(() => useRegistryCuration({ sourceIds: requested }));
         await waitForHomeGovernance(() => expect(healthyReads).toBe(1));
         // A healthy sibling cannot expose sections before pending editorial positions are known.
         expect(hook.getCurrent().layout.hasValue).toBe(false);
@@ -643,6 +648,44 @@ describe('registry item last-known reads through the Account and HTTP owners', (
         expect(hook.getCurrent().layout.hasValue).toBe(true);
         expect(hook.getCurrent().curation).toBe(retained);
         expect(hook.getCurrent().layout.sourceFailures.map(failure => failure.sourceId)).toEqual(sourceIds);
+    });
+    it('keeps healthy catalog rows mounted while an added source is still pending', async () => {
+        const { BUILT_IN_REGISTRY_SOURCES_V1 } = await import('@happier-dev/protocol/registries');
+        const firstUrl = 'https://source-arrival.test/first/catalog.json';
+        const nextUrl = 'https://source-arrival.test/next/catalog.json';
+        const firstId = deriveMarketplaceSourceId(firstUrl);
+        const nextId = deriveMarketplaceSourceId(nextUrl);
+        const source = { id: firstId, title: 'First catalog', format: 'happier-catalog', kinds: ['plugin'],
+            url: firstUrl, enabled: true, addedAt: 1 } satisfies RegistrySourceV1;
+        const added = { ...source, id: nextId, title: 'Added catalog', url: nextUrl };
+        let release!: () => void;
+        const pending = new Promise<void>(resolve => { release = resolve; });
+        let nextRequested = false;
+        const fixture = await createPlainPromptLibraryCatalogHomeFixture('https://source-arrival-home.test', {
+            key: 'registry-sources', value: { v: 2, sources: [source],
+                disabledSourceIds: BUILT_IN_REGISTRY_SOURCES_V1.map(source => source.id) },
+        }, 'updated', { handleExternalRequest: async url => {
+            if (url === firstUrl) return Response.json(createRegistryPluginCatalogFixture({ sourceUrl: firstUrl }));
+            if (url === nextUrl) { nextRequested = true; await pending;
+                return Response.json(createRegistryPluginCatalogFixture({ sourceUrl: nextUrl })); }
+            throw new Error('Unexpected catalog request');
+        } });
+        onTestFinished(async () => { release(); await standardCleanup(); await fixture.dispose(); });
+        const hook = await renderHook(() => useRegistryItems({ kind: 'plugin' }));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().items).toHaveLength(1));
+        const held = hook.getCurrent().items;
+        const scope = storage.getState().settingsScope!;
+        const row = fixture.read();
+        const record = row.record;
+        if (record.key !== 'registry-sources') throw new Error('Expected registry source fixture');
+        await act(async () => applyPromptLibraryCatalogAcknowledgedRecord(scope, { key: 'registry-sources',
+            value: { ...record.value, sources: [source, added] } }, row.revision + 1, true));
+        await waitForHomeGovernance(() => expect(nextRequested).toBe(true));
+        expect(hook.getCurrent().loading).toBe(true);
+        expect(hook.getCurrent().items).toBe(held);
+        await act(async () => { release(); });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().loading).toBe(false));
+        expect(hook.getCurrent().items.map(item => item.sourceId)).toEqual([firstId, nextId]);
     });
     it('reconciles refresh by content: zero changed row identities for equal content and only one for one changed listing', async () => {
         const { sourceId, catalog } = await setupHome('row-identity', Array.from({ length: 100 }, (_, index) => ({
