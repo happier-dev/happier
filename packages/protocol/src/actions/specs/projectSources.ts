@@ -81,7 +81,7 @@ export const PROJECT_SOURCE_ACTION_SPECS_V1: readonly ProjectSourceActionSpec[] 
     invocationServerIdForInput: actionInputServerId(ProjectSourcesListInputV1Schema, input => input.serverId),
     inputHints: { fields: [{ path: 'serverId', title: 'Home id', widget: 'text', required: true },
       { path: 'query', title: 'Search', widget: 'text' }, { path: 'audience', title: 'Audience', widget: 'json' },
-      { path: 'cursor', title: 'Page cursor', widget: 'text' }, { path: 'limit', title: 'Page size', widget: 'text' }] },
+      { path: 'cursor', title: 'Page cursor', widget: 'text' }] },
   },
   {
     ...common, id: 'projects.sources.read', approval: {result: 'required'}, title: 'Read repository source',
@@ -116,7 +116,6 @@ export const PROJECT_SOURCE_ACTION_SPECS_V1: readonly ProjectSourceActionSpec[] 
     invocationServerIdForInput: actionInputServerId(ProjectSourcesUpdateInputV1Schema, input => input.serverId),
     inputHints: { fields: [{ path: 'serverId', title: 'Home id', widget: 'text', required: true },
       { path: 'sourceId', title: 'Source id', widget: 'text', required: true },
-      { path: 'expectedRevision', title: 'Current revision', widget: 'text', required: true },
       { path: 'patch', title: 'Metadata or attachment intent', widget: 'json', required: true }] },
   },
   {
@@ -128,7 +127,6 @@ export const PROJECT_SOURCE_ACTION_SPECS_V1: readonly ProjectSourceActionSpec[] 
     inputSchema: ProjectSourcesDeleteInputV1Schema, outputSchema: ProjectSourcesDeleteOutputV1Schema,
     invocationServerIdForInput: actionInputServerId(ProjectSourcesDeleteInputV1Schema, input => input.serverId),
     inputHints: { fields: [{ path: 'serverId', title: 'Home id', widget: 'text', required: true },
-      { path: 'sourceId', title: 'Source id', widget: 'text', required: true },
-      { path: 'expectedRevision', title: 'Current revision', widget: 'text', required: true }] },
+      { path: 'sourceId', title: 'Source id', widget: 'text', required: true }] },
   },
 ] as const satisfies readonly PreNormalizedActionSpec[]);

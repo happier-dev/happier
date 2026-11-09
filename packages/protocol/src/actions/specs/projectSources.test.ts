@@ -6,8 +6,56 @@ import { updatePersonalProjectContextV1 } from '../../projects/projectContextV1.
 import { ProjectAccountOrganizationV1Schema } from '../../projects/projectAccountRowsV1.js';
 import { bindHomeDomainActionHttpRequestV1 } from '../homeDomainActionFamily.js';
 import { resolveActionSdkMethodName } from '../actionSdkMethodNames.js';
+import { ApprovalRequestSchema, type ApprovalRequest } from '../../approvals/approvalRequestV1.js';
+import { ProjectSourcesCreateInputV1Schema, ProjectSourceV1Schema, type ProjectSourceV1 } from '../../projects/sources/projectSourceV1.js';
 
 describe('Project Source Action admission', () => {
+  it.each([
+    { id: 'projects.sources.list', path: 'limit', input: { serverId: 'home', limit: 2 }, required: false },
+    { id: 'projects.sources.update', path: 'expectedRevision', input: { serverId: 'home', sourceId: 'source', expectedRevision: 2, patch: { name: 'Renamed' } }, required: true },
+    { id: 'projects.sources.delete', path: 'expectedRevision', input: { serverId: 'home', sourceId: 'source', expectedRevision: 2 }, required: true },
+  ] as const)('elicits $id.$path in the numeric format accepted by its schema', ({ id, path, input, required }) => {
+    const spec = getActionSpec(id);
+    const field = spec.inputHints?.fields.find(candidate => candidate.path === path);
+    expect(field?.widget).toBe('integer');
+    expect(field?.required === true).toBe(required);
+    expect(spec.inputSchema.safeParse(input).success).toBe(true);
+    expect(spec.inputSchema.safeParse({ ...input, [path]: '2' }).success).toBe(false);
+    expect(spec.inputSchema.safeParse({ ...input, [path]: 1.5 }).success).toBe(false);
+  });
+
+  it.each([false, true])('creates a Source after its real approval with repository present: %s', async withRepository => {
+    const input = ProjectSourcesCreateInputV1Schema.parse({ serverId: 'home', requestKey: 'create-source', name: 'Production', audience: [],
+      ...(withRepository ? { repository: { provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+        repository: { nameWithOwner: 'acme/production' }, protocol: 'https' } } : {}) });
+    let request: ApprovalRequest | null = null;
+    const sources: ProjectSourceV1[] = [];
+    const executor = createActionExecutor({
+      // Approval Artifact persistence and Source HTTP storage are the system boundaries.
+      approvalsCreate: async ({ request: value }) => { request = ApprovalRequestSchema.parse(value); return { artifactId: 'source-approval' }; },
+      approvalsGet: async () => request,
+      approvalsUpdate: async ({ request: value }) => { request = ApprovalRequestSchema.parse(value); return { ok: true }; },
+      isApprovalExecutionOriginCurrent: async () => true,
+      projectSourcesCreate: async value => {
+        const source = ProjectSourceV1Schema.parse({ id: 'source', revision: 1, name: value.name, repository: value.repository,
+          owner: { kind: 'account', accountId: 'alice' }, audience: [], createdByAccountId: 'alice' });
+        sources.push(source);
+        return { ok: true, source, canManage: true };
+      },
+    });
+    const context = { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+      serverId: 'home', runtimeAccountId: 'alice', actionRequestId: 'create-source' } as const;
+    expect(await executor.execute('projects.sources.create', input, context)).toMatchObject({ ok: true,
+      result: { kind: 'approval_request_created', artifactId: 'source-approval' } });
+    expect(sources).toEqual([]);
+    const decision = await executor.execute('approval.request.decide', { artifactId: 'source-approval', decision: 'approve' }, context);
+    expect(decision).toMatchObject({ ok: true });
+    expect(request).toMatchObject({ status: 'executed' });
+    expect(sources).toHaveLength(1);
+    expect(sources[0]).toMatchObject({ name: 'Production', owner: { kind: 'account', accountId: 'alice' } });
+    expect(sources[0]?.repository).toEqual(input.repository);
+  });
+
   it('sets shared deployment defaults through the registered Home Action and strict content CAS', async () => {
     const id = 'projects.deploymentDefaults.set';
     const spec = getActionSpec(id);
