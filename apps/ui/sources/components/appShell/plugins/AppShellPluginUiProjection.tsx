@@ -21,7 +21,7 @@ import {
     createInstalledPluginUiReactNativeRuntimeProjectionSource,
     type PluginUiReactNativeRuntimeProjectionSource,
 } from '@/components/plugins/reactNative/projectionInvalidation';
-import { useIsActiveMachineListSettled } from '@/sync/domains/state/storage';
+import { useIsActiveMachineListSettled, useSettingsSelector } from '@/sync/domains/state/storage';
 import type { LocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/url';
 import {
     EMPTY_PLUGIN_UI_PROJECTION,
@@ -94,6 +94,7 @@ import {
 } from '@/voice/registry/bundledConversationRuntimeGeneration';
 import { useVoiceExecutionMachineId } from '@/voice/credentials/useExecutionMachinePresentation';
 import { useVoiceProviderRuntimeDemand } from '@/voice/session/useVoiceProviderRuntimeDemand';
+import { resolveStoredVoiceProviderId } from '@/voice/settings/resolveVoiceProviderId';
 
 import { PluginPageLaunchInputScope } from '@/components/plugins/pages/pluginPageNavigation';
 import {
@@ -494,7 +495,11 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
         : null;
     const voiceExecutionMachineId = useVoiceExecutionMachineId();
     const voiceProviderIds = useVoiceProviderRuntimeDemand();
-    const voiceProjectionDemand = Array.from(voiceProviderIds).some((id) => parseQualifiedPluginContributionKey(id) !== null);
+    const selectedVoiceProviderId = useSettingsSelector(settings => resolveStoredVoiceProviderId(settings.voiceSettingsV1.providerId), ['voiceSettingsV1']);
+    // Selection needs declarations for discovery and Start admission, even while
+    // no attempt demands the provider's executable adapter.
+    const voiceProjectionDemand = (selectedVoiceProviderId !== null && parseQualifiedPluginContributionKey(selectedVoiceProviderId) !== null)
+        || Array.from(voiceProviderIds).some((id) => parseQualifiedPluginContributionKey(id) !== null);
     // Voice execution stays bound to the USER-selected execution machine. When
     // that machine is already a union member its observer owns acquisition; a
     // voice machine outside the eligible set (active but past the presence

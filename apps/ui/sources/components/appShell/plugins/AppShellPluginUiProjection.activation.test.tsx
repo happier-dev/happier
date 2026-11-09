@@ -48,6 +48,14 @@ import { useBoundPluginSurfaceController } from '@/components/plugins/surfaces/b
 import { useManagedProvisionerPresentation } from '@/components/settings/machines/managed/useManagedProvisionerPresentation';
 import { unloadAppShellProjectedClientExecutables } from './appShellClientExecutableActivation';
 import { AppShellPluginUiProjectionProvider, useAppShellPluginUiProjection } from './AppShellPluginUiProjection';
+import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
+import { getVoiceAdapterRegistry } from '@/voice/session/voiceAdapterRegistry';
+import { getVoiceSessionLifecycleController } from '@/voice/session/voiceSessionLifecycleControllerStore';
+import { resetVoiceSessionStoreForTests } from '@/voice/session/voiceSessionStore';
+import { useVoiceProviderRuntimeDemand } from '@/voice/session/useVoiceProviderRuntimeDemand';
+import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
+import { normalizeVoiceSettingsLocalDelta } from '@/sync/domains/settings/voiceSettingsPersistence';
+import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 
 const daemon = vi.hoisted(() => ({ projection: null as PluginProjectionV2 | null, peerProjection: null as PluginProjectionV2 | null,
     mountedProjection: null as PluginProjectionV2 | null, peerMountedProjection: null as PluginProjectionV2 | null,
@@ -448,6 +456,66 @@ async function mountClientExecutableFixture(options: { waitForAdmission?: boolea
     if (!registration || registration.registration.family !== 'actions') throw new Error('Missing actual client Action registration');
     return { ...fixture, registration };
 }
+
+it('discovers the selected Voice descriptor on a fresh Home before executable demand', async () => {
+    const selectedPluginId = 'acme.fresh-voice';
+    const contribution = PluginContributesV2Schema.parse({ voiceProviders: [{ id: 'conversation', title: 'Fresh Voice',
+        kind: 'conversation', roles: ['realtime_conversation'], platforms: ['web', 'ios', 'android'],
+        capabilities: { turn: { cancelResponse: true, bargeIn: false } },
+        client: { artifactId: 'voice-client', exportName: 'activate' },
+    }] }).voiceProviders[0]!;
+    const providerId = `${selectedPluginId}/${contribution.id}`;
+    const executionOrigin = { serverIdentityId, sourceRef: { machineId: 'machine-live', pluginId: selectedPluginId,
+        sourceCustody: { kind: 'development' as const, registeredRootId: '/fixture/plugins/fresh-voice' } } };
+    const occurrenceId = 'fresh-voice-install';
+    // This is the daemon response, not a seeded client projection/currentness cache.
+    daemon.projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1,
+        installedPackagesById: { [selectedPluginId]: { id: selectedPluginId, displayName: 'Fresh Voice', version: '1.0.0', enabled: true,
+            occurrenceId, executionOrigin, sourceCustody: executionOrigin.sourceRef.sourceCustody,
+            source: { kind: 'localPath', locator: '/fixture/plugins/fresh-voice' } } },
+        familiesById: { voiceProviders: { family: 'voiceProviders', entriesById: { [providerId]: {
+            id: providerId, pluginId: selectedPluginId, occurrenceId, generation: 1, contributionKey: providerId, definition: contribution,
+        } } } },
+    });
+    const settings = { ...initialStorage.settings,
+        ...normalizeVoiceSettingsLocalDelta({ voice: voiceSettingsParse({ providerId,
+            executionMachine: { mode: 'fixed', machineId: 'machine-live' } }) }, initialStorage.settings),
+    };
+    const machine = createMachineFixture({ id: 'machine-live', active: true, activeAt: Date.now(),
+        daemonStateVersion: 1, daemonState: pluginArtifactTransferDaemonState });
+    resetVoiceSessionStoreForTests();
+    connection = await restoreServerAccountForTest({ serverUrl: 'https://fresh-voice-descriptor.test', serverIdentityId,
+        accountId: 'account-continuity', activation: 'switch', request: async (url, init) => {
+            const path = new URL(String(url)).pathname;
+            if (path === '/health') return Response.json({ status: 'ok' });
+            if (path === '/v1/account/profile') return Response.json(AccountProfileSchema.parse({ id: 'account-continuity' }));
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture({ version: 1, updatedAt: 1 }));
+            if (path === '/v2/account/settings') return Response.json({ version: 1, content: { t: 'plain', v: settings } });
+            if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse({ features: {
+                voice: { enabled: true }, plugins: { enabled: true, ui: { enabled: true, hostedWeb: { enabled: true }, reactNativeBundles: { enabled: true } } },
+            } }));
+            if (path === '/v1/machines') return Response.json([createPlainMachineRowFixture({ id: machine.id, accountId: 'account-continuity', machine })]);
+            return createEmptyAccountBootstrapHttpResponse(path, init) ?? Response.json({ error: 'not_found' }, { status: 404 });
+        } });
+    const lifetime = captureActiveServerAccountScopeLifetime();
+    if (!lifetime) throw new Error('Missing fresh Voice Account lifetime');
+    const serverId = lifetime.scope.serverId;
+    storage.setState({ profileScope: lifetime.scope, settingsScope: lifetime.scope, endpointStatus: 'online', isDataReady: true, settings,
+        machines: { [machine.id]: machine }, machineListByServerId: { [serverId]: [machine] }, machineListStatusByServerId: { [serverId]: 'idle' } });
+    observeMachinePresenceForTest(lifetime.scope, [machine.id]);
+    const registry = createDefaultVoiceProviderRegistry();
+    expect(registry.get(providerId)).toBeNull();
+    let demand: ReadonlySet<string> = new Set();
+    function Probe() { demand = useVoiceProviderRuntimeDemand(); return null; }
+    // No CatalogDemand, Voice Runtime, Settings page or Start supplies acquisition.
+    await renderScreen(<AppShellPluginUiProjectionProvider><Probe /></AppShellPluginUiProjectionProvider>);
+    await vi.waitFor(() => expect(registry.get(providerId)).toMatchObject({ providerId,
+        kind: 'voice.conversation-provider.v1', declaration: { title: 'Fresh Voice' } }));
+    expect([...demand]).toEqual([]);
+    expect(getVoiceAdapterRegistry().get(providerId)).toBeNull();
+    expect(getVoiceSessionLifecycleController()).toBeNull();
+});
 
 it('dispatches a controller prerequisite repair through the mounted managed catalog and AppShell activation', async () => {
     // The answering platform is the only boundary replaced; the nested host
