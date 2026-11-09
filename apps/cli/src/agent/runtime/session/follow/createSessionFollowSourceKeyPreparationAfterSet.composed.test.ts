@@ -19,8 +19,9 @@ import { createAccountEncryptionCurrentnessFixture, createSessionNotificationCon
 import { registerRestrictedSessionFollowSourceKeyReceiver } from '@/ephemeralRunner/registerRestrictedSessionFollowSourceKeyReceiver';
 import { createSessionFollowSourceMaterialResolver } from './sessionFollowSourceMaterialResolver';
 import { createSessionFollowSourceKeyPreparationAfterSet } from './createSessionFollowSourceKeyPreparationAfterSet';
-import { createSessionFollowOccurrenceDispatcher } from './sessionFollowOccurrenceDispatcher';
+import { createSessionFollowOccurrenceDispatcher } from './sessionFollowOccurrenceDispatcher.testkit';
 import { createAccountSessionFollowRuleCache } from './accountSessionFollowRuleCache';
+import type { SessionFollowRuleInvalidation } from './sessionFollowRuleCache';
 import { sealSessionFollowRuleContentV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleContentCodecV1';
 import { normalizeSessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import { createAutomationAccountEncryptionMaterialSnapshotV1 } from '@/plugins/runtime/automations/automationAccountCurrentness';
@@ -55,7 +56,11 @@ it.each([
   let ruleAvailable = !delayedRuleNotification;
   let ruleCensusReads = 0;
   let originalCreatedAt: number | undefined = mode === 'rule-inception' ? 99 : undefined;
-  const ruleChanges: { invalidate?: () => void } = {};
+  const ruleChanges = new Set<(change?: SessionFollowRuleInvalidation) => void>();
+  const subscribeInvalidation = (listener: (change?: SessionFollowRuleInvalidation) => void) => {
+    ruleChanges.add(listener);
+    return () => { ruleChanges.delete(listener); };
+  };
   const machineId = 'runner-one';
   const machineKey = new Uint8Array(32).fill(11);
   const publicKey = nacl.box.keyPair.fromSecretKey(machineKey).publicKey;
@@ -199,6 +204,7 @@ it.each([
       : { status: 200, data: { didWrite: false, terminal: true, message: { localId: localInputId } } };
   });
   let dispatcher: ReturnType<typeof createSessionFollowOccurrenceDispatcher> | null = null;
+  let receiverDispatcher: ReturnType<typeof createSessionFollowOccurrenceDispatcher> | null = null;
   let primedRulesCache: ReturnType<typeof createAccountSessionFollowRuleCache> | null = null;
   try {
     if (mode === 'direct') {
@@ -212,20 +218,25 @@ it.each([
       if (delayedRuleNotification) {
         primedRulesCache = createAccountSessionFollowRuleCache({ accountId: 'account-1', credentials,
           serverHttpBaseUrl: 'https://home.example', signal: new AbortController().signal, isCurrent: async () => true,
-          subscribeInvalidation: listener => { ruleChanges.invalidate = listener; return () => { delete ruleChanges.invalidate; }; } });
+          subscribeInvalidation });
         expect(await primedRulesCache.read()).toMatchObject({ status: 'available', rules: [] });
         // The rule exists before the original. Only its already-subscribed
         // Account change notification is delayed until after ordinary admission.
         ruleAvailable = true;
       }
-      dispatcher = createSessionFollowOccurrenceDispatcher({ accountId: 'account-1', credentials,
+      const dispatcherInput = { accountId: 'account-1', credentials,
         serverId: 'home-one', serverHttpBaseUrl: 'https://home.example', machineId: 'source-machine', installationId: 'source-installation',
         signal: new AbortController().signal, isCurrent: async () => true,
-        ...(primedRulesCache ? { rulesCache: primedRulesCache } : {}),
-        subscribeInvalidation: listener => { ruleChanges.invalidate = listener; return () => { delete ruleChanges.invalidate; }; },
+        subscribeInvalidation,
         isPersonalCurrent: () => false, dispatchPersonal: async () => {},
         resolveSourceKeyContext: async () => mode === 'source-dispatch'
           ? { serverIdentityId: 'home-one', authority: 'account_automation', surface: 'api' } : null,
+      } satisfies Parameters<typeof createSessionFollowOccurrenceDispatcher>[0];
+      receiverDispatcher = createSessionFollowOccurrenceDispatcher(dispatcherInput);
+      const receiver = receiverDispatcher;
+      dispatcher = createSessionFollowOccurrenceDispatcher({ ...dispatcherInput,
+        ...(primedRulesCache ? { rulesCache: primedRulesCache } : {}),
+        dispatchReceiverRange: async (range, sourcePublisher) => { await receiver.dispatchReceiverRange(range, sourcePublisher); },
       });
       if (mode === 'rule-inception') {
         const occurrence = { sourceSessionId, sourcePublisher: { publisherGeneration: '1', machineId: 'source-machine', committedFenceMs: 1 },
@@ -249,20 +260,17 @@ it.each([
           sourceTurn: { id: 'source-turn', status: 'failed' as const }, evidence: { v: 1 as const, ownerAccountId: 'account-1',
             event: { kind: 'failed_or_stopped' as const }, facts: { serverId: 'home-one', kind: 'session' as const, startedBy: 'you' as const } } };
         await dispatcher.dispatch(occurrence);
-        if (!ruleChanges.invalidate) throw new Error('Missing captured Account rule-change subscription');
-        ruleChanges.invalidate();
+        if (!ruleChanges.size) throw new Error('Missing captured Account rule-change subscription');
+        for (const invalidate of ruleChanges) invalidate({ full: true });
         await dispatcher.dispatch(occurrence);
-        expect(produced).toHaveLength(2);
-        // Source notifications reobserve the ordered range before admission;
-        // its fresh rule read must strengthen even the first Pending input.
+        expect(produced, 'repeated source delivery must not re-admit the accepted original').toHaveLength(1);
+        // The receiver's first configuration read includes the existing rule,
+        // even when the source's Account notification has not arrived yet.
         const relations = mode === 'preacceptance-route' ? [{ relation: 'follower' }] : undefined;
         expect(produced[0]).toMatchObject({ delivery: { delivery: 'wake' }, relations,
           sources: [{ rule: { ruleId: 'private-rule-0', ruleVersion: 1 } }] });
-        expect(produced[1]).toMatchObject({ localId: produced[0]?.localId, delivery: { delivery: 'wake', original: produced[0]?.delivery.original },
-          relations: produced[0]?.relations, sources: [{ rule: { ruleId: 'private-rule-0', ruleVersion: 1 } }] });
-        expect(ruleCensusReads, 'one priming read plus one fresh census per original admission').toBe(3);
-        // Redispatch retains one original identity; the server/DB owner decides
-        // immutable Pending custody and effect deduplication.
+        expect(ruleCensusReads, 'one read per requester configuration observation, including the delayed authoring change')
+          .toBe(mode === 'preacceptance-route' ? 4 : 3);
         return;
       }
       if (mode === 'source-cost') {
@@ -272,7 +280,7 @@ it.each([
           sourceTurn: { id: 'source-turn', status: 'failed' }, evidence: { v: 1, ownerAccountId: 'account-1',
             event: { kind: 'failed_or_stopped' }, facts: { serverId: 'home-one', kind: 'session', startedBy: 'you' } } });
         expect(produced).toHaveLength(costSources.size);
-        expect(ruleCensusReads, 'one fresh rule census shared by each original and its receiver range').toBe(costSources.size);
+        expect(ruleCensusReads, 'each requester observes configuration once across all source originals').toBe(2);
         expect(new Set(produced.map(item => 'sourceSessionId' in item.delivery.original
           ? item.delivery.original.sourceSessionId : undefined))).toEqual(costSources);
         // Diagnostic only: no guessed latency ceiling. This source-owner slice
@@ -299,5 +307,5 @@ it.each([
       .toEqual({ mode: 'e2ee', dataKey: sourceKey });
     expect(machineKey).toEqual(new Uint8Array(32).fill(11));
     expect(destinationKey).toEqual(new Uint8Array(32).fill(29));
-  } finally { dispatcher?.dispose(); primedRulesCache?.dispose(); sourceMaterial.dispose(); }
+  } finally { dispatcher?.dispose(); receiverDispatcher?.dispose(); primedRulesCache?.dispose(); sourceMaterial.dispose(); }
 });

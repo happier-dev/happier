@@ -20,9 +20,7 @@ type AgentSessionTurnInvariantDiagnosticCode =
     | 'agent_runtime_successor_predecessor_not_terminal'
     | 'agent_runtime_duplicate_terminal'
     | 'agent_runtime_rollback_boundary_terminal_conflict'
-    | 'agent_runtime_delivery_turn_conflict'
-    | 'agent_runtime_ended_with_active_turn'
-    | 'agent_runtime_ended_with_pending_delivery';
+    | 'agent_runtime_delivery_turn_conflict';
 
 export type AgentSessionTurnInvariantDiagnostic = PluginDiagnosticData & Readonly<{
     code: AgentSessionTurnInvariantDiagnosticCode;
@@ -57,6 +55,7 @@ export type AgentSessionTurnInvariant<TProviderContext extends object = object> 
 type KnownTurn = {
     agentTurnId: string | null;
     rollbackBoundaryObserved: boolean;
+    pendingToolCallIds: Set<string>;
 };
 
 function diagnostic(
@@ -74,14 +73,15 @@ function diagnostic(
     });
 }
 
-/** The native identity admission rule is shared with runtime replacement. */
+/** Check explicit resume on the first native identity; later rekeys belong to the provider. */
 export function readAgentSessionProviderIdentityConflict(input: Readonly<{
     expectedProviderSessionId?: string;
     providerSessionId: string | null;
     event: Extract<AgentSessionRuntimeEvent, { kind: 'provider-session-id' }>;
 }>): AgentSessionTurnInvariantDiagnostic | null {
-    return (input.expectedProviderSessionId && input.event.providerSessionId !== input.expectedProviderSessionId)
-        || (input.providerSessionId && input.event.providerSessionId !== input.providerSessionId)
+    return !input.providerSessionId
+        && input.expectedProviderSessionId
+        && input.event.providerSessionId !== input.expectedProviderSessionId
         ? diagnostic('agent_runtime_provider_session_conflict', input.event)
         : null;
 }
@@ -133,6 +133,11 @@ export function createAgentSessionTurnInvariant<TProviderContext extends object 
         ? createProviderContinuationContexts(params.providerContinuations.captureToolContext)
         : null;
     const turns = new Map<string, KnownTurn>();
+    // Retain only unresolved calls from terminal turns. This keeps late-result
+    // admission O(1) per event and bounds retained state to genuinely pending
+    // tool executions for the lifetime of this runtime; no timer or shorter
+    // subordinate lifecycle budget is introduced.
+    const terminalTurnsWithPendingToolCalls = new Map<string, KnownTurn>();
     const pendingAcceptedTurns = new Set<string>();
     let activeTurnId: string | null = null;
     let lastTerminalTurn: Readonly<{
@@ -253,6 +258,7 @@ export function createAgentSessionTurnInvariant<TProviderContext extends object 
                     turns.has(turnId)
                     || pendingAcceptedTurns.has(turnId)
                     || lastTerminalTurn?.turnId === turnId
+                    || terminalTurnsWithPendingToolCalls.has(turnId)
                 ) {
                     return reject('agent_runtime_turn_reused', event);
                 }
@@ -270,7 +276,11 @@ export function createAgentSessionTurnInvariant<TProviderContext extends object 
                 if (activeTurnId !== null) {
                     return reject('agent_runtime_turn_already_active', event);
                 }
-                if (turns.has(event.turnId) || lastTerminalTurn?.turnId === event.turnId) {
+                if (
+                    turns.has(event.turnId)
+                    || lastTerminalTurn?.turnId === event.turnId
+                    || terminalTurnsWithPendingToolCalls.has(event.turnId)
+                ) {
                     return reject('agent_runtime_turn_reused', event);
                 }
                 if (event.startedBy === 'host' && !pendingAcceptedTurns.has(event.turnId)) {
@@ -291,6 +301,7 @@ export function createAgentSessionTurnInvariant<TProviderContext extends object 
                 turns.set(event.turnId, {
                     agentTurnId: readAgentTurnId(event),
                     rollbackBoundaryObserved: false,
+                    pendingToolCallIds: new Set(),
                 });
                 activeTurnId = event.turnId;
                 return accept(event, providerContinuationContext);
@@ -315,6 +326,9 @@ export function createAgentSessionTurnInvariant<TProviderContext extends object 
                 const observedAgentTurnId = readAgentTurnId(event);
                 if (!turn.agentTurnId && observedAgentTurnId) turn.agentTurnId = observedAgentTurnId;
                 turns.delete(event.turnId);
+                if (turn.pendingToolCallIds.size > 0) {
+                    terminalTurnsWithPendingToolCalls.set(event.turnId, turn);
+                }
                 lastTerminalTurn = Object.freeze({
                     turnId: event.turnId,
                     state: turn,
@@ -325,12 +339,12 @@ export function createAgentSessionTurnInvariant<TProviderContext extends object 
             }
 
             if (event.kind === 'runtime-ended') {
-                if (activeTurnId !== null) {
-                    return reject('agent_runtime_ended_with_active_turn', event);
-                }
-                if (pendingAcceptedTurns.size > 0) {
-                    return reject('agent_runtime_ended_with_pending_delivery', event);
-                }
+                // Runtime loss is terminal evidence, even without a native turn
+                // terminal. The turn lifecycle consumes it to publish exact failure.
+                activeTurnId = null;
+                turns.clear();
+                pendingAcceptedTurns.clear();
+                terminalTurnsWithPendingToolCalls.clear();
                 runtimeEnded = true;
                 providerContinuations?.clear();
                 return accept(event);
@@ -339,6 +353,23 @@ export function createAgentSessionTurnInvariant<TProviderContext extends object 
             if (isTurnScopedEvent(event)) {
                 const turnId = readTurnId(event);
                 if (!turnId) return reject('agent_runtime_turn_unknown', event);
+                const terminalTurn = terminalTurnsWithPendingToolCalls.get(turnId);
+                if (
+                    event.kind === 'tool-result'
+                    && terminalTurn?.pendingToolCallIds.has(event.toolCallId)
+                ) {
+                    const identityFailure = validateAgentTurnId(terminalTurn, event);
+                    if (identityFailure) return identityFailure;
+                    const observedAgentTurnId = readAgentTurnId(event);
+                    if (!terminalTurn.agentTurnId && observedAgentTurnId) {
+                        terminalTurn.agentTurnId = observedAgentTurnId;
+                    }
+                    terminalTurn.pendingToolCallIds.delete(event.toolCallId);
+                    if (terminalTurn.pendingToolCallIds.size === 0) {
+                        terminalTurnsWithPendingToolCalls.delete(turnId);
+                    }
+                    return accept(event);
+                }
                 if (lastTerminalTurn?.turnId === turnId) {
                     if (event.kind !== 'turn-rollback-boundary') {
                         return reject('agent_runtime_turn_not_active', event);
@@ -365,6 +396,11 @@ export function createAgentSessionTurnInvariant<TProviderContext extends object 
                 if (identityFailure) return identityFailure;
                 const observedAgentTurnId = readAgentTurnId(event);
                 if (!turn.agentTurnId && observedAgentTurnId) turn.agentTurnId = observedAgentTurnId;
+                if (event.kind === 'tool-call') {
+                    turn.pendingToolCallIds.add(event.toolCallId);
+                } else if (event.kind === 'tool-result') {
+                    turn.pendingToolCallIds.delete(event.toolCallId);
+                }
                 if (event.kind === 'turn-rollback-boundary') {
                     if (turn.rollbackBoundaryObserved) {
                         return reject('agent_runtime_turn_reused', event);
@@ -383,6 +419,7 @@ export function createAgentSessionTurnInvariant<TProviderContext extends object 
             activeTurnId = null;
             turns.clear();
             pendingAcceptedTurns.clear();
+            terminalTurnsWithPendingToolCalls.clear();
             providerContinuations?.clear();
         },
 

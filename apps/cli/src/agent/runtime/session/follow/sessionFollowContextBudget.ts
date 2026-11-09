@@ -2,24 +2,13 @@
  * Follow-specific optional-context byte budget.
  *
  * This owner admits only fully rendered Follow blocks. The runtime must supply
- * an evidence-backed UTF-8 allowance; absence fails closed for optional Follow
- * context so an invented model window can never reject the real user input.
+ * an evidence-backed UTF-8 allowance when known. Unknown model capacity does
+ * not impose a local limit on an already admitted original.
  */
 
 import type { SessionContextUsageSnapshotV1 } from '@happier-dev/protocol';
 
 const textEncoder = new TextEncoder();
-
-/**
- * Measured 2026-09-08 with the official `@anthropic-ai/tokenizer` and
- * `js-tiktoken` `o200k_base` packages over fully framed 4 KiB ASCII, CJK,
- * emoji/ZWJ, combining-mark, and XML-escaped samples. The largest results were
- * 3,072 Anthropic tokens and 2,559 OpenAI tokens. Four KiB is the measured
- * owner-local optional block size; this establishes its tokenizer cost, not
- * provider headroom. It avoids publishing a byte/token equivalence, tokenizer
- * service, model registry, or user-facing setting.
- */
-export const SESSION_FOLLOW_CONTEXT_V1_MEASURED_FALLBACK_UTF8_BYTES = 4_096;
 
 export function measureSessionFollowUtf8Bytes(value: string): number {
   return textEncoder.encode(value).byteLength;
@@ -27,7 +16,7 @@ export function measureSessionFollowUtf8Bytes(value: string): number {
 
 export type SessionFollowContextAllowanceV1 = Readonly<{
   maxUtf8Bytes: number;
-  basis: 'authoritative_remaining' | 'measured_fallback';
+  basis: 'authoritative_remaining' | 'unknown_window';
 }>;
 
 /**
@@ -38,7 +27,7 @@ export type SessionFollowContextAllowanceV1 = Readonly<{
  * arm therefore charges one whole remaining token for every required/follow
  * UTF-8 byte. This is intentionally conservative and is not an exact-token
  * claim. A derived estimate, unknown window, or snapshot for another active
- * model uses the independently measured fallback instead.
+ * model leaves fitting to the Provider's context owner.
  */
 export function resolveSessionFollowContextUtf8AllowanceV1(input: Readonly<{
   requiredPrompt: string;
@@ -55,8 +44,8 @@ export function resolveSessionFollowContextUtf8AllowanceV1(input: Readonly<{
     || usage.modelId !== input.activeModelId
   ) {
     return {
-      maxUtf8Bytes: SESSION_FOLLOW_CONTEXT_V1_MEASURED_FALLBACK_UTF8_BYTES,
-      basis: 'measured_fallback',
+      maxUtf8Bytes: Number.POSITIVE_INFINITY,
+      basis: 'unknown_window',
     };
   }
   const remainingTokens = Math.max(0, Math.floor(usage.windowTokens - usage.usedTokens));
@@ -78,7 +67,7 @@ export type SessionFollowBudgetEnvelopeV1 = Readonly<{
   messageSelection?: 'oldest_pending_prefix' | 'latest_current_suffix';
   truncated: boolean;
   /** Renders the complete canonical block, including awareness/framing overhead. */
-  render(input: Readonly<{ keptMessageSeqs: readonly number[]; truncated: boolean }>): string;
+  render(input: Readonly<{ keptMessageSeqs: readonly number[]; truncated: boolean; maxUtf8Bytes: number }>): string | null;
 }>;
 
 export type SessionFollowBudgetResultV1 = Readonly<{
@@ -118,7 +107,8 @@ export function applySessionFollowContextBudgetV1(input: Readonly<{
   maxUtf8Bytes: number | null;
   measureBytes?: (text: string) => number;
 }>): SessionFollowBudgetResultV1 {
-  if (input.maxUtf8Bytes === null || !Number.isSafeInteger(input.maxUtf8Bytes) || input.maxUtf8Bytes <= 0) {
+  if (input.maxUtf8Bytes === null || (input.maxUtf8Bytes !== Number.POSITIVE_INFINITY
+    && (!Number.isSafeInteger(input.maxUtf8Bytes) || input.maxUtf8Bytes <= 0))) {
     return omittedResult(input.candidates);
   }
 
@@ -130,6 +120,10 @@ export function applySessionFollowContextBudgetV1(input: Readonly<{
   const omittedSources: string[] = [];
   const deferredOriginalSources = new Set<string>();
   let used = 0;
+  const renderedCost = (candidate: SessionFollowBudgetEnvelopeV1, keptMessageSeqs: readonly number[], truncated: boolean) => {
+    const rendered = candidate.render({ keptMessageSeqs, truncated, maxUtf8Bytes: budget - used });
+    return rendered === null ? Number.POSITIVE_INFINITY : measure(rendered);
+  };
 
   for (const candidate of ordered) {
     const candidateId = candidate.candidateId ?? candidate.sourceSessionId;
@@ -140,10 +134,7 @@ export function applySessionFollowContextBudgetV1(input: Readonly<{
     }
     const ascending = [...candidate.recentMessages].sort((a, b) => a.seq - b.seq);
     const allSeqs = Object.freeze(ascending.map((message) => message.seq));
-    const completeCost = measure(candidate.render({
-      keptMessageSeqs: allSeqs,
-      truncated: candidate.truncated,
-    }));
+    const completeCost = renderedCost(candidate, allSeqs, candidate.truncated);
     let keptSeqs: readonly number[] = allSeqs;
     let sourceTruncated = candidate.truncated;
     if (used + completeCost > budget) {
@@ -160,7 +151,7 @@ export function applySessionFollowContextBudgetV1(input: Readonly<{
         const proposed = Object.freeze(candidate.messageSelection === 'latest_current_suffix'
           ? [message.seq, ...selected]
           : [...selected, message.seq]);
-        const cost = measure(candidate.render({ keptMessageSeqs: proposed, truncated: true }));
+        const cost = renderedCost(candidate, proposed, true);
         if (used + cost <= budget) {
           selected.splice(0, selected.length, ...proposed);
         } else {
@@ -172,14 +163,14 @@ export function applySessionFollowContextBudgetV1(input: Readonly<{
 
     const normalizedSeqs = Object.freeze([...keptSeqs]);
     if (normalizedSeqs.length !== candidate.recentMessages.length) sourceTruncated = true;
-    const renderedCost = measure(candidate.render({ keptMessageSeqs: normalizedSeqs, truncated: sourceTruncated }));
-    if (used + renderedCost > budget) {
+    const cost = renderedCost(candidate, normalizedSeqs, sourceTruncated);
+    if (!Number.isFinite(cost) || used + cost > budget) {
       omittedSources.push(candidateId);
       truncatedBySource.set(candidateId, true);
       if (candidate.sourceOriginalSeq !== undefined) deferredOriginalSources.add(candidate.sourceSessionId);
       continue;
     }
-    used += renderedCost;
+    used += cost;
     keptBySource.set(candidateId, normalizedSeqs);
     if (sourceTruncated) truncatedBySource.set(candidateId, true);
     // Distinct Pending originals share one source cursor. Once an original is

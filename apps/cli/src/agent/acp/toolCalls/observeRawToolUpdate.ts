@@ -47,7 +47,7 @@ export function parseRawAcpToolUpdate(value: unknown): ParsedRawAcpToolUpdate {
 function copyNullableString(
     source: Readonly<Record<string, unknown>>,
     target: Record<string, unknown>,
-    key: 'title' | 'kind' | 'status',
+    key: 'name' | 'title' | 'kind' | 'status',
 ): void {
     if (!hasOwn(source, key)) return;
     const value = source[key];
@@ -58,6 +58,17 @@ export function readRawAcpToolObservationPatch(
     update: Readonly<Record<string, unknown>>,
 ): AcpToolObservationPatch {
     const patch: Record<string, unknown> = {};
+    copyNullableString(update, patch, 'name');
+    if (isRecord(update.toolMetadata)) {
+        const metadata: Record<string, unknown> = {};
+        const mcp = update.toolMetadata.mcp;
+        if (isRecord(mcp) && typeof mcp.server === 'string' && mcp.server.trim()
+            && typeof mcp.tool === 'string' && mcp.tool.trim()) {
+            metadata.mcp = Object.freeze({ server: mcp.server, tool: mcp.tool });
+        }
+        if (typeof update.toolMetadata.internal === 'boolean') metadata.internal = update.toolMetadata.internal;
+        if (Object.keys(metadata).length > 0) patch.toolMetadata = Object.freeze(metadata);
+    }
     copyNullableString(update, patch, 'title');
     copyNullableString(update, patch, 'kind');
     copyNullableString(update, patch, 'status');

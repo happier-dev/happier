@@ -3,6 +3,8 @@ import { ProviderBoundModelRefSchema, buildBackendTargetKeyV2, readBackendTarget
 
 import { buildExecutionRunConfiguration, resolveExecutionRunChildSelection } from './openInputs';
 import type { ExecutionRunAppliedParentSelection } from './openInputs';
+import { decodeScmDiffSummaryModelOverride, encodeScmDiffSummaryModelOverride } from '@happier-dev/protocol/actions/settings/scmDiffSummarySettings';
+import { projectExecutionRunResolvedSelection } from '@happier-dev/protocol/execution/runs/requestedConfiguration';
 
 const codexTarget = { kind: 'builtInAgent', agentId: 'codex' } as const;
 const claudeTarget = { kind: 'builtInAgent', agentId: 'claude' } as const;
@@ -23,6 +25,20 @@ const appliedParent: ExecutionRunAppliedParentSelection = {
     },
 };
 
+it.each([null, { v: 2 as const, bindingsByServiceId: { 'happier.agent.codex/openai-codex': { source: 'native' as const } } }])(
+    'keeps decoded own sign-in out of an applied parent pool (%j)', connectedServices => {
+        const selector = decodeScmDiffSummaryModelOverride(encodeScmDiffSummaryModelOverride({
+            backendTargetKey: providerSelection.agentTargetKey, modelId: 'gpt-6-luna', connectedServices,
+        }));
+        const resolved = resolveExecutionRunChildSelection({ backendTarget: codexTarget, lifecycle: 'attached',
+            parent: appliedParent, modelId: selector?.modelId, modelSelection: selector?.modelSelection,
+            connectedServices: selector?.connectedServices });
+        expect(resolved).toMatchObject({ modelId: 'gpt-6-luna', connectedServices });
+        expect(projectExecutionRunResolvedSelection({ ...resolved, source: resolved.selectionSource }))
+            .toMatchObject({ modelId: 'gpt-6-luna', connectedServices });
+        expect(resolved.connectedServices?.bindingsByServiceId['happier.agent.codex/openai-codex']).not.toMatchObject({ source: 'connected', selection: 'group' });
+    });
+
 it('delivers a native model keyed by the admitted installed Agent without requiring a global runner catalog', () => {
     const target = { kind: 'backend' as const, backendId: 'acme.snapshot/parent' };
     const selection = ProviderBoundModelRefSchema.parse({
@@ -38,6 +54,16 @@ it('delivers a native model keyed by the admitted installed Agent without requir
 });
 
 describe('resolveExecutionRunChildSelection', () => {
+    it.each([undefined, 'chosen/custom'] as const)('carries resolved child provenance into the native configuration for %s', modelId => {
+        const child = resolveExecutionRunChildSelection({ backendTarget: claudeTarget, lifecycle: 'attached',
+            parent: { ...appliedParent, connectedServices: null }, ...(modelId ? { modelId } : {}) });
+        const opened = buildExecutionRunConfiguration({ backendTarget: claudeTarget, ...child,
+            permissionMode: 'read_only', updatedAtMs: 999 });
+        expect(opened.configuration.model).toMatchObject({ value: modelId ?? 'applied-model',
+            selectionSource: modelId ? 'explicit' : 'inherited' });
+        expect(child.inheritedFromDifferentAgent).toBe(true);
+    });
+
     it('inherits omitted Connected authentication independently of an explicit native model reference', () => {
         const modelSelection = { ...providerSelection, providerConnectionId: null, modelId: 'chosen-model' };
         const resolved = resolveExecutionRunChildSelection({ backendTarget: codexTarget,
@@ -81,6 +107,11 @@ describe('resolveExecutionRunChildSelection', () => {
             childSelection: 'agentDefault', agentDefaultSelection: childDefault });
         expect(result).toMatchObject({ modelSelection: childDefault, modelId: 'default-model', selectionSource: 'explicit' });
         expect(result.connectedServices).toBeUndefined();
+        const nativeDefault = resolveExecutionRunChildSelection({ backendTarget: claudeTarget, lifecycle: 'attached', parent: appliedParent,
+            childSelection: 'agentDefault', agentDefaultSelection: null });
+        expect(buildExecutionRunConfiguration({ backendTarget: claudeTarget, ...nativeDefault,
+            permissionMode: 'read_only', updatedAtMs: 999 }).configuration.model)
+            .toEqual({ value: null, updatedAtMs: 0, selectionSource: 'explicit' });
     });
     it('returns actionable default/explicit choices when another Agent cannot inherit native routing', () => {
         try {
@@ -147,9 +178,23 @@ describe('resolveExecutionRunChildSelection', () => {
 
     it.each(['independent', 'retained'] as const)('keeps %s choices independent of live parent edits', (lifecycle) => {
         const resolved = resolveExecutionRunChildSelection({ backendTarget: codexTarget, lifecycle, parent: appliedParent });
+        expect(resolved.selectionSource).toBe(lifecycle);
         expect(resolved.modelSelection).toBeUndefined();
         expect(resolved.modelId).toBeUndefined();
         expect(resolved.connectedServices).toBeUndefined();
+    });
+
+    it.each(['independent', 'retained'] as const)('preserves actual explicit model inputs in a %s Run', lifecycle => {
+        const teamCredentialModel = { kind: 'team_credential_provider_model' as const, resourceId: 'resource', teamId: 'team',
+            expectedResourceRevision: 2, agentTargetKey: providerSelection.agentTargetKey, modelId: 'custom/team', deliveryMode: 'brokered' as const };
+        for (const choice of [{ modelId: 'custom/native' }, { modelSelection: { ...providerSelection, modelId: 'custom/provider' } },
+            { teamCredentialModel }]) {
+            const resolved = resolveExecutionRunChildSelection({ backendTarget: codexTarget, lifecycle, ...choice });
+            expect(resolved.selectionSource).toBe(lifecycle);
+            expect(resolved).toHaveProperty('modelSelectionSource', 'explicit');
+            expect(buildExecutionRunConfiguration({ backendTarget: codexTarget, ...resolved, permissionMode: 'read_only', updatedAtMs: 999 })
+                .configuration.model).toMatchObject({ selectionSource: 'explicit', value: resolved.modelId });
+        }
     });
 
     it('preserves explicit Account-default requests without inheriting a parent pool', () => {
@@ -290,7 +335,7 @@ describe('buildExecutionRunConfiguration', () => {
             },
             configuration: {
                 mode: { value: 'plan', updatedAtMs: 11 },
-                model: { value: 'gpt-5.1-codex', updatedAtMs: 11 },
+                model: { value: 'gpt-5.1-codex', updatedAtMs: 11, selectionSource: 'inherited' },
                 permissionIntent: { value: 'read-only', updatedAtMs: 11 },
                 options: {
                     reasoning_effort: { value: 'high', updatedAtMs: 7 },

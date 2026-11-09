@@ -44,7 +44,7 @@ describe('capability refresh during real Run admission', () => {
             inFlightAtSignal = rpc.getInFlightRequestCount();
             return true;
           });
-          const queue = createConnectedServiceSwitchDeferralQueue({ timeoutMs: 60_000, disableDeferral: false });
+          const queue = createConnectedServiceSwitchDeferralQueue({ disableDeferral: false });
           if (reason === 'connected_service_switch') {
             queue.recordTurnLifecycleEvent({ sessionId: session.sessionId, event: 'task_started' });
           }

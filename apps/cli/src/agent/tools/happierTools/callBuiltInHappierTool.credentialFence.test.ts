@@ -42,7 +42,7 @@ describe('callBuiltInHappierTool one-shot CLI credential fence', () => {
     app.get('/v1/sessions/:id', async () => ({ session }));
     app.get('/v2/sessions/:id', async () => ({ session }));
     app.get(ACCOUNT_SECURITY_PATH_V1, async () => AccountSecurityGetResponseV1Schema.parse({
-      v: 1, encryptionMode: 'plain', terminalPresentUserPolicy: 'allowed', nativeEmail: null,
+      v: 1, encryptionMode: 'plain', nativeEmail: null,
       password: { status: 'not_enrolled', revision: null },
     }));
     app.get('/v2/account/settings', async () => {

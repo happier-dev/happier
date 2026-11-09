@@ -164,7 +164,8 @@ describe('Session Follow source hydrator', () => {
     material.installPreparedDataKey({ sourceSessionId: 'source', dataKey: key });
     try {
       for (const status of ['completed', 'failed', 'cancelled'] as const) {
-        const payload = { role: 'agent', content: { type: 'text', text: 'Exact historical final answer' } };
+        const finalText = 'Exact historical final answer é😀'.repeat(400);
+        const payload = { role: 'agent', content: { type: 'text', text: finalText } };
         const metadata = { path: '/source', host: 'test' };
         const projection = vi.fn(async () => ({ v: 1 as const, source: {
           id: 'source', encryptionMode: mode, metadata: mode === 'plain' ? JSON.stringify(metadata)
@@ -187,7 +188,8 @@ describe('Session Follow source hydrator', () => {
           observed: { transcriptSeq: 0, readyEventSeq: 0, agentStateVersion: 0, turn: { id: 'completed-turn', status } }, delivery } });
         expect(result?.workerUpdate).toMatchObject({ ownerState: status === 'completed' ? 'settled' : status,
           headline: status === 'completed' ? 'Finished its turn' : status === 'failed' ? 'Failed' : 'Stopped',
-          result: 'Exact historical final answer', transcriptPointer: { kind: 'session', sessionId: 'source', seq: 2 } });
+          result: finalText, transcriptPointer: { kind: 'session', sessionId: 'source', seq: 2 } });
+        expect(result?.workerUpdate?.truncated).not.toBe(true);
         expect(result?.observed.transcriptSeq).toBe(0);
         expect(result?.recentMessages).toEqual([]);
         expect(projection).toHaveBeenCalledTimes(1);
@@ -372,6 +374,7 @@ describe('Session Follow source hydrator', () => {
   });
 
   it('represents an admitted original report and its deliverables without consuming a later report or terminal turn', async () => {
+    const reportText = 'Complete published report é😀'.repeat(240);
     const hydrate = createSessionFollowSourceHydrator({
       session: destinationSession,
       credentials: { token: 'token', encryption: null },
@@ -381,7 +384,7 @@ describe('Session Follow source hydrator', () => {
           accountEncryptionCurrentness: { mode: 'plain' }, ctx: null, mode: 'plain' })) as never,
         fetchTranscriptPage: (async () => ({
           messages: [2, 3].map(seq => ({ seq, createdAt: seq, content: { t: 'plain', v: {
-            role: 'agent', content: { type: 'event', data: { type: 'worker-report', summary: `Report ${seq}`,
+            role: 'agent', content: { type: 'event', data: { type: 'worker-report', summary: seq === 2 ? reportText : `Report ${seq}`,
               deliverables: [{ kind: 'workspace_file', sessionId: 'source', path: `report-${seq}.md` }] } },
           } } })),
           hasMore: false, nextBeforeSeq: null, nextAfterSeq: null,
@@ -395,9 +398,10 @@ describe('Session Follow source hydrator', () => {
         delivery: SessionFollowInputV1Schema.parse({ v: 1, delivery: 'next_turn', event: { kind: 'update_posted' },
           original: { sourceSessionId: 'source', sourceMessage: { localId: 'report-original', seq: 2 } } }) },
     });
-    expect(envelope?.workerUpdate).toMatchObject({ ownerState: 'published', headline: 'Published an update', result: 'Report 2',
+    expect(envelope?.workerUpdate).toMatchObject({ ownerState: 'published', headline: 'Published an update', result: reportText,
       deliverables: [{ kind: 'workspace_file', sessionId: 'source', path: 'report-2.md' }],
       transcriptPointer: { kind: 'session', sessionId: 'source', seq: 2 } });
+    expect(envelope?.workerUpdate?.truncated).not.toBe(true);
     expect(envelope?.observed).toMatchObject({ transcriptSeq: 2, turn: null });
     expect(envelope?.recentMessages.every(message => message.seq <= 2)).toBe(true);
   });

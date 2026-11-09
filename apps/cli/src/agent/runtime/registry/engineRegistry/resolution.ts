@@ -329,6 +329,7 @@ export async function resolveEngineAdapterResolutionFromRegistry(params: Readonl
             nativeAgentSessionCapabilities: configuredLaunch.sessionCapabilities,
             nativeAgentSessionProjection: configuredLaunch.sessionProjection,
             nativeAgentAcpRuntimeDefinition: configuredLaunch.runtimeDefinition,
+            nativeAgentSessionConfigurationDefaults: configuredLaunch.configurationDefaults,
             resolveNativeAgentAcpHostLaunch: configuredLaunch.resolveHostLaunch,
         } : {}),
     });

@@ -250,14 +250,13 @@ describe('AcpBackend session models', () => {
     });
   });
 
-  it('reports successful empty model choices through the generic ACP preflight', async () => {
+  it('preserves authoritative empty model membership through the generic ACP preflight', async () => {
     await withTempDir('happier-acp-empty-preflight-', async (dir) => {
       const script = writeFakeAcpAgentScript({ dir, emptyModelChoices: true });
       const backend = new AcpBackend({ agentName: 'test', cwd: dir, command: process.execPath, args: [script] });
       try {
-        expect(await probeModelsFromAcpBackend({ backend, timeoutMs: 10000 })).toEqual([
-          { id: 'default', name: 'Default', capabilities: { structuredOutput: 'unknown' } },
-        ]);
+        expect(await probeModelsFromAcpBackend({ backend, timeoutMs: 10000 })).toEqual([]);
+        expect(backend.getSessionModelState()).toEqual({ currentModelId: 'current', availableModels: [] });
       } finally { await backend.dispose(); }
     });
   });

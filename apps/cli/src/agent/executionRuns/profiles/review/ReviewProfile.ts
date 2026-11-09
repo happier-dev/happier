@@ -16,6 +16,7 @@ import { prepareSavedReviewWalkthroughInput, readReviewNarration } from './revie
 import { scmDiffSummaryResultStore } from '../../tasks/scmDiffSummary/results/resultStore';
 import { readRetainedReviewFindings } from '../../../reviews/normalize/readRetainedReviewFindings';
 import { presentScmDiffSummaryModelContext } from '@/agent/runtime/bridges/executionRun/kinds/scmDiffSummary/presentScmDiffSummaryModelContext';
+import { readExecutionRunErrorCode } from '@/agent/runtime/bridges/executionRun/errors';
 
 function requestsWalkthrough(input: unknown) {
   const outputs = readScmDiffSummaryIntent(input).outputs;
@@ -36,6 +37,8 @@ export const ReviewProfile: ExecutionRunIntentProfile = {
   prepareStartParams: async ({ request, cwd, sessionId, contextWindowTokens, resolveReviewScmScope: resolveScope = resolveReviewScmScope }) => {
     const existing = readIntentInputRecord(request.intentInput);
     delete existing.scmContextWindowTokens;
+    delete existing.scmMaxInputUnicodeCharacters;
+    delete existing.scmAnalysisPrompt;
     delete existing.reviewNarration;
     delete existing.comparison;
     delete existing.metadata;
@@ -50,9 +53,9 @@ export const ReviewProfile: ExecutionRunIntentProfile = {
       ? await readCapturedScmComparison({ cwd, comparisonId: existing.comparisonId, ...(sessionId ? { sessionId } : {}) }) : null;
     if (requestsWalkthrough(existing) && !captured) throw new Error('Review narration requires a captured comparison');
     const analysis = requestsWalkthrough(existing) && captured ? await ScmDiffSummaryProfile.prepareStartParams!({ cwd, sessionId,
+      contextWindowTokens,
       request: { ...request, intent: 'scm_diff_summary', intentInput: {
         cwd, source: captured.comparison.source, comparisonId: captured.comparison.id, outputs: ['walkthrough'],
-        cachePolicy: { mode: 'bypass' },
       } } }) : null;
     return {
       intentInput: {
@@ -65,6 +68,14 @@ export const ReviewProfile: ExecutionRunIntentProfile = {
       },
     };
   },
+  finalizeStartParams: async ({ request, maxInputUnicodeCharacters, resolveMaxInputUnicodeCharacters }) => {
+    if (!requestsWalkthrough(request.intentInput)) return undefined;
+    maxInputUnicodeCharacters ??= await resolveMaxInputUnicodeCharacters?.();
+    const { scmAnalysisPrompt: _preparedPrompt, scmAnalysis: _earlyAnalysis,
+      scmMaxInputUnicodeCharacters: _oldCapacity, ...input } = readIntentInputRecord(request.intentInput);
+    return { instructions: request.instructions, intentInput: { ...input,
+      ...(maxInputUnicodeCharacters !== undefined ? { scmMaxInputUnicodeCharacters: maxInputUnicodeCharacters } : {}) } };
+  },
   buildPrompt: (params) => {
     if (readReviewNarration(params.intentInput)) return params.instructions;
     const prompt = buildStandardReviewPrompt({ instructions: params.instructions, intentInput: params.intentInput });
@@ -74,8 +85,6 @@ export const ReviewProfile: ExecutionRunIntentProfile = {
   onStarted: (params) => requestsWalkthrough(params.start.intentInput) ? ScmDiffSummaryProfile.onStarted!(params) : null,
   onBeforeRetainedInput: (params) => requestsWalkthrough(params.start.intentInput)
     ? ScmDiffSummaryProfile.onBeforeRetainedInput!(params) : Promise.resolve(),
-  onRetainedInputAdmitted: (params) => readReviewNarration(params.start.intentInput)
-    ? ScmDiffSummaryProfile.onRetainedInputAdmitted!(params) : Promise.resolve(null),
   buildInitialInputContext: (params) => {
     const narration = readReviewNarration(params.start.intentInput);
     if (!narration) return ReviewProfile.buildPrompt({ ...params.start, instructions: '' });
@@ -111,6 +120,9 @@ export const ReviewProfile: ExecutionRunIntentProfile = {
         reviewNarration: { phase: 'writing', resultId: nextInput.intentInput.resultId,
           runId: params.start.runId, ...provenance } } };
     } catch (error) {
+      await ScmDiffSummaryProfile.onTerminal!({ start: params.start, status: 'failed', finishedAtMs: params.finishedAtMs,
+        diagnostic: { code: readExecutionRunErrorCode(error) ?? 'SUMMARY_FAILED',
+          message: error instanceof Error ? error.message : 'Review narration preparation failed' } });
       return { ...completed, toolResultMeta: { ...completed.toolResultMeta,
         reviewNarration: { phase: 'failed', errorCode: 'review_narration_failed',
           error: error instanceof Error ? error.message : 'Review narration preparation failed',
@@ -124,8 +136,7 @@ export const ReviewProfile: ExecutionRunIntentProfile = {
     'updatedFindings', 'questions', 'assumptions', 'proposedComments', 'limits',
     ...Object.keys(ScmDiffSummaryModelOutputSchema.shape),
   ]),
-  buildInvalidOutputRepairPrompt: ({ start, rawText }) => readReviewNarration(start.intentInput)
-    ? ScmDiffSummaryProfile.buildInvalidOutputRepairPrompt!({ start, rawText }) : [
+  buildInvalidOutputRepairPrompt: ({ rawText }) => [
     'Your previous response did not include the required final JSON object.',
     'If you have already completed the review, convert your conclusions into the required JSON now.',
     'If you have not yet inspected the workspace or gathered enough evidence, continue the review first using the available read-only tools, then return ONLY valid JSON (parsable by JSON.parse).',

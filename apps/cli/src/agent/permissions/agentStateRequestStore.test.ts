@@ -62,6 +62,77 @@ async function flushMicrotasks(): Promise<void> {
 }
 
 describe('AgentStateRequestStore', () => {
+    it.each(['pending', 'late_failure', 'completed', 'newer_request', 'canceled', 'cancel_rejected', 'scoped_cancel', 'disposed', 'replaced'] as const)(
+        'reconciles an unacknowledged publication after reconnect: %s', async outcome => {
+        let online = false;
+        const connection: { listener?: (state: { phase: string }) => void; rejectFirst?: (error: Error) => void } = {};
+        class OfflineSession extends FakeSession {
+            override async updateAgentStateRequestSettlement(updater: (state: AgentState) => AgentState): Promise<void> {
+                if (outcome === 'canceled') {
+                    // The persistence boundary accepts a local retirement while
+                    // ordinary network publication is unavailable.
+                    this.agentState = updater(this.agentState);
+                    return;
+                }
+                await super.updateAgentStateRequestSettlement(updater);
+            }
+            subscribeToSessionConnectionState(next: (state: { phase: string }) => void) {
+                connection.listener = next;
+                return () => { delete connection.listener; };
+            }
+            override updateAgentState(updater: (state: AgentState) => AgentState): Promise<void> {
+                if (outcome === 'late_failure' && !connection.rejectFirst) {
+                    return new Promise((_, reject) => { connection.rejectFirst = reject; });
+                }
+                if (!online) return Promise.reject(new Error('network offline'));
+                super.updateAgentState(updater);
+                return Promise.resolve();
+            }
+        }
+        const session = new OfflineSession();
+        const store = new AgentStateRequestStore({ session, logPrefix: '[Offline publication]' });
+        const request = { requestId: 'offline', toolName: 'Bash', toolInput: { command: 'pwd' }, createdAt: 10, turnId: 'turn-offline', source: 'selected', owner: { kind: 'plugin' as const, pluginId: 'selected' } };
+        try {
+            if (outcome === 'canceled') session.agentState.completedRequests!.offline = {
+                tool: 'Bash', arguments: { command: 'previous' }, createdAt: 1, completedAt: 2, status: 'approved',
+            };
+            store.publishRequest(request);
+            if (outcome === 'scoped_cancel') store.publishRequest({ ...request, requestId: 'neighbor', source: 'other', owner: { kind: 'plugin', pluginId: 'other' } });
+            await new Promise(resolve => setImmediate(resolve));
+            expect(session.agentState.requests?.offline).toBeUndefined();
+            if (outcome === 'completed') session.agentState.completedRequests!.offline = {
+                tool: request.toolName, arguments: request.toolInput, createdAt: 10, turnId: request.turnId, completedAt: 20, status: 'approved',
+            };
+            if (outcome === 'newer_request') session.agentState.requests!.offline = {
+                tool: request.toolName, arguments: request.toolInput, createdAt: 30, turnId: 'newer-turn',
+            };
+            if (outcome === 'canceled' || outcome === 'scoped_cancel') {
+                await store.cancelRequestsByOwner({ owner: request.owner, observedRetirement: true, reason: 'Dismissed', requestIds: [] }).catch(() => undefined);
+            }
+            if (outcome === 'cancel_rejected') await store.cancelRequestsBySource({ source: 'selected', reason: 'Before effect', requestIds: [] }).catch(() => undefined);
+            if (outcome === 'disposed') store.dispose();
+            if (outcome === 'replaced') store.updateSession(new FakeSession());
+            online = true;
+            connection.listener?.({ phase: 'online' });
+            if (outcome === 'late_failure') connection.rejectFirst?.(new Error('late failed ACK'));
+            await new Promise(resolve => setImmediate(resolve));
+            if (outcome === 'pending' || outcome === 'late_failure' || outcome === 'cancel_rejected') {
+                expect(session.agentState.requests?.offline).toMatchObject({ tool: 'Bash', createdAt: 10, turnId: request.turnId });
+                const original = session.agentState.requests!.offline;
+                store.publishRequest(request);
+                await new Promise(resolve => setImmediate(resolve));
+                expect(isSameAgentStateRequestOccurrence(original, session.agentState.requests!.offline)).toBe(true);
+            } else if (outcome === 'newer_request') {
+                expect(session.agentState.requests?.offline).toMatchObject({ createdAt: 30, turnId: 'newer-turn' });
+            } else {
+                expect(session.agentState.requests?.offline).toBeUndefined();
+                if (outcome === 'completed') expect(session.agentState.completedRequests!.offline.status).toBe('approved');
+                if (outcome === 'canceled') expect(session.agentState.completedRequests?.offline).toMatchObject({ status: 'canceled', turnId: request.turnId });
+                if (outcome === 'scoped_cancel') expect(session.agentState.requests?.neighbor).toMatchObject({ source: 'other' });
+            }
+            expect(connection.listener).toBeUndefined();
+        } finally { store.dispose(); }
+    });
     it('joins source-admitted personal request policy at the original notifier before its only send', async () => {
         let admit!: (value: SessionActivityChangedResult) => void;
         class SourceSession extends FakeSession {
@@ -157,10 +228,12 @@ describe('AgentStateRequestStore', () => {
             await new Promise(resolve => setImmediate(resolve));
             expect(sendToAllDevicesAsync).not.toHaveBeenCalled();
             expect(session.agentState.requests!.passing.pushNotifiedAt).toBeUndefined();
+            expect(admissions).toHaveLength(2);
+            admissions[1]({}); // The Session-handler transition publishes its source occurrence, never a person push.
             await store.changeQuestionHandler({ requestId: 'passing', expectedCreatedAt: createdAt,
                 expectedHandler: { kind: 'session', sessionId: 'manager' }, currentHandler: { kind: 'person' } });
-            expect(admissions).toHaveLength(2);
-            admissions[1]({ personalFollow: { sourceSessionId: session.sessionId,
+            expect(admissions).toHaveLength(3);
+            admissions[2]({ personalFollow: { sourceSessionId: session.sessionId,
                 requests: [{ requestId: 'passing', policies: [{ preset: 'important' }] }] } });
             await vi.waitFor(() => expect(sendToAllDevicesAsync).toHaveBeenCalledTimes(1));
         } finally { store.dispose(); }

@@ -13,6 +13,8 @@ import type { PromptStackEntryV1 } from '@happier-dev/protocol/prompts/library/p
 import type { SessionRolePromptContextV1 } from '@happier-dev/protocol/prompts/roles/renderSessionRoleBlockV1';
 import type { DaemonAgentRuntimeTurnContributionsBridge } from '@/agent/runtime/session/process/agentRuntimeDaemonTurnContributionsBridge';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+import { artifactListResponse } from '@/testkit/http/artifactHome';
+import { projectAccountRowsReadHttpResponse } from '@/workspaces/projectAccountRows.testkit';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import { readSessionCapabilityNoticeV1 } from '@happier-dev/protocol/sessions/messages/sessionCapabilityNoticeV1';
@@ -125,7 +127,11 @@ beforeEach(async () => {
     let data: unknown;
     if (request.headers.authorization !== `Bearer ${credentials.token}`) { status = 401; data = { error: 'wrong_account' }; }
     else if (path === '/v1/account/encryption') data = { mode: 'plain', updatedAt: 1 };
-    else if (path === '/v1/account/project-rows/list') data = { status: 'listed', coverage: 'complete', rows };
+    else if (path === '/v1/account/project-rows/list' || path === '/v1/account/project-rows/read') {
+      let body = '';
+      for await (const chunk of request) body += String(chunk);
+      data = projectAccountRowsReadHttpResponse(rows, path, JSON.parse(body)).data;
+    }
     else if (path === '/v1/projects/sources/source') {
       status = sourceAvailable ? 200 : 503;
       data = sourceAvailable ? { ok: true, source, canManage: false } : { ok: false, error: 'source_backend_unavailable' };
@@ -146,7 +152,7 @@ beforeEach(async () => {
         return { artifactId, ok: true, artifact };
       }));
       data = ArtifactReadHeadersBatchResponseV1Schema.parse({ projection: 'headers', items });
-    } else if (path === '/v1/artifacts') data = documents;
+    } else if (path === '/v1/artifacts') data = artifactListResponse(request.url ?? '/', documents);
     else if (path.startsWith('/v1/artifacts/')) {
       onArtifactRead?.();
       const id = decodeURIComponent(path.slice('/v1/artifacts/'.length));
@@ -806,7 +812,7 @@ it('intentionally suppresses admitted Memory-off content but still requires curr
   expect(notices).toEqual([]);
 });
 
-it('continues with a typed notice when an optional Account document fails, then recovers without losing required context', async () => {
+it('keeps optional transient context pending and omits only definitive absence before recovering', async () => {
   selectedProfileId = null;
   const prepare = await resolver(true, false);
   const { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken,
@@ -820,17 +826,15 @@ it('continues with a typed notice when an optional Account document fails, then 
   expect(await prepare({ baseOverride: 'CONTEXT_BASE' })).toContain('CONTEXT_ACCOUNT');
   // Required Session context remains available; only this optional Account document fails.
   unavailableArtifactId = 'account';
-  const unavailableResult = await prepare({ baseOverride: 'CONTEXT_BASE' });
-  expect(unavailableResult).not.toContain('CONTEXT_ACCOUNT');
-  expect(unavailableResult).toContain('CONTEXT_SESSION');
-  expect(notices.map(readSessionCapabilityNoticeV1)).toEqual([{ v: 1, items: [
-    { kind: 'prompt_library', name: 'Prompt library', code: 'prompt_library_unavailable' },
-  ] }]);
-  expect(prepare.readStartupInstructions?.()).not.toBeNull();
-  expect(prepare.readCodingPromptBehavior?.()).not.toBeNull();
-  expect(prepare.readComposition?.()).not.toBeNull();
-  await prepare({ baseOverride: 'CONTEXT_BASE' });
-  expect(notices).toHaveLength(1);
+  await expect(prepare({ baseOverride: 'CONTEXT_BASE' })).rejects.toMatchObject({
+    code: 'preparation_pending', reason: 'unavailable',
+  });
+  expect(notices).toEqual([]);
+  expect(prepare.readStartupInstructions?.()).toBeNull();
+  expect(prepare.readCodingPromptBehavior?.()).toBeNull();
+  expect(prepare.readComposition?.()).toBeNull();
+  await expect(prepare({ baseOverride: 'CONTEXT_BASE' })).rejects.toMatchObject({ code: 'preparation_pending' });
+  expect(notices).toEqual([]);
   unavailableArtifactId = null;
   const document = documents.find(candidate => candidate.id === 'account')!;
   documents = documents.filter(candidate => candidate.id !== 'account');
@@ -840,6 +844,10 @@ it('continues with a typed notice when an optional Account document fails, then 
     expect.objectContaining({ entryId: 'account', outcome: 'unavailable', reason: 'not_found' }),
     expect.objectContaining({ entryId: 'session', outcome: 'ready' }),
   ]));
+  expect(missing.text).toContain('CONTEXT_SESSION');
+  expect(notices.map(readSessionCapabilityNoticeV1)).toEqual([{ v: 1, items: [
+    { kind: 'prompt_library', name: 'Prompt library', code: 'prompt_library_unavailable' },
+  ] }]);
   documents.push(document);
   expect(await prepare({ baseOverride: 'CONTEXT_BASE' })).toContain('CONTEXT_ACCOUNT');
   expect(notices).toHaveLength(1);

@@ -25,7 +25,7 @@ type Demand = { request: Request; contexts: DispatchContext[]; unavailable: bool
 
 /** Account-lifetime non-Session source demand. Refusal is not a new publication. */
 export function createAccountRunFollowRoutes(input: Readonly<{
-  credentials: StoredCredentials; serverHttpBaseUrl: string; signal: AbortSignal; isCurrent: () => Promise<boolean>;
+  credentials: StoredCredentials; serverHttpBaseUrl: string; signal: AbortSignal; isCurrent?: () => Promise<boolean>;
   subscribeAvailability?: (listener: (change: RunFollowAvailability) => void) => () => void;
 }>) {
   const demands = new Map<string, Demand>();
@@ -33,7 +33,7 @@ export function createAccountRunFollowRoutes(input: Readonly<{
   let releaseAvailability: (() => void) | undefined;
   let dispatch: ((request: RunRequest, context: DispatchContext) => Promise<void>) | undefined;
   let dispatchDiscussion: ((source: DiscussionRequest['source']) => Promise<void>) | undefined;
-  const current = async () => !disposed && !input.signal.aborted && await input.isCurrent();
+  const current = async () => !disposed && !input.signal.aborted && (await input.isCurrent?.() ?? true);
   const sourceOf = (request: Request) => 'original' in request ? request.original.source : request.source;
   const keyOf = (request: Request) => JSON.stringify('original' in request ? { original: request.original }
     : { source: followDeliveryMuteScopeKeyV1({ kind: 'source', source: request.source }),

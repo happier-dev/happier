@@ -1,3 +1,4 @@
+import { createUnavailableManagedServices } from '@/plugins/runtime/invocation/services/managedServicesAdapter';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentSessionRuntime, AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
 import { AgentSessionRuntimeEventSchema } from '@happier-dev/protocol/runtime/agentSessionV1';
@@ -174,7 +175,8 @@ async function openCodeFixture(): Promise<NativeFixture> {
     logger: { debug() {}, info() {}, warn() {}, error() {} },
     abort: { signal: abort.signal, compose: signals => AbortSignal.any(signals) },
     config: { values: {} }, env: { list: () => ({}) },
-    managedServices: { dependencies: {} as OpenCodeRuntimeContext['managedServices']['dependencies'],
+    managedServices: {
+        ...createUnavailableManagedServices(), dependencies: {} as OpenCodeRuntimeContext['managedServices']['dependencies'],
       supervise: async () => { throw new Error('Unexpected native server spawn'); } },
     ui: { askQuestions: async () => ({ requestId: 'unused', kind: 'questions', status: 'userCancelled' }) },
     sessions: { current: { permissions: { requestDecision: async () => ({ requestId: 'unused', kind: 'approval', status: 'approved', persistence: 'once' }) } }, writeStateField: async () => {} },

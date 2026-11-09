@@ -164,12 +164,13 @@ describe('protected Follow queue to host context', () => {
       observations: scenario === 'withdrawn' || scenario === 'run-execution-withdrawn' ? [] : [...[{ localInputId: 'follow-input', delivery: follow },
         ...(second ? [{ localInputId: 'follow-second', delivery: second }] : [])].map(({ localInputId, delivery }) => {
         if ('source' in delivery.original) return { kind: 'admitted_run_input' as const, localInputId,
-          destinationSessionId: 'destination', delivery, ...(runPermissionCleared ? { disposition: 'withdrawn' as const } : {}) };
+          destinationSessionId: 'destination', delivery, effectiveDelivery: delivery.delivery,
+          ...(runPermissionCleared ? { disposition: 'withdrawn' as const } : {}) };
         if (!('sourceMessage' in delivery.original)) return { kind: 'admitted_input' as const, localInputId,
-          sourceSessionId: 'source', destinationSessionId: 'destination', delivery,
+          sourceSessionId: 'source', destinationSessionId: 'destination', delivery, effectiveDelivery: delivery.delivery,
           delivered: { transcriptSeq: 0, readyEventSeq: 0, agentStateVersion: 3, turn: null },
           observed: { transcriptSeq: 0, readyEventSeq: 0, agentStateVersion: 4, turn: null } };
-        return { kind: 'admitted_input' as const, localInputId, sourceSessionId: 'source', destinationSessionId: 'destination', delivery,
+        return { kind: 'admitted_input' as const, localInputId, sourceSessionId: 'source', destinationSessionId: 'destination', delivery, effectiveDelivery: delivery.delivery,
           delivered: { transcriptSeq: delivery.original.sourceMessage.seq - 1, readyEventSeq: 0, agentStateVersion: 0, turn: null },
           observed: { transcriptSeq: delivery.original.sourceMessage.seq, readyEventSeq: 0, agentStateVersion: 0, turn: null } };
       }), ...(scenario === 'two-originals' ? [{ sourceSessionId: 'source', destinationSessionId: 'destination',

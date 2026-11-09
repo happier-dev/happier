@@ -158,6 +158,18 @@ describe('createNativeAgentExecutionRunHostServices', () => {
             expect(hookServer.port).toBeGreaterThan(0);
             await hookServer.dispose();
 
+            const transcriptPath = join(happyHomeDir, 'native-run.jsonl');
+            await writeFile(transcriptPath, '{"type":"user"}\n');
+            const followInput = { path: transcriptPath, startAt: 'end' as const, onLine: async () => {} };
+            await expect(services.fileFollow.follow(followInput)).rejects.toMatchObject({
+                code: 'PLUGIN_TRANSCRIPTS_FILE_FOLLOW_PATH_DENIED',
+            });
+            await services.hooks.observeSessionHook({ providerSessionId: 'native-run', payload: {
+                hook_event_name: 'SessionStart', session_id: 'native-run', transcript_path: transcriptPath,
+            } });
+            const follow = await services.fileFollow.follow(followInput);
+            await follow.close();
+
             expect(services.hooks).not.toHaveProperty('publishProviderTranscript');
             expect(services).not.toHaveProperty('transcripts');
             expect(services).not.toHaveProperty('accountUsage');

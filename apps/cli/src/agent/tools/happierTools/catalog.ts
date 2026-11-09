@@ -18,7 +18,7 @@ function buildActionBackedTools(): readonly HappierBuiltInToolDefinition[] {
       title: spec.title,
       description: spec.description ?? spec.title,
       actionId: spec.id,
-      inputSchema: spec.inputSchema,
+      inputSchema: spec.surfaceBindings?.mcp?.inputSchema ?? spec.inputSchema,
       ...(spec.examples ? { examples: spec.examples } : {}),
       ...(spec.contextualDefaults ? { contextualDefaults: spec.contextualDefaults } : {}),
       ...(spec.outputSchema === undefined ? {} : { outputSchema: spec.outputSchema }),
@@ -42,7 +42,7 @@ const MANUAL_TOOLS: readonly HappierBuiltInToolDefinition[] = Object.freeze([
   {
     name: 'action_execute',
     title: 'Execute Action',
-    description: 'Execute a Happier action by action id with structured input',
+    description: 'Execute a Happier Action. Pass one envelope: {"actionId":"<id>","input":{<Action input fields>}}. Get the Action inputSchema with action_spec_get; its fields go directly inside input. For example: {"actionId":"discussion.post","input":{"discussionId":"<id>","content":{"v":1,"parts":[{"t":"text","text":"My reply"}]}}}. Do not put another {actionId,input} envelope inside input. For a named Action tool, pass only its Action input fields, without the envelope.',
     inputSchema: actionExecuteToolInputSchema,
   },
 ]);

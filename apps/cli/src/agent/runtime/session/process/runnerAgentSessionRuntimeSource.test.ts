@@ -416,6 +416,45 @@ describe('runner Agent session runtime source', () => {
         });
     });
 
+    it('forwards connected-account observations through the admitted daemon service and surfaces refusal', async () => {
+        const source = await createRunnerAgentSessionRuntimeSource({
+            happyHomeDir: '/tmp/happier-runner-source', publicReleaseRing: 'stable',
+            authorityFilePath: '/tmp/happier-runner-source/authority.json',
+        });
+        const observation = { kind: 'connected-account-identity-observed' as const, sequence: 1,
+            sessionId: 'session-1', emittedAtMs: 100, observedAtMs: 99,
+            service: { pluginId: 'happier.claude', localId: 'claude-subscription' },
+            nativeSessionId: 'native-1', providerOrganizationId: 'org-1' };
+        const requests: unknown[] = [];
+        mocks.dispatch.mockImplementation(async input => {
+            requests.push(AgentRuntimeDaemonServiceRequestV1Schema.parse(input.createRequest('B'.repeat(43))));
+            return { ok: true, result: { kind: 'connected_account.identity.observed' } };
+        });
+        try {
+            await source!.daemonTurnContributionsBridge!.observeConnectedAccountIdentity!(observation);
+            expect(requests).toEqual([expect.objectContaining({ context: expect.objectContaining({ sessionId: 'session-1' }),
+                operation: { kind: 'connected_account.identity.observe', observation } })]);
+            mocks.dispatch.mockResolvedValue({ ok: false, error: { code: 'agent_runtime_daemon_service_forbidden', message: 'refused' } });
+            await expect(source!.daemonTurnContributionsBridge!.observeConnectedAccountIdentity!(observation))
+                .rejects.toThrow('agent_runtime_daemon_service_forbidden');
+            let transportEntered!: (signal: AbortSignal) => void;
+            const entered = new Promise<AbortSignal>(resolve => { transportEntered = resolve; });
+            mocks.dispatch.mockImplementation(async input => await new Promise((resolve, reject) => {
+                if (!input.signal) throw new Error('Daemon read has no cancellation');
+                const signal = input.signal;
+                transportEntered(signal);
+                signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+            }));
+            const loopLifetime = new AbortController();
+            const pending = source!.daemonTurnContributionsBridge!.observeConnectedAccountIdentity!(observation, { signal: loopLifetime.signal });
+            const transportSignal = await entered;
+            const cancelled = expect(pending).rejects.toThrow('Runner loop ended');
+            loopLifetime.abort(new Error('Runner loop ended'));
+            await cancelled;
+            expect(transportSignal.aborted).toBe(true);
+        } finally { await source!.retire?.(); }
+    });
+
     it.each([false, true])('records an unsupported refusal read without private reads or dispatch (logging failed=%s)', async loggingFailed => {
         const source = await createRunnerAgentSessionRuntimeSource({
             happyHomeDir: '/tmp/happier-runner-source', publicReleaseRing: 'stable',

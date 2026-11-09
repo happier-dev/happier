@@ -83,7 +83,8 @@ export async function prepareSavedReviewWalkthroughInput(start: ExecutionRunProf
   });
   const planned = planDiffSummaryAnalysis({ comparison, metadata: saved.result.output.metadata!, outputs: ['walkthrough'],
     prompt: instructions, instructions: userInstructions, taskInstructions: narrativeTask, evidenceContext, outputLanguage,
-    contextWindowTokens: typeof input.scmContextWindowTokens === 'number' ? input.scmContextWindowTokens : undefined });
+    contextWindowTokens: typeof input.scmContextWindowTokens === 'number' ? input.scmContextWindowTokens : undefined,
+    maxInputUnicodeCharacters: typeof input.scmMaxInputUnicodeCharacters === 'number' ? input.scmMaxInputUnicodeCharacters : undefined });
   if (planned) planned.state.expectedInputId = localId;
   return { instructions: planned?.instructions ?? instructions, localId, intentInput: { ...input, resultId: saved.result.resultId,
     ...(userInstructions ? { instructions: userInstructions } : {}),

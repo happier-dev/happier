@@ -1,4 +1,4 @@
-import { mkdtemp, rm, stat } from 'node:fs/promises';
+import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -19,6 +19,65 @@ import { createCurrentSessionPresentationHost } from '@/session/presentation/cur
 import { createBundledFirstPartyPluginSourceCustody } from '@/plugins/runtime/lifecycle/contributions/runtimeIdentity.testkit';
 
 describe('createNativeAgentSessionHostServiceOwners', () => {
+    it('admits a Session-owned Claude Run transcript from authenticated statusline before SessionStart and refuses other paths', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-run-follow-grant-'));
+        const transcriptPath = join(root, 'run-native.jsonl');
+        const outsidePath = join(root, 'other-native.jsonl');
+        await writeFile(transcriptPath, '{"type":"user","uuid":"run-input"}\n');
+        await writeFile(outsidePath, '{"type":"user","uuid":"outside"}\n');
+        const owners = createNativeAgentSessionHostServiceOwners({
+            executionRunId: 'run-follow-grant', runtimeRegistry: null,
+            runtimeAuthority: { runtimeCapabilities: ['sessionHooks'] },
+            identity: { pluginId: 'happier.agent.claude', agentId: 'claude', occurrenceId: 'run-occurrence' },
+            backend: { id: 'claude', agentId: 'claude', provenance: 'first_party', source: { kind: 'bundled' },
+                definition: { kindVersion: 1, id: 'claude', agentId: 'claude' } },
+            agent: { id: 'claude', provenance: 'first_party', source: { kind: 'bundled' },
+                definition: { kindVersion: 1, id: 'claude', ownedBackendIds: ['claude'] } },
+            hostSession: { session: { getMetadataSnapshot: () => null }, machineId: 'machine-1',
+                permissionHandler: { handleToolCall: async () => { throw new Error('Unexpected permission call'); } } },
+            sessionId: 'parent-session', directory: root, signal: new AbortController().signal, happyHomeDir: root,
+        });
+        const lines: string[] = [];
+        let followFailure: unknown;
+        let observationDone!: () => void;
+        const observed = new Promise<void>(resolve => { observationDone = resolve; });
+        const server = await owners.sessionHooks.startServer({
+            providerId: 'claude', sessionId: 'parent-session', sessionHookSecret: 'synthetic-run-hook-secret',
+            onStatuslineUpdate: async () => {
+                try {
+                    const handle = await owners.transcripts.fileFollow.follow({
+                        path: transcriptPath, startAt: 'beginning', onLine: ({ line }) => { lines.push(line); },
+                    });
+                    await handle.drainNow();
+                    await handle.close();
+                } catch (error) { followFailure = error; }
+                finally { observationDone(); }
+            },
+        });
+        try {
+            const refused = await fetch(`http://127.0.0.1:${server.port}/hook/statusline`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: 'other-native', transcript_path: outsidePath }),
+            });
+            expect(refused.status).toBe(403);
+            const response = await fetch(`http://127.0.0.1:${server.port}/hook/statusline`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json', 'x-happier-hook-secret': 'synthetic-run-hook-secret' },
+                body: JSON.stringify({ session_id: 'run-native', transcript_path: transcriptPath }),
+            });
+            expect(response.status).toBe(200);
+            await observed;
+            expect(followFailure).toBeUndefined();
+            expect(lines).toEqual(['{"type":"user","uuid":"run-input"}']);
+            await expect(owners.transcripts.fileFollow.follow({
+                path: outsidePath, startAt: 'beginning', onLine: () => undefined,
+            })).rejects.toMatchObject({ code: 'PLUGIN_TRANSCRIPTS_FILE_FOLLOW_PATH_DENIED' });
+        } finally {
+            await server.dispose();
+            await owners.dispose();
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
     it('dispatches Agent tool interception and host-stamped observation through the exact retained runtime registry', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-agent-tool-hooks-'));
         const observedAfterPayloads: unknown[] = [];
@@ -49,7 +108,6 @@ describe('createNativeAgentSessionHostServiceOwners', () => {
                             installPolicy: 'link',
                         },
                         definition: {
-                            hookApiVersion: 1,
                             id: 'agent.tool.execute.before',
                             category: 'augmentation',
                             scope: 'tool',
@@ -79,7 +137,6 @@ describe('createNativeAgentSessionHostServiceOwners', () => {
                             installPolicy: 'link',
                         },
                         definition: {
-                            hookApiVersion: 1,
                             id: 'agent.tool.execute.after',
                             category: 'lifecycle',
                             scope: 'tool',

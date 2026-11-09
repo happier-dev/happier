@@ -504,6 +504,7 @@ export async function prepareRunnerDaemonPluginServices(
             | 'sessions'
             | 'managedServices'
             | 'machineProvisioners'
+            | 'deploymentSource'
             | 'targetedContributions'
             | 'interactions'
             | 'composerContent'
@@ -1808,6 +1809,16 @@ export async function prepareRunnerDaemonPluginServices(
     } satisfies PluginServices['http']);
     const fs: PluginServices['fs'] = Object.freeze({
         observeMachinePath: PLUGIN_SERVICE_DESCRIPTORS.fs.createUnavailable().observeMachinePath,
+        async prepareDownload(input, options) {
+            assertAvailable('fs');
+            return await dispatch<Awaited<ReturnType<PluginServices['fs']['prepareDownload']>>>({
+                kind: 'plugin_fs.prepare_download_v1',
+                ...requestBase(),
+                name: input.name,
+                bytes: Buffer.from(input.bytes).toString('base64'),
+                destination: input.destination,
+            }, options?.signal ? { signal: options.signal } : undefined);
+        },
         async readFile(path, options) {
             assertAvailable('fs');
             return await dispatch<Uint8Array>({

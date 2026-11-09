@@ -36,8 +36,7 @@ import { BRIDGE_LIFECYCLE_HOOK_EVENT_IDS_V1 } from '@happier-dev/protocol/hooks/
  * Private descriptor-only runner bootstrap carrier. It contains no bearer and
  * grants no daemon or Provider operation authority.
  */
-export const HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY =
-  'HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE';
+export { HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY } from './agentRuntimeRunnerEnvironment';
 
 const BoundedIdSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(256)));
 const BoundedPathSchema = lazyZodSchema(() => z.string().check(z.minLength(1), z.maxLength(32_768)));

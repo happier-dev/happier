@@ -101,6 +101,28 @@ function sessionRunnerRuntime(
 }
 
 describe('createSessionRuntimeModelsPublisher', () => {
+  it.each([false, true])('requires actual readback before publishing current-runner proof or inventing a current model (prior observation: %s)', async (hasPriorObservation) => {
+    const source = createSource();
+    source.publish({ currentModelId: null, models: [{ id: 'configured', name: 'Configured' }] });
+    const selection = { agentTargetKey: 'backend:generic-agent', providerConnectionId: null, modelId: 'prior' } as const;
+    const session = createSession(createTestMetadata(hasPriorObservation ? { sessionModelsV1: {
+      v: 1, agentId: 'generic-agent', updatedAt: 1, currentModelId: 'prior', availableModels: [{ id: 'prior', name: 'Prior' }],
+      activeSelectionV1: { v: 1, source: 'runtime_readback', selection, runner: { pid: 1, processStartTimeMs: 1 } },
+    } } : {}));
+    const runner = { pid: 123, processStartTimeMs: 1_000 };
+    const publisher = createSessionRuntimeModelsPublisher({ agentId: 'generic-agent', agentTargetKey: selection.agentTargetKey,
+      runnerProcessIdentity: runner, session, source });
+    try {
+      await publisher.flush();
+      expect(session.getMetadataSnapshot().sessionModelsV1?.currentModelId).toBe(hasPriorObservation ? 'prior' : undefined);
+      expect(session.getMetadataSnapshot().sessionModelsV1?.activeSelectionV1).toBeUndefined();
+      source.publish({ currentModelId: 'actual', models: [{ id: 'configured', name: 'Configured' }, { id: 'actual', name: 'Actual' }] });
+      await publisher.flush();
+      expect(session.getMetadataSnapshot().sessionModelsV1).toMatchObject({ currentModelId: 'actual',
+        activeSelectionV1: { source: 'runtime_readback', selection: { ...selection, modelId: 'actual' }, runner } });
+      expect(session.getMetadataSnapshot().sessionModelsV1?.availableModels).toContainEqual({ id: 'configured', name: 'Configured' });
+    } finally { publisher.dispose(); }
+  });
   it('publishes the accepted Team route and withholds proof for an unknown or mismatched open', async () => {
     const source = createSource();
     const session = createSession(createTestMetadata());
@@ -517,9 +539,9 @@ describe('createSessionRuntimeModelsPublisher', () => {
     const source = createSource();
     const session = createSession({} as Metadata);
     const publisher = createSessionRuntimeModelsPublisher({ agentId: 'cursor', session, source });
-    source.publish({ models: [{ id: 'runtime', name: 'Runtime' }] });
+    source.publish({ currentModelId: 'runtime', models: [{ id: 'runtime', name: 'Runtime' }] });
     await publisher.flush();
-    source.publish({ models: [{ id: 'latest', name: 'Latest' }] });
+    source.publish({ currentModelId: 'latest', models: [{ id: 'latest', name: 'Latest' }] });
     await publisher.flush();
     expect(session.getMetadataSnapshot().sessionModelsV1?.availableModels.map((model) => model.id)).toEqual(['latest']);
 
@@ -576,9 +598,11 @@ describe('createSessionRuntimeModelsPublisher', () => {
           modelOptions: [{
             id: 'effort',
             name: 'Effort',
+            category: 'thought_level',
             type: 'select',
             currentValue: 'high',
             options: [{ value: 'high', name: 'High' }],
+            groups: [{ id: ' levels ', name: 'Levels', options: [{ value: 'high', name: 'High' }] }],
           }],
         },
         { id: 'stale-base', name: 'Stale base' },
@@ -590,7 +614,9 @@ describe('createSessionRuntimeModelsPublisher', () => {
     expect(session.getMetadataSnapshot().sessionModelsV1?.availableModels).toEqual([
       expect.objectContaining({
         id: 'provider-current',
-        modelOptions: [expect.objectContaining({ id: 'effort', currentValue: 'high' })],
+        modelOptions: [expect.objectContaining({ id: 'effort', category: 'thought_level', currentValue: 'high',
+          groups: [{ id: ' levels ', name: 'Levels', options: [{ value: 'high', name: 'High' }] }],
+        })],
       }),
       expect.objectContaining({
         id: 'stale-base',
@@ -730,8 +756,11 @@ describe('createSessionRuntimeModelsPublisher', () => {
 
     await publisher.flush();
 
-    expect(session.getMetadataSnapshot().sessionModelsV1?.currentModelId).toBe('provider-current');
+    expect(session.getMetadataSnapshot().sessionModelsV1?.currentModelId).toBe(runtimeObserved ? 'provider-current' : undefined);
     expect(session.updateCount()).toBe(1);
+    if (!runtimeObserved) {
+      expect(session.getMetadataSnapshot().sessionModelsV1).toBeUndefined();
+    }
     expect(readSessionProviderBindingMetadataStateV1(session.getMetadataSnapshot())).toMatchObject({
       kind: 'valid', binding: target.sessionBindingMetadata,
     });
@@ -748,7 +777,7 @@ describe('createSessionRuntimeModelsPublisher', () => {
         type: 'boolean',
         currentValue: 'true',
       }],
-    }] : [target.providerBinding.model]);
+    }] : undefined);
     publisher.dispose();
     if (runtimeObserved) {
       const nativeTarget = { ...target,
@@ -856,7 +885,7 @@ describe('createSessionRuntimeModelsPublisher', () => {
     const source = createSource();
     const session = createSession({} as Metadata);
     const publisher = createSessionRuntimeModelsPublisher({ agentId: 'cursor', session, source });
-    source.publish({ models: [{ id: 'runtime', name: 'Runtime' }] });
+    source.publish({ currentModelId: 'runtime', models: [{ id: 'runtime', name: 'Runtime' }] });
     await publisher.flush();
     const writesBeforeDispose = session.updateCount();
     expect(session.listenerCount()).toBe(1);
@@ -920,7 +949,7 @@ describe('createSessionRuntimeModelsPublisher', () => {
     };
     const publisher = createSessionRuntimeModelsPublisher({ agentId: 'cursor', session, source });
 
-    source.publish({ models: [{ id: 'runtime', name: 'Runtime' }] });
+    source.publish({ currentModelId: 'runtime', models: [{ id: 'runtime', name: 'Runtime' }] });
     await metadataWriteStarted;
 
     let stopped = false;

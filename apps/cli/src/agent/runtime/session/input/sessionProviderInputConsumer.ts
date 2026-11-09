@@ -30,11 +30,8 @@ import type {
 import type {
   MaterializeNextPendingOptions,
   MaterializeNextPendingResult,
-  PendingMaterializationDiagnosticPhase,
   RuntimeActivitySnapshotTail,
 } from '@/api/session/sessionClientPort';
-
-const PENDING_INPUT_SLOW_PHASE_DIAGNOSTIC_MS = 30_000;
 
 type WakeWinner =
   | { kind: 'queue'; hasMessages: boolean; refreshBeforeReturn?: boolean }
@@ -61,7 +58,6 @@ export type SessionProviderInputConsumerOptions<Mode, Message> = Readonly<{
   /** @deprecated Wake polling is disabled; provider input wakes only from canonical queue/metadata events. */
   metadataWaitRetryBackoffMs?: number;
   refreshBeforeQueuedBatch?: boolean;
-  pendingDrainMaxPopPerWake?: number;
   /** Host-private, non-queued input source used by centralized runtime owners. */
   takeContextOnlyInput?: ((abortSignal: AbortSignal) => Promise<MessageBatch<Mode, Message> | null>) | null;
   /** Remains ready for an unobserved source change until the corresponding take observes it. */
@@ -71,7 +67,6 @@ export type SessionProviderInputConsumerOptions<Mode, Message> = Readonly<{
 export function createSessionProviderPendingDrainAdapter(
   session: SessionProviderInputConsumerSession,
   defaults?: Readonly<{
-    maxPopPerWake?: number;
     pendingQueueDeliveryTiming?: SessionPendingQueueDeliveryTiming;
     afterDrain?: () => Promise<void>;
     waitForInputChange?: (abortSignal: AbortSignal) => Promise<boolean>;
@@ -81,7 +76,6 @@ export function createSessionProviderPendingDrainAdapter(
     const result = await drainPendingMessages(
       withDefaultDrainOptions(
         session,
-        defaults?.maxPopPerWake,
         defaults?.pendingQueueDeliveryTiming,
         undefined,
         options,
@@ -157,14 +151,8 @@ async function materializeWithRuntimeActivityTail(
   options: ReturnType<typeof buildMaterializeOptions>,
   abortSignal: AbortSignal,
 ): Promise<MaterializeNextPendingResult> {
-  const first = await observePendingInputPhase(
-    'materialize',
-    async (onDiagnosticPhase) => await session.materializeNextPendingMessageSafely?.({
-      ...options,
-      onDiagnosticPhase,
-    })
-      ?? { type: 'retryable_transport' as const },
-  );
+  const first = await session.materializeNextPendingMessageSafely?.(options)
+    ?? { type: 'retryable_transport' as const };
   if (
     options.deliveryTiming !== 'after_runtime_idle'
     || first.type !== 'deferred'
@@ -176,14 +164,10 @@ async function materializeWithRuntimeActivityTail(
     if (!tail) return first;
     const committedRevision = readExactIdleRuntimeActivityRevision(tail);
     if (committedRevision !== undefined) {
-      return await observePendingInputPhase(
-        'materialize_runtime_tail_retry',
-        async (onDiagnosticPhase) => await session.materializeNextPendingMessageSafely?.({
-          ...options,
-          expectedRuntimeActivityRevision: committedRevision,
-          onDiagnosticPhase,
-        }) ?? { type: 'retryable_transport' as const },
-      );
+      return await session.materializeNextPendingMessageSafely?.({
+        ...options,
+        expectedRuntimeActivityRevision: committedRevision,
+      }) ?? { type: 'retryable_transport' as const };
     }
     if (tail.custody === null || !session.waitForRuntimeActivitySnapshotTailChange) return first;
     if (!await session.waitForRuntimeActivitySnapshotTailChange(tail.sequence, abortSignal)) return first;
@@ -322,7 +306,7 @@ export function createSessionProviderInputConsumer<Mode, Message>(
       notifyLiveWorkChanged();
     }
     try {
-      await observePendingInputPhase('pending_materialization_turn', async () => await previousTurn.catch(() => undefined));
+      await previousTurn.catch(() => undefined);
       return await operation();
     } finally {
       activePendingMaterializationTurns -= 1;
@@ -362,7 +346,7 @@ export function createSessionProviderInputConsumer<Mode, Message>(
 
   const waitUntilAdmitted = async (abortSignal: AbortSignal): Promise<boolean> => {
     while (readAdmission()) {
-      if (!await observePendingInputPhase('input_admission', async () => await waitForAdmissionChange(abortSignal))) return false;
+      if (!await waitForAdmissionChange(abortSignal)) return false;
     }
     return true;
   };
@@ -501,7 +485,6 @@ export function createSessionProviderInputConsumer<Mode, Message>(
       const callerShouldContinue = drainOpts?.shouldContinue;
       const result = await drainPendingMessages(withDefaultDrainOptions(
         opts.session,
-        opts.pendingDrainMaxPopPerWake,
         opts.resolvePendingQueueDeliveryTiming?.() ?? opts.pendingQueueDeliveryTiming,
         opts.resolvePendingQueueDeliveryTiming,
         {
@@ -685,8 +668,7 @@ export function createSessionProviderInputConsumer<Mode, Message>(
             // A take can acquire context custody before its asynchronous preparation
             // finishes. Keep that one operation across user-input wakes and waits.
             if (contextOnlyPreparation === null) {
-              contextOnlyPreparation = observePendingInputPhase('context_only',
-                async () => await opts.takeContextOnlyInput?.(signal) ?? null).then(
+              contextOnlyPreparation = (async () => await opts.takeContextOnlyInput?.(signal) ?? null)().then(
                 value => ({ status: 'fulfilled' as const, value }),
                 reason => ({ status: 'rejected' as const, reason }),
               );
@@ -1028,7 +1010,7 @@ async function returnBatch<Mode, Message>(
 async function collectQueuedBatch<Mode, Message>(
   opts: WaitForNextInputOptions<Mode, Message>,
 ): Promise<MessageBatch<Mode, Message> | null> {
-  await observePendingInputPhase('queued_input_preparation', async () => await opts.beforeCollectQueuedBatch?.());
+  await opts.beforeCollectQueuedBatch?.();
   if (opts.messageQueue.size() <= 0) {
     return null;
   }
@@ -1062,7 +1044,7 @@ async function materializePendingMessage<Mode, Message>(
   return await opts.runPendingMaterializationExclusive(async () => {
     if (opts.abortSignal.aborted || !opts.isAdmitted() || opts.hasLocalInputCustody()) return null;
     if (isSessionPendingDrainBlocked(opts.session)) return null;
-    if ((await observePendingInputPhase('pending_handoff', async () => await (opts.beforePendingMaterialize?.() ?? true))) !== true) return null;
+    if ((await (opts.beforePendingMaterialize?.() ?? true)) !== true) return null;
     if (!opts.isAdmitted() || opts.hasLocalInputCustody()) return null;
     if ((await reconcilePendingProviderInputCustodyBeforeMaterialization(opts.session)) !== true) return null;
     if (opts.abortSignal.aborted || !opts.isAdmitted() || opts.hasLocalInputCustody()) return null;
@@ -1100,7 +1082,6 @@ async function materializePendingMessage<Mode, Message>(
 
 function withDefaultDrainOptions(
   session: SessionProviderInputConsumerSession,
-  defaultMaxPopPerWake: number | undefined,
   defaultPendingQueueDeliveryTiming: SessionPendingQueueDeliveryTiming | undefined,
   resolvePendingQueueDeliveryTiming: (() => SessionPendingQueueDeliveryTiming) | undefined,
   drainOpts: DrainPendingOptions | undefined,
@@ -1112,7 +1093,6 @@ function withDefaultDrainOptions(
   return {
     ...(drainOpts ?? {}),
     session,
-    maxPopPerWake: drainOpts?.maxPopPerWake ?? defaultMaxPopPerWake,
     pendingQueueDeliveryTiming: defaultPendingQueueDeliveryTiming ?? 'after_foreground_ready',
     ...(resolvePendingQueueDeliveryTiming ? { resolvePendingQueueDeliveryTiming } : {}),
   };
@@ -1170,17 +1150,13 @@ async function drainPendingMessages(
 async function reconcilePendingProviderInputCustodyBeforeMaterialization(
   session: SessionProviderInputConsumerSession,
 ): Promise<boolean> {
-  return await observePendingInputPhase('pending_provider_custody',
-    async () => await (session.reconcilePendingProviderInputCustodyBeforeMaterialization?.() ?? true));
+  return await (session.reconcilePendingProviderInputCustodyBeforeMaterialization?.() ?? true);
 }
 
 function isSessionPendingDrainBlocked(session: SessionProviderInputConsumerSession): boolean {
-  if (!session.getMetadataSnapshot) {
-    return false;
-  }
-  const metadata = session.getMetadataSnapshot();
-  return isSessionPendingQueueHoldBlockingPendingDrain(metadata)
-    || readSessionExplicitStopV1FromMetadata(metadata) !== null;
+  const metadata = session.getMetadataSnapshot?.();
+  return isSessionPendingQueueHoldBlockingPendingDrain(metadata, session.getPendingMessageEditHoldIds?.() ?? null)
+    || (session.getMetadataSnapshot !== undefined && readSessionExplicitStopV1FromMetadata(metadata) !== null);
 }
 
 async function materializeNextPendingForDrain(
@@ -1207,7 +1183,7 @@ async function materializeNextPendingForDrain(
         deliveryTiming,
         result,
       });
-      if (result.type === 'materialized') return { materialized: 1, stoppedReason: 'max_pop_per_wake' };
+      if (result.type === 'materialized') return { materialized: 1, stoppedReason: 'materialized' };
       if (result.type === 'auth_failure') {
         logTerminalAuthDrainStop(opts, null);
         return { materialized: 0, stoppedReason: 'auth_failure' };
@@ -1304,10 +1280,7 @@ async function callMetadataUpdate(
     releaseAbort = () => abortSignal.removeEventListener('abort', onAbort);
   });
   const reconciled = Promise.resolve()
-    .then(async () => await observePendingInputPhase(
-      'metadata_reconcile',
-      async () => await onMetadataUpdate(abortSignal),
-    ))
+    .then(async () => await onMetadataUpdate(abortSignal))
     .then(
       () => 'reconciled' as const,
       () => 'failed' as const,
@@ -1317,63 +1290,5 @@ async function callMetadataUpdate(
     await Promise.race([reconciled, aborted]);
   } finally {
     releaseAbort?.();
-  }
-}
-
-type PendingInputConsumerDiagnosticPhase =
-  | 'materialize'
-  | 'materialize_runtime_tail_retry'
-  | 'metadata_reconcile'
-  | 'pending_materialization_turn'
-  | 'input_admission'
-  | 'queued_input_preparation'
-  | 'pending_handoff'
-  | 'pending_provider_custody'
-  | 'context_only'
-  | PendingMaterializationDiagnosticPhase;
-
-async function observePendingInputPhase<T>(
-  initialPhase: PendingInputConsumerDiagnosticPhase,
-  operation: (onPhase: (phase: PendingMaterializationDiagnosticPhase) => void) => Promise<T>,
-): Promise<T> {
-  let phase = initialPhase;
-  let startedAt = Date.now();
-  let slowDiagnosticEmitted = false;
-  let timer: ReturnType<typeof setTimeout> | null = null;
-
-  const finishPhase = () => {
-    if (timer) clearTimeout(timer);
-    timer = null;
-    if (slowDiagnosticEmitted) {
-      logger.infoFile('[pendingQueue] input consumer slow phase settled', {
-        elapsedMs: Date.now() - startedAt,
-        phase,
-      });
-    }
-  };
-  const startPhase = () => {
-    startedAt = Date.now();
-    slowDiagnosticEmitted = false;
-    timer = setTimeout(() => {
-      slowDiagnosticEmitted = true;
-      logger.infoFile('[pendingQueue] input consumer phase remains unsettled', {
-        elapsedMs: Date.now() - startedAt,
-        phase,
-      });
-    }, PENDING_INPUT_SLOW_PHASE_DIAGNOSTIC_MS);
-    timer.unref?.();
-  };
-  const onPhase = (nextPhase: PendingMaterializationDiagnosticPhase) => {
-    if (nextPhase === phase) return;
-    finishPhase();
-    phase = nextPhase;
-    startPhase();
-  };
-
-  startPhase();
-  try {
-    return await operation(onPhase);
-  } finally {
-    finishPhase();
   }
 }

@@ -1,7 +1,6 @@
 import type { BackendTargetRefV2 } from '@happier-dev/protocol';
 
-import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { createResolvedContributionRegistry, resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import {

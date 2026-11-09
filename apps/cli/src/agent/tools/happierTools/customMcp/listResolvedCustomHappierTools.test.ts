@@ -28,6 +28,7 @@ vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => ({
     args: string[];
     env: Record<string, string>;
     stderr = { resume: stderrResumeMock };
+    async close() {}
 
     constructor(config: { command: string; args?: string[]; env?: Record<string, string>; stderr?: string }) {
       this.command = config.command;

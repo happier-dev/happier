@@ -285,7 +285,7 @@ describe('ACP runtime definitions', () => {
         },
         permissionModeMapping: {
           default: null,
-          'safe-yolo': 'smart',
+          'safe-yolo': ['preferred', 'legacy'],
         },
         permissionModeArgv: {
           flag: '--approval-mode',
@@ -316,7 +316,7 @@ describe('ACP runtime definitions', () => {
         },
         permissionModeMapping: {
           default: null,
-          'safe-yolo': 'smart',
+          'safe-yolo': ['preferred', 'legacy'],
         },
         permissionModeArgv: {
           flag: '--approval-mode',
@@ -526,7 +526,6 @@ describe('ACP runtime definitions', () => {
               initMs: 11,
               initDelayMs: 12,
               idleMs: 13,
-              toolCallMs: null,
               promptLivenessMs: null,
               postPromptNoUpdatesMs: null,
               postToolCallIdleMs: 17,
@@ -544,7 +543,6 @@ describe('ACP runtime definitions', () => {
       getInitTimeout: () => number;
       getInitDelayMs?: () => number;
       getIdleTimeout?: () => number;
-      getToolCallTimeout?: (toolCallId: string, toolKind?: string) => number | null;
       getPromptLivenessTimeoutMs?: () => number | null;
       getPostPromptNoUpdatesTimeoutMs?: () => number | null;
       getPostToolCallIdleTimeoutMs?: () => number;
@@ -555,7 +553,6 @@ describe('ACP runtime definitions', () => {
     expect(transport.getInitTimeout()).toBe(11);
     expect(transport.getInitDelayMs?.()).toBe(12);
     expect(transport.getIdleTimeout?.()).toBe(13);
-    expect(transport.getToolCallTimeout?.('tool-1')).toBeNull();
     expect(transport.getPromptLivenessTimeoutMs?.()).toBeNull();
     expect(transport.getPostPromptNoUpdatesTimeoutMs?.()).toBeNull();
     expect(transport.getPostToolCallIdleTimeoutMs?.()).toBe(17);
@@ -577,13 +574,6 @@ describe('ACP runtime definitions', () => {
           launch: {
             kind: 'executable',
             command: 'acme-agent',
-          },
-          timeouts: {
-            toolCallMs: 120,
-            investigationToolCallMs: 300,
-            toolKindTimeouts: {
-              think: 30,
-            },
           },
         },
         toolNameInference: {
@@ -628,7 +618,6 @@ describe('ACP runtime definitions', () => {
         context: { recentPromptHadChangeTitle: boolean; toolCallCountSincePrompt: number },
       ) => string;
       isInvestigationTool?: (toolCallId: string, toolKind?: string) => boolean;
-      getToolCallTimeout?: (toolCallId: string, toolKind?: string) => number | null;
       handleStderr?: (
         text: string,
         context: { activeToolCalls: Set<string>; hasActiveInvestigation: boolean },
@@ -684,9 +673,6 @@ describe('ACP runtime definitions', () => {
     expect(transport.isInvestigationTool?.('task-123', undefined)).toBe(true);
     expect(transport.isInvestigationTool?.('read-123', 'task')).toBe(true);
     expect(transport.isInvestigationTool?.('read-123', 'read')).toBe(false);
-    expect(transport.getToolCallTimeout?.('task-123')).toBe(300);
-    expect(transport.getToolCallTimeout?.('read-123', 'think')).toBe(30);
-    expect(transport.getToolCallTimeout?.('read-123', 'read')).toBe(120);
     expect(transport.handleStderr?.('models.dev unable to connect', {
       activeToolCalls: new Set(),
       hasActiveInvestigation: false,

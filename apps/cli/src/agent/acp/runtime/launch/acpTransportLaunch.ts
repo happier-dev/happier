@@ -55,7 +55,6 @@ export type PublicAcpManagedDependencies = Readonly<{
 export type PublicAcpTransportTimeouts = Readonly<{
   initializeMs?: number;
   idleMs?: number;
-  toolCallMs?: number;
 }>;
 
 export type PublicAcpHostLaunch = Readonly<{

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { AgentSessionOpenRequest, AgentSessionRuntime, AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentSessionOpenRequest, AgentSessionRuntime, AgentSessionRuntimeEvent, AgentSessionRealtimeConversation } from '@happier-dev/plugin-sdk/agents/runtime';
 import { UsageEventIngestRequestSchema, type SessionTeamCredentialBindingIntentV1 } from '@happier-dev/protocol';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { HostSessionRuntimeHookRuntime } from '@/agent/runtime/session/loop/runHostSessionRuntime';
@@ -8,19 +8,23 @@ import { buildPluginSessionBindingInput } from '@/plugins/runtime/runtimeCore/pl
 import { createNativeAgentRuntimeSessionPlanFixture as createNativeAgentRuntimeSessionPlan } from './nativeAgentSession.testkit';
 import { createNativeSessionClientTestPort, createExternalContributionFixtures, createLease, createSessionHostServiceOwners } from './nativeAgentSession.testkit';
 import { buildUsageEventIngestRequest } from '@/usage/buildUsageEventIngestRequest';
+import { createAgentSessionRealtimeVoiceAuthority } from '@/agent/runtime/session/realtime/resolveAgentSessionRealtimeVoiceAuthority';
+import { registerAgentSessionRealtimeVoiceRpc } from '@/agent/runtime/session/realtime/registerAgentSessionRealtimeVoiceRpc';
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 import { runScmCommand, runWithScmCommandRunner } from '@/scm/runtime';
 
-async function openSession(binding?: SessionTeamCredentialBindingIntentV1, connectedAccounts: NonNullable<AgentSessionOpenRequest['connectedAccounts']> = [], runtimeAuth?: AgentSessionRuntime['runtimeAuth'], attached = false, exec?: ExecService) {
+async function openSession(binding?: SessionTeamCredentialBindingIntentV1, connectedAccounts: NonNullable<AgentSessionOpenRequest['connectedAccounts']> = [], runtimeAuth?: AgentSessionRuntime['runtimeAuth'], attached = false, realtimeConversation?: AgentSessionRealtimeConversation, exec?: ExecService) {
     const agentId = 'acme-applied-reader';
     const contributions = createExternalContributionFixtures(agentId);
     const listeners = new Set<(event: AgentSessionRuntimeEvent) => void>();
-    const nativeSession: AgentSessionRuntime = {
+    const nativeSession: AgentSessionRuntime & { realtimeConversation?: AgentSessionRealtimeConversation } = {
         send: async () => ({ status: 'admitted' }),
         watch: listener => { listeners.add(listener); return { dispose: () => { listeners.delete(listener); } }; }, dispose: async () => undefined,
         ...(runtimeAuth ? { runtimeAuth } : {}),
+        ...(realtimeConversation ? { realtimeConversation } : {}),
     };
     const plan = await createNativeAgentRuntimeSessionPlan({
         runtime: { sessions: { open: async () => nativeSession } },
@@ -76,7 +80,7 @@ describe('native accepted-open applied selection', () => {
         const resolve = vi.fn<ExecService['systemTools']['resolve']>(async () => {
             throw new PluginError({ code: 'workspace_exec_isolation_unavailable', message: 'Workspace execution is unavailable' });
         });
-        const { created, hookRuntime } = await openSession(undefined, [], undefined, false, {
+        const { created, hookRuntime } = await openSession(undefined, [], undefined, false, undefined, {
             ...createUnavailablePluginServices().exec, systemTools: { resolve },
         });
         const command = { bin: 'git', cwd: '/tmp/applied-reader', args: ['rev-parse', '--show-toplevel'] };
@@ -98,6 +102,152 @@ describe('native accepted-open applied selection', () => {
             expect(resolve).not.toHaveBeenCalled();
         } finally { await created.operations.resetOrDisposeRuntime(); }
     });
+    it.each(['end', 'disconnect', 'retirement', 'failed_start'] as const)('withdraws person Start authority at %s before native cleanup can settle', async ending => {
+        let releaseStop!: () => void;
+        let publishTerminal: ((event: import('@happier-dev/plugin-sdk/agents/runtime').AgentSessionRealtimeLifecycleEvent) => void) | undefined;
+        const stopPending = new Promise<void>(resolve => { releaseStop = resolve; });
+        const realtimeConversation: AgentSessionRealtimeConversation = {
+            inspect: async () => ({ status: 'available', transport: 'webrtc' }),
+            start: async () => ending === 'failed_start'
+                ? { status: 'failed', diagnostic: { code: 'native_start_failed', severity: 'error' } }
+                : ({ status: 'started', transport: { kind: 'webrtc', answerSdp: 'answer' },
+                handle: { stop: async () => { await stopPending; return { status: 'stopped' }; },
+                    watch: listener => { publishTerminal = listener; return { dispose() {} }; }, dispose() {} } }),
+        };
+        const { created, hookRuntime, emit, session } = await openSession(undefined, [], undefined, false, realtimeConversation);
+        const unsubscribe = created.operations.subscribeRuntimeEvents(() => undefined);
+        const provider = { pluginId: 'acme.agent-plugin', localId: 'realtime' };
+        const retirement = new AbortController();
+        const handlers = new Map<string, import('@/api/rpc/types').RpcHandler>();
+        const registration = registerAgentSessionRealtimeVoiceRpc({
+            rpc: { registerHandler: (method, handler) => { handlers.set(method, handler); } }, runtime: hookRuntime,
+            getHappierSessionId: () => session.sessionId, ownerId: 'session-occurrence', agentGeneration: 'generation',
+            isOccurrenceCurrent: () => true, resolveProviderOccurrenceId: () => 'provider-occurrence',
+            resolveRetirementSignal: () => retirement.signal,
+            resolveConversation: () => ({ conversation: realtimeConversation, retirementSignal: retirement.signal }),
+            admitNativeInput: async ({ admission, conversation, signal }) => {
+                const admitted = hookRuntime.admitAgentSessionRealtimeInput?.({ admission, conversation, signal,
+                    agentStartCaller: { kind: 'session', sessionId: session.sessionId, starterDepth: 0, turnDepth: 0 } });
+                if (!admitted) throw new Error('Native admission unavailable');
+                return { dispose: async () => { admitted.dispose(); } };
+            },
+        });
+        const request = { v: 1, provider, applicationAttemptId: 'live-attempt', transport: { kind: 'webrtc', offerSdp: 'offer' } };
+        const context = { signal: new AbortController().signal, callerAuthority: 'present_user' as const,
+            authorization: { kind: 'session.write' as const, sessionId: session.sessionId, authority: 'sessionOwner' as const } };
+        try {
+            // A locally supplied turn/attempt name is not authenticated person input.
+            await expect(handlers.get(SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_START)!(request,
+                { signal: context.signal, callerAuthority: 'account_automation' })).resolves.toMatchObject({ ok: false });
+            // A shared writer/legacy relay has Session write proof, not owner-classified Start proof.
+            await expect(handlers.get(SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_START)!(request, {
+                ...context, authorization: { kind: 'session.write', sessionId: session.sessionId },
+            })).resolves.toMatchObject({ ok: false, code: 'agent_realtime_owner_required' });
+            expect(created.operations.readActiveTurnAdmissionWitness?.()).toBeNull();
+            await expect(handlers.get(SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_START)!(request, context)).resolves.toMatchObject({
+                status: ending === 'failed_start' ? 'failed' : 'started' });
+            emit({ kind: 'turn-start', sequence: 1, sessionId: session.sessionId, emittedAtMs: 1, turnId: 'provider-turn', startedBy: 'provider' });
+            if (ending === 'failed_start') {
+                expect(created.operations.readActiveTurnAdmissionWitness?.()).toBeNull();
+                return;
+            }
+            expect(created.operations.readActiveTurnAdmissionWitness?.()).toMatchObject({ turnId: 'provider-turn',
+                nativeRealtimeAdmission: { attemptId: request.applicationAttemptId } });
+            if (ending === 'disconnect' || ending === 'retirement') {
+                if (ending === 'disconnect') publishTerminal?.({ kind: 'terminal', reason: 'upstream_closed' });
+                else retirement.abort();
+                expect(created.operations.readActiveTurnAdmissionWitness?.()).toBeNull();
+                return;
+            }
+            await expect(handlers.get(SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_STOP)!({ v: 1, provider, applicationAttemptId: 'other-attempt' }, context))
+                .resolves.toMatchObject({ status: 'already_stopped' });
+            expect(created.operations.readActiveTurnAdmissionWitness?.()).not.toBeNull();
+            const stopping = handlers.get(SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_STOP)!({ v: 1, provider, applicationAttemptId: request.applicationAttemptId }, context);
+            await vi.waitFor(() => expect(created.operations.readActiveTurnAdmissionWitness?.()).toBeNull());
+            releaseStop();
+            await expect(stopping).resolves.toMatchObject({ status: 'stopped' });
+            publishTerminal?.({ kind: 'terminal', reason: 'upstream_closed' });
+        } finally { releaseStop(); registration.dispose(); unsubscribe(); await created.operations.resetOrDisposeRuntime(); }
+    });
+    it('admits provider-started native input only under the exact live host Realtime fact, without Queue custody', async () => {
+        const conversation: AgentSessionRealtimeConversation = { inspect: async () => ({ status: 'available', transport: 'webrtc' }),
+            start: async () => ({ status: 'busy' }) };
+        const { created, hookRuntime, emit } = await openSession(undefined, [], undefined, false, conversation);
+        const unsubscribe = created.operations.subscribeRuntimeEvents(() => undefined);
+        const lifetime = new AbortController();
+        const admission = { admissionId: 'native-input-1', occurrenceId: 'native-occurrence-1', attemptId: 'voice-attempt-1' };
+        const caller = { kind: 'session' as const, sessionId: 'applied-reader', starterDepth: 0, turnDepth: 0 };
+        let sequence = 0;
+        const start = (turnId: string) => emit({ kind: 'turn-start', sequence: ++sequence, sessionId: 'applied-reader',
+            emittedAtMs: sequence, turnId, startedBy: 'provider' });
+        const complete = (turnId: string) => emit({ kind: 'turn-complete', sequence: ++sequence, sessionId: 'applied-reader',
+            emittedAtMs: sequence, turnId });
+        try {
+            start('unadmitted');
+            expect(created.operations.readActiveTurnAdmissionWitness?.()).toBeNull();
+            complete('unadmitted');
+            expect(hookRuntime.admitAgentSessionRealtimeInput?.({ admission, conversation, agentStartCaller: { ...caller, sessionId: 'another-session' },
+                signal: lifetime.signal })).toBeNull();
+            const admitted = hookRuntime.admitAgentSessionRealtimeInput?.({ admission, conversation, agentStartCaller: caller, signal: lifetime.signal });
+            start('native-voice-turn');
+            expect(created.operations.readActiveTurnAdmissionWitness?.()).toMatchObject({
+                inputId: admission.admissionId, turnId: 'native-voice-turn', userMessageSeq: null, userMessageSeqs: [],
+                nativeRealtimeAdmission: admission, agentStartCaller: caller,
+            });
+            expect(created.operations.readTurnStartingInputId?.('native-voice-turn')).toBeNull();
+            complete('native-voice-turn');
+            // One admitted attempt covers successive speech turns, not an invented Queue item per utterance.
+            start('next-native-voice-turn');
+            expect(created.operations.readActiveTurnAdmissionWitness?.()?.inputId).toBe(admission.admissionId);
+            lifetime.abort();
+            expect(created.operations.readActiveTurnAdmissionWitness?.()).toBeNull();
+            admitted?.dispose();
+            complete('next-native-voice-turn');
+            start('after-end');
+            expect(created.operations.readActiveTurnAdmissionWitness?.()).toBeNull();
+        } finally { unsubscribe(); await created.operations.resetOrDisposeRuntime(); }
+    });
+    it('keeps native realtime reachable through the real host adapter and retires it with the Session', async () => {
+        // The native Agent is the external executable boundary; all host adapters,
+        // authority resolution and Session RPC dispatch below remain real.
+        const realtimeConversation: AgentSessionRealtimeConversation = {
+            inspect: async () => ({ status: 'available', transport: 'webrtc' }),
+            start: async () => ({ status: 'busy' }),
+        };
+        const { created, hookRuntime, session, agentId } = await openSession(undefined, [], undefined, false, realtimeConversation);
+        const provider = { pluginId: 'acme.agent-plugin', localId: 'realtime' };
+        const policyAgentRef = { pluginId: provider.pluginId, localId: agentId };
+        const retirement = new AbortController();
+        const authority = createAgentSessionRealtimeVoiceAuthority({
+            occurrenceId: 'native-realtime-owner', policyAgentRef, isAgentRuntimeCurrent: () => true,
+            providers: [{ provider, occurrenceId: 'native-realtime-provider', isCurrent: () => true, retirementSignal: retirement.signal,
+                declaration: { id: provider.localId, title: 'Native realtime', kind: 'conversation', roles: ['realtime_conversation'], platforms: ['web'],
+                    capabilities: { turn: { cancelResponse: false, bargeIn: false }, tools: { effectCalls: 'none' } },
+                    execution: { kind: 'experimental_agent_session_realtime', agent: policyAgentRef },
+                    client: { artifactId: 'voice-runtime', exportName: 'activate' } },
+            }],
+        });
+        const registration = registerAgentSessionRealtimeVoiceRpc({
+            rpc: session.rpcHandlerManager, runtime: hookRuntime, getHappierSessionId: () => session.sessionId,
+            ownerId: 'native-realtime-owner', agentGeneration: authority.occurrenceId,
+            isOccurrenceCurrent: authority.isCurrent, resolveProviderOccurrenceId: authority.resolveProviderOccurrenceId,
+            resolveRetirementSignal: authority.resolveRetirementSignal, resolveConversation: authority.resolveConversation,
+        });
+        const inspect = () => session.rpcHandlerManager.invokeLocal(SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_INSPECT, { v: 1, provider });
+        try {
+            await expect(inspect()).resolves.toMatchObject({ ok: true, status: 'available', transport: 'webrtc' });
+            await created.operations.resetOrDisposeRuntime('runtime_recovery');
+            await expect(inspect()).resolves.toMatchObject({ ok: false, reason: 'unsupported_runtime' });
+            await created.operations.resetOrDisposeRuntime('runtime_recovery', { kind: 'create' });
+            await expect(inspect()).resolves.toMatchObject({ ok: true, status: 'available', transport: 'webrtc' });
+            retirement.abort();
+            await expect(inspect()).resolves.toMatchObject({ ok: false, reason: 'unsupported_runtime' });
+        } finally {
+            registration.dispose();
+            await created.operations.resetOrDisposeRuntime();
+        }
+    });
+
     it.each([
         { scopes: ['workspace'], nativeScope: false, expectedScope: 'workspace' },
         { scopes: ['personal', 'workspace'], nativeScope: false, expectedScope: 'workspace' },
@@ -114,8 +264,12 @@ describe('native accepted-open applied selection', () => {
         const unsubscribe = created.operations.subscribeRuntimeEvents(() => undefined);
         try {
             await created.operations.sendTurnPrompt('request', { turnId: 'scope-turn', localId: 'scope-input' });
+            // The native boundary proves input custody before its turn starts,
+            // as the production Agent adapters do; `send` alone grants no witness.
+            emit({ kind: 'input-accepted', sequence: 0, sessionId: 'applied-reader', emittedAtMs: 98,
+                inputIds: ['scope-input'], delivery: { kind: 'newTurn', turnId: 'scope-turn' } });
             emit({ kind: 'turn-start', sequence: 1, sessionId: 'applied-reader', emittedAtMs: 99,
-                turnId: 'scope-turn', startedBy: 'provider' });
+                turnId: 'scope-turn', startedBy: 'host' });
             emit({ kind: 'usage-observed', sequence: 2, sessionId: 'applied-reader', emittedAtMs: 100,
                 turnId: 'scope-turn', observationId: 'scope-observation', source: 'native', scope: 'turn_delta', modelId: 'model',
                 ...(nativeScope ? { attribution: { v: 1, turnId: 'scope-turn', source: { kind: 'native',

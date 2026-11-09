@@ -23,6 +23,7 @@ describe('origin workflow current-state pull', () => {
   const accountId = 'account-1';
   const runId = 'run-1';
   const run: WorkflowRunSummaryV1 = { sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null,
+    failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
     id: runId, origin: { kind: 'direct', originSessionId: 'origin' }, machineId: 'machine',
     state: 'succeeded', revision: 5, workflowCustodyState: 'settled', originDeliveryAckRevision: 0,
     attentionRequired: false, createdAt: '2026-09-30T00:00:00.000Z', updatedAt: '2026-09-30T00:00:00.000Z',
@@ -160,38 +161,59 @@ describe('origin workflow current-state pull', () => {
 
   it.each(['machine', 'origin-machine'])('pulls current state without claiming custody and acknowledges only provider acceptance on %s', async (originMachineId) => {
     const operations: Readonly<Record<string, unknown>>[] = [];
+    const counts = () => operations.reduce<Record<string, number>>((result, operation) => {
+      const key = String(operation.operation);
+      result[key] = (result[key] ?? 0) + 1;
+      return result;
+    }, {});
+    let acknowledgedRevision = 0;
     const port = createWorkflowOriginContextInputPort({ ...dispatchBoundary, accountId, originSessionId: 'origin', machineId: originMachineId,
       resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
       // The real storage owner is an HTTP/database system boundary; sealed bytes stay opaque here.
       storage: { execute: async (operation) => {
         operations.push(operation);
         if (operation.operation === 'run-key.census') return plainCensus;
-        if (operation.operation === 'delivery.pull') return { runs: [{ run, acceptedEnvelope, resultEnvelope, checkpointEnvelope: null, invocations: [] }] };
-        if (operation.operation === 'get') return { run, acceptedEnvelope, resultEnvelope };
+        if (operation.operation === 'delivery.pull') return { runs: [{ run: { ...run, originDeliveryAckRevision: acknowledgedRevision }, acceptedEnvelope, resultEnvelope, checkpointEnvelope: null, invocations: [] }] };
+        if (operation.operation === 'get') return { run: { ...run, originDeliveryAckRevision: acknowledgedRevision }, acceptedEnvelope, resultEnvelope };
         if (operation.operation === 'invocations.get') return { invocation: { index: producerIndex, contentEnvelope: producerEnvelope } };
-        if (operation.operation === 'delivery.ack') return { acknowledgedRevision: operation.revision };
+        if (operation.operation === 'delivery.ack') {
+          acknowledgedRevision = Number(operation.revision);
+          return { acknowledgedRevision };
+        }
         throw new Error('unexpected custody/input mutation');
       } },
       onError: (error) => { throw error; },
     });
     const signal = new AbortController().signal;
     expect(await port.take(signal)).toBeNull();
-    const input = (await port.prepareWorkerUpdates!({ signal, maxUtf8Bytes: 65536 }))[0];
+    expect(counts()).toEqual({ 'delivery.pull': 1, 'run-key.census': 1, 'invocations.get': 1 });
+    operations.length = 0;
+    const prepared = await port.prepareWorkerUpdates!({ signal, maxUtf8Bytes: 65536 });
+    expect(prepared).toHaveLength(1);
+    const input = prepared[0];
     expect(input).toMatchObject({ update: { result: expect.stringContaining('current final result'),
       headline: expect.stringContaining('follow-up-run'), ownerState: 'succeeded' } });
     expect(operations.some((operation) => operation.operation === 'delivery.ack')).toBe(false);
+    expect(counts()).toEqual({ 'delivery.pull': 1, 'run-key.census': 1, 'invocations.get': 1 });
     if (!input) throw new Error('expected natural-turn worker update');
+    operations.length = 0;
     expect(await input.recheckAdmission(signal)).toBe(true);
+    expect(counts()).toEqual({ get: 1, 'run-key.census': 1 });
+    operations.length = 0;
     input.acknowledgeAccepted();
-    await port.prepareWorkerUpdates!({ signal, maxUtf8Bytes: 65536 });
+    expect(await port.prepareWorkerUpdates!({ signal, maxUtf8Bytes: 65536 })).toEqual([]);
+    expect(counts()).toEqual({ 'delivery.ack': 1, 'delivery.pull': 1, 'run-key.census': 1 });
     expect(operations.filter((operation) => operation.operation === 'delivery.ack')).toEqual([
       { operation: 'delivery.ack', runId, revision: 5 },
     ]);
+    operations.length = 0;
     expect(await port.take(signal)).toBeNull();
+    // The acknowledged result causes no repeated producer detail demand or publication.
+    expect(counts()).toEqual({ 'delivery.pull': 1, 'run-key.census': 1 });
   });
 
   it('rechecks the current Run so an old attention update is never admitted after resolution', async () => {
-    let current = { ...run, state: 'running' as const, attentionRequired: true };
+    let current = { ...run, state: 'running' as const, attentionRequired: true, invocationAttentionRequired: true };
     const port = createWorkflowOriginContextInputPort({ ...dispatchBoundary, accountId, originSessionId: 'origin', machineId: 'machine',
       resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
       storage: { execute: async (operation) => operation.operation === 'run-key.census' ? plainCensus : operation.operation === 'delivery.pull'
@@ -203,7 +225,7 @@ describe('origin workflow current-state pull', () => {
     const input = (await port.prepareWorkerUpdates!({ signal, maxUtf8Bytes: 65536 }))[0];
     expect(input?.update.wake).toBe('needs_you');
     expect(await port.take(signal)).toMatchObject({ kind: 'worker_update', update: { ownerState: 'running', wake: 'needs_you' } });
-    current = { ...current, attentionRequired: false };
+    current = { ...current, attentionRequired: false, invocationAttentionRequired: false };
     expect(await input?.recheckAdmission(signal)).toBe(false);
     expect(await port.take(signal)).toBeNull();
   });
@@ -213,7 +235,7 @@ describe('origin workflow current-state pull', () => {
     { resetAtMs: null, state: 'failed' as const, attentionRequired: false, lifecycle: 'failed' as const },
     { resetAtMs: 1_800_000, state: 'waiting_for_review' as const, attentionRequired: true, lifecycle: 'waiting_for_review' as const },
   ])('delivers the actual failed leaf issue through sealed progress and the WorkerUpdate reader ($state, reset $resetAtMs)', async ({ resetAtMs, state, attentionRequired, lifecycle }) => {
-    const failedRun = { ...run, state, attentionRequired };
+    const failedRun = { ...run, state, attentionRequired, invocationAttentionRequired: attentionRequired };
     const runtimeIssueV1 = { v: 1 as const, scope: 'primary_session' as const, status: 'failed' as const,
       source: 'usage_limit' as const, code: 'usage_limit', occurredAt: 1000,
       usageLimit: { v: 1 as const, resetAtMs, retryAfterMs: null, quotaScope: 'provider' as const, recoverability: 'wait' as const } };
@@ -274,8 +296,10 @@ describe('origin workflow current-state pull', () => {
       binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId }, acceptedSnapshot: { ...opened.content,
         authorization: { ...opened.content.authorization, admittedPermissionCeiling: ceiling, ...(sourceAuthority ? { sourceAuthority } : {}) } } }));
     const restored: string[] = [];
+    let dispatchReads = 0;
     const port = createWorkflowOriginContextInputPort({ accountId, originSessionId: 'origin', machineId: 'machine',
-      readDispatchFact: async () => dispatched ? 'dispatched' : 'not_dispatched', onDispatchedInput: (input) => { restored.push(input.localInputId); },
+      readDispatchFact: async () => { dispatchReads++; return dispatched ? 'dispatched' : 'not_dispatched'; },
+      onDispatchedInput: (input) => { restored.push(input.localInputId); },
       resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
       storage: { execute: async (operation) => {
         if (operation.operation === 'run-key.census') return plainCensus;
@@ -292,6 +316,12 @@ describe('origin workflow current-state pull', () => {
     if (dispatched) {
       expect(await port.take(signal)).toBeNull();
       expect(restored).toContain(localInputId);
+      // A positive host dispatch settles this offer. Later native-boundary
+      // probes must not retain it as outstanding work or read its history again.
+      expect(await port.isWorkflowStepDeliverable!({ localInputId })).toBe(false);
+      expect(await port.isWorkflowStepDeliverable!({ localInputId })).toBe(false);
+      expect(dispatchReads).toBe(1);
+      expect(restored).toEqual([localInputId]);
     } else {
       const input = await port.take(signal);
       expect(input).toMatchObject({ kind: 'workflow_step', localInputId,

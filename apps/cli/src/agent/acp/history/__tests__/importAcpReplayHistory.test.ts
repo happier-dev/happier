@@ -5,6 +5,8 @@ import type { AcpReplayHistorySessionClient } from '@/agent/acp/sessionClient';
 import type { TranscriptSessionPort } from '@/api/session/transcriptPort';
 import type { Metadata } from '@/api/types';
 import { CHANGE_TITLE_INSTRUCTION } from '@/agent/runtime/changeTitleInstruction';
+import { AcpReplayCapture } from '../acpReplayCapture';
+import { vi } from 'vitest';
 
 function createFakeSession(params?: {
   existing?: Array<{ role: 'user' | 'agent'; text: string }>;
@@ -60,6 +62,79 @@ function createFakeSession(params?: {
 }
 
 describe('importAcpReplayHistoryV1', () => {
+  it.each([false, true])('imports tool/media tails immediately after an existing text overlap (new reply: %s)', async reply => {
+    const { session, calls } = createFakeSession({ existing: [{ role: 'user', text: 'inspect' }] });
+    const sendAgentSessionMediaCommitted = vi.fn(async () => {});
+    const capture = new AcpReplayCapture();
+    capture.handleUpdate({ sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'inspect' } });
+    capture.handleUpdate({ sessionUpdate: 'tool_call', toolCallId: 'read-image', title: 'Read image', kind: 'read', rawInput: {} });
+    capture.handleUpdate({ sessionUpdate: 'tool_call_update', toolCallId: 'read-image', status: 'completed', content: [
+      { type: 'content', content: { type: 'image', mimeType: 'image/png', data: 'aW1hZ2U=' } },
+    ] });
+    if (reply) capture.handleUpdate({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'done' } });
+    await importAcpReplayHistoryV1({ session: { ...session, sendAgentSessionMediaCommitted }, provider: 'opencode', remoteSessionId: 'tail-images',
+      replay: capture.finalize(), permissionHandler: { handleToolCall: () => { throw new Error('No divergence'); } } as never });
+    expect(calls.sendUser).toBe(0);
+    expect(calls.agentCommitted).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'tool-call', callId: 'read-image' }),
+      expect.objectContaining({ type: 'tool-result', callId: 'read-image' }),
+    ]));
+    expect(sendAgentSessionMediaCommitted).toHaveBeenCalledTimes(1);
+    expect(sendAgentSessionMediaCommitted).toHaveBeenCalledWith('opencode', expect.objectContaining({ category: 'tool-artifact' }));
+  });
+
+  it.each([true, false])('keeps standard tool images out of the text result with a user turn: %s', async includeUser => {
+    const { session, calls } = createFakeSession();
+    const sendAgentSessionMediaCommitted = vi.fn(async () => {});
+    const data = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jP0cAAAAASUVORK5CYII=';
+    const capture = new AcpReplayCapture();
+    if (includeUser) capture.handleUpdate({ sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'inspect' } });
+    capture.handleUpdate({ sessionUpdate: 'tool_call', toolCallId: 'read-image', title: 'Read image', kind: 'read', rawInput: {} });
+    capture.handleUpdate({ sessionUpdate: 'tool_call_update', toolCallId: 'read-image', status: 'completed', content: [
+      { type: 'content', content: { type: 'text', text: 'image result' } },
+      { type: 'content', content: { type: 'image', mimeType: 'image/png', data } },
+    ] });
+    await importAcpReplayHistoryV1({ session: { ...session, sendAgentSessionMediaCommitted }, provider: 'opencode', remoteSessionId: 'tool-images',
+      replay: capture.finalize(), permissionHandler: { handleToolCall: () => { throw new Error('No divergence'); } } as never });
+    expect(JSON.stringify(calls.agentCommitted)).not.toContain(data);
+    expect(JSON.stringify(calls.agentCommitted)).toContain('image result');
+    expect(sendAgentSessionMediaCommitted).toHaveBeenCalledWith('opencode', expect.objectContaining({
+      category: 'tool-artifact', media: [expect.objectContaining({ source: { kind: 'base64', data, mimeType: 'image/png' },
+        origin: { source: 'tool-output', toolCallId: 'read-image' } })],
+    }));
+  });
+
+  it('preserves unavailable resource images explicitly with partial item coverage', async () => {
+    const { session } = createFakeSession();
+    const sendAgentSessionMediaCommitted = vi.fn(async () => {});
+    await importAcpReplayHistoryV1({ session: { ...session, sendAgentSessionMediaCommitted }, provider: 'opencode', remoteSessionId: 'missing-images',
+      replay: [{ type: 'message', role: 'user', text: '', content: [{ type: 'resource_link', mimeType: 'image/png', uri: 'https://example.com/image.png' }] }],
+      permissionHandler: { handleToolCall: () => { throw new Error('No divergence'); } } as never });
+    expect(sendAgentSessionMediaCommitted).toHaveBeenCalledWith('opencode', expect.objectContaining({
+      role: 'input', media: [], failures: [expect.objectContaining({ code: 'http_uri_unavailable' })],
+      messageText: expect.stringMatching(/image unavailable/i), meta: expect.objectContaining({ importedHistoryCoverage: 'partial' }),
+    }));
+  });
+
+  it('imports captured image-only and mixed user history through Session media custody', async () => {
+    const { session, calls } = createFakeSession();
+    const sendAgentSessionMediaCommitted = vi.fn(async () => {});
+    const capture = new AcpReplayCapture();
+    const data = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jP0cAAAAASUVORK5CYII=';
+    capture.handleUpdate({ sessionUpdate: 'user_message_chunk', content: { type: 'image', mimeType: 'image/png', data } });
+    capture.handleUpdate({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'first reply' } });
+    capture.handleUpdate({ sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'inspect' } });
+    capture.handleUpdate({ sessionUpdate: 'user_message_chunk', content: { type: 'image', mimeType: 'image/png', data } });
+    await importAcpReplayHistoryV1({ session: { ...session, sendAgentSessionMediaCommitted }, provider: 'opencode', remoteSessionId: 'image-history',
+      replay: capture.finalize(), permissionHandler: { handleToolCall: () => { throw new Error('No divergence'); } } as never });
+    expect(sendAgentSessionMediaCommitted.mock.calls).toEqual([
+      ['opencode', expect.objectContaining({ role: 'input', category: 'attachment', messageText: '', media: [expect.objectContaining({ source: { kind: 'base64', data, mimeType: 'image/png' } })] })],
+      ['opencode', expect.objectContaining({ role: 'input', category: 'attachment', messageText: 'inspect' })],
+    ]);
+    expect(calls.sendUser).toBe(0);
+    expect(calls.enqueueAgent).toBe(1);
+  });
+
   it('does not prompt when Gemini replay includes the exact predecessor title suffix', async () => {
     // Captured from ../0.2 HEAD 37a6541578749067b49d4579be8c752c9591b8c8; independent of the current live producer.
     const legacySuffix = `Before you respond, call the change-title tool once to set (or update) a short, descriptive session title based on the user's message.

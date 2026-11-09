@@ -72,10 +72,6 @@ function parseExtensionParams<Params>(parser: ParamsParser<Params>, value: unkno
   }
 }
 
-function wrapExtensionParamsParser<Params>(parser: ParamsParser<Params>): ParamsParser<Params> {
-  return { parse: (value) => parseExtensionParams(parser, value) };
-}
-
 export function defineAcpExtensionRequest<Params, Response>(
   definition: Readonly<{
     method: string;
@@ -90,7 +86,7 @@ export function defineAcpExtensionRequest<Params, Response>(
     kind: 'request',
     method: definition.method,
     register: (app, createContext) => {
-      app.onRequest(definition.method, wrapExtensionParamsParser(definition.params), (context) => (
+      app.onRequest(definition.method, { parse: value => parseExtensionParams(definition.params, value) }, (context) => (
         definition.handler(
           context.params,
           createContext(definition.method, context.signal, context.requestId ?? undefined),
@@ -112,7 +108,7 @@ export function defineAcpExtensionNotification<Params>(definition: Readonly<{
     kind: 'notification',
     method: definition.method,
     register: (app, createContext) => {
-      app.onNotification(definition.method, wrapExtensionParamsParser(definition.params), (context) => (
+      app.onNotification(definition.method, { parse: value => parseExtensionParams(definition.params, value) }, (context) => (
         definition.handler(context.params, createContext(definition.method, context.signal))
       ));
     },

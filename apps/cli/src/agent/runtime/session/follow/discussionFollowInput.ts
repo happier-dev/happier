@@ -1,5 +1,5 @@
 import { countDocPassageThreadsV1 } from '@happier-dev/protocol/actions/executor/docCollaborationActions';
-import { docPassageEditTargetV1 } from '@happier-dev/protocol/artifacts/artifactPassageV1';
+import { captureDocPassageV1, docPassageEditTargetV1, locateDocPassageThreadV1 } from '@happier-dev/protocol/artifacts/artifactPassageV1';
 import { readDiscussionInputMessages, readDiscussionInputQuestion } from '@/discussions/readDiscussionInputMessages';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -179,47 +179,53 @@ export function createDiscussionFollowInputIntake(input: Readonly<{
       if (passage && (!rootSource || passage.ref.artifactId !== rootSource.ref.artifactId)) return false;
       if (root.messageRef.discussion.serverId !== binding.serverId
         || root.messageRef.discussion.discussionId !== addressing.discussionId) return false;
-      // A redo can carry a newer committed basis than the original thread root.
       // Stored labels belong to the creator's device. Only the exact admitted
       // row's current Home qualifies the compact card and its subsequent reads.
-      const source = rootSource ? { ref: { ...rootSource.ref, serverId: root.messageRef.discussion.serverId },
-        revision: passage?.revision ?? rootSource.revision } : null;
+      const source = rootSource ? { ref: { ...rootSource.ref, serverId: root.messageRef.discussion.serverId } } : null;
       // A typed Doc payload must never fall back to serializing its sealed source.
       if (passage && !source) return false;
+      const attachedPassage = passage ?? (root.content && 'kind' in root.content
+        ? root.content.kind === 'doc_passage_comment' ? root.content.passage
+          : root.content.kind === 'doc_edit_proposal' ? root.content.proposal.target : null : null);
+      let currentPassage: typeof attachedPassage = null;
       let doc: Readonly<{ docRef: NonNullable<typeof source>['ref']; title: string | null;
-        revision: NonNullable<typeof source>['revision']; openCommentCount: number | null; threadRef: typeof question.messageRef }> | undefined;
+        revision: NonNullable<typeof rootSource>['revision']; openCommentCount: number | null; threadRef: typeof question.messageRef }> | undefined;
       if (source) {
-        let header: Awaited<ReturnType<typeof artifacts.readHeader>>;
+        let artifact: Awaited<ReturnType<typeof artifacts.read>>;
         try {
-          header = await runWithServerHttpBaseUrl(binding.serverUrl, () => artifacts.readHeader(source.ref.artifactId,
-            { signal, prepareRecipients: false }));
+          artifact = await runWithServerHttpBaseUrl(binding.serverUrl, () => artifacts.read(source.ref.artifactId,
+            { signal, prepareRecipients: false, includeSharedAudience: false }));
         } catch {
           signal.throwIfAborted();
           return false;
         }
-        if (!header || header.header.title !== undefined && typeof header.header.title !== 'string') return false;
+        if (!artifact || typeof artifact.body !== 'string'
+          || artifact.header.title !== undefined && typeof artifact.header.title !== 'string') return false;
+        if (attachedPassage) {
+          const { location } = locateDocPassageThreadV1({ target: attachedPassage, source: artifact.body,
+            revision: artifact.revision, messages, purpose: 'propose' });
+          if (location.state !== 'detached') currentPassage = captureDocPassageV1({ ref: source.ref,
+            revision: artifact.revision, source: artifact.body, range: location.range });
+        }
         const openCommentCount = await countDocPassageThreadsV1(source.ref,
           { surface: 'cli', authority: 'account_automation', serverId: binding.serverId, signal }, discussionAction);
-        doc = { docRef: source.ref, title: typeof header.header.title === 'string' ? header.header.title : null, revision: source.revision,
+        doc = { docRef: source.ref, title: typeof artifact.header.title === 'string' ? artifact.header.title : null, revision: artifact.revision,
           openCommentCount, threadRef: root.messageRef };
       }
-      // A plain reply inherits the passage attached to its admitted thread root.
-      // Preserve that quoted version as source data, without fetching the Doc body
-      // or presenting the historical attachment as the document's current text.
-      const attachedPassage = passage ?? (root.content && 'kind' in root.content
-        ? root.content.kind === 'doc_passage_comment' ? root.content.passage
-          : root.content.kind === 'doc_edit_proposal' ? root.content.proposal.target : null : null);
+      // Historical proposals are conversation context, never the next edit's basis.
+      // Recapture through the proposal placement owner so surrounding human edits survive.
+      const contextPassage = currentPassage ?? attachedPassage;
       if (doc) discussionContext.push({ kind: 'host_reference_metadata', text: JSON.stringify({ doc,
-        ...(attachedPassage ? { documentPassage: {
-          revision: attachedPassage.revision, quote: attachedPassage.quote,
-          ...(attachedPassage.prefix === undefined ? {} : { prefix: attachedPassage.prefix }),
-          ...(attachedPassage.suffix === undefined ? {} : { suffix: attachedPassage.suffix }),
+        ...(contextPassage ? { documentPassage: {
+          revision: contextPassage.revision, quote: contextPassage.quote,
+          ...(contextPassage.prefix === undefined ? {} : { prefix: contextPassage.prefix }),
+          ...(contextPassage.suffix === undefined ? {} : { suffix: contextPassage.suffix }),
         } } : {}),
         suggestEdit: { actionId: 'doc.edit.propose', discussionRef: doc.threadRef.discussion,
-          ...(attachedPassage?.prefix !== undefined && attachedPassage.suffix !== undefined
-            ? { before: docPassageEditTargetV1(attachedPassage).quote,
-              beforeWithSelection: `${attachedPassage.prefix}<selected_passage>${attachedPassage.quote}</selected_passage>${attachedPassage.suffix}` } : {}),
-          replacementScope: 'Supply the complete paragraph(s) in suggestEdit.before as after, editing the selected span and keeping all text outside it verbatim unless the request asks otherwise. suggestEdit.beforeWithSelection marks the person\'s highlight with <selected_passage> tags; omit those annotation tags from after. documentPassage.quote is the selected text. after replaces the entire before verbatim. These are the attached version, not a claim about current document text. If before is absent or the Doc changed, use doc.read and apply the same selection-only edit to the complete current paragraph(s) containing the passage.',
+          ...(currentPassage
+            ? { before: docPassageEditTargetV1(currentPassage).quote,
+              beforeWithSelection: `${currentPassage.prefix}<selected_passage>${currentPassage.quote}</selected_passage>${currentPassage.suffix}` } : {}),
+          replacementScope: 'Supply the complete paragraph(s) in suggestEdit.before as after, editing the selected span and keeping all text outside it verbatim unless the request asks otherwise. suggestEdit.beforeWithSelection marks the person\'s highlight with <selected_passage> tags; omit those annotation tags from after. documentPassage.quote is the selected text. after replaces the entire before verbatim. before is captured from the current Doc at intake; historical suggestions are not its basis. If before is absent or the Doc changed, use doc.read and apply the same selection-only edit to the complete current paragraph(s) containing the passage.',
         },
       }) });
       // Keep selected identity in the incumbent Pending metadata so dispatch

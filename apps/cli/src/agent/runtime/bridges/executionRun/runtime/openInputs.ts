@@ -38,6 +38,8 @@ export type ResolvedExecutionRunChildSelection = Readonly<{
     teamCredentialModel?: TeamCredentialProviderModelSelectionV1;
     connectedServices?: ConnectedServiceBindingsV2 | null;
     selectionSource: 'explicit' | 'inherited' | 'independent' | 'retained';
+    /** Transient model intent; lifecycle provenance remains independent. */
+    modelSelectionSource?: 'explicit' | 'inherited';
     inheritedFromDifferentAgent: boolean;
 }>;
 
@@ -119,9 +121,10 @@ export function resolveExecutionRunChildSelection(input: ExecutionRunChildSelect
                 throw new Error('Account default choice conflicts with an explicit child selection');
             }
             return { ...resolveExecutionRunChildSelectionInput({ ...input, lifecycle: 'independent',
-                modelSelection: input.agentDefaultSelection ?? null }), selectionSource: 'explicit' };
+                modelSelection: input.agentDefaultSelection ?? null }), selectionSource: 'explicit', modelSelectionSource: 'explicit' };
         }
-        return resolveExecutionRunChildSelectionInput(input);
+        return { ...resolveExecutionRunChildSelectionInput(input),
+            modelSelectionSource: input.modelId?.trim() || input.modelSelection || input.teamCredentialModel ? 'explicit' : 'inherited' };
     } catch (error) {
         if (error && typeof error === 'object' && 'code' in error && error.code === 'execution_run_child_choice_required') {
             Object.assign(error, { details: { childChoice: projectExecutionRunChildChoiceV1({
@@ -252,6 +255,7 @@ function resolveExecutionRunModelInput(input: Readonly<{
 export function buildExecutionRunConfiguration(input: Readonly<{
     backendTarget: BackendTargetRefV2Input;
     modelId?: string;
+    modelSelectionSource?: ResolvedExecutionRunChildSelection['modelSelectionSource'];
     modelSelection?: ProviderBoundModelRef | null;
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
     acpSessionModeId?: string;
@@ -274,6 +278,7 @@ export function buildExecutionRunConfiguration(input: Readonly<{
         model: {
             value: selectedModelId,
             updatedAtMs: selectedModelId === null ? 0 : input.updatedAtMs,
+            selectionSource: input.modelSelectionSource ?? 'inherited',
         },
         permissionIntent: {
             value: permissionMode(input.permissionMode),

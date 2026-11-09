@@ -3,6 +3,7 @@ import { ExecutionRunResultContractV1Schema } from '@happier-dev/protocol/execut
 
 import type {
   ExecutionRunIntentProfile,
+  ExecutionRunProfileBoundedCompleteParams,
   ExecutionRunProfileBoundedCompleteResult,
 } from '../ExecutionRunIntentProfile';
 import { buildExecutionRunResultContractPrompt, decodeExecutionRunProfileResult, normalizeExecutionRunProfileResultContract } from '@happier-dev/protocol/execution/runs/resultContract';
@@ -30,10 +31,23 @@ function invalidAgentOutput(): ExecutionRunProfileBoundedCompleteResult {
   };
 }
 
+function completeAgentTurn({ start, rawText }: ExecutionRunProfileBoundedCompleteParams): ExecutionRunProfileBoundedCompleteResult {
+  const decoded = decodeExecutionRunProfileResult(
+    rawText,
+    readResultContract(start.intentInput, start.resultContract),
+  );
+  if (!decoded.ok) return invalidAgentOutput();
+  return {
+    status: 'succeeded',
+    summary: typeof decoded.value === 'string' ? decoded.value : JSON.stringify(decoded.value),
+    toolResultOutput: decoded.value,
+  };
+}
+
 export const AgentProfile: ExecutionRunIntentProfile = {
   intent: 'agent',
   supportsDetached: true,
-  transcriptMaterialization: 'none',
+  transcriptMaterialization: 'completion',
   prepareStartParams: ({ request }) => {
     const input = readAgentIntentInput(request.intentInput);
     const resultContract = normalizeExecutionRunProfileResultContract(
@@ -61,16 +75,6 @@ export const AgentProfile: ExecutionRunIntentProfile = {
     if (resultPrompt) blocks.push(resultPrompt);
     return blocks.filter(Boolean).join('\n\n');
   },
-  onBoundedComplete: ({ start, rawText }) => {
-    const decoded = decodeExecutionRunProfileResult(
-      rawText,
-      readResultContract(start.intentInput, start.resultContract),
-    );
-    if (!decoded.ok) return invalidAgentOutput();
-    return {
-      status: 'succeeded',
-      summary: typeof decoded.value === 'string' ? decoded.value : JSON.stringify(decoded.value),
-      toolResultOutput: decoded.value,
-    };
-  },
+  onBoundedComplete: completeAgentTurn,
+  onTurnComplete: completeAgentTurn,
 };

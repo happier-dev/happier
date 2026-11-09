@@ -272,6 +272,7 @@ export function createAgentExternalSessionsExecutionSurface(
                 ...(request.projection ? { projection: request.projection } : {}),
                 source: toAgentSource(request.source, 'pageTranscript'),
                 remoteSessionId: request.remoteSessionId,
+                ...(request.sourceItemId === undefined ? {} : { sourceItemId: request.sourceItemId }),
                 direction: request.direction,
                 maxItems: request.maxItems,
                 ...invocation(

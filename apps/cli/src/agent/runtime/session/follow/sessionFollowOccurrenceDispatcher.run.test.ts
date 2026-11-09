@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { afterEach, expect, it, vi } from 'vitest';
-import { createSessionFollowOccurrenceDispatcher } from './sessionFollowOccurrenceDispatcher';
+import { createSessionFollowOccurrenceDispatcher } from './sessionFollowOccurrenceDispatcher.testkit';
 import { createAccountRunFollowRoutes } from './accountRunFollowRoutes';
 import { createAccountEncryptionCurrentnessFixture, createSessionNotificationContextFixture } from '@/testkit/backends/sessionFixtures';
 import { SessionFollowInputV1Schema, deriveSessionFollowInputLocalIdV1, resolveExecutionRunFollowOccurrenceV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';

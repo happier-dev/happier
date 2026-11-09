@@ -1,14 +1,19 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { join, resolve } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
+import type { ScmDiffSummaryResultRevisionHint } from '@happier-dev/protocol/scm/diffSummaryResult';
 import { readdir, rm, stat } from 'node:fs/promises';
 import { z } from 'zod/mini';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { ScmDiffSummaryGenerateOutputSchema, ScmDiffSummaryOutputKindSchema, normalizeScmDiffSummaryModelOutput, ScmReviewExplanationTargetsSchema, ScmReviewExplanationRequesterSchema, ScmDiffSummaryModelOutputSchema } from '@happier-dev/protocol/scm/diffSummary';
-import { ScmDiffSummaryResultSchema, ScmDiffSummaryResultEditSchema, ScmWalkthroughProvenanceSchema } from '@happier-dev/protocol/scm/diffSummaryResult';
+import { ScmDiffSummaryResultSchema, ScmDiffSummaryResultEditSchema, ScmWalkthroughProvenanceSchema, ScmDiffSummarySavedResultItemSchema } from '@happier-dev/protocol/scm/diffSummaryResult';
+import { scmComparisonSourceMatches } from '@happier-dev/protocol/scm/comparison';
+import type { ScmDiffSummaryResultListInput } from '@happier-dev/protocol/scm/diffSummaryResult';
 import { ScmCommitPlanAcceptanceSchema, ScmCommitPlanApplicationSchema, isScmCommitPlanApplicationLocked } from '@happier-dev/protocol/scm/diffSummaryCommitPlan';
 import type { ScmDiffSummaryGenerateOutput, ScmDiffSummaryModelOutput, ScmDiffSummaryOutputKind, ScmDiffSummaryOutputs, ScmDiffSummaryResult, ScmDiffSummaryResultEdit, ScmDiffSummaryResultResponse, ScmDiffSummaryResultFailure, ScmDiffSummaryResultDeleteResponse, ScmDiffSummaryGeneratorSelection, ScmDiffSummarySavedResultItem, ScmCommitPlanAcceptance, ScmCommitPlanApplication } from '@happier-dev/protocol';
 import { configuration } from '@/configuration';
+import { daemonPost } from '@/daemon/controlHttp';
 import { prepareCapturedScmComparisonInvestigation, resolveCapturedScmComparisonSource } from '@/scm/comparisons/captureScmComparison';
 import { reviewFindingCitationsSchema, publishReviewFindingCitations, publishFindingCitationMarkdown, validatePublishedFindingCitationMarkdown,
   type ReviewFindingCitations } from '@/agent/executionRuns/profiles/review/reviewFindingCitations';
@@ -40,6 +45,22 @@ const storedSchema = z.strictObject({
 });
 type Stored = z.infer<typeof storedSchema>;
 const storedReadSchema = createStoredReadSchema(storedSchema);
+type AdmittedScope = Readonly<{ cwd: string; sessionId?: string; sourceSessionId?: string }>;
+type ListOptions = Readonly<{ query?: ScmDiffSummaryResultListInput['query'];
+  admitScope?: (scope: AdmittedScope) => Promise<boolean>; signal?: AbortSignal;
+  generation?: Readonly<{ key: string; outputs: readonly ScmDiffSummaryOutputKind[] }> }>;
+const selectionSchema = z.strictObject({ v: z.literal(1), entries: z.array(z.strictObject({
+  item: ScmDiffSummarySavedResultItemSchema,
+  outputs: z.array(z.strictObject({ kind: ScmDiffSummaryOutputKindSchema, state: z.string(), hasValue: z.boolean() })),
+  generationKey: z.optional(z.string()),
+  basis: z.optional(z.strictObject({ baseOid: z.optional(z.string()), headOid: z.optional(z.string()) })),
+})) });
+type Selection = z.infer<typeof selectionSchema>['entries'][number];
+function storedScope(stored: Stored): AdmittedScope {
+  const source = stored.result.output.comparison?.source;
+  return { cwd: stored.cwd, ...(stored.sessionId ? { sessionId: stored.sessionId } : {}),
+    ...(typeof source?.sessionId === 'string' ? { sourceSessionId: source.sessionId } : {}) };
+}
 /** Reconcile the receipt against this same saved result; a known Run supersedes an unknown Start observation. */
 function generationOutput(stored: Stored): ScmDiffSummaryGenerateOutput {
   const output = stored.result.output;
@@ -66,10 +87,10 @@ function resolveStoredCapturedSources(stored: Stored): Stored {
 export type ScmDiffSummaryResultStore = Readonly<{
   admitGeneration(input: Readonly<{ cwd: string; sessionId?: string; key: string; outputs: readonly ScmDiffSummaryOutputKind[]; bypass?: boolean; signal?: AbortSignal }>,
     generate: () => Promise<ScmDiffSummaryGenerateOutput>): Promise<ScmDiffSummaryGenerateOutput>;
-  list(options?: Readonly<{ admitScope?: (scope: Readonly<{ cwd: string; sessionId?: string; sourceSessionId?: string }>) => Promise<boolean> }>): Promise<Readonly<{ results: readonly ScmDiffSummarySavedResultItem[]; count: number; bytes: number }>>;
+  list(options?: ListOptions): Promise<Readonly<{ results: readonly ScmDiffSummarySavedResultItem[]; count: number; bytes: number }>>;
   create(input: Readonly<{ cwd: string; sessionId?: string; output: ScmDiffSummaryGenerateOutput; generator?: ScmDiffSummaryGeneratorSelection;
     pullRequestDraftEvidence?: string }>): Promise<ScmDiffSummaryResult>;
-  read(scope: ScmDiffSummaryResultScope): Promise<ScmDiffSummaryResultResponse>;
+  read(scope: ScmDiffSummaryResultScope, options?: Readonly<{ admitScope: (scope: AdmittedScope) => Promise<boolean> }>): Promise<ScmDiffSummaryResultResponse>;
   prepareInvestigation(scope: ScmDiffSummaryResultScope): Promise<Readonly<{ beforeDirectory: string; afterDirectory: string }>>;
   readStoredScope(scope: ScmDiffSummaryResultScope): Promise<Readonly<{ cwd: string; sessionId?: string; sourceSessionId?: string;
     result: ScmDiffSummaryResult; reviewFindingCitations?: ReviewFindingCitations; pullRequestDraftEvidence?: string }> | null>;
@@ -78,13 +99,11 @@ export type ScmDiffSummaryResultStore = Readonly<{
   delete(input: ScmDiffSummaryResultScope & Readonly<{ expectedRevision: number }>): Promise<ScmDiffSummaryResultDeleteResponse>;
   beginInput(input: ScmDiffSummaryResultScope & InputScope): Promise<ScmDiffSummaryResultResponse>;
   readInput(scope: ScmDiffSummaryResultScope & Readonly<{ inputIds: readonly string[] }>): Promise<z.infer<typeof pendingInputSchema> | null>;
-  beginRefinement(input: ScmDiffSummaryResultScope & Readonly<{ expectedRevision: number; output: ScmDiffSummaryOutputKind;
-    inputId: string; stopIds?: readonly string[] }>): Promise<ScmDiffSummaryResultResponse>;
   abandonInput(input: ScmDiffSummaryResultScope & Readonly<{ inputId: string }>): Promise<void>;
   bindRun(input: ScmDiffSummaryResultScope & Readonly<{ expectedRevision: number; runId: string; seededFromRunId?: string;
     generator?: ScmDiffSummaryGeneratorSelection }>): Promise<ScmDiffSummaryResultResponse>;
   publish(input: ScmDiffSummaryResultScope & Readonly<{ inputId: string; modelOutput: unknown;
-    outputEnvelope?: ScmDiffSummaryGenerateOutput; modelId?: string; runId?: string; generatedAtMs?: number }>): Promise<ScmDiffSummaryResultResponse>;
+    outputEnvelope?: Pick<ScmDiffSummaryGenerateOutput, 'analysis' | 'producer'>; modelId?: string; runId?: string; generatedAtMs?: number }>): Promise<ScmDiffSummaryResultResponse>;
   publishProgress(input: ScmDiffSummaryResultScope & Readonly<{ expectedRevision: number;
     output: ScmDiffSummaryGenerateOutput; preserveUndo?: true; inputId?: string }>): Promise<ScmDiffSummaryResultResponse>;
   beginApplication(input: ScmDiffSummaryResultScope & Readonly<{ expectedRevision: number;
@@ -116,8 +135,61 @@ function preserveWalkthroughEdits(incoming: NonNullable<ScmDiffSummaryModelOutpu
     }) };
 }
 /** Saved domain state. Every machine/session writer rereads under the existing filesystem exclusion owner. */
-export function createScmDiffSummaryResultStore(options: Readonly<{ directory: string }>): ScmDiffSummaryResultStore {
+export function createScmDiffSummaryResultStore(options: Readonly<{ directory: string;
+  onChanged?: (change: ScmDiffSummaryResultRevisionHint) => void }>): ScmDiffSummaryResultStore {
   const directory = options.directory;
+  const selectionPath = join(directory, 'selection.json');
+  async function withSelection<T>(operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    await ensureProtectedLocalStateDirectory(directory);
+    // Result/generation locks may enter this lock; repair never acquires either of them.
+    return withJsonOwnerFileLock({ lockPath: `${selectionPath}.lock`, timeoutMs: Infinity,
+      staleAfterMs: Infinity, errorCode: 'result_unavailable', ...(signal ? { signal } : {}) }, operation);
+  }
+  async function readSelection(): Promise<Selection[]> {
+    try { return selectionSchema.parse(JSON.parse(await readProtectedLocalStateFile(selectionPath))).entries; }
+    catch { return []; } // Rebuildable metadata; canonical result files remain authoritative.
+  }
+  async function writeSelection(entries: Selection[]) {
+    await writeProtectedLocalStateFileAtomic(selectionPath, JSON.stringify({ v: 1, entries }));
+  }
+  function projectSelection(stored: Stored, raw: string, updatedAtMs: number): Selection {
+    const { result } = stored;
+    const comparison = result.output.comparison;
+    if (!comparison) throw new Error('Saved result inventory identity is invalid');
+    const generationKey = !stored.pullRequestDraftEvidence && stored.generation
+      && (!stored.generation.runId || !result.output.runId || stored.generation.runId === result.output.runId)
+      ? stored.generation.key : undefined;
+    return { item: { cwd: stored.cwd, ...(stored.sessionId ? { sessionId: stored.sessionId } : {}),
+      resultId: result.resultId, revision: result.revision, comparisonId: comparison.id,
+      ...(result.output.outputs?.walkthrough?.value ? { title: result.output.outputs.walkthrough.value.title } : {}),
+      source: comparison.source, bytes: Buffer.byteLength(raw, 'utf8'), updatedAtMs },
+      outputs: (['summary', 'walkthrough', 'commitPlan'] as const).flatMap(kind => {
+        const output = result.output.outputs?.[kind];
+        return output ? [{ kind, state: output.state, hasValue: Boolean(output.value) }] : [];
+      }), ...(generationKey ? { generationKey } : {}),
+      ...(comparison.pullRequest ? { basis: { baseOid: comparison.pullRequest.baseOid, headOid: comparison.endpoints.after } } : {}),
+    };
+  }
+  async function inventory(): Promise<Selection[]> {
+    const retained = await readSelection();
+    const files = new Set((await readdir(directory)).filter(entry => /^[a-f0-9-]{36}\.json$/.test(entry)));
+    const entries = retained.filter(entry => files.has(`${entry.item.resultId}.json`));
+    const known = new Set(entries.map(entry => `${entry.item.resultId}.json`));
+    for (const file of files) {
+      if (known.has(file)) continue;
+      try {
+        const raw = await readProtectedLocalStateFile(join(directory, file));
+        const stored = resolveStoredCapturedSources(storedReadSchema.parse(JSON.parse(raw)));
+        if (`${stored.result.resultId}.json` !== file) continue;
+        entries.push(projectSelection(stored, raw, Math.floor((await stat(join(directory, file))).mtimeMs)));
+      } catch { /* A malformed unrelated record cannot hide valid retained results. */ }
+    }
+    if (entries.length !== retained.length || files.size !== known.size) {
+      // Repair failure does not invalidate the canonical records just recovered.
+      await writeSelection(entries).catch(() => undefined);
+    }
+    return entries;
+  }
   function path(id: string) {
     if (!/^[a-f0-9-]{36}$/.test(id)) throw new Error('Saved result identity is invalid');
     return join(directory, `${id}.json`);
@@ -133,11 +205,23 @@ export function createScmDiffSummaryResultStore(options: Readonly<{ directory: s
       throw error;
     }
   }
-  async function save(stored: Stored) {
+  async function save(stored: Stored, publish = true) {
     // Return the same JSON data that readers reload. Optional native members
     // must not escape as undefined into strict Action/approval responses.
     const saved = storedSchema.parse(projectNativeJsonValueForTransport(resolveStoredCapturedSources(stored)));
-    await writeProtectedLocalStateFileAtomic(path(saved.result.resultId), JSON.stringify(saved));
+    await withSelection(async () => {
+      const entries = (await readSelection()).filter(entry => entry.item.resultId !== saved.result.resultId);
+      const raw = JSON.stringify(saved);
+      await writeProtectedLocalStateFileAtomic(path(saved.result.resultId), raw);
+      try {
+        entries.push(projectSelection(saved, raw, Math.floor((await stat(path(saved.result.resultId))).mtimeMs)));
+        await writeSelection(entries);
+      } catch { /* The body committed; inventory still repairs missing rows. */ }
+    });
+    if (publish) {
+      try { options.onChanged?.({ resultId: saved.result.resultId, revision: saved.result.revision }); }
+      catch { /* A failed observation cannot revoke a persisted revision. */ }
+    }
     return saved;
   }
   async function locked<T>(scope: ScmDiffSummaryResultScope, operation: (stored: Stored | null) => Promise<T>): Promise<T> {
@@ -158,6 +242,7 @@ export function createScmDiffSummaryResultStore(options: Readonly<{ directory: s
       let next: Stored | ScmDiffSummaryResultFailure;
       try { next = apply(stored); } catch (error) { return failure('invalid_edit', error instanceof Error ? error.message : 'Invalid edit'); }
       if ('success' in next) return next;
+      if (next === stored) return { success: true, result: stored.result };
       return { success: true, result: (await save(next)).result };
     });
   }
@@ -208,7 +293,7 @@ export function createScmDiffSummaryResultStore(options: Readonly<{ directory: s
       }
     }
   }
-  function replaceValues(stored: Stored, model: ScmDiffSummaryModelOutput, kinds: readonly ScmDiffSummaryOutputKind[], envelope?: ScmDiffSummaryGenerateOutput) {
+  function replaceValues(stored: Stored, model: ScmDiffSummaryModelOutput, kinds: readonly ScmDiffSummaryOutputKind[], envelope?: Pick<ScmDiffSummaryGenerateOutput, 'analysis' | 'producer'>) {
     const output = stored.result.output;
     if (!output.comparison) throw new Error('Saved comparison is required');
     const outputs: ScmDiffSummaryOutputs = { ...output.outputs };
@@ -222,8 +307,7 @@ export function createScmDiffSummaryResultStore(options: Readonly<{ directory: s
     for (const kind of requestedOutputs) outputs[kind] ??= { state: 'pending' };
     assertPublishedCommitGroupsPreserved(stored, outputs.commitPlan?.value);
     const next = { ...output,
-      ...(envelope ? { analysis: envelope.analysis ?? output.analysis, producer: envelope.producer ?? output.producer,
-        runId: envelope.runId ?? output.runId, cost: envelope.cost ?? output.cost } : {}),
+      ...(envelope ? { analysis: envelope.analysis ?? output.analysis, producer: envelope.producer ?? output.producer } : {}),
       requestedOutputs, outputs,
       ...(summary ? { summaryMarkdown: summary.summaryMarkdown, risks: summary.risks, testImpact: summary.testImpact,
         suggestedPrBody: summary.suggestedPrBody } : {}),
@@ -239,7 +323,8 @@ export function createScmDiffSummaryResultStore(options: Readonly<{ directory: s
       return withJsonOwnerFileLock({ lockPath: join(directory, `generation-${identity}.lock`), timeoutMs: Infinity,
         staleAfterMs: Infinity, errorCode: 'result_unavailable', ...(input.signal ? { signal: input.signal } : {}) }, async () => {
         if (!input.bypass) {
-          const inventory = await store.list();
+          const inventory = await store.list({ query: { cwd: input.cwd, sessionId: input.sessionId ?? null },
+            generation: { key: input.key, outputs: input.outputs }, ...(input.signal ? { signal: input.signal } : {}) });
           for (const entry of inventory.results) {
             if (entry.cwd !== resolve(input.cwd) || entry.sessionId !== input.sessionId) continue;
             const stored = await load({ ...input, resultId: entry.resultId });
@@ -256,36 +341,49 @@ export function createScmDiffSummaryResultStore(options: Readonly<{ directory: s
           await locked({ ...input, resultId: output.resultId }, async (stored) => {
             if (stored) await save({ ...stored, generation: { key: input.key, ...(output.runId ? { runId: output.runId } : {}),
               ...(output.admission ? { admission: output.admission } : {}),
-              ...(output.success && output.inputId ? { inputId: output.inputId } : {}) } });
+              ...(output.success && output.inputId ? { inputId: output.inputId } : {}) } }, false);
           });
         }
         return output;
       });
     },
     async list(options) {
-      let entries: string[];
-      try { entries = await readdir(directory); }
-      catch (error) { if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return { results: [], count: 0, bytes: 0 }; throw error; }
-      const results: ScmDiffSummarySavedResultItem[] = [];
-      for (const entry of entries.sort()) {
-        if (!/^[a-f0-9-]{36}\.json$/.test(entry)) continue;
-        let raw: string;
-        let updatedAtMs: number;
-        try { raw = await readProtectedLocalStateFile(join(directory, entry)); updatedAtMs = Math.floor((await stat(join(directory, entry))).mtimeMs); }
-        catch (error) { if (error instanceof Error && 'code' in error && error.code === 'ENOENT') continue; throw error; }
-        const stored = resolveStoredCapturedSources(storedReadSchema.parse(JSON.parse(raw)));
-        const { result } = stored;
-        if (`${result.resultId}.json` !== entry || !result.output.comparison) throw new Error('Saved result inventory identity is invalid');
-        const source = result.output.comparison.source;
-        const sourceSessionId = typeof source.sessionId === 'string' ? source.sessionId : undefined;
-        if (options?.admitScope && !await options.admitScope({ cwd: stored.cwd,
-          ...(stored.sessionId ? { sessionId: stored.sessionId } : {}), ...(sourceSessionId ? { sourceSessionId } : {}) })) continue;
-        results.push({ cwd: stored.cwd, ...(stored.sessionId ? { sessionId: stored.sessionId } : {}),
-          resultId: result.resultId, revision: result.revision, comparisonId: result.output.comparison.id,
-          ...(result.output.outputs?.walkthrough?.value ? { title: result.output.outputs.walkthrough.value.title } : {}),
-          source: result.output.comparison.source, bytes: Buffer.byteLength(raw, 'utf8'), updatedAtMs });
+      const entries = await withSelection(inventory, options?.signal);
+      const query = options?.query;
+      const admitted: Selection[] = [];
+      for (const entry of entries) {
+        const item = entry.item;
+        if (query && (item.cwd !== resolve(query.cwd)
+          || (query.sessionId !== undefined && item.sessionId !== (query.sessionId ?? undefined)))) continue;
+        if (query?.comparisons && !query.comparisons.some(demand => (!demand.comparisonId || item.comparisonId === demand.comparisonId)
+          && scmComparisonSourceMatches(demand.source, item.source, entry.basis)
+          && demand.outputs.some(kind => entry.outputs.some(output => output.kind === kind)))) continue;
+        if (options?.generation && (entry.generationKey !== options.generation.key
+          || options.generation.outputs.some(kind => !entry.outputs.some(output => output.kind === kind)))) continue;
+        if (options?.admitScope && !await options.admitScope({ cwd: item.cwd,
+          ...(item.sessionId ? { sessionId: item.sessionId } : {}),
+          ...(typeof item.source.sessionId === 'string' ? { sourceSessionId: item.source.sessionId } : {}) })) continue;
+        admitted.push(entry);
       }
-      results.sort((left, right) => right.updatedAtMs - left.updatedAtMs || left.resultId.localeCompare(right.resultId));
+      admitted.sort((left, right) => right.item.updatedAtMs - left.item.updatedAtMs || left.item.resultId.localeCompare(right.item.resultId));
+      let selected = admitted;
+      if (query?.comparisons) {
+        const ids = new Set<string>();
+        for (const demand of query.comparisons) {
+          const matches = admitted.filter(entry => (!demand.comparisonId || entry.item.comparisonId === demand.comparisonId)
+            && scmComparisonSourceMatches(demand.source, entry.item.source, entry.basis));
+          for (const kind of demand.outputs) {
+            const candidates = matches.filter(entry => entry.outputs.some(output => output.kind === kind));
+            const newest = candidates[0];
+            const output = newest?.outputs.find(output => output.kind === kind);
+            const chosen = output && !output.hasValue && (output.state === 'failed' || output.state === 'cancelled')
+              ? candidates.find(entry => entry.outputs.some(output => output.kind === kind && output.hasValue)) ?? newest : newest;
+            if (chosen) ids.add(chosen.item.resultId);
+          }
+        }
+        selected = admitted.filter(entry => ids.has(entry.item.resultId));
+      }
+      const results = selected.map(entry => entry.item);
       return { results, count: results.length, bytes: results.reduce((sum, item) => sum + item.bytes, 0) };
     },
     async prepareInvestigation(scope) {
@@ -304,8 +402,11 @@ export function createScmDiffSummaryResultStore(options: Readonly<{ directory: s
       return (await save({ result, cwd: resolve(cwd), ...(sessionId ? { sessionId } : {}), inputs: [],
         ...(pullRequestDraftEvidence !== undefined ? { pullRequestDraftEvidence } : {}) })).result;
     },
-    async read(scope) {
+    async read(scope, options) {
       const stored = await load(scope);
+      if (options && (!stored || !await options.admitScope(storedScope(stored)))) {
+        return failure('result_unavailable', 'Saved result is unavailable for this caller.');
+      }
       if (!stored) return failure('result_not_found', 'Saved result is unavailable in this repository/session.');
       return { success: true, result: { ...stored.result, output: generationOutput(stored) } };
     },
@@ -337,6 +438,7 @@ export function createScmDiffSummaryResultStore(options: Readonly<{ directory: s
           return edit.output === 'commitPlan' ? { ...discarded, result: { ...discarded.result, application: undefined } } : discarded;
         }
         const walkthrough = output.outputs?.walkthrough?.value;
+        if (edit.kind === 'renameWalkthrough' && walkthrough?.title === edit.title) return stored;
         let model: ScmDiffSummaryModelOutput;
         let kind: ScmDiffSummaryOutputKind;
         if (edit.kind === 'replaceSummary') { model = edit.value; kind = 'summary'; }
@@ -443,7 +545,10 @@ export function createScmDiffSummaryResultStore(options: Readonly<{ directory: s
         const stale = conflict(stored, input.expectedRevision); if (stale) return stale;
         if (isScmCommitPlanApplicationLocked(stored.result.application)) return failure('application_locked', 'Resolve the accepted commit application before deleting its result.', stored.result.revision);
         await rm(`${path(input.resultId)}.investigation`, { recursive: true, force: true });
-        await removeProtectedLocalStateFile(path(input.resultId));
+        await withSelection(async () => {
+          await writeSelection((await readSelection()).filter(entry => entry.item.resultId !== input.resultId));
+          await removeProtectedLocalStateFile(path(input.resultId));
+        }, input.signal);
         return { success: true, resultId: input.resultId, comparisonId: stored.result.output.comparison!.id };
       });
     },
@@ -471,11 +576,10 @@ export function createScmDiffSummaryResultStore(options: Readonly<{ directory: s
           outputs, ...(input.stopIds ? { stopIds: input.stopIds } : {}),
           ...(citations ? { reviewFindingCitations: citations } : {}),
           ...(explanation ? { reviewExplanation: { ...explanation, requestedAtMs: explanation.requestedAtMs ?? Date.now() } } : {}) }));
-        await save(stored);
+        await save(stored, false);
         return { success: true, result: stored.result };
       });
     },
-    async beginRefinement(input) { return store.beginInput({ ...input, outputs: [input.output] }); },
     async readInput(input) {
       const stored = await load(input);
       return stored?.inputs.find((pending) => input.inputIds.includes(pending.inputId)) ?? null;
@@ -484,7 +588,7 @@ export function createScmDiffSummaryResultStore(options: Readonly<{ directory: s
       await locked(input, async (stored) => {
         if (!stored) return;
         stored.inputs = stored.inputs.filter((pending) => pending.inputId !== input.inputId);
-        await save(stored);
+        await save(stored, false);
       });
     },
     async bindRun(input) {
@@ -642,8 +746,10 @@ export function createScmDiffSummaryResultStore(options: Readonly<{ directory: s
         if (!stored.result.application) return failure('application_unavailable', 'No accepted commit application exists.');
         const application = transition(stored.result);
         if ('success' in application) return application;
+        const parsed = ScmCommitPlanApplicationSchema.parse(application);
+        if (isDeepStrictEqual(parsed, stored.result.application)) return { success: true, result: stored.result };
         const next = updated(stored, stored.result.output, 'preserve');
-        next.result.application = ScmCommitPlanApplicationSchema.parse(application);
+        next.result.application = parsed;
         return { success: true, result: (await save(next)).result };
       });
     },
@@ -656,7 +762,13 @@ let defaultStoreDirectory: string | undefined;
 function currentStore() {
   const directory = join(configuration.activeServerDir, 'runtime', 'scm', 'results');
   if (!defaultStore || defaultStoreDirectory !== directory) {
-    defaultStore = createScmDiffSummaryResultStore({ directory });
+    const serverId = configuration.activeServerId;
+    defaultStore = createScmDiffSummaryResultStore({ directory, onChanged: change => {
+      if (configuration.activeServerId !== serverId) return;
+      // Cross-process ingress is owned by the daemon's authenticated control transport.
+      // Losing an ephemeral hint cannot revoke a committed result; readers catch up on reconnect.
+      void daemonPost('/scm-diff-summary-result-updated', change).catch(() => undefined);
+    } });
     defaultStoreDirectory = directory;
   }
   return defaultStore;
@@ -664,11 +776,11 @@ function currentStore() {
 export const scmDiffSummaryResultStore: ScmDiffSummaryResultStore = {
   admitGeneration: (input, generate) => currentStore().admitGeneration(input, generate),
   list: (options) => currentStore().list(options),
-  create: (input) => currentStore().create(input), read: (input) => currentStore().read(input),
+  create: (input) => currentStore().create(input), read: (input, options) => currentStore().read(input, options),
   prepareInvestigation: (input) => currentStore().prepareInvestigation(input),
   readStoredScope: (input) => currentStore().readStoredScope(input), edit: (input) => currentStore().edit(input),
   undo: (input) => currentStore().undo(input), delete: (input) => currentStore().delete(input),
-  beginInput: (input) => currentStore().beginInput(input), beginRefinement: (input) => currentStore().beginRefinement(input),
+  beginInput: (input) => currentStore().beginInput(input),
   readInput: (input) => currentStore().readInput(input),
   abandonInput: (input) => currentStore().abandonInput(input), bindRun: (input) => currentStore().bindRun(input),
   publish: (input) => currentStore().publish(input), publishProgress: (input) => currentStore().publishProgress(input),

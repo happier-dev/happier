@@ -42,8 +42,100 @@ import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportD
 import { createActionToolExecutorBridge } from './createActionToolExecutorBridge';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { dispatchBuiltInHappierTool } from './dispatchBuiltInHappierTool';
+import { projectAgentRuntimeDaemonServiceTurnWitnessV1 } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceTurnWitness';
+import { SessionMessageReplyMutationResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
 
 describe('createActionToolExecutorBridge', () => {
+  it.each(['agent', 'mcp'] as const)('keeps native Realtime %s decisions person-only despite a waiver and cancels ordinary local Actions at End', async surface => {
+    const lifetime = new AbortController();
+    const tool = new AbortController();
+    const transportSignals: AbortSignal[] = [];
+    let permissionDecisions = 0;
+    const witness = projectAgentRuntimeDaemonServiceTurnWitnessV1({ turnId: 'speech-turn', inputId: 'person-start',
+      nativeRealtimeAdmission: { admissionId: 'person-start', occurrenceId: 'provider-occurrence', attemptId: 'live-attempt' },
+      userMessageSeq: null, userMessageSeqs: [], agentStartCaller: { kind: 'session', sessionId: 'voice-session', starterDepth: 0, turnDepth: 0 } });
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+      // Session RPC is the system boundary; the canonical decision guard remains real.
+      sessionPermissionRespond: async () => { permissionDecisions += 1; return { ok: true }; },
+      sessionList: async request => {
+        if (request.signal) transportSignals.push(request.signal);
+        return markSessionListQueryResultV1({ sessions: [], nextCursor: null, hasNext: false,
+          attentionNextCursor: null, attentionHasNext: false });
+      },
+    });
+    const bridge = createActionToolExecutorBridge({ surface,
+      resolveSessionListAccess: () => 'current_session',
+      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'session.permission.respond': [surface] } }),
+      resolveActiveTurnPermissionWitness: () => ({ ...witness, signal: lifetime.signal }),
+      executor: { execute: (id, input, context) => executor.execute(id, input, { ...context,
+        serverId: 'home', runtimeAccountId: 'account', actionCaller: witness.agentStartCaller }) },
+    });
+    expect(await bridge.executeActionByToolName('action_execute', { actionId: 'session.permission.respond', input: {
+      sessionId: 'voice-session', requestId: 'approval', decision: 'allow',
+    } }, 'voice-session')).toMatchObject({ ok: false, errorCode: 'present_user_required' });
+    expect(permissionDecisions).toBe(0);
+    const listed = await bridge.executeActionByToolName('action_execute', { actionId: 'session.list', input: {} }, 'voice-session',
+      { signal: tool.signal });
+    expect(listed, JSON.stringify(listed)).toMatchObject({ ok: true });
+    expect(transportSignals).toHaveLength(1);
+    expect(transportSignals[0]?.aborted).toBe(false);
+    tool.abort();
+    expect(transportSignals[0]?.aborted).toBe(true);
+    expect(await bridge.executeActionByToolName('action_execute', { actionId: 'session.list', input: {} }, 'voice-session'))
+      .toMatchObject({ ok: true });
+    expect(transportSignals[1]?.aborted).toBe(false);
+    lifetime.abort();
+    expect(transportSignals[1]?.aborted).toBe(true);
+    expect(await bridge.executeActionByToolName('action_execute', { actionId: 'session.list', input: {} }, 'voice-session'))
+      .toMatchObject({ ok: false, errorCode: 'cancelled' });
+    expect(transportSignals).toHaveLength(2);
+  });
+
+  it.each(['agent', 'mcp'] as const)('passes only the trusted exact Discussion original through the %s bridge', async surface => {
+    const discussionId = '41414141-4141-4141-8141-414141414165';
+    const sessionId = 'participant-session';
+    const addressing = { discussionId, messageId: '41414141-4141-4141-8141-414141414166',
+      throughSeq: 7, participantSessionId: sessionId };
+    const witness = projectAgentRuntimeDaemonServiceTurnWitnessV1({ turnId: 'turn-active', inputId: 'accepted-input',
+      userMessageSeq: 3, userMessageSeqs: [3], discussionAddressing: addressing });
+    const replies: unknown[] = [];
+    const executor = createActionExecutor({
+      ...createUnavailableActionTransportDeps(),
+      // The original-reply transport is the boundary; bridge/source admission remain real.
+      sessionMessageReply: async request => {
+        replies.push(request);
+        return SessionMessageReplyMutationResultV1Schema.parse({ v: 1, ok: true,
+          progress: { v: 1, mode: 'return', discussion: addressing, acceptedTurnId: witness.turnId,
+            outcome: request.reply, disposition: 'released' } });
+      },
+    });
+    let activeWitness: unknown = witness;
+    const bridge = createActionToolExecutorBridge({ surface, resolveActiveTurnPermissionWitness: () => activeWitness,
+      executor: { execute: (id, input, context) => executor.execute(id, input, { ...context,
+        serverId: 'home', runtimeAccountId: 'account', actionCaller: { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 } }) },
+    });
+    const pass = (input: unknown, sourceSessionId = sessionId) => bridge.executeActionByToolName('action_execute',
+      { actionId: 'discussion.pass', input }, sourceSessionId);
+    expect(await pass({ discussionId })).toMatchObject({ ok: true });
+    expect(replies).toEqual([expect.objectContaining({ sessionId, requestLocalId: 'accepted-input', reply: { kind: 'pass' },
+      context: expect.objectContaining({ sessionInputSource: {
+        sourceSessionId: sessionId, sourceTurnId: 'turn-active', sourceInputId: 'accepted-input',
+        via: 'action', discussionAddressing: addressing,
+      } }),
+    })]);
+    replies.length = 0;
+    expect(await pass({ discussionId: '41414141-4141-4141-8141-414141414167' }))
+      .toMatchObject({ ok: false, errorCode: 'session_reply_source_unavailable' });
+    expect(await pass({ discussionId }, 'another-session'))
+      .toMatchObject({ ok: false, errorCode: 'session_reply_source_unavailable' });
+    // Authored Action operands cannot replace absent trusted addressing.
+    activeWitness = { ...witness, discussionAddressing: undefined };
+    expect(await pass({ discussionId, discussionAddressing: addressing }))
+      .toMatchObject({ ok: false });
+    expect(await pass({ discussionId })).toMatchObject({ ok: false, errorCode: 'session_reply_source_unavailable' });
+    expect(replies).toEqual([]);
+  });
+
   it('dispatches session code Actions with the host Machine and root, while preserving explicit targets and approval', async () => {
     const queries: unknown[] = [];
     const approvals: unknown[] = [];

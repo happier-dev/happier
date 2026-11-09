@@ -43,6 +43,34 @@ function deferred(): Readonly<{
 }
 
 describe('AgentSessionRuntime event stream', () => {
+  it('delivers closed retry evidence and preserves progress from an emitter without retry evidence', async () => {
+    const stream = createAgentSessionRuntimeEventStream();
+    const observed: AgentSessionRuntimeEvent[] = [];
+    stream.watch(event => { observed.push(event); });
+    const retry = { ...progressEvent(1), retry: { attempt: 1, reason: 'connection_failed' as const } };
+    await expect(stream.publish(retry)).resolves.toMatchObject({ status: 'accepted' });
+    await expect(stream.publish(progressEvent(2))).resolves.toMatchObject({ status: 'accepted' });
+    await stream.whenIdle();
+    expect(observed).toEqual([retry, progressEvent(2)]);
+    await stream.dispose();
+  });
+
+  it.each([
+    { attempt: 0, reason: 'unknown' },
+    { attempt: 1.5, reason: 'unknown' },
+    { attempt: Number.MAX_SAFE_INTEGER + 1, reason: 'unknown' },
+    { attempt: 1, reason: 'provider_native_text' },
+    { attempt: 1, reason: 'unknown', payload: 'private-provider-body' },
+  ])('refuses malformed or open retry evidence at native event admission: %j', async retry => {
+    const stream = createAgentSessionRuntimeEventStream();
+    const observed: AgentSessionRuntimeEvent[] = [];
+    stream.watch(event => { observed.push(event); });
+    const invalid = { ...progressEvent(1), retry };
+    await expect(Reflect.apply(stream.publish, stream, [invalid])).resolves.toMatchObject({ status: 'invalidEvent' });
+    expect(observed).toEqual([]);
+    await stream.dispose();
+  });
+
   it('replays events emitted before the first watcher in exact sequence order', async () => {
     const stream = createAgentSessionRuntimeEventStream();
 
@@ -147,18 +175,40 @@ describe('AgentSessionRuntime event stream', () => {
     await stream.dispose();
   });
 
+  it('keeps invalid publication terminal while admitting strictly validated recovery events', async () => {
+    const stream = createAgentSessionRuntimeEventStream();
+    const observed: AgentSessionRuntimeEvent[] = [];
+    stream.watch(event => { observed.push(event); });
+    await stream.publish(progressEvent(1));
+    // Boundary fixture deliberately violates the strict native event grammar.
+    await expect(stream.publish({ ...progressEvent(2), legacyPayload: true } as unknown as AgentSessionRuntimeEvent))
+      .resolves.toMatchObject({ status: 'invalidEvent' });
+    await expect(stream.publish(progressEvent(3))).resolves.toMatchObject({ status: 'invalidEvent' });
+    const recovery: AgentSessionRuntimeEvent = {
+      kind: 'runtime-ended', sessionId: 'session-1', sequence: 3, emittedAtMs: 3,
+      cause: 'protocolError', retryable: true,
+    };
+    expect(stream.admit({ ...recovery, sessionId: 'foreign-session' }, { useRecoveryReserve: true }))
+      .toMatchObject({ status: 'invalidEvent' });
+    expect(stream.admit({ ...recovery, sequence: 1 }, { useRecoveryReserve: true }))
+      .toMatchObject({ status: 'invalidEvent' });
+    expect(stream.admit(recovery, { useRecoveryReserve: true })).toMatchObject({ status: 'accepted' });
+    await stream.whenIdle();
+    expect(observed).toEqual([progressEvent(1), recovery]);
+    await stream.dispose();
+  });
+
   it('accepts the exact byte bound and rejects one additional byte-bearing event', async () => {
     const stream = createAgentSessionRuntimeEventStream();
     const byteLimit = AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1
       .p0MeasuredCandidates.preWatchReplayBufferMaxJsonBytes;
-    const textLimit = AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1
-      .p0MeasuredCandidates.transcriptTextMaxCodeUnits;
+    const chunkTextCodeUnits = 512 * 1_024;
     const events: AgentSessionRuntimeEvent[] = [];
     let totalBytes = 0;
     let sequence = 1;
 
     while (events.length < 15) {
-      const event = transcriptEvent(sequence, 'x'.repeat(textLimit));
+      const event = transcriptEvent(sequence, 'x'.repeat(chunkTextCodeUnits));
       events.push(event);
       totalBytes += measureAgentSessionRuntimeEventJsonBytes(event);
       sequence += 1;
@@ -168,7 +218,7 @@ describe('AgentSessionRuntime event stream', () => {
       - totalBytes
       - measureAgentSessionRuntimeEventJsonBytes(emptyFinal);
     expect(finalTextCodeUnits).toBeGreaterThanOrEqual(0);
-    expect(finalTextCodeUnits).toBeLessThanOrEqual(textLimit);
+    expect(finalTextCodeUnits).toBeLessThanOrEqual(chunkTextCodeUnits);
     events.push(transcriptEvent(sequence, 'x'.repeat(finalTextCodeUnits)));
 
     expect(events.reduce(

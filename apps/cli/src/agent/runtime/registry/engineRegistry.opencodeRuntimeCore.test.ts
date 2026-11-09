@@ -3,7 +3,7 @@ import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRu
 import { isExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 
 describe('engineRegistry (opencode runtimeCore)', () => {
-  it('resolves the plugin-owned OpenCode execution-run runtimeCore without consulting the legacy execution-run registry', async () => {
+  it('admits a native read-only OpenCode Run with workspace-write denial', async () => {
     const { resolveBackendEngineAdapterResolution } = await import('./engineRegistry');
 
     const fixture = await createAdmittedPluginRuntimeFixture({
@@ -20,6 +20,7 @@ describe('engineRegistry (opencode runtimeCore)', () => {
         cwd: process.cwd(),
         backendId: 'opencode',
         permissionMode: 'read_only',
+        workspaceWrites: 'deny',
       });
       expect(isExecutionRunHostRuntime(runtime)).toBe(true);
       expect(runtime).toEqual(expect.objectContaining({

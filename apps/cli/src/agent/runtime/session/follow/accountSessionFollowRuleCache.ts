@@ -22,7 +22,7 @@ export type SessionFollowReceiverSourceRangesRead = Readonly<{ status: 'availabl
 /** Own-Account transport captured by the daemon; restricted Session credentials never enter this reader. */
 export function createAccountSessionFollowRuleCache(input: Readonly<{
   accountId: string; credentials: StoredCredentials; serverHttpBaseUrl: string; signal: AbortSignal;
-  isCurrent: () => boolean | Promise<boolean>; subscribeInvalidation: (listener: (change?: SessionFollowRuleInvalidation) => void) => () => void;
+  isCurrent?: () => boolean | Promise<boolean>; subscribeInvalidation: (listener: (change?: SessionFollowRuleInvalidation) => void) => () => void;
   subscribeSourceInvalidation?: (listener: (sourceSessionId: string | null, receiver?: true, availabilityChanged?: boolean, sourceChanged?: false) => void) => () => void;
 }>) {
   if (readAccountIdFromToken(input.credentials.token) !== input.accountId) throw new Error('follow_rule_account_mismatch');
@@ -84,7 +84,7 @@ export function createAccountSessionFollowRuleCache(input: Readonly<{
   };
   const current = async () => {
     if (retired || input.signal.aborted) return false;
-    const accountCurrent = await input.isCurrent();
+    const accountCurrent = await input.isCurrent?.() ?? true;
     if (!accountCurrent || retired || input.signal.aborted) return false;
     if (encryptionIdentity && observation) {
       const observed = await observation.read(input.signal, { requireLiveObservation: true });
@@ -106,7 +106,7 @@ export function createAccountSessionFollowRuleCache(input: Readonly<{
       let identity: AccountEncryptionIdentity | null = null;
       const encryption = await resolveValidatedAutomationAccountEncryptionV1({ signal: input.signal,
         resolveAccountEncryptionCurrentness: async signal => {
-          const fact = await fetchAccountEncryptionCurrentness({ token: input.credentials.token,
+          const fact = await fetchAccountEncryptionCurrentness({ credentials: input.credentials, token: input.credentials.token,
             serverBaseUrl: input.serverHttpBaseUrl, signal });
           identity = projectAccountEncryptionIdentity(fact);
           return fact;

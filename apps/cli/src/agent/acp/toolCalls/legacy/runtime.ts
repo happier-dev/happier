@@ -24,7 +24,6 @@ import {
 } from './projectAgentMessages';
 import { LegacyAcpSessionMediaPublisher } from './sessionMedia';
 
-const DEFAULT_TOOL_CALL_TIMEOUT_MS = 120_000;
 const GENERIC_TOOL_NAMES = new Set(['', 'other', 'unknown', 'unknown_tool']);
 
 function isGenericToolName(value: string): boolean {
@@ -61,7 +60,6 @@ export type LegacyAcpToolRuntimeOptions = Readonly<{
 
 export class LegacyAcpToolRuntime {
     private readonly accumulator = new AcpToolCallAccumulator();
-    private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
     private readonly permissionWaiting = new Set<string>();
     private readonly sessionMedia: LegacyAcpSessionMediaPublisher;
     private revision = 0;
@@ -82,6 +80,7 @@ export class LegacyAcpToolRuntime {
         const update = parseRawAcpToolUpdate({
             ...parsedInput,
             ...(Object.prototype.hasOwnProperty.call(parsedInput, 'rawInput') || extractedInput === undefined
+                || (knownBefore?.rawInput !== undefined && parsedInput.input === undefined)
                 ? {}
                 : { rawInput: extractedInput }),
             ...(Object.prototype.hasOwnProperty.call(parsedInput, 'rawOutput') || extractedOutput === undefined
@@ -129,7 +128,10 @@ export class LegacyAcpToolRuntime {
             semanticName,
         });
         this.publish(emission);
-        if (emission.kind !== 'ignored') this.updateOperationalState(emission.call);
+        if (emission.kind !== 'ignored'
+            && (emission.call.status === 'completed' || emission.call.status === 'failed' || emission.call.status === 'cancelled')) {
+            this.permissionWaiting.delete(emission.call.localId);
+        }
         const isActive = this.activeCalls().length > 0;
         if (!wasActive && isActive) this.options.onBecameActive();
         if (wasActive && !isActive) this.options.onBecameIdle();
@@ -156,7 +158,6 @@ export class LegacyAcpToolRuntime {
         });
         this.publish(emission);
         if (emission.kind !== 'ignored') {
-            this.clearTimer(emission.call.localId);
             this.permissionWaiting.add(emission.call.localId);
         }
         if (!wasActive && this.activeCalls().length > 0) this.options.onBecameActive();
@@ -166,7 +167,6 @@ export class LegacyAcpToolRuntime {
     markWaitingForPermission(toolCallId: string): void {
         const call = this.readCall(toolCallId);
         if (!call) return;
-        this.clearTimer(call.localId);
         this.permissionWaiting.add(call.localId);
         this.observeStatus(call, 'pending');
     }
@@ -175,8 +175,7 @@ export class LegacyAcpToolRuntime {
         const call = this.readCall(toolCallId);
         if (!call) return;
         this.permissionWaiting.delete(call.localId);
-        const emission = this.observeStatus(call, 'running');
-        if (emission.kind !== 'ignored') this.armTimer(emission.call);
+        this.observeStatus(call, 'running');
     }
 
     terminalizeCall(toolCallId: string, status: Extract<AcpToolLifecycleStatus, 'completed' | 'failed' | 'cancelled'>): void {
@@ -193,7 +192,7 @@ export class LegacyAcpToolRuntime {
             patch: { status },
         });
         this.publish(emission);
-        this.clearOperationalState(call.localId);
+        this.permissionWaiting.delete(call.localId);
     }
 
     terminalizeTurn(status: Extract<AcpToolLifecycleStatus, 'completed' | 'failed' | 'cancelled'>): void {
@@ -208,7 +207,7 @@ export class LegacyAcpToolRuntime {
         });
         for (const emission of emissions) {
             this.publish(emission);
-            if (emission.kind !== 'ignored') this.clearOperationalState(emission.call.localId);
+            if (emission.kind !== 'ignored') this.permissionWaiting.delete(emission.call.localId);
         }
         if (wasActive && this.activeCalls().length === 0) this.options.onBecameIdle();
     }
@@ -229,7 +228,6 @@ export class LegacyAcpToolRuntime {
         active: number;
         tombstones: number;
         closedTurns: number;
-        timers: number;
         permissionWaiters: number;
         mediaFingerprints: number;
     }> {
@@ -237,14 +235,12 @@ export class LegacyAcpToolRuntime {
             active: this.accumulator.activeSize,
             tombstones: this.accumulator.tombstoneSize,
             closedTurns: this.accumulator.closedTurnSize,
-            timers: this.timers.size,
             permissionWaiters: this.permissionWaiting.size,
             mediaFingerprints: this.sessionMedia.size,
         });
     }
 
     reset(): void {
-        this.clearTimers();
         this.permissionWaiting.clear();
         this.sessionMedia.reset();
         this.accumulator.reset();
@@ -252,7 +248,6 @@ export class LegacyAcpToolRuntime {
 
     dispose(): void {
         if (this.disposed) return;
-        this.clearTimers();
         this.permissionWaiting.clear();
         this.sessionMedia.reset();
         this.accumulator.dispose();
@@ -272,49 +267,6 @@ export class LegacyAcpToolRuntime {
         });
         this.publish(emission);
         return emission;
-    }
-
-    private updateOperationalState(call: MergedAcpToolCall): void {
-        if (call.status === 'completed' || call.status === 'failed' || call.status === 'cancelled') {
-            this.clearOperationalState(call.localId);
-            return;
-        }
-        if (call.status === 'running') this.armTimer(call);
-        else this.clearTimer(call.localId);
-    }
-
-    private armTimer(call: MergedAcpToolCall): void {
-        this.clearTimer(call.localId);
-        const configured = this.options.transport.getToolCallTimeout?.(call.toolCallId, call.kind);
-        const timeoutMs = configured === undefined ? DEFAULT_TOOL_CALL_TIMEOUT_MS : configured;
-        if (timeoutMs == null || !Number.isFinite(timeoutMs) || timeoutMs <= 0) return;
-        const timer = setTimeout(() => {
-            this.timers.delete(call.localId);
-            const current = this.readCall(call.toolCallId);
-            if (!current || current.status !== 'running') return;
-            const emission = this.accumulator.observe({
-                sessionId: current.sessionId,
-                turnId: current.turnId,
-                sidechainId: current.sidechainId,
-                toolCallId: current.toolCallId,
-                revision: this.nextRevision(),
-                observedAtMs: Date.now(),
-                source: 'terminalize_turn',
-                patch: {
-                    status: 'failed',
-                    error: {
-                        error: `Tool call timed out after ${(timeoutMs / 1_000).toFixed(0)}s`,
-                        status: 'timeout',
-                        timeoutMs,
-                    },
-                },
-            });
-            this.publish(emission);
-            if (emission.kind !== 'ignored') this.clearOperationalState(emission.call.localId);
-            if (this.activeCalls().length === 0) this.options.onBecameIdle();
-        }, Math.trunc(timeoutMs));
-        timer.unref?.();
-        this.timers.set(call.localId, timer);
     }
 
     private publish(emission: AcpToolAccumulatorEmission): void {
@@ -353,23 +305,6 @@ export class LegacyAcpToolRuntime {
             this.options.sidechainId,
             toolCallId,
         );
-    }
-
-    private clearTimer(localId: string): void {
-        const timer = this.timers.get(localId);
-        if (!timer) return;
-        clearTimeout(timer);
-        this.timers.delete(localId);
-    }
-
-    private clearOperationalState(localId: string): void {
-        this.clearTimer(localId);
-        this.permissionWaiting.delete(localId);
-    }
-
-    private clearTimers(): void {
-        for (const timer of this.timers.values()) clearTimeout(timer);
-        this.timers.clear();
     }
 
     private nextRevision(): number {

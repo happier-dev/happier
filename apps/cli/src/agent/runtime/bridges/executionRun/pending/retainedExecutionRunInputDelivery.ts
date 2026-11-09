@@ -1,7 +1,7 @@
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { readSessionAttachmentDescriptorsV1 } from '@happier-dev/protocol/messages/structured/sessionAttachmentsInputV1';
 import { readHappierStructuredInputV1FromMeta } from '@happier-dev/protocol/runtime/input/structuredInputV1';
-import { readSessionInputCausalPermissionAuthorityV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { readSessionInputCausalPermissionAuthorityV1, readSessionInputAuthority } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { resolveSessionInputPromptProvenanceV1, renderSessionInputContextBlockV1, renderSessionInputContextPromptV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
 import type { SessionRunPromptContextV1 } from '@happier-dev/protocol';
 import { readAdmittedHappierStructuredInputV1FromMeta } from '@happier-dev/protocol/runtime/input/structuredInputV1';
@@ -29,8 +29,7 @@ export function renderRetainedExecutionRunInputPrompt(
     params: Parameters<typeof renderSessionInputContextPromptV1>[0] & Readonly<{ profileContext?: string }>,
 ): string {
     const { profileContext, ...context } = params;
-    return renderSessionInputContextPromptV1({ ...context,
-        transformedUserText: profileContext ? `${profileContext}\n\n${context.transformedUserText}` : context.transformedUserText });
+    return [profileContext, renderSessionInputContextPromptV1(context)].filter(Boolean).join('\n\n');
 }
 
 export function readRetainedExecutionRunInputTextReservation(
@@ -303,11 +302,15 @@ export function createRetainedExecutionRunInputDelivery(
 
         const causalPermissionAuthority = readSessionInputCausalPermissionAuthorityV1(input.meta, 'stored');
         const provenance = resolveSessionInputPromptProvenanceV1(input.meta);
+        const authority = readSessionInputAuthority(input.meta, 'stored');
+        const returnedAnswer = authority?.v === 1 ? authority.returnedAnswer : undefined;
         const sessionRunContext = !contextInitialized ? options.sessionRunContext : undefined;
         const profileContext = !contextInitialized ? options.readInitialProfileContext?.() : undefined;
         const runtimeInput = {
             text: renderRetainedExecutionRunInputPrompt({
-                provenanceBlock: renderSessionInputContextBlockV1({ provenance }),
+                inputProvenance: provenance,
+                returnedAnswer,
+                provenanceBlock: renderSessionInputContextBlockV1({ provenance, returnedAnswer }),
                 ...resolved.promptContext,
                 ...(sessionRunContext ? { sessionRunContext } : {}),
                 ...(profileContext ? { profileContext } : {}),

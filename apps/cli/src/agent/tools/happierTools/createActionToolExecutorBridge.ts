@@ -5,21 +5,14 @@ import {
   type ResolvedActionOption,
   type ReviewCommentPrincipalHeaderV1,
 } from '@happier-dev/protocol';
-import { createActionToolNameToIdMap, listPluginActionBackedTools, resolveActionToolCatalogAvailability, resolveDiscoveredPluginActionAvailability } from './actionToolCatalog';
+import { createActionToolNameToIdMap, resolveActionToolCatalogAvailability, resolveDiscoveredPluginActionAvailability } from './actionToolCatalog';
 import { ActionDefinitionV1Schema } from '@happier-dev/protocol/actions/actionDefinitionV1';
 import { isAgentStartActionInvocationV1, requiresActionAgentStartDepthV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { normalizeExecutionRunToolResult } from './executionRunToolResult';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import type { ProjectedPluginToolCatalogEntry } from '@/plugins/runtime/toolCatalog';
-import { bindContextualActionToolInput, projectSessionBoundActionToolInputSchema } from './actionToolContext';
-import { preparePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
-import { actionInputIssueFailure, projectActionInputJsonSchemaIssues } from '@happier-dev/protocol/actions/executor/actionInputValidation';
-import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
-import { createSensitiveDiagnosticTextRedactor } from '@happier-dev/protocol/bugs/reports/redaction';
-import type { SensitiveDiagnosticValuesLease } from '@happier-dev/protocol/bugs/reports';
-import { projectTargetActionFailure } from '@/plugins/runtime/invocation/actionExecutor';
-import { registerTargetActionDiagnosticInput } from '@/plugins/runtime/invocation/diagnostics';
+import { bindContextualActionToolInput } from './actionToolContext';
 import { materializeActionRequestAttributionV1, type ActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 
 type ActionExecutorResult = Readonly<
@@ -39,6 +32,7 @@ type ActionExecutorLike = Readonly<{
       approvalOrigin?: ApprovalRequestOriginV1 | null;
       callerPermissionMode?: string | null;
       causalPermissionAuthority?: unknown;
+      nativeRealtimeInput?: true;
       actionRequestAttributionV1?: ActionRequestAttributionV1;
       sessionInputSource?: unknown;
       sessionAgentSpawnPolicyV1?: unknown;
@@ -151,6 +145,8 @@ async function buildActionExecutorContext(params: Readonly<{
   authority?: 'account_automation';
   callerPermissionMode?: string | null;
   causalPermissionAuthority?: unknown;
+  nativeRealtimeInput?: true;
+  signal?: AbortSignal;
   actionRequestAttributionV1?: ActionRequestAttributionV1;
   sessionInputSource?: unknown;
   sessionAgentSpawnPolicyV1?: unknown;
@@ -162,7 +158,7 @@ async function buildActionExecutorContext(params: Readonly<{
   reviewCommentPrincipal?: ReviewCommentPrincipalHeaderV1;
   onWaitSnapshot?: (snapshot: unknown) => void | Promise<void>;
 }>> {
-  const callerPermissionMode = params.surface === 'agent' && params.resolveCallerPermissionMode
+  let callerPermissionMode = params.surface === 'agent' && params.resolveCallerPermissionMode
     ? await params.resolveCallerPermissionMode()
     : null;
   const reviewActor = params.surface !== 'cli' ? params.resolveReviewCommentActor?.() : null;
@@ -171,14 +167,22 @@ async function buildActionExecutorContext(params: Readonly<{
     && typeof params.resolveActiveTurnPermissionWitness === 'function';
   let causalPermissionAuthority: unknown = null;
   let activeTurnAttribution: unknown;
+  let activeDiscussionAddressing: unknown;
   let activeTurnId: string | null = null;
   let activeInputId: string | null = null;
+  let nativeRealtimeInput = false;
+  let admissionSignal: AbortSignal | undefined;
   if (hasActiveTurnPermissionWitnessResolver) {
     try {
       const rawWitness = await params.resolveActiveTurnPermissionWitness!();
       const witness = isInputRecord(rawWitness) ? rawWitness : null;
+      nativeRealtimeInput = isInputRecord(witness?.nativeRealtimeAdmission);
+      admissionSignal = witness?.signal instanceof AbortSignal ? witness.signal : undefined;
+      if (nativeRealtimeInput) callerPermissionMode = typeof witness?.callerPermissionMode === 'string'
+        ? witness.callerPermissionMode : null;
       causalPermissionAuthority = witness?.causalPermissionAuthority ?? null;
       activeTurnAttribution = witness?.actionRequestAttributionV1;
+      activeDiscussionAddressing = witness?.discussionAddressing;
       activeTurnId = typeof witness?.turnId === 'string' && witness.turnId.trim().length > 0
         ? witness.turnId.trim()
         : null;
@@ -191,10 +195,12 @@ async function buildActionExecutorContext(params: Readonly<{
       causalPermissionAuthority = null;
     }
   }
+  const signal = params.options?.signal && admissionSignal
+    ? AbortSignal.any([params.options.signal, admissionSignal]) : params.options?.signal ?? admissionSignal;
   const sessionAgentSpawnPolicyV1 =
     params.getSessionAgentSpawnPolicyV1 && (requiresActionAgentStartDepthV1(params.actionId)
       || isAgentStartActionInvocationV1(params.actionId, isInputRecord(params.input) ? params.input : {}))
-      ? await params.getSessionAgentSpawnPolicyV1(params.options?.signal)
+      ? await params.getSessionAgentSpawnPolicyV1(signal)
       : params.sessionAgentSpawnPolicyV1;
   const origin = params.options?.approvalOrigin;
   const runtimeRunId = params.surface === 'agent' ? params.resolveRuntimeRunId?.() : undefined;
@@ -220,7 +226,8 @@ async function buildActionExecutorContext(params: Readonly<{
         ? { sessionListAccess: 'led_subtree' as const }
         : {}),
     ...(params.options?.approvalOrigin ? { approvalOrigin: params.options.approvalOrigin } : {}),
-    ...(params.options?.signal ? { signal: params.options.signal } : {}),
+    ...(signal ? { signal } : {}),
+    ...(nativeRealtimeInput ? { nativeRealtimeInput: true as const } : {}),
     ...(params.options?.onWaitSnapshot ? { onWaitSnapshot: params.options.onWaitSnapshot } : {}),
     ...(actionRequestId ? { actionRequestId } : {}),
     ...(callerPermissionMode ? { callerPermissionMode } : {}),
@@ -236,6 +243,7 @@ async function buildActionExecutorContext(params: Readonly<{
             sourceSessionId: params.defaultSessionId,
             sourceTurnId: activeTurnId,
             ...(activeInputId ? { sourceInputId: activeInputId } : {}),
+            ...(activeDiscussionAddressing !== undefined ? { discussionAddressing: activeDiscussionAddressing } : {}),
             via: params.sessionInputVia ?? 'action',
           },
         }
@@ -430,52 +438,6 @@ export function createActionToolExecutorBridge(params: Readonly<{
         return { ok: false, errorCode: 'action_disabled', error: 'Action is disabled', details: availability };
       }
 
-      // Host-generated Tools share their Action's schema and parser. Declared
-      // plugin Tools (bundled or installed) own an independent, possibly narrower
-      // JSON Schema contract. Admit that contract without running Action parsing,
-      // defaults or transforms in the Tool/presentation layer.
-      const tool = listPluginActionBackedTools({ registry: params.registry, pluginToolCatalog: params.pluginToolCatalog })
-        .find(candidate => candidate.name === toolName && candidate.actionId === actionId);
-      if (tool) {
-        const schema = projectSessionBoundActionToolInputSchema({ actionId, inputSchema: tool.inputSchema,
-          contextualDefaults: tool.contextualDefaults, registry: params.registry, pluginToolCatalog: params.pluginToolCatalog,
-          context: { defaultSessionId, defaultSessionMachineId: params.defaultSessionMachineId, defaultSessionRootPath: params.defaultSessionRootPath } });
-        if (!schema || typeof schema !== 'object' || Array.isArray(schema)) {
-          return { ok: false, errorCode: 'action_schema_invalid', error: 'action_schema_invalid' };
-        }
-        const prepared = preparePluginJsonSchema(schema);
-        if (!prepared.validate(toolArgs)) {
-          // Capture the compiler's error bag before awaiting discovery, which
-          // can itself compile/validate another schema in the same realm.
-          const issues = projectActionInputJsonSchemaIssues(prepared.validate, prepared.jsonSchema, toolArgs);
-          const discoveryInput = { id: actionId };
-          const context = await buildActionExecutorContext({ actionId: 'action.spec.get', input: discoveryInput,
-            defaultSessionId, surface, options, actionsSettings: readActionsSettings() });
-          const discovery = await params.executor.execute('action.spec.get', discoveryInput, context);
-          if (!discovery.ok) return normalizeActionExecutorResult(discovery);
-          const definition = ActionDefinitionV1Schema.safeParse(isInputRecord(discovery.result) ? discovery.result.actionSpec : null);
-          if (!definition.success || definition.data.id !== actionId) {
-            return { ok: false, errorCode: 'action_disabled', error: 'Action is unavailable' };
-          }
-          const secretInputPaths = (definition.data.inputHints?.fields ?? [])
-            .filter(field => field.widget === 'secret').map(field => field.path);
-          const input = AgentRuntimeJsonValueV1Schema.safeParse(toolArgs);
-          if (!input.success) return actionInputIssueFailure({ code: 'invalid_json_value', path: [] });
-          const redactor = createSensitiveDiagnosticTextRedactor();
-          const leases: SensitiveDiagnosticValuesLease[] = [];
-          try {
-            registerTargetActionDiagnosticInput(input.data, secretInputPaths, value => {
-              if (value.length > 0) leases.push(redactor.register([value]));
-            });
-            const failure = projectTargetActionFailure({ status: 'invalid', code: 'plugin_action_input_schema_invalid',
-              message: 'plugin_action_input_schema_invalid', issues: issues.map(issue => ({ ...issue, message: 'invalid_parameters' })) },
-            value => redactor.redact(value), { input: input.data, secretInputPaths });
-            return { ...actionInputIssueFailure(...('issues' in failure ? failure.issues ?? [] : [])),
-              errorCode: 'plugin_action_input_schema_invalid', error: 'plugin_action_input_schema_invalid' };
-          } finally { for (const lease of leases.reverse()) lease.close(); }
-        }
-      }
-
       const actionInput = bindContextualActionToolInput({
         actionId,
         input: toolArgs,
@@ -532,12 +494,12 @@ export function createActionToolExecutorBridge(params: Readonly<{
       const result = await params.executor.execute(
         'action.options.resolve',
         input,
-        {
-          defaultSessionId,
-          surface,
-          ...(surface === 'agent' ? { authority: 'account_automation' as const } : {}),
-          actionsSettings: readActionsSettings(),
-        },
+        await buildActionExecutorContext({ actionId: 'action.options.resolve', input, defaultSessionId, surface,
+          actionsSettings: readActionsSettings(), resolveCallerPermissionMode: params.resolveCallerPermissionMode,
+          resolveActiveTurnPermissionWitness: params.resolveActiveTurnPermissionWitness,
+          resolveReviewCommentActor: params.resolveReviewCommentActor,
+          sessionInputVia: params.sessionInputVia,
+          sessionListAccess: params.resolveSessionListAccess?.(defaultSessionId) }),
       );
       if (!result.ok) {
         return {

@@ -8,9 +8,6 @@ export type HostAcpTimeouts = Partial<Readonly<{
   initMs: number;
   initDelayMs: number;
   idleMs: number;
-  toolCallMs: number | null;
-  investigationToolCallMs: number | null;
-  toolKindTimeouts: Readonly<Record<string, number | null>>;
   promptLivenessMs: number | null;
   postPromptNoUpdatesMs: number | null;
   postToolCallIdleMs: number;

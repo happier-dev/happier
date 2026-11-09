@@ -13,6 +13,7 @@ import type {
     SessionPendingExecutionRunEnqueueByMachineRequestV2,
 } from '@happier-dev/protocol';
 import type { SessionRuntimeTeamCredentialDenialDetailsV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import type { AgentSessionRuntimeEventV1 } from '@happier-dev/protocol/runtime/agentSessionV1';
 
 type DaemonAgentRuntimePromptContributions = Extract<
     AgentRuntimeDaemonTurnContributionsResultV1,
@@ -36,6 +37,8 @@ type DaemonAgentRuntimeAgentCompositionContributions = Extract<
  * This contract is independent of the retired whole-runtime session bridge.
  */
 export type DaemonAgentRuntimeTurnContributionsBridge = Readonly<{
+    observeConnectedAccountIdentity?(observation: Extract<AgentSessionRuntimeEventV1,
+        { kind: 'connected-account-identity-observed' }>, options?: Readonly<{ signal?: AbortSignal }>): Promise<void>;
     pluginMcp?: import('@/mcp/runtime/pluginMcpPort').PluginMcpPort;
     mcpRequestAuth?: import('@/mcp/runtime/mcpRequestAuth').McpRequestAuthPort;
     readTeamCredentialDenial?(params: Readonly<{

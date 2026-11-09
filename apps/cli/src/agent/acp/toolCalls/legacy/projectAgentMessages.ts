@@ -21,6 +21,8 @@ export function projectLegacyAcpToolCallMessage(call: MergedAcpToolCall): AgentM
             ...input,
             ...(call.locations ? { locations: call.locations } : {}),
             _acp: {
+                ...(call.name !== undefined ? { name: call.name } : {}),
+                ...call.toolMetadata,
                 ...(call.kind ? { kind: call.kind } : {}),
                 ...(call.title !== undefined ? { title: call.title } : {}),
                 ...(call.content ? { content: call.content } : {}),

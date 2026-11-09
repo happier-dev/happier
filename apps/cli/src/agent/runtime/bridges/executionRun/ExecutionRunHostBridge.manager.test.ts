@@ -50,7 +50,10 @@ import { configuration } from '@/configuration';
 import { resolveCurrentCliHomeTarget } from '@/server/homeTarget';
 import { normalizeServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
-import { createMutableApiSessionClientFixture, type MutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
+import { createAccountEncryptionCurrentnessFixture, createMutableApiSessionClientFixture, createSessionRecordFixture, type MutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
+import { seedTestServerProfile } from '@/testkit/serverProfiles';
+import { projectAccountRowsReadHttpResponse } from '@/workspaces/projectAccountRows.testkit';
 import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
 import { buildBackendTargetKeyV2, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import {
@@ -64,6 +67,10 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from
 import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
 import { ReviewCommentCreateRequestV1Schema, ReviewCommentV1Schema } from '@happier-dev/protocol';
 import { createReviewRunCommentService } from '@/agent/executionRuns/profiles/review/reviewComments';
+import { SessionInputRequestV1Schema, SessionMessageProvenanceV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { renderSessionInputContextBlockV1, renderSessionInputContextPromptV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
+import { TaskProfile } from '@/agent/executionRuns/profiles/task/TaskProfile';
+import { buildExecutionRunSessionPromptContext } from './ExecutionRunHostBridge';
 import { createCliReviewCommentActionExecutorFromCredentials } from '@/agent/reviews/comments/executor';
 
 type TestRuntimeFactoryInput = Parameters<typeof import('./runtime/create').createExecutionRunRuntime>[0];
@@ -198,15 +205,18 @@ afterAll(async () => {
   }
 });
 
-beforeEach(() => {
+beforeEach(async () => {
   runtimeFactoryRef.current = null;
   createExecutionRunRuntimeMock.mockClear();
   dispatchBridgeLifecycleHookEvent.mockClear();
+  await seedTestServerProfile({ id: configuration.activeServerId, homeId: 'srv_manager_fixture',
+    serverUrl: configuration.apiServerUrl });
   admitDefaultVoiceAccountFixture();
   // Review completion persists findings through the real service and signed
   // transport. Only Home's HTTP response and the installation key are fixtures.
   const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
     const path = new URL(String(url)).pathname;
+    if (path.startsWith('/v1/account/project-rows/')) return projectAccountRowsReadHttpResponse([], String(url), body);
     if (path !== '/v1/reviews/comments') throw new Error(`Unexpected manager Account write: ${path}`);
     const { authorIntent, clientMutationId, eventEnvelope, ...input } = ReviewCommentCreateRequestV1Schema.parse(body);
     const comment = ReviewCommentV1Schema.parse({ ...input,
@@ -237,14 +247,12 @@ function admitDefaultVoiceAccountFixture() {
   // This HTTP boundary represents their ordinary, plain Account Sessions.
   const http = vi.spyOn(axios, 'get').mockImplementation(async url => {
     const path = new URL(String(url)).pathname;
-    if (path === '/v1/account/encryption/currentness') return { status: 200, data: { mode: 'plain', version: 0,
-      signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 0 } };
+    if (path === '/v1/account/encryption/currentness') return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
     if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
     if (!path.startsWith('/v2/sessions/')) throw new Error(`Unexpected manager Account read: ${path}`);
     const id = path.slice('/v2/sessions/'.length);
-    return { status: 200, data: { session: { id, seq: 1, createdAt: 1, updatedAt: 1, active: true, activeAt: 1,
-      archivedAt: null, encryptionMode: 'plain', metadataVersion: 0, agentState: null, agentStateVersion: 0,
-      pendingCount: 0, pendingVersion: 0, share: null, dataEncryptionKey: null, metadata: '{}' } } };
+    return { status: 200, data: { session: createSessionRecordFixture({ id, encryptionMode: 'plain',
+      metadata: JSON.stringify(createTestMetadata({ machineId: 'manager-fixture-machine', path: defaultExecutionRunManagerTestCwd })) }) } };
   });
   restoreDefaultVoiceAccountHttp = () => http.mockRestore();
 }
@@ -372,7 +380,8 @@ it('denies a Run before effects when operation refresh observes a missed shared 
     },
   })).rejects.toMatchObject({
     code: 'provider_binding_changed',
-    details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' } },
+    details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' },
+      providerError: { code: 'provider_binding_changed', savedSecretReason: 'reference_stale' } },
   });
   expect(createRuntime).not.toHaveBeenCalled();
   expect((manager as unknown as { runs: Map<string, ExecutionRunState> }).runs.size).toBe(0);
@@ -509,6 +518,56 @@ function createExecutionRunManager(
     }),
   });
 }
+
+it('stamps generated retained initial input with host admission that has a deterministic prompt envelope', async () => {
+  const host = createManagerParentHost();
+  let generatedAdmission: unknown;
+  let generatedText: string | undefined;
+  let preparedBudget: number | undefined;
+  const limit = 2_000;
+  const skillPrefix = 'skill 😀\n\n';
+  const profileCatalog = buildExecutionRunProfileCatalog();
+  const preparedTask = { ...TaskProfile, finalizeStartParams: async (input: Parameters<NonNullable<typeof TaskProfile.finalizeStartParams>>[0]) => {
+    preparedBudget = await input.resolveMaxInputUnicodeCharacters?.() ?? input.maxInputUnicodeCharacters;
+    return { instructions: input.request.instructions, intentInput: input.request.intentInput };
+  } };
+  const manager = createExecutionRunManager({
+    parentProvider: TEST_PRIMARY_BACKEND_ID, cwd: process.cwd(), sendAcp: async () => {},
+    createRuntime: () => ({ ...createTestExecutionRunHostRuntime(),
+      prepareInputBudget: async () => limit - Array.from(skillPrefix).length,
+      interaction: { kind: 'retained_agent_session.v1', capabilities: { open: ['create'], delivery: ['newTurn'], cancel: true } } }),
+    resolveExecutionRunProfileCatalog: () => ({
+      profileCatalog: { ...profileCatalog, builtInProfilesByIntent: new Map(profileCatalog.builtInProfilesByIntent).set('task', preparedTask) },
+      engineRegistry: defaultExecutionRunManagerEngineRegistry,
+    }),
+    sessionInteractionHost: { ...host, session: Object.assign(host.session, {
+      enqueueSessionUserMessageWithDisposition: async (input: Parameters<NonNullable<typeof host.session.enqueueSessionUserMessageWithDisposition>>[0]) => {
+        generatedAdmission = input.inputAdmission;
+        generatedText = input.text;
+        return { status: 'accepted' as const, localId: input.localId };
+      },
+    }) },
+  });
+  try {
+    const started = await manager.start({ sessionId: host.session.sessionId, intent: 'task',
+      backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID }, instructions: 'Generated input.',
+      permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'request_response' });
+    expect(generatedText).toBe('Generated input.');
+    expect(generatedAdmission).toMatchObject({ request: { producer: 'sessionAction', caller: { kind: 'host' } },
+      provenance: { kind: 'host', producer: 'sessionAction' } });
+    const admission = generatedAdmission as { request: unknown; provenance: unknown };
+    expect(SessionInputRequestV1Schema.parse(admission.request).producer).toBe('sessionAction');
+    const provenance = SessionMessageProvenanceV1Schema.parse(admission.provenance);
+    expect(renderSessionInputContextBlockV1({ provenance })).toContain('source_kind="sessionAction"');
+    const envelope = renderSessionInputContextPromptV1({
+      provenanceBlock: renderSessionInputContextBlockV1({ provenance }),
+      sessionRunContext: buildExecutionRunSessionPromptContext({ sessionId: host.session.sessionId, supportedReadActions: [] }),
+      transformedUserText: 'a',
+    });
+    expect(preparedBudget).toBe(limit - Array.from(skillPrefix).length - (Array.from(envelope).length - 1));
+    await manager.stop(started.runId);
+  } finally { await manager.dispose(); }
+});
 
 it('refuses attached omission before Run effects when the applied parent is unavailable', async () => {
   const createRuntime = vi.fn(() => createTestExecutionRunHostRuntime());
@@ -1464,6 +1523,7 @@ describe('ExecutionRunManager (review intent)', () => {
     const followUpRunId = String((followUp as any).result?.runId ?? '');
     expect(followUpRunId).not.toBe('');
     await manager.waitForTerminal(followUpRunId);
+    expect(manager.get(followUpRunId)?.status, JSON.stringify(manager.get(followUpRunId)?.error)).toBe('succeeded');
 
     expect(loadSessionCalls).toEqual([providerSessionId]);
     expect(prompts.at(-1)).toContain('Please clarify why this matters.');
@@ -3268,7 +3328,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
       transcript: { persistenceMode: 'persistent', epoch: 3 },
     });
 
-    expect((manager.getPublic(started.runId) as any)?.transcript).toMatchObject({
+    expect(manager.getPublic(started.runId)?.transcript, JSON.stringify(manager.getPublic(started.runId))).toMatchObject({
       persistenceMode: 'persistent',
       epoch: 3,
     });
@@ -3602,10 +3662,12 @@ describe('ExecutionRunManager (long-lived runs)', () => {
 
       expect(manager.get(started.runId)?.status).toBe('running');
 
+      nowMs = 59_999;
+      await vi.advanceTimersByTimeAsync(59_999);
+      expect(manager.get(started.runId)?.status).toBe('running');
+
       nowMs = 60_001;
-      await vi.advanceTimersByTimeAsync(30_000);
-      await Promise.resolve();
-      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(2);
 
       expect(manager.get(started.runId)?.status).toBe('cancelled');
       expect(manager.getPublic(started.runId)).toMatchObject({
@@ -3657,6 +3719,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
     });
     // Selected Artifact headers use the narrow batch read; bodies are still ordinary GETs.
     vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+      if (new URL(String(url)).pathname.startsWith('/v1/account/project-rows/')) return projectAccountRowsReadHttpResponse([], String(url), body);
       if (new URL(String(url)).pathname !== '/v1/artifacts/read') throw new Error(`Unexpected Account write: ${String(url)}`);
       const input = ArtifactReadHeadersBatchInputV1Schema.parse(body);
       return { status: 200, data: ArtifactReadHeadersBatchResponseV1Schema.parse({ projection: 'headers',
@@ -3666,8 +3729,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
       const address = new URL(String(url));
       expect(new URL(normalizeServerHttpBaseUrl(String(url))).origin).toBe(new URL(normalizeServerHttpBaseUrl(serverUrl)).origin);
       const path = address.pathname;
-      if (path === '/v1/account/encryption/currentness') return { status: 200, data: { mode: 'plain', version: 0,
-        signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 0 } };
+      if (path === '/v1/account/encryption/currentness') return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
       if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
       if (path === '/v1/artifacts') return { status: 200, data: ['rpc-account-doc', 'rpc-profile-doc', 'rpc-session-doc'].map(id => artifactHeader(id)) };
       if (path.startsWith('/v2/sessions/')) {
@@ -3677,9 +3739,9 @@ describe('ExecutionRunManager (long-lived runs)', () => {
             transcriptMode: 'synthetic', targetSessionId: 'rpc-target', updatedAt: 1 } }
           : id === 'rpc-target' ? { profileId: 'rpc-target-profile', work: { promptStack: [entry('rpc-session-doc')] } }
             : (() => { throw new Error(`Unexpected target: ${id}`); })();
-        return { status: 200, data: { session: { id, seq: 1, createdAt: 1, updatedAt: 1, active: true, activeAt: 1,
-          archivedAt: null, encryptionMode: 'plain', metadataVersion: 0, agentState: null, agentStateVersion: 0,
-          pendingCount: 0, pendingVersion: 0, share: null, dataEncryptionKey: null, metadata: JSON.stringify(metadata) } } };
+        return { status: 200, data: { session: createSessionRecordFixture({ id, encryptionMode: 'plain',
+          metadata: JSON.stringify(createTestMetadata({ machineId: 'manager-fixture-machine',
+            path: defaultExecutionRunManagerTestCwd, ...metadata })) }) } };
       }
       if (path.startsWith('/v1/artifacts/')) {
         const id = path.slice('/v1/artifacts/'.length);
@@ -3741,17 +3803,17 @@ describe('ExecutionRunManager (long-lived runs)', () => {
     const hidden = buildSystemSessionMetadataV1({ key: VOICE_CONVERSATION_SYSTEM_SESSION_KEY, hidden: true });
     const http = vi.spyOn(axios, 'get').mockImplementation(async url => {
       const path = new URL(String(url)).pathname;
-      if (path === '/v1/account/encryption/currentness') return { status: 200, data: { mode: 'plain', version: 0,
-        signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 0 } };
+      if (path === '/v1/account/encryption/currentness') return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+      if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
       const id = path.slice('/v2/sessions/'.length);
       const metadata = id === 'history-session' ? { ...hidden, profileId: 'wrong-history-profile', voiceConversationBindingV1: {
         v: 1, adapterId: 'local', controlSessionId: 'voice-global', transcriptMode: 'synthetic', targetSessionId: 'attached-target', updatedAt: 1,
       } } : id === 'attached-target' ? { work: { promptStack: [{ id: 'target-doc', enabled: true,
         ref: { kind: 'doc', artifactId: 'target-doc' }, placement: 'system_append', required: true }] } }
         : (() => { throw new Error(`Unexpected qualified Voice Session: ${path}`); })();
-      return { status: 200, data: { session: { id, seq: 1, createdAt: 1, updatedAt: 1, active: true, activeAt: 1,
-        archivedAt: null, encryptionMode: 'plain', metadataVersion: 0, agentState: null, agentStateVersion: 0,
-        pendingCount: 0, pendingVersion: 0, share: null, dataEncryptionKey: null, metadata: JSON.stringify(metadata) } } };
+      return { status: 200, data: { session: createSessionRecordFixture({ id, encryptionMode: 'plain',
+        metadata: JSON.stringify(createTestMetadata({ machineId: 'manager-fixture-machine',
+          path: defaultExecutionRunManagerTestCwd, ...metadata })) }) } };
     });
     const manager = createExecutionRunManager({ parentProvider: TEST_PRIMARY_BACKEND_ID, cwd: process.cwd(),
       sendAcp: async () => {}, createRuntime: () => createPromptRuntime((runtime, _id, prompt) => {

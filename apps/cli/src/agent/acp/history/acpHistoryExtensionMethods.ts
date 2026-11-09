@@ -2,8 +2,6 @@ import { RequestError } from '@agentclientprotocol/sdk';
 
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 
-export const ACP_HISTORY_EXTENSION_METHOD_LIMIT = 8;
-
 const EXTENSION_METHOD_PATTERN =
   /^[A-Za-z0-9_][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._/-]*$/u;
 const EXTENSION_METHOD_MAX_CODE_UNITS = 256;
@@ -18,10 +16,9 @@ function assertHistoryExtensionMethods(methods: readonly string[]): void {
   if (
     !Array.isArray(methods)
     || methods.length === 0
-    || methods.length > ACP_HISTORY_EXTENSION_METHOD_LIMIT
   ) {
     throw new Error(
-      `ACP history extension methods must contain between 1 and ${ACP_HISTORY_EXTENSION_METHOD_LIMIT} entries`,
+      'ACP history extension methods must contain at least one entry',
     );
   }
   for (const method of methods) {

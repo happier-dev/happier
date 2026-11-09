@@ -1,4 +1,5 @@
 import type { Metadata, PermissionMode } from '@/api/types';
+import type { AgentSessionModelsSource } from '@happier-dev/plugin-sdk/agents/runtime';
 import { randomUUID } from 'node:crypto';
 import type { ACPProvider } from '@/api/session/sessionMessageTypes';
 import { commitRequiredRuntimeTranscriptMessage, type RuntimeTranscriptProjectionSession } from './session/transcripts/projectRuntimeTranscriptEvent';
@@ -131,6 +132,7 @@ export function createRuntimeOverrideSynchronizers(params: Readonly<{
   runtime: RuntimeOverrideTarget;
   isStarted: () => boolean;
   capabilitySelection?: CapabilitySelectionSynchronizerInput;
+  models?: Pick<AgentSessionModelsSource, 'read'>;
   configOptionRejectionTranscript?: Readonly<{ session: RuntimeTranscriptProjectionSession; provider: ACPProvider }>;
 }>): RuntimeOverrideSynchronizers {
   const capabilitySync = params.capabilitySelection ? createCapabilitySelectionSynchronizer(params.capabilitySelection) : null;
@@ -147,6 +149,7 @@ export function createRuntimeOverrideSynchronizers(params: Readonly<{
   const rejectionTranscript = params.configOptionRejectionTranscript;
   const configOptionSync = createSessionConfigOptionOverrideSynchronizer({
     session: params.session,
+    models: params.models,
     runtime: params.runtime,
     isStarted: params.isStarted,
     onConfigOptionRejected: rejectionTranscript ? async ({ outcome }) => {

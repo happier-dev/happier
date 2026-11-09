@@ -73,12 +73,13 @@ export type ExecutionRunPendingInputConsumer = Readonly<{
     /** Wake this exact target from a pending-change hint or reconnect observation. */
     wake: () => void;
     /**
-     * The durable accepted-anchor proof for one admitted input.
+     * The durable native-acceptance anchor for one admitted input.
      *
      * Agent output produced before the user anchor commits must be held until this
      * resolves `accepted`. A resolved settlement promise alone is not that proof:
-     * only the durable reader survives restart and can distinguish a committed row
-     * from an unclassified one.
+     * only the durable reader survives restart and proves explicit native settlement
+     * on that exact committed row. Host admission may publish the row earlier and
+     * manual handling does not establish this output anchor.
      */
     awaitAcceptedUserAnchor: (localId: string) => Promise<DurableProviderInputAcceptanceV1>;
     dispose: () => Promise<void>;
@@ -162,8 +163,8 @@ export function createExecutionRunPendingInputConsumer(
             if (outcome) {
                 await port.observeProviderInputSettlement(outcome);
             }
-            // The durable reader — not the settlement promise — proves the committed
-            // user anchor. An unavailable or unclassified row stays `unknown` so no
+            // The durable reader — not the settlement promise or transcript presence —
+            // proves the native-accepted user anchor. An unavailable or unclassified row stays `unknown` so no
             // caller may read it as either outcome.
             const acceptance = await port.readDurableProviderInputAcceptanceV1(localId);
             if (pendingAdmission && acceptance !== 'unknown') {
@@ -269,10 +270,14 @@ export function createExecutionRunPendingInputConsumer(
         wake: () => {
             wake();
         },
-        awaitAcceptedUserAnchor: async (localId) => {
+        awaitAcceptedUserAnchor: async (localId): Promise<DurableProviderInputAcceptanceV1> => {
+            if (disposed || !options.isCurrent()) return 'unknown';
             const entry = admitted.get(localId);
             if (entry) return await entry.admission.promise;
             const durable = await port.readDurableProviderInputAcceptanceV1(localId);
+            // Disposal can win while the exact read is pending. Never install a
+            // waiter after disposal has already settled this occurrence's waiters.
+            if (disposed || !options.isCurrent()) return 'unknown';
             if (durable !== 'unknown') return durable;
             // Materialization can race the durable read. Recheck the admitted map
             // before installing the event waiter so an already-claimed input can

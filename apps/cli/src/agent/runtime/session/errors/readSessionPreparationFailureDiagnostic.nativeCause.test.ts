@@ -2,6 +2,15 @@ import { expect, it } from 'vitest';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { readSessionPreparationFailureDiagnostic } from './classifyPrimarySessionRuntimeIssue';
 
+it('reports the closed native startup category when provider classification is unavailable', () => {
+  const failureCause = { phase: 'client_start', code: 'agent_startup_transport_failed',
+    failureReason: 'unclassified_provider_error', providerErrorMessage: 'CODEX_HOME does not exist' };
+  const error = new PluginError({ code: 'agent_startup_transport_failed', details: { failureCause } });
+  expect(readSessionPreparationFailureDiagnostic(error)).toMatchObject({
+    originalCode: 'agent_startup_transport_failed', reason: 'agent_startup_transport_failed', failureCause,
+  });
+});
+
 it('retains the native startup phase and closed cause in runner file diagnostics', () => {
   const failureCause = { phase: 'client_start', failureReason: 'permission_denied', code: 'EACCES' };
   const error = new PluginError({ code: 'agent_startup_failed', message: '/private/credential PRIVATE_TOKEN',

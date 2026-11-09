@@ -7,8 +7,8 @@ import { logger } from '@/utils/logger';
 import type { AcpReplaySidechainSessionClient } from '@/agent/acp/sessionClient';
 import { extractThinkingTextFromThinkToolInput, isThinkingToolName } from '@/agent/acp/bridge/thinkingToolCall';
 import { enqueueAcpReplayAgentMessage } from './enqueueAcpReplayAgentMessage';
-
-const MAX_REPLAY_EVENTS = 1_000;
+import { publishImportedSessionMedia } from '@/session/media/imported';
+import { extractAcpMediaContentBlocks } from '@/agent/acp/media/extractAcpMediaContentBlocks';
 
 function sha256(input: string): string {
   return createHash('sha256').update(input).digest('hex');
@@ -108,18 +108,7 @@ export async function importAcpReplaySidechainV1(params: {
     return;
   }
 
-  const replay = params.replay.length > MAX_REPLAY_EVENTS
-    ? params.replay.slice(0, MAX_REPLAY_EVENTS)
-    : params.replay;
-  if (replay.length !== params.replay.length) {
-    logger.warn('[ACP Sidechain Import] Replay exceeded max event limit; truncating import', {
-      provider: params.provider,
-      remoteSessionId: params.remoteSessionId,
-      sidechainId,
-      maxEvents: MAX_REPLAY_EVENTS,
-      replayEvents: params.replay.length,
-    });
-  }
+  const replay = params.replay;
 
   const pendingSyntheticToolCallIds: string[] = [];
   let syntheticToolCallCounter = 0;
@@ -146,6 +135,9 @@ export async function importAcpReplaySidechainV1(params: {
         index: i,
         key: `message:${normalizeTextForMatch(text)}`,
       });
+      if (await publishImportedSessionMedia({ ...params, sidechainId, localId, role: 'agent', text,
+        content: event.content, meta: { importedFrom: 'acp-sidechain', remoteSessionId: params.remoteSessionId, sidechainId },
+        provenanceSource: 'sidechain' })) continue;
       await enqueueAcpReplayAgentMessage({
         session: params.session,
         provider: params.provider,
@@ -254,11 +246,16 @@ export async function importAcpReplaySidechainV1(params: {
       await enqueueAcpReplayAgentMessage({
         session: params.session,
         provider: params.provider,
-        body: { type: 'tool-result', callId, output: rawOutput, id: `import-${callId}-result`, isError, sidechainId } satisfies ACPMessageData,
+        body: { type: 'tool-result', callId,
+          output: extractAcpMediaContentBlocks(rawOutput, { originSource: 'tool-output', toolCallId: callId }).contentWithoutMedia,
+          id: `import-${callId}-result`, isError, sidechainId } satisfies ACPMessageData,
         localId,
         meta: { importedFrom: 'acp-sidechain', remoteSessionId: params.remoteSessionId, sidechainId },
         provenanceSource: 'sidechain',
       });
+      await publishImportedSessionMedia({ ...params, sidechainId, localId: `${localId}:media`, role: 'agent', text: '',
+        content: event.content ?? rawOutput, toolCallId: callId,
+        meta: { importedFrom: 'acp-sidechain', remoteSessionId: params.remoteSessionId, sidechainId }, provenanceSource: 'sidechain' });
       continue;
     }
   }

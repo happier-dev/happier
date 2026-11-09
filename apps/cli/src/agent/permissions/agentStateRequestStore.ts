@@ -10,6 +10,7 @@ import {
 import { PermissionRequestPushNotifier } from '@/settings/notifications/permissionRequestPushNotifier';
 import type { PermissionRequestPushSender } from '@/agent/permissions/BasePermissionHandler';
 import { logger } from '@/ui/logger';
+import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import { deepEqual } from '@/utils/deterministicJson';
 import {
     isAgentStateRequestCoveredByCompletedRequests,
@@ -236,6 +237,7 @@ type SessionLike = Readonly<{
     updateAgentStateRequestSettlement: (updater: (state: AgentState) => AgentState) => Promise<void>;
     getAgentStateSnapshot?: () => AgentState | null | undefined;
     getMetadataSnapshot?: () => unknown;
+    subscribeToSessionConnectionState?: (listener: (state: Readonly<{ phase: string }>) => void) => () => void;
     getArchivedAtSnapshot?: () => number | null | undefined;
     onArchivedAtChange?: (listener: (archivedAt: number | null) => void) => () => void;
     getAgentStateResponseTargetDispatcher?: () => AgentStateResponseTargetDispatcher;
@@ -375,6 +377,13 @@ function pendingIdentity(entry: unknown): unknown {
 }
 
 export class AgentStateRequestStore {
+    private readonly pendingPublications = new Map<string, Readonly<{
+        request: AgentStateRequestEntry;
+        completedBeforePublication: AgentStateCompletedEntry | undefined;
+        retry: () => void;
+        cancel: () => void;
+    }>>();
+    private unsubscribePublicationReconnect: (() => void) | null = null;
     private appliedCompletionOwner: AgentStateRequestStore = this;
     private appliedCompletions = new Map<string, RetainedAppliedCompletion>();
     private target: AgentStateRequestPersistenceOwner;
@@ -429,6 +438,7 @@ export class AgentStateRequestStore {
     }
 
     updateSession(session: SessionLike): void {
+        this.cancelPendingPublications();
         const nextTarget = createSessionPersistenceTarget(session);
         if (nextTarget.scopeId !== this.target.scopeId) {
             this.retireAppliedCompletions();
@@ -459,6 +469,7 @@ export class AgentStateRequestStore {
     rebindPersistenceTargetFrom(next: unknown): boolean {
         if (!(next instanceof AgentStateRequestStore) || this.session || next.session
             || next.target.scopeId !== this.target.scopeId) return false;
+        this.cancelPendingPublications();
         this.target = next.target;
         return true;
     }
@@ -636,9 +647,11 @@ export class AgentStateRequestStore {
             return { ...state, requests };
         }));
         if (!changed) return false;
-        if (nextHandler.kind === 'person') {
-            const pending = this.readOutstandingRequest(params.requestId);
-            if (pending) this.notifyPermissionRequestPushBestEffort({ permissionId: params.requestId,
+        const pending = this.readOutstandingRequest(params.requestId);
+        // The incumbent notifier sends Session handlers through source Follow
+        // admission and person handlers through the existing push owner.
+        if (pending?.createdAt === params.expectedCreatedAt && deepEqual(pending.currentHandler, nextHandler)) {
+            this.notifyPermissionRequestPushBestEffort({ permissionId: params.requestId,
                 toolName: pending.toolName, toolInput: pending.toolInput, createdAtMs: pending.createdAt });
         }
         return true;
@@ -832,7 +845,7 @@ export class AgentStateRequestStore {
         }
     }
 
-    private beginRequestPublication(params: AgentStateRequestPublication, preserveExisting = false): Readonly<{
+    private beginRequestPublication(params: AgentStateRequestPublication, preserveExisting = false, retainUntilReconnect = false): Readonly<{
         result: Promise<void> | void;
         notify: () => void;
     }> {
@@ -842,6 +855,19 @@ export class AgentStateRequestStore {
             }
         };
         assertActiveQuestion();
+        this.pendingPublications.get(params.requestId)?.cancel();
+        const target = this.target;
+        const replacedCompletion = target.readState()?.completedRequests?.[params.requestId];
+        const entryTemplate = Object.create(null) as AgentStateRequestEntry & { source?: string; permissionSuggestions?: readonly unknown[] };
+        entryTemplate.tool = params.toolName;
+        entryTemplate.kind = params.kind ?? resolveAgentRequestKind(params.toolName);
+        entryTemplate.arguments = params.toolInput;
+        entryTemplate.createdAt = params.createdAt;
+        if (typeof params.source === 'string') entryTemplate.source = params.source;
+        applyAgentStateRequestMetadata(entryTemplate, params);
+        const followEvent = readRequestFollowEvent(entryTemplate);
+        const evidence = !params.sidechainId && !readRunScopedExecutionPermissionRequestIdentity(params.requestId)
+            && followEvent ? this.session?.captureSessionFollowRuleEvidence?.(followEvent) : null;
         let shouldNotify = false;
         let didRunUpdater = false;
         let publishedRequest: AgentStateRequestEntry | null = null;
@@ -857,9 +883,14 @@ export class AgentStateRequestStore {
             });
         };
 
-        const result = this.target.updateState((currentState) => {
+        const updater = (currentState: AgentState, replay = false) => {
             assertActiveQuestion();
+            shouldNotify = false;
             didRunUpdater = true;
+            // A reconnect retries the original occurrence; it cannot erase a
+            // terminal answer that arrived after that publication was admitted.
+            if (replay && currentState.completedRequests?.[params.requestId]
+                && !deepEqual(currentState.completedRequests[params.requestId], replacedCompletion)) return currentState;
             // A transcript mirror has no new request tuple. It cannot replace
             // an owning producer's pending question or revive its completion.
             if (preserveExisting && (Object.hasOwn(currentState.requests ?? {}, params.requestId)
@@ -867,11 +898,7 @@ export class AgentStateRequestStore {
             const requests = cloneStringKeyedRecordToNullProto<AgentStateRequestEntry>(currentState.requests);
             const completedRequests = cloneStringKeyedRecordToNullProto<AgentStateCompletedEntry>(currentState.completedRequests);
             const existingOutstanding = clonePlainObjectToNullProto(requests[params.requestId]);
-            const entry = Object.create(null) as AgentStateRequestEntry & { source?: string; permissionSuggestions?: readonly unknown[] };
-            entry.tool = params.toolName;
-            entry.kind = params.kind ?? resolveAgentRequestKind(params.toolName);
-            entry.arguments = params.toolInput;
-            entry.createdAt = params.createdAt;
+            const entry = Object.assign(Object.create(null), entryTemplate) as AgentStateRequestEntry;
             if (existingOutstanding && Object.prototype.hasOwnProperty.call(existingOutstanding, 'permissionResponseClaimV1')) {
                 // A restarted handler can republish the same canonical
                 // outstanding request. Preserve even a malformed prior
@@ -879,13 +906,6 @@ export class AgentStateRequestStore {
                 // than accidentally clearing a first-answer authority.
                 entry.permissionResponseClaimV1 = existingOutstanding.permissionResponseClaimV1;
             }
-            if (typeof params.source === 'string') {
-                entry.source = params.source;
-            }
-            if (Array.isArray(params.permissionSuggestions) && params.permissionSuggestions.length > 0) {
-                entry.permissionSuggestions = [...params.permissionSuggestions];
-            }
-            applyAgentStateRequestMetadata(entry, params);
             const sameOccurrence = existingOutstanding && isSameAgentStateRequestOccurrence(existingOutstanding, entry);
             if (sameOccurrence) {
                 // Native notifier acceptance belongs to the original request,
@@ -900,8 +920,6 @@ export class AgentStateRequestStore {
                     entry[SESSION_FOLLOW_RULE_EVIDENCE_META_KEY_V1] = existingOutstanding[SESSION_FOLLOW_RULE_EVIDENCE_META_KEY_V1];
                 }
             } else if (!params.sidechainId && !readRunScopedExecutionPermissionRequestIdentity(params.requestId)) {
-                const event = readRequestFollowEvent(entry);
-                const evidence = event && this.session?.captureSessionFollowRuleEvidence?.(event);
                 // Session request state is shared with Session readers. Account-
                 // private project/tag evidence must remain at its private owner.
                 if (evidence) entry[SESSION_FOLLOW_RULE_EVIDENCE_META_KEY_V1] = projectSessionFollowRuleSharedSourceEvidenceV1(evidence);
@@ -917,6 +935,7 @@ export class AgentStateRequestStore {
                     if (retained.currentHandler) entry.currentHandler = retained.currentHandler;
                 }
             }
+            if (replay && existingOutstanding && !isSameAgentStateRequestOccurrence(existingOutstanding, entry)) return currentState;
             delete completedRequests[params.requestId];
             if (isAgentStateRequestCoveredByCompletedRequests({
                 requestId: params.requestId,
@@ -940,27 +959,76 @@ export class AgentStateRequestStore {
                 completedRequests,
             };
             return typeof params.updateState === 'function' ? params.updateState(nextState) : nextState;
-        });
+        };
+        const result = retainUntilReconnect
+            ? this.publishRequestWithReconnectRetry(params.requestId, entryTemplate, replacedCompletion, updater, notify)
+            : target.updateState(updater);
         return { result, notify };
+    }
+
+    private publishRequestWithReconnectRetry(requestId: string, request: AgentStateRequestEntry,
+        completedBeforePublication: AgentStateCompletedEntry | undefined,
+        updater: (state: AgentState, replay: boolean) => AgentState, notify: () => void): Promise<void> | void {
+        const target = this.target;
+        let inFlight = false;
+        let retryRequested = false;
+        let attempted = false;
+        const retire = () => {
+            if (this.pendingPublications.get(requestId) !== publication) return;
+            this.pendingPublications.delete(requestId);
+            if (this.pendingPublications.size === 0) {
+                this.unsubscribePublicationReconnect?.();
+                this.unsubscribePublicationReconnect = null;
+            }
+        };
+        const attempt = (): Promise<void> | void => {
+            if (this.pendingPublications.get(requestId) !== publication) return;
+            if (inFlight) { retryRequested = true; return; }
+            inFlight = true;
+            const replay = attempted;
+            attempted = true;
+            const success = () => {
+                if (this.pendingPublications.get(requestId) !== publication) return;
+                retire();
+                notify();
+            };
+            const failed = (error: unknown) => {
+                logger.infoFile(`${this.logPrefix} Request publication deferred until reconnect`, {
+                    scopeId: target.scopeId, operation: 'publish_request', error: serializeAxiosErrorForLog(error),
+                });
+                if (error && typeof error === 'object' && 'code' in error && error.code === 'session_archived') retire();
+            };
+            const finished = () => {
+                inFlight = false;
+                if (retryRequested) { retryRequested = false; void attempt(); }
+            };
+            try {
+                const result = target.updateState(state => this.pendingPublications.get(requestId) === publication ? updater(state, replay) : state);
+                if (isPromiseLike(result)) return Promise.resolve(result).then(success, failed).finally(finished);
+                success();
+            } catch (error) { failed(error); }
+            finished();
+        };
+        const publication = { request, completedBeforePublication, retry: () => { void attempt(); }, cancel: retire };
+        this.pendingPublications.set(requestId, publication);
+        this.unsubscribePublicationReconnect ??= this.session?.subscribeToSessionConnectionState?.(state => {
+            if (state.phase === 'online') for (const pending of this.pendingPublications.values()) pending.retry();
+        }) ?? null;
+        return attempt();
+    }
+
+    private cancelPendingPublications(): void {
+        for (const publication of this.pendingPublications.values()) publication.cancel();
     }
 
     private publishRequestBestEffort(params: AgentStateRequestPublication, preserveExisting: boolean): void {
         try {
-            const publication = this.beginRequestPublication(params, preserveExisting);
-            const { result } = publication;
-            if (isPromiseLike(result)) {
-                void Promise.resolve(result)
-                    .then(publication.notify)
-                    .catch((error) => {
-                        logger.debug(`${this.logPrefix} Failed to update agent state (publish_request) (non-fatal)`, error);
-                    });
-                return;
-            }
-
-            publication.notify();
+            this.beginRequestPublication(params, preserveExisting, true);
         } catch (error) {
             if (error && typeof error === 'object' && 'code' in error && error.code === 'session_archived') throw error;
-            logger.debug(`${this.logPrefix} Failed to update agent state (publish_request) (non-fatal)`, error);
+            logger.infoFile(`${this.logPrefix} Request publication failed`, {
+                operation: 'publish_request', error: serializeAxiosErrorForLog(error),
+            });
         }
     }
 
@@ -984,6 +1052,7 @@ export class AgentStateRequestStore {
     }
 
     async completeRequest(params: AgentStateRequestCompletion): Promise<boolean> {
+        const publication = this.pendingPublications.get(params.requestId);
         if (params.applicationAcknowledged && !deepEqual(
             pendingIdentity(this.target.readState()?.requests?.[params.requestId]),
             pendingIdentity(params.applicationAcknowledged.pending),
@@ -1031,6 +1100,7 @@ export class AgentStateRequestStore {
 
         if (appliedCompletion) return await appliedCompletion.acknowledgement;
         if (!didCompleteRequest) return false;
+        publication?.cancel();
         completedRequestIds.add(params.requestId);
         for (const requestId of completedRequestIds) {
             this.markPermissionRequestCompletedBestEffort(requestId);
@@ -1203,6 +1273,7 @@ export class AgentStateRequestStore {
     }>): Promise<boolean> {
         const completedRequestIds = new Set<string>();
         let didRecordCompletedRequest = false;
+        const publication = this.pendingPublications.get(params.requestId);
         await this.updateAgentStateWithResponseDispatch(
             (currentState) => {
                 const requests = cloneStringKeyedRecordToNullProto(currentState.requests);
@@ -1273,6 +1344,7 @@ export class AgentStateRequestStore {
             },
         );
         if (!didRecordCompletedRequest) return false;
+        publication?.cancel();
         completedRequestIds.add(params.requestId);
         for (const requestId of completedRequestIds) {
             this.markPermissionRequestCompletedBestEffort(requestId);
@@ -1327,6 +1399,21 @@ export class AgentStateRequestStore {
         observedRetirement?: true;
     }>): Promise<readonly AgentStateRequestCancellation[]> {
         const completedRequestsById = new Map<string, AgentStateRequestCancellation>();
+        const isSelected = (id: string, entry: Readonly<Record<string, unknown>>) => {
+            if (params.scope === 'foreground' && readRunScopedExecutionPermissionRequestIdentity(id)) return false;
+            if (params.preserveQuestions && isDurableAgentStructuredQuestionRequest(readStoredQuestionClassification(entry))) return false;
+            if (params.turnId && !isPermissionRequestOwnedByPluginTurn({
+                owner: normalizePermissionRequestOwner(entry.owner, 'stored'),
+                ...(typeof entry.turnId === 'string' ? { turnId: entry.turnId } : {}),
+                ...(entry.lifetime === 'occurrence' ? { lifetime: entry.lifetime } : {}),
+            }, params.pluginId ?? '', params.turnId)) return false;
+            if (params.source !== undefined && entry.source !== params.source) return false;
+            return !params.pluginId || isPermissionRequestOwnedByPlugin(normalizePermissionRequestOwner(entry.owner, 'stored'), params.pluginId);
+        };
+        const selectedPublications = [...this.pendingPublications].filter(([id, publication]) => isSelected(id, publication.request));
+        // An already observed local retirement withdraws publication before IO.
+        // Pre-effect cancellation keeps its ACK-before-retirement contract.
+        if (params.observedRetirement) for (const [, publication] of selectedPublications) publication.cancel();
         // Classify each selected current row, not an unrelated Session claim.
         // Both persistence owners preserve ACK-before-return; only ordinary
         // cancellations additionally retain a private restart recovery intent.
@@ -1341,26 +1428,21 @@ export class AgentStateRequestStore {
                     const completedRequests = cloneStringKeyedRecordToNullProto(currentState.completedRequests);
                     const now = Date.now();
 
-                    for (const [id, request] of Object.entries(pendingRequests)) {
-                        if (params.scope === 'foreground' && readRunScopedExecutionPermissionRequestIdentity(id)) continue;
-                        const entry = clonePlainObjectToNullProto(request) ?? Object.create(null);
-                        if (params.preserveQuestions && isDurableAgentStructuredQuestionRequest(readStoredQuestionClassification(entry))) continue;
-                        if (params.turnId && !isPermissionRequestOwnedByPluginTurn({
-                            owner: normalizePermissionRequestOwner(entry.owner, 'stored'),
-                            ...(typeof entry.turnId === 'string' ? { turnId: entry.turnId } : {}),
-                            ...(entry.lifetime === 'occurrence' ? { lifetime: entry.lifetime } : {}),
-                        }, params.pluginId ?? '', params.turnId)) continue;
-                        if (params.observedRetirement && this.canJournalRequestRetirement(id, entry) !== durableRetirement) continue;
-                        if (params.source !== undefined && entry.source !== params.source) continue;
-                        if (
-                            params.pluginId
-                            && !isPermissionRequestOwnedByPlugin(
-                                normalizePermissionRequestOwner(entry.owner, 'stored'),
-                                params.pluginId,
-                            )
-                        ) {
-                            continue;
+                    // A publication can reach Home without its ACK reaching this
+                    // snapshot. Preserve the retired occurrence in the existing
+                    // exact cancellation writer, without replacing newer answers.
+                    if (params.observedRetirement) for (const [id, publication] of selectedPublications) {
+                        if (!pendingRequests[id]
+                            && deepEqual(completedRequests[id], publication.completedBeforePublication)
+                            && this.canJournalRequestRetirement(id, publication.request) === durableRetirement) {
+                            pendingRequests[id] = publication.request;
                         }
+                    }
+
+                    for (const [id, request] of Object.entries(pendingRequests)) {
+                        const entry = clonePlainObjectToNullProto(request) ?? Object.create(null);
+                        if (!isSelected(id, entry)) continue;
+                        if (params.observedRetirement && this.canJournalRequestRetirement(id, entry) !== durableRetirement) continue;
                         delete pendingRequests[id];
                         entry.completedAt = now;
                         entry.status = 'canceled';
@@ -1378,29 +1460,13 @@ export class AgentStateRequestStore {
                     // persisted. A cancellation already written above (or by an
                     // earlier repeat) is the sole durable terminal result.
                     for (const id of params.requestIds) {
-                        if (params.scope === 'foreground' && readRunScopedExecutionPermissionRequestIdentity(id)) continue;
                         if (selectedRequests.has(id) || completedRequestsById.has(id)) continue;
                         const completed = completedRequests[id];
                         if (!completed) continue;
                         const entry = clonePlainObjectToNullProto(completed) ?? Object.create(null);
-                        if (params.preserveQuestions && isDurableAgentStructuredQuestionRequest(readStoredQuestionClassification(entry))) continue;
-                        if (params.turnId && !isPermissionRequestOwnedByPluginTurn({
-                            owner: normalizePermissionRequestOwner(entry.owner, 'stored'),
-                            ...(typeof entry.turnId === 'string' ? { turnId: entry.turnId } : {}),
-                            ...(entry.lifetime === 'occurrence' ? { lifetime: entry.lifetime } : {}),
-                        }, params.pluginId ?? '', params.turnId)) continue;
+                        if (!isSelected(id, entry)) continue;
                         if (params.observedRetirement && this.canJournalRequestRetirement(id, entry) !== durableRetirement) continue;
-                        if (params.source !== undefined && entry.source !== params.source) continue;
                         if (entry.status === 'canceled') continue;
-                        if (
-                            params.pluginId
-                            && !isPermissionRequestOwnedByPlugin(
-                                normalizePermissionRequestOwner(entry.owner, 'stored'),
-                                params.pluginId,
-                            )
-                        ) {
-                            continue;
-                        }
                         entry.completedAt = now;
                         entry.status = 'canceled';
                         entry.reason = params.reason;
@@ -1428,10 +1494,12 @@ export class AgentStateRequestStore {
             this.markPermissionRequestCompletedBestEffort(requestId);
             this.dispatchResponseTargetBestEffort(this.readCompletedResponseTarget(requestId));
         }
+        for (const [, publication] of selectedPublications) publication.cancel();
         return [...completedRequestsById.values()];
     }
 
     dispose(): void {
+        this.cancelPendingPublications();
         this.unsubscribeArchiveState?.();
         this.unsubscribeArchiveState = null;
         if (this.appliedCompletionOwner === this) this.retireAppliedCompletions();
@@ -1494,6 +1562,10 @@ export class AgentStateRequestStore {
     }
 
     markPermissionRequestCompletedBestEffort(permissionId: string): void {
+        const publication = this.pendingPublications.get(permissionId);
+        if (publication && isSameAgentStateRequestOccurrence(publication.request, this.target.readState()?.completedRequests?.[permissionId])) {
+            publication.cancel();
+        }
         if (this.target.markRequestCompleted) {
             try {
                 void Promise.resolve(this.target.markRequestCompleted(permissionId)).catch((error) => {

@@ -52,6 +52,13 @@ function readPromptPreparationSettingsBasis(settings: Record<string, unknown> | 
   };
 }
 
+/** Equal Settings cannot derive a different basis, so availability is not re-evaluated. */
+function isPromptPreparationSettingsBasisCurrent(prepared: Record<string, unknown> | null | undefined,
+  current: Record<string, unknown> | null | undefined, profileId: string | null, behavior: CodingPromptBehaviorV1) {
+  return isDeepStrictEqual(prepared, current) || isDeepStrictEqual(readPromptPreparationSettingsBasis(prepared, profileId, behavior),
+    readPromptPreparationSettingsBasis(current, profileId, behavior));
+}
+
 function readPromptPreparationProfileBasis(snapshot: NonNullable<PromptPreparationAccountSnapshot>, profileId: string | null) {
   if (!profileId) return null;
   const catalog = snapshot.profileCatalog;
@@ -77,8 +84,7 @@ function readPromptPreparationAccountChange(prepared: PromptPreparationAccountSn
   // First network confirmation of equal Settings is hydration, not retirement.
   // Losing previously admitted availability still withdraws the plan.
   if (prepared.source !== 'none' && current.source === 'none') return 'account-availability-changed';
-  if (!isDeepStrictEqual(readPromptPreparationSettingsBasis(prepared.settings, profileId, behavior),
-    readPromptPreparationSettingsBasis(current.settings, profileId, behavior))) return 'account-settings-changed';
+  if (!isPromptPreparationSettingsBasisCurrent(prepared.settings, current.settings, profileId, behavior)) return 'account-settings-changed';
   if (!isDeepStrictEqual(prepared.settingsSecretsReadKeys, current.settingsSecretsReadKeys)) return 'account-keys-changed';
   if (!isDeepStrictEqual(readPromptPreparationProfileBasis(prepared, profileId),
     readPromptPreparationProfileBasis(current, profileId))) return 'account-profile-changed';
@@ -308,8 +314,7 @@ export function createSessionPromptPlanResolver(params: Readonly<{
     }
     const currentSettings = preparedBehavior.operationContext ? capturedAccount?.settings
       : accountScopeKey ? activeAccount?.settings : params.opts.accountSettingsContext?.settings ?? null;
-    if (!isDeepStrictEqual(readPromptPreparationSettingsBasis(preparedBehavior.settings, preparedBehavior.profileId, preparedBehavior.behavior),
-      readPromptPreparationSettingsBasis(currentSettings, preparedBehavior.profileId, preparedBehavior.behavior))) return 'prepared-settings-changed';
+    if (!isPromptPreparationSettingsBasisCurrent(preparedBehavior.settings, currentSettings, preparedBehavior.profileId, preparedBehavior.behavior)) return 'prepared-settings-changed';
     if (preparedBehavior.profileId !== (params.session.getMetadataSnapshot()?.profileId ?? null)) return 'profile-selection-changed';
     return null;
   };

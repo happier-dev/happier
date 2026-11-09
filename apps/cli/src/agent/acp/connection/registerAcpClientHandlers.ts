@@ -1,4 +1,4 @@
-import { methods, type ClientApp } from '@agentclientprotocol/sdk';
+import { methods, type ClientApp, type SessionNotification } from '@agentclientprotocol/sdk';
 
 import type {
   AcpClientConnectionHandlers,
@@ -16,9 +16,16 @@ export function registerAcpClientHandlers(params: Readonly<{
     .onRequest(methods.client.session.requestPermission, (context) => (
       params.handlers.requestPermission(context.params)
     ))
-    .onNotification(methods.client.session.update, (context) => (
-      params.handlers.sessionUpdate(context.params)
-    ));
+    .onNotification(
+      methods.client.session.update,
+      // SDK 1.2.1's always-on SessionUpdateRouter validates this notification
+      // before registered handlers, but its default second parse drops the
+      // standard tool_call.name field. Valid update fields need no rewriting.
+      // Preserve the validated raw value until the SDK's schema retains name;
+      // malformed-frame rejection is pinned by the real connection test.
+      (value: unknown) => value as SessionNotification,
+      (context) => params.handlers.sessionUpdate(context.params),
+    );
 
   if (params.handlers.readTextFile) {
     const readTextFile = params.handlers.readTextFile;

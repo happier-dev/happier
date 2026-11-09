@@ -131,25 +131,16 @@ export interface TransportHandler {
   getToolPatterns(): ToolPattern[];
 
   /**
-   * Check if a tool is an "investigation" tool that needs longer timeout.
+   * Check if a tool is an "investigation" tool.
    *
    * Investigation tools (like codebase_investigator) can run for minutes
-   * and need special timeout handling.
+   * and retain their investigation classification while active.
    *
    * @param toolCallId - The tool call ID
    * @param toolKind - The tool kind/type
    * @returns true if this is an investigation tool
    */
   isInvestigationTool?(toolCallId: string, toolKind?: string): boolean;
-
-  /**
-   * Get timeout for a specific tool call.
-   *
-   * @param toolCallId - The tool call ID
-   * @param toolKind - The tool kind/type
-   * @returns Timeout in milliseconds, or null to disable the watchdog
-   */
-  getToolCallTimeout?(toolCallId: string, toolKind?: string): number | null;
 
   /**
    * Extract tool name from toolCallId.

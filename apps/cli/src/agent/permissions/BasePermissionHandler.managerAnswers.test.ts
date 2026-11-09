@@ -450,15 +450,7 @@ describe('manager answers at the registered question RPC owner', () => {
         expect(session.agentState.completedRequests).toEqual({});
     });
 
-    it('passes up the same request once to the next manager, then to the person', async () => {
-        const { session, rpc } = prepareQuestion();
-        await expect(rpc({ id: 'question', disposition: 'pass_up' }, managerContext())).resolves.toBeUndefined();
-        expect(Object.keys(session.agentState.requests!)).toEqual(['question']);
-        expect(session.agentState.requests!.question).toMatchObject({ createdAt: 100, currentHandler: { kind: 'session', sessionId: 'lead' } });
-        expect(session.agentState.completedRequests).toEqual({});
-        await expect(rpc(answer, managerContext())).resolves.toMatchObject({ ok: false, errorCode: 'present_user_required' });
-        await expect(rpc({ id: 'question', disposition: 'pass_up' }, managerContext('lead'))).resolves.toBeUndefined();
-        expect(session.agentState.requests!.question).toMatchObject({ createdAt: 100, currentHandler: { kind: 'person' } });
-        expect(session.agentState.completedRequests).toEqual({});
-    });
+    // The pass-up chain is exercised through actual ancestor intake in
+    // sessionFollowStalled.sqlite.composed.integration.spec.ts. Directly
+    // invoking the next manager here used to hide missing offer delivery.
 });

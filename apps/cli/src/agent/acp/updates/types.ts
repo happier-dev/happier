@@ -9,11 +9,6 @@ import type { LegacyAcpToolRuntime } from '../toolCalls/legacy/runtime';
 export const DEFAULT_IDLE_TIMEOUT_MS = 500;
 
 /**
- * Default timeout for tool calls if transport doesn't specify (ms).
- */
-export const DEFAULT_TOOL_CALL_TIMEOUT_MS = 120_000;
-
-/**
  * Extended session update structure with all possible fields.
  */
 export interface SessionUpdate {

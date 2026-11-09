@@ -26,6 +26,19 @@ const request = {
 };
 
 describe('Agent runtime daemon Session-input admission service protocol', () => {
+  it('transports only canonical connected-account observations and acknowledgments', () => {
+    const observation = { kind: 'connected-account-identity-observed', sequence: 1,
+      sessionId: 'session-1', emittedAtMs: 100, observedAtMs: 99,
+      service: { pluginId: 'happier.claude', localId: 'claude-subscription' },
+      nativeSessionId: 'native-1', providerOrganizationId: 'org-1' };
+    const observed = { ...request, operation: { kind: 'connected_account.identity.observe', observation } };
+    expect(AgentRuntimeDaemonServiceRequestV1Schema.parse(observed)).toEqual(observed);
+    expect(AgentRuntimeDaemonServiceRequestV1Schema.safeParse({ ...observed,
+      operation: { ...observed.operation, observation: { ...observation, groupId: 'untrusted' } } }).success).toBe(false);
+    expect(AgentRuntimeDaemonServiceResponseV1Schema.parse({ ok: true,
+      result: { kind: 'connected_account.identity.observed' } })).toEqual({ ok: true,
+      result: { kind: 'connected_account.identity.observed' } });
+  });
   it('preserves strict target Machine V2 admission through the runner bridge', () => {
     const targeted = {
       ...request,

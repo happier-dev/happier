@@ -11,6 +11,7 @@ import type { SessionTranscriptObservationProvenanceV1 } from '@happier-dev/prot
  */
 export type AcpReplaySidechainSessionClient = Readonly<{
   enqueueAgentMessageCommitted: NonNullable<TranscriptSessionPort['enqueueAgentMessageCommitted']>;
+  sendAgentSessionMediaCommitted?: TranscriptSessionPort['sendAgentSessionMediaCommitted'];
 }>;
 
 export type AcpReplayHistorySessionClient = AcpReplaySidechainSessionClient & Readonly<{
@@ -30,5 +31,4 @@ export type AcpRuntimeSessionClient = AcpReplayHistorySessionClient & Readonly<{
   sendAgentMessageEphemeral?: TranscriptSessionPort['sendAgentMessageEphemeral'];
   sendAgentMessageEphemeralDelta?: TranscriptSessionPort['sendAgentMessageEphemeralDelta'];
   getEphemeralStreamConnectionEpoch?: TranscriptSessionPort['getEphemeralStreamConnectionEpoch'];
-  sendAgentSessionMediaCommitted?: TranscriptSessionPort['sendAgentSessionMediaCommitted'];
 }>;

@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { randomBytes } from 'node:crypto';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
@@ -22,7 +22,7 @@ import { type SavedSecretOperationContextV1 } from "@/settings/secrets/savedSecr
 import { normalizeCliAccountSettingsHistoryAfterTransfer } from '@/settings/accountSettings/accountSettingsHistoryNormalization';
 import type { AcpCatalogCleanupV1 } from '@happier-dev/protocol/acp/catalog/catalogMutationsV1';
 import { AcpCatalogUnavailableError, requireReadyAcpCatalog } from './configured/resolveBackend';
-import { runWithRequesterSessionCurrentnessCheckpoint, runWithoutRequesterSessionCurrentnessCheckpoint } from '@/daemon/sessionEncryption/requesterCurrentness';
+
 
 /** The existing Account custody supplies admission; the row is the sole ACP persistence owner. */
 export function createCliAcpCatalogStore(input: Readonly<{
@@ -87,12 +87,12 @@ export function createCliAcpCatalogStore(input: Readonly<{
     if (!incumbent) throw new AcpCatalogUnavailableError('scope-retired');
     const next = { ...incumbent, source: 'network' as const, rawSettings: source.raw,
       settings: accountSettingsParse(source.raw), settingsVersion: source.version, loadedAtMs: Date.now() };
-    await runWithoutRequesterSessionCurrentnessCheckpoint(async () => {
+    await (async () => {
       await admitCurrent();
       if (operation) {
         if (!await operation.replaceAccountSettings(next)) throw new AcpCatalogUnavailableError('scope-retired');
       } else commitActiveAccountSettingsSnapshot(next);
-    });
+    })();
     if (snapshot()?.settingsVersion !== source.version) throw new AcpCatalogUnavailableError('source-stale');
     capturedSource = { ...source, mode: storage.mode };
     return source;
@@ -103,7 +103,8 @@ export function createCliAcpCatalogStore(input: Readonly<{
     let catalog: AcpCatalogSnapshotV1;
     if (row.status === 'present') {
       const opened = openAcpCatalogContentV1({ ...storage, content: row.content });
-      catalog = opened.status === 'opened' ? { status: 'ready', record: opened.record, revision: row.revision } : opened;
+      catalog = opened.status === 'opened' ? { status: 'ready', record: opened.record, revision: row.revision }
+        : { ...opened, revision: row.revision };
     } else if (row.status === 'deleted') catalog = { status: 'ready', revision: row.revision, record: { v: 1, definitions: [] } };
     else if (row.status === 'absent') {
       const source = await readSourceSnapshot();
@@ -128,7 +129,7 @@ export function createCliAcpCatalogStore(input: Readonly<{
   const readCatalog = async (): Promise<AcpCatalogSnapshotV1> => {
     // Destination/source reads share one observation; private source publication
     // above and the caller's catalog publication retain fresh admission.
-    const catalog = await runWithRequesterSessionCurrentnessCheckpoint(prepareCatalog, { readOnly: true });
+    const catalog = await (prepareCatalog)();
     await admitCurrent();
     return catalog;
   };
@@ -173,10 +174,10 @@ export function createCliAcpCatalogStore(input: Readonly<{
     }
     return result.data;
   };
-  const publish = async (catalog: AcpCatalogSnapshotV1) => runWithoutRequesterSessionCurrentnessCheckpoint(async () => {
+  const publish = async (catalog: AcpCatalogSnapshotV1) => (async () => {
     if (operation) return await operation.commitAcpCatalog({ catalog });
     return commitActiveAcpCatalog({ scopeKey, lifetimeToken, catalog });
-  });
+  })();
   return { assertCurrent, admitCurrent, readStorageContext, readRow, readSourceSnapshot, readCatalog, writeRecord, publish,
     updateCatalog: async (mutate: (current: unknown) => unknown, expectation?: Readonly<{
       expectedRevision?: number | 'absent'; sourceSettingsVersion?: number;

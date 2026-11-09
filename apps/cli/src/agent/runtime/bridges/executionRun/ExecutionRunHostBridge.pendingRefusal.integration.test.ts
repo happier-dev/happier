@@ -2,9 +2,11 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { randomBytes, randomUUID } from 'node:crypto';
+import axios from 'axios';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import type { AgentSessionOpenRequest, AgentSessionRuntime, AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
-import { ExecutionRunGetResponseSchema, type SessionInputAdmissionResultV1 } from '@happier-dev/protocol';
+import { ExecutionRunGetResponseSchema, QualifiedConnectedAccountListResponseV4Schema, type SessionInputAdmissionResultV1 } from '@happier-dev/protocol';
 import { getAgentStaticModels } from '@happier-dev/agents';
 import { ExecutionRunHostBridge } from './ExecutionRunHostBridge';
 import type { ExecutionRunState } from './executionRunTypes';
@@ -25,6 +27,12 @@ import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
 import { createExecutionRunTranscriptCustodyError } from './executionRunTranscriptPublisher';
 import { createExecutionRunRpcActionDeps } from '@/rpc/handlers/executionRuns/dispatchExecutionRunRpcAction';
+import { ApiClient } from '@/api/api';
+import type { Credentials } from '@/persistence';
+import { createForegroundPurposeOwnerFixture } from '@/daemon/agentRuntime/prepareForegroundAdmission.connectedServices.testkit';
+import { withAgentPreflightCatalog } from '@/capabilities/probes/withAgentPreflightCatalog';
+import { invokeCliPreflightMethod } from '@/capabilities/probes/agentPreflight';
+import { readNativeExecutionRunOfferedModel } from './structuredOutputAdmission';
 
 const materialize = vi.hoisted(() => vi.fn());
 // Only daemon transport, external Agent process and persisted credentials are doubled.
@@ -59,6 +67,7 @@ beforeEach(() => {
 afterEach(async () => {
   await Promise.all(bridges.splice(0).map(manager => manager.dispose()));
   await Promise.all(parentSessions.splice(0).map(session => session.close()));
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
   reloadConfiguration();
 });
@@ -70,7 +79,8 @@ afterAll(async () => {
 });
 
 function createHarness(detached = false, checkConnectedServicesGenerationCurrent?: ConstructorParameters<typeof ExecutionRunHostBridge>[0]['checkConnectedServicesGenerationCurrent'],
-  resolution?: { engineRegistry: ResolvedCliEngineRegistry; profileCatalog: ExecutionRunProfileContributionCatalog }) {
+  resolution?: { engineRegistry: ResolvedCliEngineRegistry; profileCatalog: ExecutionRunProfileContributionCatalog;
+    readNativeOfferedModel?: NonNullable<Parameters<ExecutionRunHostBridge['start']>[0]['readNativeOfferedModel']> }) {
   let consume: ExecutionRunPendingInputBinding['consume'] | undefined;
   const acceptedInputs = new Set<string>();
   const rejectedInputs = new Set<string>();
@@ -154,7 +164,7 @@ function createHarness(detached = false, checkConnectedServicesGenerationCurrent
 }
 
 describe('retained Run provider-effect refusal', () => {
-  it.each(['native_unavailable', 'followup_unavailable', 'async_native_refused', 'initial', 'followup', 'publication_failed', 'active_host_refused', 'active_native_refused', 'active_unknown'] as const)(
+  it.each(['missing_requester', 'native_unavailable', 'native_input_too_large', 'followup_unavailable', 'async_native_refused', 'initial', 'followup', 'publication_failed', 'active_host_refused', 'active_native_refused', 'active_unknown'] as const)(
     'settles refused inputs and failed prior publication through the admitted Agent, saved SCM result and strict public consumer (%s)', async phase => {
     const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
     const sent = vi.fn<AgentSessionRuntime['send']>(async () => ({ status: 'admitted' }));
@@ -176,6 +186,21 @@ describe('retained Run provider-effect refusal', () => {
         sessionRunnerFactory: { module: './agent.mjs', export: 'createRuntime', runtimeApiVersion: 1 } } } });
     const agent = { pluginId: plugin.manifest.id, localId: 'agent' };
     const agentId = `${agent.pluginId}/${agent.localId}`;
+    const credentials: Credentials = { token: randomUUID(), encryption: { type: 'legacy', secret: randomBytes(32) } };
+    const api = await ApiClient.create(credentials);
+    const requester = createForegroundPurposeOwnerFixture({ consumer: agent, service, accountId: 'fixture-profile',
+      materializeAccount: async () => { throw new Error('This Agent declares no Account launch material'); } });
+    // Only Home HTTP is substituted. Selection, purpose activation and preflight
+    // materialization use the same owners as the requester-bound daemon reader.
+    const accounts = QualifiedConnectedAccountListResponseV4Schema.parse({ service, accounts: [{
+      ref: { service, accountId: 'fixture-profile' }, authenticationModeId: 'oauth', status: 'connected',
+      revisionSemantics: 'revisioned', credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+      configurationReady: true, configurationRevision: null, scopes: [],
+    }] });
+    vi.spyOn(axios, 'get').mockImplementation(async url => {
+      if (new URL(String(url)).pathname === '/v4/connect/qualified/accounts') return { status: 200, data: accounts };
+      throw new Error('Unexpected requester Home read');
+    });
     openNativeSession = open;
     const fixture = admittedFixture ??= await createAuthoredAdmittedPluginRuntimeFixture({ happyHomeDir: directory, controller: pluginReloadController,
       plugins: [{ manifest: plugin.manifest, files: {
@@ -209,20 +234,46 @@ describe('retained Run provider-effect refusal', () => {
       sent.mockImplementation(async () => ({ status: 'admitted' }));
       let current = true;
       const generationSignals: (AbortSignal | undefined)[] = [];
+      const readNativeOfferedModel: NonNullable<Parameters<ExecutionRunHostBridge['start']>[0]['readNativeOfferedModel']>
+        = request => withAgentPreflightCatalog({ agentId }, context => readNativeExecutionRunOfferedModel({
+          ...request, ...context, ...(phase === 'missing_requester' ? {} : { promptCredentials: credentials }), accountSettings: {},
+          preflightDependencies: { createApiClient: async () => api,
+            activatePurposeBindings: requester.owner.activatePurposeBindings, connectedAccountsOwner: requester.owner },
+        }));
       const harness = createHarness(false, async ({ signal }) => {
         generationSignals.push(signal);
         if (!current) throw new Error('Generation transport unavailable');
         return { current: true };
-      }, { engineRegistry, profileCatalog });
+      }, { engineRegistry, profileCatalog, readNativeOfferedModel });
       manager = harness.manager;
       const comparison = await captureScmComparison({ cwd: directory, source: { kind: 'workingTree' }, sessionId: 'session-1' });
-      const started = await harness.manager.start({ sessionId: 'session-1', cwd: directory, intent: 'scm_diff_summary',
+      if (phase === 'missing_requester') {
+        // Missing requester credentials must fail closed before any native send.
+        const response = await withAgentPreflightCatalog({ agentId }, context => invokeCliPreflightMethod(agentId, 'probeModels', {
+          backendTarget: { kind: 'builtInAgent', agentId }, cwd: directory,
+          connectedServices: { v: 2, bindingsByServiceId: { [`${service.pluginId}/${service.localId}`]: {
+            source: 'connected', selection: 'profile', profileId: 'fixture-profile' } } },
+        }, { agentCatalogEntry: context.catalogEntry, agentRegistrySnapshot: context.registrySnapshot,
+          createAgentInvocationServices: context.createAgentInvocationServices, isAgentRegistryCurrent: context.isCurrent,
+          createApiClient: async () => api, activatePurposeBindings: requester.owner.activatePurposeBindings,
+          connectedAccountsOwner: requester.owner,
+        }, {}));
+        expect(response).toMatchObject({ ok: false, error: { code: 'connected-service-preflight-failed' } });
+      }
+      const start = harness.manager.start({ sessionId: 'session-1', cwd: directory, intent: 'scm_diff_summary',
         backendTarget: { kind: 'builtInAgent', agentId }, initialInput: { kind: 'deferred_session_pending' },
         modelId: 'fixture-model',
         permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming',
         connectedServices: { v: 2, bindingsByServiceId: { [`${service.pluginId}/${service.localId}`]: {
           source: 'connected', selection: 'profile', profileId: 'fixture-profile' } } },
         intentInput: { cwd: directory, source: comparison.comparison.source, comparisonId: comparison.comparison.id, outputs: ['commitPlan'] } });
+      if (phase === 'missing_requester') {
+        await expect(start).rejects.toMatchObject({ code: 'model_catalog_unavailable',
+          details: { executionRunStart: { runCreation: 'noRunCreated' } } });
+        expect(sent).not.toHaveBeenCalled();
+        return;
+      }
+      const started = await start;
       while (harness.manager.getPublic(started.runId)?.status === 'running'
         && !harness.manager.getPublic(started.runId)?.interaction) {
         await harness.manager.waitForRunStateChange(started.runId);
@@ -236,7 +287,7 @@ describe('retained Run provider-effect refusal', () => {
       const input = (localId: string): ExecutionRunAdmittedPendingInputV1 => ({ role: 'user', content: { type: 'text', text: 'Generate the plan.' },
         localId, authorAccountId: 'account-1', inputAdmissionReceipt: null, pendingProviderAction: 'send' });
       const priorPlan = { groups: [{ id: 'preserved', message: 'fix: retained output', rationale: 'Already analysed.', changeRefs: [] }], leftOutChangeRefs: [] };
-      const hasPriorOutput = phase !== 'initial' && phase !== 'native_unavailable' && phase !== 'async_native_refused';
+      const hasPriorOutput = phase !== 'initial' && phase !== 'native_unavailable' && phase !== 'native_input_too_large' && phase !== 'async_native_refused';
       if (hasPriorOutput) {
         expect(harness.consume(input(`initial:${started.runId}`))).toBe(true);
         await vi.waitFor(() => expect(sent).toHaveBeenCalledOnce());
@@ -307,11 +358,15 @@ describe('retained Run provider-effect refusal', () => {
           output: { ...saved.result.output, outputs: { commitPlan: { state: 'partial', value: priorPlan } } } });
       }
       const nativeUnavailable = phase === 'native_unavailable' || phase === 'followup_unavailable';
-      const nativeRefusal = nativeUnavailable || phase === 'async_native_refused';
+      const sizeRefusal = phase === 'native_input_too_large';
+      const nativeRefusal = nativeUnavailable || sizeRefusal || phase === 'async_native_refused';
       current = nativeRefusal;
       if (nativeUnavailable) sent.mockImplementation(async () => ({ status: 'unavailable', retryable: true,
         diagnostic: { code: 'native_terminal_host_unavailable', severity: 'error', message: 'Terminal host unavailable' } }));
-      const failureCode = nativeRefusal ? 'native_terminal_host_unavailable' : 'execution_run_connected_service_generation_refresh_required';
+      if (sizeRefusal) sent.mockImplementation(async () => ({ status: 'rejected', retryable: false,
+        diagnostic: { code: 'provider_input_too_large', severity: 'error', message: 'Input exceeds native character limit' } }));
+      const failureCode = sizeRefusal ? 'provider_input_too_large'
+        : nativeRefusal ? 'native_terminal_host_unavailable' : 'execution_run_connected_service_generation_refresh_required';
       const refusedInputId = !hasPriorOutput ? `initial:${started.runId}` : 'followup-refused';
       if (phase === 'async_native_refused') {
         // Direct Run send has a completion waiter but no claimed Pending row.
@@ -329,7 +384,7 @@ describe('retained Run provider-effect refusal', () => {
       }
       if (phase !== 'async_native_refused') await vi.waitFor(() => expect(harness.settlements).toContainEqual(expect.objectContaining({
         kind: 'rejected_before_effect', localId: refusedInputId, diagnostic: { code: failureCode,
-          message: expect.any(String), severity: 'error' }, retryable: true,
+          message: expect.any(String), severity: 'error' }, retryable: !sizeRefusal,
       })));
       await vi.waitFor(() => expect(harness.manager.get(started.runId)).toMatchObject({ status: 'failed',
         error: { code: phase === 'publication_failed' ? 'execution_run_transcript_custody_unavailable'
@@ -342,9 +397,11 @@ describe('retained Run provider-effect refusal', () => {
           reviewBoundedTimeoutMs: null, maxTurns: null, allowIoModes: new Set(['streaming', 'request_response']) } });
       expect(ExecutionRunGetResponseSchema.parse(await rpc.executionRunGet!('session-1', { runId: started.runId, includeStructured: true })))
         .toMatchObject({ run: { status: 'failed', lifecycle: { state: 'recoverable' } }, structuredMeta: { kind: 'scm_diff_summary.v1',
-          payload: { outputs: { commitPlan: { state: 'failed', ...(hasPriorOutput ? { value: priorPlan } : {}) } } } } });
+          payload: { outputs: { commitPlan: { state: hasPriorOutput ? 'partial' : 'failed',
+            ...(sizeRefusal ? { reason: 'Input exceeds native character limit', reasonCode: 'provider_input_too_large' } : {}), ...(hasPriorOutput ? { value: priorPlan } : {}) } } } } });
       expect(await scmDiffSummaryResultStore.read(scope)).toMatchObject({ success: true,
-        result: { output: { outputs: { commitPlan: { state: 'failed', ...(hasPriorOutput ? { value: priorPlan } : {}) } } } } });
+        result: { output: { outputs: { commitPlan: { state: hasPriorOutput ? 'partial' : 'failed',
+          ...(sizeRefusal ? { reason: 'Input exceeds native character limit', reasonCode: 'provider_input_too_large' } : {}), ...(hasPriorOutput ? { value: priorPlan } : {}) } } } } });
       const sentBeforeRetry = (hasPriorOutput ? 1 : 0) + (nativeRefusal ? 1 : 0);
       expect(sent).toHaveBeenCalledTimes(sentBeforeRetry);
       current = true;

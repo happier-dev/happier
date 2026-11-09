@@ -30,7 +30,7 @@ export function buildDiffSummaryRefinementTask(params: Readonly<{
 }>): string {
   const manualTitles = params.stops.filter(stop => params.editedStopIds.includes(stop.id)).map(stop => ({ id: stop.id, title: stop.title }));
   return [
-    'Return only the selected stops with unchanged stop IDs and exact selected change-ref coverage. Set otherChangeRefs to []. Unselected stops are preserved by the saved-result owner.',
+    'Return the walkthrough object containing only the selected stops with unchanged stop IDs and exact selected change-ref coverage. Set otherChangeRefs to []. Unselected stops are preserved by the saved-result owner.',
     'Generate selected stop titles in the admitted prose language, except manually edited titles.',
     `Preserve these manually edited titles exactly: ${JSON.stringify(manualTitles)}.`,
   ].join('\n');

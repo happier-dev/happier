@@ -81,6 +81,8 @@ function writeFakeAcpAgentScript(params: {
         }
 
         if (method === 'session/set_config_option') {
+          const selected = configOptions?.find(option => option.id === params.configId);
+          if (selected) selected.currentValue = params.value;
           ok(id, { configOptions });
           continue;
         }
@@ -252,7 +254,7 @@ describe('AcpBackend disabled mode config options', () => {
     await withTempDir('happier-acp-mode-config-', async (dir) => {
       const configOptions = [
         { id: 'approval-policy', name: 'Policy', category: 'mode', type: 'select', currentValue: 'default', options: [{ value: 'default', name: 'Manual' }, { value: 'yolo', name: 'Automatic' }] },
-        { id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: 'fixture', options: [{ value: 'fixture', name: 'Fixture' }] },
+        { id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: 'fixture', options: [{ value: 'fixture', name: 'Fixture' }, { value: 'alternate', name: 'Alternate' }] },
       ];
       const backend = new AcpBackend({
         agentName: 'test', cwd: dir, command: process.execPath,
@@ -265,13 +267,16 @@ describe('AcpBackend disabled mode config options', () => {
         const { sessionId } = await backend.startSession();
         expect(backend.getSessionConfigOptionsState()?.map(option => option.id)).toEqual(['model']);
         await expect(backend.setSessionConfigOption(sessionId, 'approval-policy', 'yolo')).rejects.toThrow(/unavailable/);
-        await backend.setSessionConfigOption(sessionId, 'model', 'fixture');
-        expect(backend.getSessionConfigOptionsState()?.map(option => option.id)).toEqual(['model']);
+        await backend.setSessionConfigOption(sessionId, 'model', 'alternate');
+        expect(backend.getSessionConfigOptionsState()).toMatchObject([{ id: 'model', currentValue: 'alternate' }]);
         await backend.sendPrompt(sessionId, 'emit mode config update');
         await backend.waitForResponseComplete();
         expect(backend.getSessionConfigOptionsState()?.map(option => option.id)).toEqual(['model']);
         const controls = updates.filter(message => message.type === 'event' && message.name === 'config_options_update');
-        expect(controls).toHaveLength(2);
+        // The setter changes the model; the identical prompt notification is deduplicated.
+        expect(controls).toEqual([expect.objectContaining({ payload: {
+          configOptions: [expect.objectContaining({ id: 'model', currentValue: 'alternate' })],
+        } })]);
         expect(JSON.stringify(controls)).not.toContain('approval-policy');
       } finally {
         await backend.dispose();

@@ -63,6 +63,7 @@ export async function writeExecutionRunActivityMarker(args: Readonly<{
     ...(requestedConfiguration ? { requestedConfiguration } : {}),
     ...(resolvedSelection ? { resolvedSelection } : {}),
     permissionMode: run.permissionMode,
+    approvalProfileId: run.approvalProfileId ?? null,
     retentionPolicy: run.retentionPolicy,
     runClass: run.runClass,
     ioMode: run.ioMode,

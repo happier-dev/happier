@@ -232,7 +232,7 @@ export function createSessionFollowContextReconciler(input: Readonly<{
       ? invocationAllowance
       : input.maxFollowContextUtf8Bytes ?? null;
     const canAdmitFollowContext = maxFollowContextUtf8Bytes !== null
-      && Number.isSafeInteger(maxFollowContextUtf8Bytes)
+      && (maxFollowContextUtf8Bytes === Number.POSITIVE_INFINITY || Number.isSafeInteger(maxFollowContextUtf8Bytes))
       && maxFollowContextUtf8Bytes > 0;
     if (!canAdmitFollowContext && !input.sourceMaterialController && !input.intakeDiscussionObservation) {
       return null;
@@ -555,13 +555,15 @@ export function createSessionFollowContextReconciler(input: Readonly<{
       else workerGroups.set(entry.observation.sourceSessionId, [entry]);
     }
     const renderedWorkers = [...workerGroups.values()].map(group => group[0]!);
+    const fittedOriginalWorkers = new Map<string, WorkerUpdateV1>();
     const originalProjection = (entry: typeof followAdmitted[number], keptSeqs: readonly number[], truncated: boolean) => {
       const consumedTranscriptSeq = entry.readMode === 'initial_current_snapshot'
         ? entry.observation.observed.transcriptSeq
         : entry.transcriptConsumedThroughByRenderedMessageCount?.[keptSeqs.length]
           ?? keptSeqs[keptSeqs.length - 1]
           ?? entry.observation.delivered.transcriptSeq;
-      const workerUpdate = 'kind' in entry.observation ? entry.workerUpdate : undefined;
+      const workerUpdate = 'kind' in entry.observation
+        ? fittedOriginalWorkers.get(budgetKey(entry.observation)) ?? entry.workerUpdate : undefined;
       const messages = entry.update.recentMessages.filter(message => keptSeqs.includes(message.seq));
       const renderFollow = !workerUpdate || messages.length > 0;
       return { workerUpdate, renderFollow, consumedTranscriptSeq, update: { ...entry.update, recentMessages: messages, truncated } };
@@ -585,8 +587,18 @@ export function createSessionFollowContextReconciler(input: Readonly<{
             ? 'latest_current_suffix' as const
             : 'oldest_pending_prefix' as const,
           truncated: update.truncated,
-          render: ({ keptMessageSeqs, truncated }) => {
+          render: ({ keptMessageSeqs, truncated, maxUtf8Bytes }) => {
             const projection = originalProjection(entry, keptMessageSeqs, truncated);
+            if (projection.workerUpdate) {
+              const followPrompt = renderSessionInputContextPromptV1({
+                sessionFollowUpdates: projection.renderFollow ? [projection.update] : [], transformedUserText: '',
+              });
+              const framingCost = measureSessionFollowUtf8Bytes(`${followPrompt}${followPrompt ? '\n\n' : ''}\n\n`);
+              const fitted = fitWorkerUpdateWithinHostContextAllowance(entry.workerUpdate!, Math.max(0, maxUtf8Bytes - framingCost));
+              if (!fitted) return null;
+              fittedOriginalWorkers.set(budgetKey(observation), fitted);
+              projection.workerUpdate = fitted;
+            }
             return `${renderSessionInputContextPromptV1({
               sessionFollowUpdates: projection.renderFollow ? [projection.update] : [],
               ...(projection.workerUpdate ? { workerUpdates: [projection.workerUpdate] } : {}),

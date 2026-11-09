@@ -1,5 +1,6 @@
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
+import { AgentRuntimeDiagnosticDataV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
 
 import {
     inspectOwnErrorCodeDataProperty,
@@ -145,6 +146,17 @@ function projectNativeAgentSessionBoundaryStack(error: Error): string | undefine
     }
 }
 
+function projectNativeAgentDiagnosticValue(value: unknown): unknown {
+    if (typeof value === 'string') return projectPluginFailureText(new Error(value));
+    if (Array.isArray(value)) return value.map(projectNativeAgentDiagnosticValue);
+    if (value !== null && typeof value === 'object') {
+        return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+            projectPluginFailureText(new Error(key)), projectNativeAgentDiagnosticValue(item),
+        ]));
+    }
+    return value;
+}
+
 export function sanitizeNativeAgentSessionBoundaryError(
     error: unknown,
     forceSafeShape: boolean,
@@ -157,6 +169,10 @@ export function sanitizeNativeAgentSessionBoundaryError(
         || 'Error';
     const message = projectPluginFailureText(error);
     const stack = projectNativeAgentSessionBoundaryStack(error);
+    const diagnosticProperty = readOwnDataProperty(error, 'diagnostic');
+    const admittedDiagnostic = AgentRuntimeDiagnosticDataV1Schema.safeParse(diagnosticProperty);
+    const diagnostic = AgentRuntimeDiagnosticDataV1Schema.safeParse(admittedDiagnostic.success
+        ? projectNativeAgentDiagnosticValue(admittedDiagnostic.data) : undefined);
     const codeProperty = inspectOwnErrorCodeDataProperty(error);
     const rawCode = codeProperty.kind === 'string'
         ? codeProperty.value
@@ -175,6 +191,7 @@ export function sanitizeNativeAgentSessionBoundaryError(
     if (
         !forceSafeShape
         && !hasCause
+        && diagnosticProperty === undefined
         && name === error.name
         && message === error.message
         && stack === error.stack
@@ -182,8 +199,8 @@ export function sanitizeNativeAgentSessionBoundaryError(
     ) {
         return error;
     }
-    if (pluginError) {
-        const sanitized = error instanceof SessionStartupInputRefusalError
+    const sanitized = pluginError
+        ? error instanceof SessionStartupInputRefusalError
             ? new SessionStartupInputRefusalError({ code: code ?? pluginError.code, message })
             : new PluginError({
             code: code ?? pluginError.code,
@@ -192,19 +209,11 @@ export function sanitizeNativeAgentSessionBoundaryError(
             ...(pluginError.details === undefined ? {} : { details: pluginError.details }),
             ...(pluginError.remediation === undefined ? {} : { remediation: pluginError.remediation }),
             ...(pluginError.diagnostics === undefined ? {} : { diagnostics: pluginError.diagnostics }),
-        });
-        if (stack !== undefined) {
-            sanitized.stack = stack;
-        }
-        return sanitized;
-    }
-    const sanitized = new Error(message) as Error & { code?: string };
-    sanitized.name = name;
+        })
+        : Object.assign(new Error(message), { name, ...(code === undefined ? {} : { code }) });
     if (stack !== undefined) {
         sanitized.stack = stack;
     }
-    if (code !== undefined) {
-        sanitized.code = code;
-    }
+    if (diagnostic.success) Object.assign(sanitized, { diagnostic: diagnostic.data });
     return sanitized;
 }

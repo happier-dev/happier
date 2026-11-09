@@ -30,6 +30,8 @@ describe.each(['finite', 'retained'] as const)('native %s Run recovery before te
         connectedServiceRuntimeTurnCompleted?: () => Promise<void>;
         unknownCustodyOnSend?: number;
         resumedProviderSessionId?: string;
+        rekeyBeforeFailure?: string;
+        agentEnvironment?: Readonly<Record<string, string>>;
     }> = {}) {
         const { resumeFailure, holdContinuation = false, failureCount = 1,
             connectedServiceRuntimeTurnCompleted, unknownCustodyOnSend = 0 } = behavior;
@@ -50,7 +52,7 @@ describe.each(['finite', 'retained'] as const)('native %s Run recovery before te
             return {
                 watch(next) {
                     listener = next; nativeListeners.add(next);
-                    emit({ kind: 'provider-session-id', providerSessionId: request.kind === 'resume' ? behavior.resumedProviderSessionId ?? 'vendor-original' : 'vendor-original' });
+                    emit({ kind: 'provider-session-id', providerSessionId: request.kind === 'resume' ? behavior.resumedProviderSessionId ?? request.providerSessionId : 'vendor-original' });
                     return { dispose() { nativeListeners.delete(next); listener = null; } };
                 },
                 async send(request) {
@@ -65,6 +67,7 @@ describe.each(['finite', 'retained'] as const)('native %s Run recovery before te
                     emit({ kind: 'input-accepted', inputIds: request.inputIds, delivery: request.delivery });
                     emit({ kind: 'turn-start', turnId, startedBy: 'host' });
                     if (sends.length <= failureCount) {
+                        if (behavior.rekeyBeforeFailure) emit({ kind: 'provider-session-id', providerSessionId: behavior.rekeyBeforeFailure });
                         emit({ kind: 'message-delta', turnId, channel: 'assistant', text: 'Partial work. ' });
                         emit({ kind: 'turn-failed', turnId, diagnostic: {
                             code: 'provider_capacity', severity: 'error', message: 'Provider temporarily unavailable',
@@ -101,6 +104,7 @@ describe.each(['finite', 'retained'] as const)('native %s Run recovery before te
             lease: { pluginId: 'acme.recovery', pluginVersion: '1.0.0', agentId: 'acme.recovery/default', localAgentId: 'default', occurrenceId: 'recovery-fixture', isCurrent: () => true },
             createSessionContext: ({ services, signal }: Parameters<NativeAgentSessionContextLeaseFactory>[0]) => ({
                 ...createVoiceSessionContextLease({ services, signal, async dispose() {} }),
+                ...(behavior.agentEnvironment ? { agentEnvironment: behavior.agentEnvironment } : {}),
                 subscribeMcpToolPolicy(listener: (policy: NonNullable<AgentSessionOpenRequest['mcpToolPolicy']>) => void) {
                     policyListener = listener;
                     return () => { policyListener = undefined; };
@@ -137,6 +141,37 @@ describe.each(['finite', 'retained'] as const)('native %s Run recovery before te
             expect(f.messages.some(message => message.type === 'status' && message.status === 'error')).toBe(false);
             expect(JSON.stringify(f.messages)).toContain('Partial work. ');
             expect(JSON.stringify(f.messages)).toContain('Continued work.');
+        } finally { await f.host.dispose(); }
+    });
+
+    it('resumes the latest provider-reported conversation after a same-Session rekey', async () => {
+        const recovery = vi.fn(async (): Promise<RecoveryResult> => ({
+            status: 'continue', input: 'Continue', async prepareResume() { return undefined; },
+        }));
+        const f = fixture(recovery, { rekeyBeforeFailure: 'vendor-after-clear' });
+        try {
+            await f.host.provisionRuntime({ initialPrompt: 'Perform work' });
+            await f.host.waitForTurnCompletion?.();
+            expect(recovery).toHaveBeenCalledWith(expect.objectContaining({ providerSessionId: 'vendor-after-clear' }));
+            expect(f.opens).toMatchObject([{ kind: 'create' }, { kind: 'resume', providerSessionId: 'vendor-after-clear' }]);
+            expect(f.sends.map(send => send.input.text)).toEqual(['Perform work', 'Continue']);
+        } finally { await f.host.dispose(); }
+    });
+
+    it('keeps the Session MCP context after a recovery launch environment overlay', async () => {
+        const contextKey = 'HAPPIER_SESSION_MCP_CONTEXT_FILE';
+        const f = fixture(async () => ({ status: 'continue', input: 'Continue', async prepareResume() {
+            return { values: { AUTH_HOME: '/run/account-b', [contextKey]: '/stale-context' }, unset: [contextKey] };
+        } }), { agentEnvironment: { [contextKey]: '/run/current-session-mcp.json' } });
+        try {
+            await f.host.provisionRuntime({ initialPrompt: 'Perform work' });
+            await f.host.waitForTurnCompletion?.();
+            expect(f.opens).toHaveLength(2);
+            for (const request of f.opens) {
+                expect(request.launchEnvironment?.values[contextKey]).toBe('/run/current-session-mcp.json');
+                expect(request.launchEnvironment?.unset).not.toContain(contextKey);
+            }
+            expect(f.opens[1]?.launchEnvironment?.values.AUTH_HOME).toBe('/run/account-b');
         } finally { await f.host.dispose(); }
     });
 

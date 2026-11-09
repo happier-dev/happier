@@ -11,9 +11,42 @@ import { materializeActionRequestAttributionV1 } from '@happier-dev/protocol/act
 import type { ExecutionRunBackendController } from '@/agent/executionRuns/controllers/types';
 import type { AgentInvocationTurnAdmissionWitness } from '@/plugins/runtime/invocation/services/types';
 import { createRetainedExecutionRunInputDelivery } from './pending/retainedExecutionRunInputDelivery';
-import { createNativeSessionBoundary } from './testkit/nativeSessionContext';
+import { createVoiceSessionRuntimeThroughNativeFactory, createNativeSessionBoundary } from './testkit/nativeSessionContext';
+import { createDeferred } from '@/testkit/async/deferred';
 
 describe('native Session Run parity', () => {
+    it.each(['finite', 'retained'] as const)('awaits the %s Session context cleanup before retirement', async adapter => {
+        const boundary = createNativeSessionBoundary();
+        const cleanupEntered = createDeferred<void>();
+        const releaseCleanup = createDeferred<void>();
+        let cleanupFinished = false;
+        const createHost = adapter === 'finite'
+            ? createNativeAgentSessionExecutionRunHostRuntime
+            : createNativeAgentSessionInteractionHostRuntime;
+        const host = createHost({
+            runtime: { sessions: { open: boundary.open } },
+            lease: { pluginId: 'acme.cleanup', pluginVersion: '1.0.0', agentId: 'acme.cleanup/default',
+                localAgentId: 'default', occurrenceId: 'cleanup-fixture', isCurrent: () => true },
+            options: { cwd: '/repo', runId: 'run-cleanup', scope: 'session_owned', backendId: 'acme.cleanup/default',
+                permissionMode: 'read_only', start: { intent: 'review' } },
+            supportsResume: false,
+            sessionCapabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
+            createSessionContext: ({ services, signal }) => createVoiceSessionContextLease({ services, signal,
+                async dispose() { cleanupEntered.resolve(); await releaseCleanup.promise; cleanupFinished = true; } }),
+        });
+        await host.provisionRuntime({ initialPrompt: 'Prepare the Session-owned Run' });
+        boundary.complete();
+        await host.waitForTurnCompletion?.();
+        let retired = false;
+        const retirement = host.dispose().then(() => { retired = true; });
+        try {
+            await cleanupEntered.promise;
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(retired).toBe(false);
+        } finally { releaseCleanup.resolve(); await retirement; }
+        expect(cleanupFinished).toBe(true);
+    });
+
     it.each(['bob', 'carol', null])('binds requester %s to the finite Run invocation without publishing it to the Agent', async accountId => {
         const attribution = materializeActionRequestAttributionV1({ requestRef: 'finite-request',
             requester: accountId ? { serverId: 'home', accountId } : null,
@@ -81,6 +114,39 @@ describe('native Session Run parity', () => {
             await host.waitForTurnCompletion?.();
         } finally { delivery.dispose(); await host.dispose(); }
     });
+    it.each(['send', 'steer'] as const)('projects an attributed retained input only once through native %s', async action => {
+        const boundary = createNativeSessionBoundary();
+        const host = createVoiceSessionRuntimeThroughNativeFactory({ runtime: { sessions: { open: boundary.open } },
+            modelId: 'fixture', capabilities: { open: ['create', 'resume'], delivery: ['newTurn', 'steer'], cancel: false },
+            start: { intent: 'delegate', runClass: 'long_lived', retentionPolicy: 'resumable' } });
+        const runId = 'host-voice-run';
+        const controller: ExecutionRunBackendController = {
+            kind: 'backend', controllerOccurrenceId: 'framing-controller', backend: host, backendSupportsResume: true,
+            runtimeId: runId, buffer: '', sidechainStreamBuffer: '', sidechainStreamKey: '', streamWriter: null,
+            cancelled: false, turnCount: 0, turnEpoch: 0, turnInFlight: false, turnCancelReason: null, turnCancelEpoch: null,
+            admittedLiveInterventions: [], admittedLiveInterventionsSignal: null, lastMarkerWriteAtMs: 0,
+            terminalPromise: Promise.resolve(), resolveTerminal() {},
+        };
+        const delivery = createRetainedExecutionRunInputDelivery({ runId, controller,
+            authorizeProviderEffect: async () => ({ ok: true }) });
+        try {
+            await host.provisionRuntime({ resumeRuntimeId: 'registry-native-session' });
+            if (action === 'steer') await host.deliverInput(runId, { text: 'Initial input' }, { localId: 'initial' });
+            const text = String.raw`[\[Inner\](happier-ref:session:inner)](happier-ref:session:outer)`;
+            expect(await delivery.delivery.deliver({ role: 'user', content: { type: 'text', text },
+                localId: 'framed', authorAccountId: 'owner', inputAdmissionReceipt: null, pendingProviderAction: action,
+                meta: { happierProvenanceV1: { v: 1, kind: 'happierSession', sourceSessionId: 'sender', via: 'action' } },
+            })).toEqual({ status: 'admitted' });
+            const rendered = boundary.inputs.at(-1)!.input.text;
+            const frame = rendered.match(/<happier_session_message v="1">\n([\s\S]*?)\n<\/happier_session_message>/)?.[1];
+            expect(frame).toBeDefined();
+            expect(JSON.parse(frame!.match(/^message=(.*)$/m)![1]!)).toBe('[Inner](happier-ref:session:inner)');
+            expect(rendered.match(/<happier_session_message v="1">/g)).toHaveLength(1);
+            boundary.complete();
+            await host.waitForTurnCompletion?.();
+        } finally { delivery.dispose(); await host.dispose(); }
+    });
+
     it('preserves a correlated asynchronous native refusal after dispatch admission', async () => {
         let emit: ((event: AgentSessionRuntimeEvent) => void) | undefined;
         let sessionId = '';
@@ -240,12 +306,16 @@ describe('native Session Run parity', () => {
             publishRuntimeEvent!({ sequence: 3, sessionId: 'session-parent', emittedAtMs: 20,
                 turnId: 'run-usage-turn-1', kind: 'usage-observed', observationId: 'usage-attached-1',
                 source: 'provider', scope: 'turn_delta', modelId: 'model-a',
+                promptCache: { lastUseAtMs: 10 },
                 tokens: { input: 8, output: 4, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 12 } });
             await vi.waitFor(() => expect(publishUsage).toHaveBeenCalledOnce());
             expect(publishUsage).toHaveBeenCalledWith(expect.objectContaining({
                 externalKey: 'usage-attached-1', turnId: 'run-usage-turn-1',
                 observation: expect.objectContaining({ provider: 'acme.finite/default',
                     tokens: expect.objectContaining({ total: 12 }) }),
+            }));
+            expect(publishUsage).toHaveBeenCalledWith(expect.objectContaining({
+                observation: expect.objectContaining({ promptCache: { lastUseAtMs: 10 } }),
             }));
             expect(observeWorkflowUsage).toHaveBeenCalledWith({
                 turnId: 'run-usage-turn-1', observation: expect.objectContaining({

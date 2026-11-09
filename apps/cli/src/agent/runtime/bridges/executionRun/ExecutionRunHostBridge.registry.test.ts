@@ -16,6 +16,8 @@ import { indexAgentRoutingIdsByContributionIdentity, readAgentRoutingIdForContri
 import { createNativeSessionBoundary } from './testkit/nativeSessionContext';
 import { writeAcpTestAgentScript } from '@/agent/acp/testkit/subprocessHarness';
 import { AcpCatalogRecordV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
+import { createExecutionRunRpcActionExecutor } from '@/rpc/handlers/executionRuns/dispatchExecutionRunRpcAction';
+import { resolveExecutionRunPolicy } from '@/agent/executionRuns/policy/executionRunPolicy';
 
 const presentUser = { verifiedPeerAuthority: 'present_user' } as const;
 const readRun = async (fixture: AdmittedSessionRunFixture, runId: string) => fixture.bridge
@@ -258,8 +260,20 @@ describe('ExecutionRunHostBridge admitted registry integration', () => {
       await wait(fixture, started.runId);
       await vi.waitFor(() => expect(native.isDisposed()).toBe(true));
       expect(await readRun(fixture, started.runId)).toMatchObject({ status: 'succeeded', lifecycle: { v: 1, state: 'recoverable_with_input' } });
-      expect(await fixture.bridge!.ensure(started.runId, { resume: true }))
+      const actions = createExecutionRunRpcActionExecutor({ manager: fixture.bridge!,
+        context: { cwd: fixture.directory, sessionId: fixture.session.sessionId }, isExecutionRunsEnabled: () => true,
+        policy: resolveExecutionRunPolicy({ defaults: { maxConcurrentRuns: null, boundedTimeoutMs: null,
+          reviewBoundedTimeoutMs: null, maxTurns: null } }),
+      });
+      for (const actionId of ['execution.run.ensure', 'execution.run.ensure_or_start'] as const) {
+        expect(await actions.execute(actionId, { sessionId: fixture.session.sessionId, runId: started.runId, resume: true },
+          { surface: 'rpc', authority: 'present_user' })).toMatchObject({
+          ok: false, errorCode: 'execution_run_input_required',
+        });
+      }
+      expect(await send(fixture, started.runId, 'Ordinary input must refuse'))
         .toMatchObject({ ok: false, errorCode: 'execution_run_not_allowed' });
+      expect(native.opens).toHaveLength(1);
       expect(native.inputs).toHaveLength(1);
       const resumed = await send(fixture, started.runId, 'Review again.', true);
       expect(resumed, JSON.stringify({ resumed, opens: native.opens.map(open => ({ kind: open.kind, sessionId: open.sessionId })) })).toMatchObject({ ok: true });

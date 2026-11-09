@@ -66,12 +66,11 @@ describe('legacy ACP session tool handlers', () => {
     },
   );
 
-  it('keeps a permission-gated call pending until explicit approval', () => {
+  it('keeps a permission-gated call running after approval until the real result', () => {
     vi.useFakeTimers();
     try {
-      const emitted: any[] = [];
+      const emitted: AgentMessage[] = [];
       const transport = new DefaultTransport('test');
-      transport.getToolCallTimeout = () => 10;
       const ctx = createLegacyHandlerContextFixture({ transport, emit: (message) => emitted.push(message) });
       ctx.toolCalls.observePermission({ toolCallId: 'permission-call', toolName: 'execute', input: { command: 'pwd' } });
       markToolCallWaitingForPermission('permission-call', ctx);
@@ -82,7 +81,14 @@ describe('legacy ACP session tool handlers', () => {
       expect(emitted.filter((message) => message.type === 'tool-result')).toHaveLength(0);
 
       markToolCallRunningAfterPermission('permission-call', ctx);
-      vi.advanceTimersByTime(20);
+      vi.advanceTimersByTime(180_000);
+      expect(ctx.toolCalls.readCall('permission-call')?.status).toBe('running');
+      expect(emitted.filter((message) => message.type === 'tool-result')).toHaveLength(0);
+
+      handleToolCallUpdate({
+        sessionUpdate: 'tool_call_update', toolCallId: 'permission-call', status: 'completed',
+        rawOutput: { output: '/workspace' },
+      }, ctx);
       expect(emitted.filter((message) => message.type === 'tool-result')).toHaveLength(1);
     } finally {
       vi.useRealTimers();

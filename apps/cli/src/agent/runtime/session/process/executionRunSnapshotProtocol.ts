@@ -17,6 +17,8 @@ import { ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol/connect/
 import { AgentProbeModelSchema } from '@happier-dev/protocol/capabilities';
 import { PortableRuntimeDescriptorV1Schema } from '@happier-dev/protocol/sessions/metadata/runtimeDescriptorV1';
 import { SecretReferenceOverlayV1Schema } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
+import { AcpConfigOptionOverridesV1Schema } from '@happier-dev/protocol/sessions/metadata/overrides';
+import { TeamCredentialProviderModelSelectionV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
 
 const StrictBackendTargetRefV2Schema = zMini.pipe(
   zMini.strictObject(BackendTargetRefV2Schema.shape),
@@ -25,6 +27,8 @@ const StrictBackendTargetRefV2Schema = zMini.pipe(
 
 const ProviderLaunchRequestShape = {
   selection: asHostProtocolZod(ProviderBoundModelRefSchema),
+  teamCredentialModel: z.optional(asHostProtocolZod(TeamCredentialProviderModelSelectionV1Schema)),
+  sessionConfigOptionOverrides: z.optional(asHostProtocolZod(AcpConfigOptionOverridesV1Schema)),
   backendTarget: asHostProtocolZod(StrictBackendTargetRefV2Schema),
   agentId: z.string().check(z.minLength(1)), runId: z.string().check(z.minLength(1)), controllerOccurrenceId: z.optional(z.string().check(z.minLength(1))),
   expectedAccountSettingsScopeKey: z.string().check(z.minLength(1)),

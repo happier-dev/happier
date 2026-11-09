@@ -1,8 +1,9 @@
 import type { SessionUpdate } from '../updates/types';
 import { extractTextFromContentBlock } from '../updates/content';
+import { extractAcpMediaContentBlocks } from '../media/extractAcpMediaContentBlocks';
 
 export type AcpReplayEvent =
-  | { type: 'message'; role: 'user' | 'agent'; text: string }
+  | { type: 'message'; role: 'user' | 'agent'; text: string; content?: readonly unknown[] }
   | {
       type: 'tool_call';
       toolCallId: string;
@@ -21,6 +22,7 @@ export type AcpReplayEvent =
 export class AcpReplayCapture {
   private currentRole: 'user' | 'agent' | null = null;
   private currentText = '';
+  private currentContent: unknown[] = [];
   private events: AcpReplayEvent[] = [];
   private seenToolCallIds = new Set<string>();
 
@@ -28,13 +30,15 @@ export class AcpReplayCapture {
     if (!this.currentRole) return;
     const role = this.currentRole;
     const text = this.currentText;
+    const content = this.currentContent;
     this.currentRole = null;
     this.currentText = '';
-    if (text.trim().length === 0) return;
-    this.events.push({ type: 'message', role, text });
+    this.currentContent = [];
+    if (text.trim().length === 0 && content.length === 0) return;
+    this.events.push({ type: 'message', role, text, ...(content.length ? { content } : {}) });
   }
 
-  private pushMessage(role: 'user' | 'agent', textDelta: string): void {
+  private pushMessage(role: 'user' | 'agent', content: unknown): void {
     if (this.currentRole && this.currentRole !== role) {
       this.flushMessage();
     }
@@ -42,19 +46,21 @@ export class AcpReplayCapture {
       this.currentRole = role;
       this.currentText = '';
     }
-    this.currentText += textDelta;
+    for (const block of Array.isArray(content) ? content : [content]) {
+      const text = extractTextFromContentBlock(block);
+      if (text !== null) this.currentText += text;
+      else if (block !== undefined && block !== null) this.currentContent.push(block);
+    }
   }
 
   handleUpdate(update: SessionUpdate): void {
     const kind = String(update.sessionUpdate || '');
     if (kind === 'user_message_chunk') {
-      const text = extractTextFromContentBlock(update.content);
-      if (text) this.pushMessage('user', text);
+      this.pushMessage('user', update.content);
       return;
     }
     if (kind === 'agent_message_chunk') {
-      const text = extractTextFromContentBlock(update.content);
-      if (text) this.pushMessage('agent', text);
+      this.pushMessage('agent', update.content);
       return;
     }
 
@@ -88,7 +94,9 @@ export class AcpReplayCapture {
         this.seenToolCallIds.add(toolCallId);
         const title = typeof update.title === 'string' ? update.title : undefined;
         const toolKind = typeof update.kind === 'string' ? update.kind : undefined;
-        const rawInput = update.rawInput ?? update.content;
+        const rawInput = update.rawInput ?? extractAcpMediaContentBlocks(update.content, {
+          originSource: 'tool-output', toolCallId,
+        }).contentWithoutMedia;
         this.events.push({
           type: 'tool_call',
           toolCallId,

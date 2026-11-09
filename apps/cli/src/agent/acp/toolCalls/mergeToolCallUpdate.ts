@@ -3,6 +3,7 @@ import { isDeepStrictEqual } from 'node:util';
 import type {
     AcpToolIdentity,
     AcpToolLifecycleStatus,
+    AcpToolMetadata,
     AcpToolObservation,
     MergedAcpToolCall,
     MergedAcpToolResult,
@@ -18,6 +19,8 @@ export type MutableAcpToolCallRecord = {
     observedAtMs: number;
     status: AcpToolLifecycleStatus;
     semanticName?: string;
+    name?: string;
+    toolMetadata?: AcpToolMetadata;
     title?: string;
     kind?: string;
     rawInput?: unknown;
@@ -31,6 +34,7 @@ export type MutableAcpToolCallRecord = {
     resultPublished: boolean;
     publishedResultOutput?: unknown;
     publishedResultIsError?: boolean;
+    publishedResultToolName?: string;
 };
 
 const TERMINAL_STATUSES = new Set<AcpToolLifecycleStatus>(['completed', 'failed', 'cancelled']);
@@ -112,8 +116,20 @@ export function mergeAcpToolObservation(
     let changed = false;
     const patch = observation.patch;
 
+    if (typeof patch.name === 'string' && patch.name.trim().length > 0) {
+        changed = assignIfChanged(record, 'name', patch.name) || changed;
+    }
+    if (patch.toolMetadata !== undefined) {
+        changed = assignIfChanged(record, 'toolMetadata', Object.freeze({
+            ...record.toolMetadata,
+            ...patch.toolMetadata,
+        })) || changed;
+    }
+
     if (
-        observation.semanticName !== undefined
+        record.name === undefined
+        && record.toolMetadata?.mcp === undefined
+        && observation.semanticName !== undefined
         && observation.semanticName !== null
         && observation.semanticName.trim().length > 0
     ) {
@@ -181,7 +197,8 @@ export function mergeAcpToolObservation(
 }
 
 function resolveToolName(record: MutableAcpToolCallRecord): string {
-    return record.semanticName ?? record.kind ?? 'other';
+    const mcp = record.toolMetadata?.mcp;
+    return mcp ? `mcp__${mcp.server}__${mcp.tool}` : record.name ?? record.semanticName ?? record.kind ?? 'other';
 }
 
 export function snapshotAcpToolCall(record: MutableAcpToolCallRecord): MergedAcpToolCall {
@@ -193,6 +210,8 @@ export function snapshotAcpToolCall(record: MutableAcpToolCallRecord): MergedAcp
         localId: record.identity.callLocalId,
         resultLocalId: record.identity.resultLocalId,
         toolName: resolveToolName(record),
+        ...(record.name !== undefined ? { name: record.name } : {}),
+        ...(record.toolMetadata !== undefined ? { toolMetadata: record.toolMetadata } : {}),
         ...(record.title !== undefined ? { title: record.title } : {}),
         ...(record.kind !== undefined ? { kind: record.kind } : {}),
         status: record.status,
@@ -236,6 +255,7 @@ export function claimAcpToolResultPublication(
     if (
         record.resultPublished
         && record.publishedResultIsError === result.isError
+        && record.publishedResultToolName === result.toolName
         && isDeepStrictEqual(record.publishedResultOutput, output)
     ) {
         return false;
@@ -243,5 +263,6 @@ export function claimAcpToolResultPublication(
     record.resultPublished = true;
     record.publishedResultOutput = output;
     record.publishedResultIsError = result.isError;
+    record.publishedResultToolName = result.toolName;
     return true;
 }

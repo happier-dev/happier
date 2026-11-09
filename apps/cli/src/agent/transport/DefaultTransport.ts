@@ -171,14 +171,6 @@ export class DefaultTransport implements TransportHandler {
   }
 
   /**
-   * Generic ACP has no provider-owned evidence that a tool is stuck. Callers
-   * remain cancellable, while providers with a real deadline override this.
-   */
-  getToolCallTimeout(_toolCallId: string, _toolKind?: string): number | null {
-    return null;
-  }
-
-  /**
    * Default: no tool name extraction (return null)
    */
   extractToolNameFromId(_toolCallId: string): string | null {

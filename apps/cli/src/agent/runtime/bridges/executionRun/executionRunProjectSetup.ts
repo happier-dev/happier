@@ -5,6 +5,7 @@ import { createActionOperationSetupReview } from '@/daemon/actionOperations/acti
 import { parseActionOperationProgressUpdate } from '@/daemon/actionOperations/actionOperationProgress';
 import type { ProjectSetupOperationContext } from '@/workspaces/projectSetup/projectSetupExecution';
 import type { ExecutionRunState } from './executionRunTypes';
+import { isDeepStrictEqual } from 'node:util';
 
 /** Shared projection of an existing Run or its pending native startup invocation. */
 export function createExecutionRunProjectSetupProjection(input: Readonly<{
@@ -15,23 +16,33 @@ export function createExecutionRunProjectSetupProjection(input: Readonly<{
   publish(): void;
 }>) {
   let revision = 1;
-  let observed: ActionOperationOwnerUpdate = {};
+  let observed: Pick<ActionOperationSnapshotV1, 'progress' | 'domainRef' | 'observation'> = {};
   let setupReview: ActionOperationSnapshotV1['setupReview'];
   const changed = () => { revision++; input.publish(); };
+  const updateObserved = (update: ActionOperationOwnerUpdate) => {
+    const progress = update.progress === undefined ? observed.progress
+      : parseActionOperationProgressUpdate(update.progress) ?? undefined;
+    const domainRef = update.domainRef ?? observed.domainRef;
+    const observation = update.observation === undefined ? observed.observation : update.observation ?? undefined;
+    if (isDeepStrictEqual(observed.progress, progress) && isDeepStrictEqual(observed.domainRef, domainRef)
+      && isDeepStrictEqual(observed.observation, observation)) return;
+    observed = { progress, domainRef, observation };
+    changed();
+  };
   const review = createActionOperationSetupReview({ signal: input.signal, publish(details) { setupReview = details; changed(); } });
   const context: ProjectSetupOperationContext = {
     signal: input.signal,
     actionRequestId: input.runId,
     operationAcceptance: { operationId: input.runId, actionId: 'execution.run.start', accept() {} },
-    operationOwnerUpdate: { update(update) { observed = { ...observed, ...update }; changed(); } },
-    operationProgress: { update(progress) { observed = { ...observed, progress }; changed(); } },
+    operationOwnerUpdate: { update: updateObserved },
+    operationProgress: { update(progress) { updateObserved({ progress }); } },
     operationReview: review.operationReview,
   };
   return Object.freeze({ context, scope: input.scope, refresh: review.refresh, decide: review.decide,
     snapshot(base = input.readBaseSnapshot()): ActionOperationSnapshotV1 | null {
       if (!base) return null;
       const state = base.state;
-      const progress = observed.progress ? parseActionOperationProgressUpdate(observed.progress) : null;
+      const progress = observed.progress;
       return { ...base, revision: revision + (state === 'running' ? 0 : 1),
         ...(progress ? { progress } : {}), ...(observed.domainRef ? { domainRef: observed.domainRef } : {}),
         ...(state === 'running' && setupReview ? { setupReview } : {}),

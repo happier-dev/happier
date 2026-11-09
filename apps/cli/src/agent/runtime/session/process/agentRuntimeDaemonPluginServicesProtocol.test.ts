@@ -75,6 +75,7 @@ const retainedRunnerOperationClassification = [
             'plugin_fetch.prepare_read_v1',
             'plugin_fetch.prepared_read.request_v1',
             'plugin_fetch.prepared_read.dispose_v1',
+            'plugin_fs.prepare_download_v1',
             'plugin_fs.read_file_v1',
             'plugin_fs.write_file_v1',
             'plugin_fs.stat_v1',
@@ -178,6 +179,7 @@ describe('runner daemon PluginServices v1 protocol', () => {
             kind: 'plugin_exec.resolved_agent_launch.authorize_v1',
             requestId: 'request-resolved',
             invocationId: 'invocation-1',
+            agentLaunchKind: 'attach',
             launch: { command: '/native/agent', cwd: '/project', args: ['--session'], env: {}, ...values },
         };
         expect(RunnerDaemonPluginServiceOperationV1Schema.parse(operation)).toEqual(operation);
@@ -188,6 +190,7 @@ describe('runner daemon PluginServices v1 protocol', () => {
             kind: 'plugin_exec.resolved_agent_launch.authorize_v1',
             requestId: 'request-resolved',
             invocationId: 'invocation-1',
+            agentLaunchKind: 'attach',
             launch: { command: '/native/agent', args: ['--session'], env: {} },
         };
         for (const invalid of [
@@ -198,6 +201,63 @@ describe('runner daemon PluginServices v1 protocol', () => {
         ]) {
             expect(RunnerDaemonPluginServiceOperationV1Schema.safeParse(invalid).success).toBe(false);
         }
+    });
+
+    it.each(['resolved', 'declared'] as const)('transports selected MCP frame bytes only in native authorization (%s)', envelope => {
+        const material = {
+            runtimeHome: '/var/lib/happier-agent/runtime/selected-session',
+            environment: { HAPPIER_MCP_STDIO_LAUNCHER_CONFIG_FILE: '/var/lib/happier-agent/runtime/selected-session/files/mcp.json' },
+            selectedMaterials: [{ relativePath: 'files/mcp.json', contentBase64: Buffer.from('{}').toString('base64') }],
+            nativeIdentity: { agentUid: 2401, agentGid: 2401, home: '/var/lib/happier-agent' },
+        };
+        const resolved = {
+            kind: 'plugin_exec.resolved_agent_launch.authorize_v1',
+            requestId: 'request-mcp', invocationId: 'invocation-1', agentLaunchKind: 'exec',
+            mcpLaunchMaterial: material,
+            launch: { command: '/native/happier', args: ['mcp-launcher'], env: {} },
+        };
+        const operation = envelope === 'resolved' ? resolved : {
+            kind: 'plugin_exec.launch.authorize_v1', requestId: 'request-mcp', invocationId: 'invocation-1',
+            agentNativeLaunch: true, mcpLaunchMaterial: material,
+            request: { executable: { kind: 'systemTool', id: 'native-agent' }, args: ['--session'] },
+        };
+        expect(RunnerDaemonPluginServiceOperationV1Schema.safeParse(operation).success).toBe(true);
+        for (const invalidMaterial of [
+            { ...material, ambientAuthority: true },
+            { ...material, runtimeHome: '../daemon-private' },
+            { ...material, selectedMaterials: [{ relativePath: '../escape', contentBase64: 'e30=' }] },
+            { ...material, selectedMaterials: [{ relativePath: 'files/mcp.json', contentBase64: 'not base64' }] },
+            { ...material, selectedMaterials: [material.selectedMaterials[0], material.selectedMaterials[0]] },
+            { ...material, nativeIdentity: { ...material.nativeIdentity, agentUid: 0 } },
+        ]) expect(RunnerDaemonPluginServiceOperationV1Schema.safeParse({
+            ...operation, mcpLaunchMaterial: invalidMaterial,
+        }).success).toBe(false);
+        const { launch: _launch, ...admission } = resolved;
+        expect(RunnerDaemonPluginServiceOperationV1Schema.safeParse({ ...admission, phase: 'admit' }).success).toBe(false);
+    });
+
+    it('keeps phase-absent resolved launches compatible while admission cannot carry a launch tuple', () => {
+        // The prior CLI-private producer sent this resolved shape without phase.
+        // agentLaunchKind was already required before the admission-only extension.
+        const resolved = {
+            kind: 'plugin_exec.resolved_agent_launch.authorize_v1',
+            requestId: 'request-resolved', invocationId: 'invocation-1', agentLaunchKind: 'attach',
+            launch: { command: '/native/agent', args: ['--session'], env: {} },
+        };
+        expect(RunnerDaemonPluginServiceOperationV1Schema.parse(resolved)).toEqual(resolved);
+        expect(RunnerDaemonPluginServiceOperationV1Schema.parse({ ...resolved, phase: 'resolved' }))
+            .toEqual({ ...resolved, phase: 'resolved' });
+        const admission = { kind: resolved.kind, requestId: 'request-admit', invocationId: resolved.invocationId,
+            phase: 'admit', agentLaunchKind: 'attach' };
+        expect(RunnerDaemonPluginServiceOperationV1Schema.parse(admission)).toEqual(admission);
+        for (const invalid of [
+            { ...admission, launch: resolved.launch },
+            { ...admission, sessionMcpContext: undefined },
+            { ...admission, ambientAuthority: true },
+            { ...admission, phase: 'future' },
+            { ...admission, agentLaunchKind: 'future' },
+            { ...admission, phase: 'resolved' },
+        ]) expect(RunnerDaemonPluginServiceOperationV1Schema.safeParse(invalid).success).toBe(false);
     });
 
     it('rejects malformed managed Provider bootstraps through the schema result', () => {
@@ -432,6 +492,17 @@ describe('runner daemon PluginServices v1 protocol', () => {
         ]);
     });
 
+    it('admits only plugin-owned pages in plugin notification transport', () => {
+        const operation = { kind: 'plugin_notifications.send_v1', requestId: 'request-page', invocationId: 'invocation-1',
+            request: { clientRequestId: 'notification', categoryId: 'build', title: 'Done', itemId: 'build-1' } };
+        expect(RunnerDaemonPluginServiceOperationV1Schema.safeParse({ ...operation,
+            request: { ...operation.request, page: { pageId: 'builds', subPath: '/build-1' } } }).success).toBe(true);
+        expect(RunnerDaemonPluginServiceOperationV1Schema.safeParse({ ...operation,
+            request: { ...operation.request, page: { kind: 'host', page: 'machine_service',
+                machine: { serverId: 'home', machineId: 'machine' }, service: { kind: 'deployment', machineId: 'machine',
+                    environmentId: 'environment', environmentInstanceId: 'instance', composeService: 'web', serviceId: 'instance/web' } } } }).success).toBe(false);
+    });
+
     it('accepts explicit PluginServices operations and rejects generic authority', () => {
         const witness = {
             inputId: 'input-1',
@@ -470,6 +541,7 @@ describe('runner daemon PluginServices v1 protocol', () => {
             { kind: 'plugin_fetch.prepared_read.dispose_v1', requestId: 'request-15-dispose', invocationId: 'invocation-1', readId: 'prepared-read' },
             { kind: 'plugin_actions.execute_v1', requestId: 'request-15-action', invocationId: 'invocation-1', actionId: 'session.list', input: { t: 'object', value: {} } },
             { kind: 'plugin_providers.invoke_v1', requestId: 'request-15a', invocationId: 'invocation-1', operation: 'connections.describe', request: { t: 'object', value: {} } },
+            { kind: 'plugin_fs.prepare_download_v1', requestId: 'request-download', invocationId: 'invocation-1', name: 'download.bin', bytes: 'AP8=', destination: { destinationId: 'receiver-destination' } },
             { kind: 'plugin_fs.read_file_v1', requestId: 'request-16', invocationId: 'invocation-1', path: { root: 'workspace', relativePath: 'README.md' } },
             { kind: 'plugin_fs.write_file_v1', requestId: 'request-17', invocationId: 'invocation-1', path: { root: 'pluginData', relativePath: 'state.bin' }, data: 'AA==' },
             { kind: 'plugin_fs.stat_v1', requestId: 'request-18', invocationId: 'invocation-1', path: { root: 'workspace', relativePath: '.' } },
@@ -506,7 +578,7 @@ describe('runner daemon PluginServices v1 protocol', () => {
             { kind: 'plugin_exec.agent_cli.check_readiness_v1', requestId: 'request-36', invocationId: 'invocation-1', request: { candidates: ['codex'], requirement: 'any', includeVersion: true } },
             { kind: 'plugin_exec.system_tools.resolve_v1', requestId: 'request-37', invocationId: 'invocation-1', request: { toolId: 'codex', purpose: 'session' } },
             { kind: 'plugin_exec.launch.authorize_v1', requestId: 'request-38', invocationId: 'invocation-1', request: { executable: { kind: 'systemTool', id: 'codex' }, args: ['--version'] } },
-            { kind: 'plugin_exec.resolved_agent_launch.authorize_v1', requestId: 'request-38-resolved', invocationId: 'invocation-1', launch: { command: '/native/agent', args: ['--session'], env: {} } },
+            { kind: 'plugin_exec.resolved_agent_launch.authorize_v1', requestId: 'request-38-resolved', invocationId: 'invocation-1', agentLaunchKind: 'exec', launch: { command: '/native/agent', args: ['--session'], env: {} } },
             { kind: 'plugin_exec.launch.release_v1', requestId: 'request-38a', invocationId: 'invocation-1', authorizationId: 'authorization-1' },
             { kind: 'plugin_services.close_v1', requestId: 'request-39', invocationId: 'invocation-1' },
         ];

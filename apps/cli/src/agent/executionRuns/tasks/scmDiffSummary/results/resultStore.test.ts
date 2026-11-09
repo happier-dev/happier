@@ -1,11 +1,63 @@
-import { describe, expect, it } from 'vitest';
-import { mkdtemp, readFile, writeFile, utimes } from 'node:fs/promises';
+import { describe, expect, it, vi, onTestFinished } from 'vitest';
+import { mkdtemp, readFile, writeFile, utimes, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ScmComparisonSchema, ScmDiffSummaryGenerateOutputSchema, ScmDiffSummaryGenerateSuccessSchema } from '@happier-dev/protocol/scm/diffSummary';
 import { ScmDiffSummaryResultEditSchema } from '@happier-dev/protocol/scm/diffSummaryResult';
 import { createScmDiffSummaryResultStore } from './resultStore';
 import { presentReviewFindingCitations } from '@/agent/executionRuns/profiles/review/reviewFindingCitations';
+
+const filesystem = vi.hoisted(() => ({ measuring: false, opens: [] as string[], stats: 0, lstats: 0, directoryReads: 0,
+  fileReads: 0, handleStats: 0,
+  statPaths: [] as string[], lstatPaths: [] as string[],
+  interruptedProjection: null as string | null, projectionWrites: 0,
+  measuredProjection: null as string | null, selectionWrites: 0 }));
+// Instrument the real filesystem boundary; result parsing, locking and persistence remain real.
+vi.mock('node:fs/promises', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual,
+    open: async (...args: Parameters<typeof actual.open>) => {
+      if (filesystem.measuring) filesystem.opens.push(String(args[0]));
+      const handle = await actual.open(...args);
+      // Preserve native receivers while counting descriptor operations as well as path APIs.
+      return new Proxy(handle, { get(target, key) {
+        if (key === 'stat') return (...parameters: Parameters<typeof handle.stat>) => {
+          if (filesystem.measuring) { filesystem.handleStats++; filesystem.statPaths.push(String(args[0])); }
+          return handle.stat(...parameters);
+        };
+        if (key === 'readFile') return (...parameters: Parameters<typeof handle.readFile>) => {
+          if (filesystem.measuring) filesystem.fileReads++;
+          return handle.readFile(...parameters);
+        };
+        const member: unknown = Reflect.get(target, key, target);
+        return typeof member === 'function' ? member.bind(target) : member;
+      } });
+    },
+    readFile: (...args: Parameters<typeof actual.readFile>) => {
+      if (filesystem.measuring) {
+        filesystem.fileReads++;
+        if (typeof args[0] === 'string') filesystem.opens.push(args[0]);
+      }
+      return actual.readFile(...args);
+    },
+    stat: (...args: Parameters<typeof actual.stat>) => {
+      if (filesystem.measuring) { filesystem.stats++; filesystem.statPaths.push(String(args[0])); }
+      return actual.stat(...args);
+    },
+    lstat: (...args: Parameters<typeof actual.lstat>) => {
+      if (filesystem.measuring) { filesystem.lstats++; filesystem.lstatPaths.push(String(args[0])); }
+      return actual.lstat(...args);
+    },
+    readdir: (...args: Parameters<typeof actual.readdir>) => { if (filesystem.measuring) filesystem.directoryReads++; return actual.readdir(...args); },
+    rename: async (...args: Parameters<typeof actual.rename>) => {
+      if (String(args[1]) === filesystem.measuredProjection) filesystem.selectionWrites++;
+      if (String(args[1]) === filesystem.interruptedProjection && ++filesystem.projectionWrites === 1) {
+        throw Object.assign(new Error('Projection publication interrupted'), { code: 'EIO' });
+      }
+      return actual.rename(...args);
+    },
+  };
+});
 
 const cwd = '/repo';
 const comparison = ScmComparisonSchema.parse({
@@ -49,7 +101,7 @@ async function setupPartialApplication() {
   } });
   if (!moved.success) throw new Error('Could not prepare two groups');
   const plan = moved.result.output.outputs!.commitPlan!.value!;
-  expect(await store.beginRefinement({ ...request, expectedRevision: 1, output: 'commitPlan', inputId: 'before-application' }))
+  expect(await store.beginInput({ ...request, expectedRevision: 1, outputs: ['commitPlan'], inputId: 'before-application' }))
     .toMatchObject({ success: true });
   expect(await store.beginApplication({ ...request, expectedRevision: 1, acceptance: {
     ...plan, comparisonId: comparison.id, repositoryRootPath: cwd, expectedHeadOid: 'a'.repeat(40), expectedRef: 'refs/heads/main',
@@ -62,6 +114,175 @@ async function setupPartialApplication() {
 }
 
 describe('saved SCM result owner', () => {
+  it('writes the selection index once per save and restores the changed title after restart', async () => {
+    const { directory, store, request } = await setup();
+    filesystem.measuredProjection = join(directory, 'selection.json');
+    filesystem.selectionWrites = 0;
+    try {
+      expect(await store.edit({ ...request, expectedRevision: 0, edit: { kind: 'renameWalkthrough', title: 'One indexed write' } }))
+        .toMatchObject({ success: true, result: { revision: 1 } });
+      expect(filesystem.selectionWrites).toBe(1);
+    } finally { filesystem.measuredProjection = null; }
+    expect(await createScmDiffSummaryResultStore({ directory }).list()).toMatchObject({ results: [{ revision: 1, title: 'One indexed write' }] });
+  });
+  it('keeps revision, Undo and publication unchanged when renaming to the current title', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-scm-rename-noop-'));
+    onTestFinished(() => rm(directory, { recursive: true, force: true }));
+    const onChanged = vi.fn();
+    const store = createScmDiffSummaryResultStore({ directory, onChanged });
+    const saved = await store.create({ cwd, output });
+    const scope = { cwd, resultId: saved.resultId };
+    const renamed = await store.edit({ ...scope, expectedRevision: 0, edit: { kind: 'renameWalkthrough', title: 'Renamed' } });
+    expect(renamed).toMatchObject({ success: true, result: { revision: 1, canUndo: true } });
+    onChanged.mockClear();
+    expect(await store.edit({ ...scope, expectedRevision: 1, edit: { kind: 'renameWalkthrough', title: 'Renamed' } })).toEqual(renamed);
+    expect(onChanged).not.toHaveBeenCalled();
+    expect(await store.undo({ ...scope, expectedRevision: 1 })).toMatchObject({ success: true,
+      result: { revision: 2, output: { outputs: { walkthrough: { value: { title: 'Original' } } } } } });
+  });
+
+  it('publishes each persisted apply and Stop revision, and publishes nothing for reads or refused edits', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-scm-result-push-'));
+    onTestFinished(() => rm(directory, { recursive: true, force: true }));
+    const onChanged = vi.fn();
+    const store = createScmDiffSummaryResultStore({ directory, ...{ onChanged } });
+    const saved = await store.create({ cwd, output });
+    const scope = { cwd, resultId: saved.resultId };
+    onChanged.mockClear();
+    const plan = saved.output.outputs!.commitPlan!.value!;
+    await store.beginApplication({ ...scope, expectedRevision: 0, acceptance: { ...plan,
+      comparisonId: comparison.id, repositoryRootPath: cwd, expectedHeadOid: 'a'.repeat(40), expectedRef: 'refs/heads/main' } });
+    await store.mutateApplication(scope, result => ({ ...result.application!, steps: [{ groupId: 'g1', state: 'writing' }] }));
+    await store.mutateApplication(scope, result => ({ ...result.application!, stopAfterCurrent: true }));
+    expect(onChanged.mock.calls.map(([change]) => change)).toEqual([1, 2, 3].map(revision => ({ resultId: saved.resultId, revision })));
+    const reread = await createScmDiffSummaryResultStore({ directory }).read(scope);
+    expect(reread).toMatchObject({ success: true, result: { revision: 3, application: { stopAfterCurrent: true } } });
+    await store.read(scope);
+    await store.mutateApplication(scope, result => result.application!);
+    await store.edit({ ...scope, expectedRevision: 0, edit: { kind: 'renameWalkthrough', title: 'Stale' } });
+    expect(onChanged).toHaveBeenCalledTimes(3);
+  });
+
+  it('selects one comparison from retained metadata without parsing unrelated bodies, including after restart', async () => {
+    const { directory, store, request } = await setup();
+    for (let index = 0; index < 128; index++) {
+      await store.create({ cwd: `/unrelated/${index}`, output });
+    }
+    const reopened = createScmDiffSummaryResultStore({ directory });
+    const parse = JSON.parse;
+    let bodyParses = 0;
+    let projectionParses = 0;
+    Object.assign(filesystem, { measuring: true, opens: [], stats: 0, lstats: 0, directoryReads: 0,
+      fileReads: 0, handleStats: 0, statPaths: [], lstatPaths: [] });
+    const spy = vi.spyOn(JSON, 'parse').mockImplementation((text, reviver) => {
+      if (typeof text === 'string' && text.startsWith('{"result":')) bodyParses++;
+      if (typeof text === 'string' && text.startsWith('{"v":1,"entries":')) projectionParses++;
+      return parse(text, reviver);
+    });
+    try {
+      const selected = await reopened.list({ query: { cwd, sessionId: 'session-1', comparisons: [
+        { comparisonId: comparison.id, source: comparison.source, outputs: ['walkthrough'] },
+      ] } });
+      console.info('saved-result selection cost', { retainedResults: 129, bodyParses, projectionParses, fileOpens: filesystem.opens.length,
+        fileReads: filesystem.fileReads, stats: filesystem.stats, handleStats: filesystem.handleStats,
+        lstats: filesystem.lstats, directoryReads: filesystem.directoryReads });
+      expect(bodyParses).toBe(0);
+      expect(projectionParses).toBe(1);
+      expect(selected.results.map(item => item.resultId)).toEqual([request.resultId]);
+      expect(filesystem.opens.filter(path => path === join(directory, 'selection.json'))).toHaveLength(1);
+      expect(filesystem.opens.filter(path => /[a-f0-9-]{36}\.json$/.test(path))).toHaveLength(0);
+      expect(filesystem.statPaths.filter(path => /[a-f0-9-]{36}\.json$/.test(path))).toHaveLength(0);
+      expect(filesystem.lstatPaths.filter(path => /[a-f0-9-]{36}\.json$/.test(path))).toHaveLength(0);
+      expect(await reopened.read(request)).toMatchObject({ success: true, result: { resultId: request.resultId } });
+      expect(bodyParses).toBe(1);
+      bodyParses = 0;
+      expect((await reopened.list()).count).toBe(129);
+      expect(bodyParses).toBe(0);
+      await rm(join(directory, 'selection.json'));
+      bodyParses = 0;
+      projectionParses = 0;
+      Object.assign(filesystem, { opens: [], stats: 0, lstats: 0, directoryReads: 0,
+        fileReads: 0, handleStats: 0, statPaths: [], lstatPaths: [] });
+      const repaired = await createScmDiffSummaryResultStore({ directory }).list({ query: { cwd, sessionId: 'session-1',
+        comparisons: [{ comparisonId: comparison.id, source: comparison.source, outputs: ['walkthrough'] }] } });
+      console.info('saved-result cold repair cost', { retainedResults: 129, bodyParses, projectionParses,
+        fileOpens: filesystem.opens.length, fileReads: filesystem.fileReads, stats: filesystem.stats,
+        handleStats: filesystem.handleStats, lstats: filesystem.lstats,
+        directoryReads: filesystem.directoryReads });
+      expect(repaired.results.map(item => item.resultId)).toEqual([request.resultId]);
+      expect(bodyParses).toBe(129);
+    } finally { spy.mockRestore(); filesystem.measuring = false; }
+  });
+  it('recovers missing projections, isolates malformed unrelated bodies, and keeps edits, Undo and deletion current', async () => {
+    const { directory, store, request } = await setup();
+    const unrelated = await store.create({ cwd: '/other', output });
+    await rm(join(directory, 'selection.json'), { force: true });
+    await writeFile(join(directory, `${unrelated.resultId}.json`), '{broken');
+    const reopened = createScmDiffSummaryResultStore({ directory });
+    expect((await reopened.list()).results.map(item => item.resultId)).toEqual([request.resultId]);
+    expect(await reopened.edit({ ...request, expectedRevision: 0, edit: { kind: 'renameWalkthrough', title: 'Current title' } }))
+      .toMatchObject({ success: true });
+    expect(await reopened.list()).toMatchObject({ results: [{ revision: 1, title: 'Current title' }] });
+    expect(await reopened.undo({ ...request, expectedRevision: 1 })).toMatchObject({ success: true });
+    expect(await createScmDiffSummaryResultStore({ directory }).list()).toMatchObject({ results: [{ revision: 2, title: 'Original' }] });
+    expect(await reopened.delete({ ...request, expectedRevision: 2 })).toMatchObject({ success: true });
+    expect(await reopened.list()).toMatchObject({ count: 0 });
+  });
+  it('recovers a missing projection when its first publication fails without losing the committed body', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-scm-result-missing-projection-'));
+    onTestFinished(() => rm(directory, { recursive: true, force: true }));
+    const store = createScmDiffSummaryResultStore({ directory });
+    filesystem.interruptedProjection = join(directory, 'selection.json');
+    filesystem.projectionWrites = 0;
+    let resultId: string;
+    try {
+      const saved = await store.create({ cwd, output });
+      resultId = saved.resultId;
+      expect(saved).toMatchObject({ revision: 0 });
+      expect(filesystem.projectionWrites).toBe(1);
+    } finally { filesystem.interruptedProjection = null; }
+    let deadPid = 999_999;
+    for (;; deadPid++) {
+      try { process.kill(deadPid, 0); }
+      catch (error) {
+        if (error instanceof Error && 'code' in error && error.code === 'ESRCH') break;
+        if (!(error instanceof Error && 'code' in error && (error.code === 'EPERM' || error.code === 'EACCES'))) throw error;
+      }
+    }
+    // Canonical current-owner vector with an OS-verified unused PID.
+    // Fresh wall-clock timestamps ensure the shelf's Infinity stale age cannot reclaim it.
+    await writeFile(join(directory, 'selection.json.lock'), JSON.stringify({ pid: deadPid,
+      ownerToken: 'interrupted-shelf-writer', processStartedAtMs: 1, createdAtMs: Date.now(), updatedAtMs: Date.now() }));
+    const reopened = createScmDiffSummaryResultStore({ directory });
+    expect(await reopened.list()).toMatchObject({ count: 1, results: [{ resultId, revision: 0, title: 'Original' }] });
+    expect(await reopened.read({ cwd, resultId })).toMatchObject({ success: true, result: { revision: 0 } });
+  });
+  it('keeps concurrent writers on different results in the same rebuildable shelf', async () => {
+    const { directory, store, request } = await setup();
+    const second = await store.create({ cwd, sessionId: request.sessionId, output });
+    const other = createScmDiffSummaryResultStore({ directory });
+    await Promise.all([
+      store.edit({ ...request, expectedRevision: 0, edit: { kind: 'renameWalkthrough', title: 'First edit' } }),
+      other.edit({ ...request, resultId: second.resultId, expectedRevision: 0, edit: { kind: 'renameWalkthrough', title: 'Second edit' } }),
+    ]);
+    const inventory = await createScmDiffSummaryResultStore({ directory }).list();
+    expect(inventory.results.map(item => item.title).sort()).toEqual(['First edit', 'Second edit']);
+    expect(inventory.results.map(item => item.revision)).toEqual([1, 1]);
+  });
+  it('selects outputs independently and restores an older published value behind a newer failed attempt', async () => {
+    const { store, request } = await setup();
+    const failed = await store.create({ cwd, sessionId: request.sessionId, output: ScmDiffSummaryGenerateOutputSchema.parse({
+      ...output, requestedOutputs: ['walkthrough'], outputs: { walkthrough: { state: 'failed', reasonCode: 'SUMMARY_FAILED', reason: 'Failed attempt' } },
+    }) });
+    const proposal = await store.create({ cwd, sessionId: request.sessionId, output: ScmDiffSummaryGenerateOutputSchema.parse({
+      ...output, requestedOutputs: ['commitPlan'], outputs: { commitPlan: output.outputs!.commitPlan },
+    }) });
+    const query = { cwd, sessionId: request.sessionId, comparisons: [{ comparisonId: comparison.id,
+      source: comparison.source, outputs: ['walkthrough', 'commitPlan'] satisfies Array<'walkthrough' | 'commitPlan'> }] };
+    const selected = await store.list({ query });
+    expect(new Set(selected.results.map(item => item.resultId))).toEqual(new Set([request.resultId, proposal.resultId]));
+    expect(selected.results.map(item => item.resultId)).not.toContain(failed.resultId);
+  });
   it.each([false, true])('persists a PR draft generation receipt independently of cache reuse (unknown: %s)', async unknown => {
     const directory = await mkdtemp(join(tmpdir(), 'happier-scm-draft-receipt-'));
     const store = createScmDiffSummaryResultStore({ directory });
@@ -117,7 +338,7 @@ describe('saved SCM result owner', () => {
   it('carries suggested questions through publication, revisioned edits, merge and Undo', async () => {
     const { directory, store, request } = await setup();
     const questions = ['Why keep the selected change?', 'Which test covers the second change?'];
-    await store.beginRefinement({ ...request, expectedRevision: 0, inputId: 'questions', output: 'walkthrough' });
+    await store.beginInput({ ...request, expectedRevision: 0, inputId: 'questions', outputs: ['walkthrough'] });
     const published = await store.publish({ ...request, inputId: 'questions', modelOutput: { walkthrough: {
       ...modelWalkthrough, stops: modelWalkthrough.stops.map((stop, index) => ({ ...stop, suggestedQuestions: [questions[index]!] })),
     } } });
@@ -139,7 +360,7 @@ describe('saved SCM result owner', () => {
   });
   it('publishes a refined walkthrough with omitted changes reachable in Other changes without changing analysis or other outputs', async () => {
     const { store, request } = await setup();
-    await store.beginRefinement({ ...request, expectedRevision: 0, inputId: 'refinement', output: 'walkthrough' });
+    await store.beginInput({ ...request, expectedRevision: 0, inputId: 'refinement', outputs: ['walkthrough'] });
     const published = await store.publish({ ...request, inputId: 'refinement', modelOutput: { walkthrough: {
       ...modelWalkthrough, title: 'Refined', stops: [modelWalkthrough.stops[0]], otherChangeRefs: [],
     } } });
@@ -186,17 +407,18 @@ describe('saved SCM result owner', () => {
       .toMatchObject({ success: true, result: { revision: 2 } });
     expect(await readFile(file, 'utf8')).not.toContain('"future"');
     await writeFile(file, JSON.stringify({ ...withExtras, result: { ...withExtras.result, revision: -1 } }));
+    await rm(join(directory, 'selection.json'), { force: true });
     await expect(store.read(request)).rejects.toThrow();
-    await expect(store.list()).rejects.toThrow();
+    await expect(store.list()).resolves.toMatchObject({ count: 0 });
   });
-  it('keeps the admitted revision basis when only same-input multipart admission progress changes', async () => {
+  it('keeps the admitted revision basis across same-input completion progress, manual edits and Undo', async () => {
     const store = createScmDiffSummaryResultStore({ directory: await mkdtemp(join(tmpdir(), 'scm-part-admission-')) });
     const created = await store.create({ cwd: '/repo', output });
     const scope = { cwd: '/repo', resultId: created.resultId };
     await store.beginInput({ ...scope, inputId: 'part', expectedRevision: created.revision, outputs: ['summary'] });
     const progress = await store.publishProgress({ ...scope, inputId: 'part', expectedRevision: created.revision, preserveUndo: true,
       output: ScmDiffSummaryGenerateOutputSchema.parse({ ...created.output, analysis: { ...created.output.analysis,
-        parts: { admitted: 2, completed: 1, total: 3, phase: 'evidence' } } }) });
+        parts: { completed: 1, total: 3, phase: 'evidence' } } }) });
     expect(progress).toMatchObject({ success: true });
     const published = await store.publish({ ...scope, inputId: 'part', modelOutput: { summaryMarkdown: 'Completed part' } });
     expect(published).toMatchObject({ success: true, result: { output: { outputs: { summary: { value: { summaryMarkdown: 'Completed part' } } } } } });
@@ -204,7 +426,7 @@ describe('saved SCM result owner', () => {
     await store.beginInput({ ...scope, inputId: 'next-part', expectedRevision: published.result.revision, outputs: ['summary'] });
     const nextProgress = await store.publishProgress({ ...scope, inputId: 'next-part', expectedRevision: published.result.revision,
       preserveUndo: true, output: ScmDiffSummaryGenerateOutputSchema.parse({ ...published.result.output,
-        analysis: { ...published.result.output.analysis, parts: { admitted: 3, completed: 2, total: 3, phase: 'evidence' } } }) });
+        analysis: { ...published.result.output.analysis, parts: { completed: 2, total: 3, phase: 'evidence' } } }) });
     if (!nextProgress.success) throw new Error(nextProgress.error);
     await store.edit({ ...scope, expectedRevision: nextProgress.result.revision,
       edit: { kind: 'replaceSummary', value: { summaryMarkdown: 'Manual intervening edit' } } });
@@ -215,11 +437,11 @@ describe('saved SCM result owner', () => {
     const later = await store.publishProgress({ ...scope, expectedRevision: current.result.revision,
       output: ScmDiffSummaryGenerateOutputSchema.parse({ ...current.result.output, summaryMarkdown: 'Later native part', outputs: { ...current.result.output.outputs,
         summary: { state: 'writing', value: { summaryMarkdown: 'Later native part' } } },
-        analysis: { ...current.result.output.analysis, parts: { admitted: 4, completed: 3, total: 4, phase: 'merge' } } }) });
+        analysis: { ...current.result.output.analysis, parts: { completed: 3, total: 4, phase: 'merge' } } }) });
     if (!later.success) throw new Error(later.error);
     expect(await store.undo({ ...scope, expectedRevision: later.result.revision })).toMatchObject({ success: true, result: {
       output: { outputs: { summary: { value: { summaryMarkdown: 'Manual intervening edit' } } },
-        analysis: { parts: { admitted: 4, completed: 3, total: 4, phase: 'merge' } } },
+        analysis: { parts: { completed: 3, total: 4, phase: 'merge' } } },
     } });
   });
   it('projects edited titles, moved/changed stops and the immediate update notice across reload and Undo', async () => {
@@ -418,7 +640,7 @@ describe('saved SCM result owner', () => {
     if (!explained.success) throw new Error(explained.error);
     const blocks = explained.result.output.outputs!.walkthrough!.value!.stops[0]!.reviewExplanations;
     const refine = async (inputId: string, revision: number, swap: boolean) => {
-      await store.beginRefinement({ ...request, inputId, expectedRevision: revision, output: 'walkthrough' });
+      await store.beginInput({ ...request, inputId, expectedRevision: revision, outputs: ['walkthrough'] });
       return store.publish({ ...request, inputId, modelOutput: { walkthrough: {
         ...output.outputs!.walkthrough!.value!, stops: output.outputs!.walkthrough!.value!.stops.map((stop, index) => ({
           ...stop, explanationMarkdown: 'Refined prose', changeRefs: [swap ? `c${2 - index}` : `c${index + 1}`],
@@ -438,7 +660,7 @@ describe('saved SCM result owner', () => {
     await store.undo({ ...request, expectedRevision: 3 });
     const changed = await refine('changed-selection', 4, true);
     expect(changed.success && changed.result.output.outputs!.walkthrough!.value!.stops[0]!.reviewExplanations).toBeUndefined();
-    const forged = await store.beginRefinement({ ...request, inputId: 'forged', expectedRevision: 5, output: 'walkthrough' });
+    const forged = await store.beginInput({ ...request, inputId: 'forged', expectedRevision: 5, outputs: ['walkthrough'] });
     expect(forged.success).toBe(true);
     expect(await store.publish({ ...request, inputId: 'forged', modelOutput: { walkthrough: {
       ...output.outputs!.walkthrough!.value!, stops: [{ ...output.outputs!.walkthrough!.value!.stops[0]!, reviewExplanations: blocks },
@@ -464,6 +686,8 @@ describe('saved SCM result owner', () => {
     await utimes(join(directory, `${request.resultId}.json`), 2, 2);
     await utimes(join(directory, `${another.resultId}.json`), 1, 1);
     await writeFile(join(directory, 'unrelated.tmp'), 'unrelated');
+    // A missing rebuildable projection recovers canonical file metadata from disk.
+    await rm(join(directory, 'selection.json'), { force: true });
     const reopened = createScmDiffSummaryResultStore({ directory });
     const listed = await reopened.list();
     expect(listed.count).toBe(2);
@@ -624,13 +848,13 @@ describe('saved SCM result owner', () => {
     const { store, request, plan } = await setupPartialApplication();
     expect(await store.publish({ ...request, inputId: 'before-application', modelOutput: { commitPlan: output.outputs!.commitPlan!.value } }))
       .toMatchObject({ success: false, errorCode: 'revision_conflict', latestRevision: 3 });
-    expect(await store.beginRefinement({ ...request, expectedRevision: 3, output: 'commitPlan', inputId: 'after-application' }))
+    expect(await store.beginInput({ ...request, expectedRevision: 3, outputs: ['commitPlan'], inputId: 'after-application' }))
       .toMatchObject({ success: true });
     expect(await store.publish({ ...request, inputId: 'after-application', modelOutput: { commitPlan: {
       groups: plan.groups.slice(1).map(group => ({ ...group, changeRefs: ['c2'] })), leftOutChangeRefs: ['c1'],
     } } })).toMatchObject({ success: false, errorCode: 'invalid_output' });
     expect(await store.read(request)).toMatchObject({ success: true, result: { revision: 3, output: { outputs: { commitPlan: { value: plan } } } } });
-    expect(await store.beginRefinement({ ...request, expectedRevision: 3, output: 'summary', inputId: 'summary-after-application' }))
+    expect(await store.beginInput({ ...request, expectedRevision: 3, outputs: ['summary'], inputId: 'summary-after-application' }))
       .toMatchObject({ success: true });
     expect(await store.publish({ ...request, inputId: 'summary-after-application', modelOutput: { summaryMarkdown: 'Updated analysis' } }))
       .toMatchObject({ success: true, result: { revision: 4, output: { summaryMarkdown: 'Updated analysis', outputs: { commitPlan: { value: plan } } } } });
@@ -699,14 +923,14 @@ describe('saved SCM result owner', () => {
 
   it('binds refinement before dispatch, refuses stale publication and validates aliases without losing outputs', async () => {
     const { store, request } = await setup();
-    const begun = await store.beginRefinement({ ...request, expectedRevision: 0, output: 'walkthrough', stopIds: ['s1'], inputId: 'refine-1' });
+    const begun = await store.beginInput({ ...request, expectedRevision: 0, outputs: ['walkthrough'], stopIds: ['s1'], inputId: 'refine-1' });
     expect(begun).toMatchObject({ success: true });
     await store.edit({ ...request, expectedRevision: 0, edit: { kind: 'renameWalkthrough', title: 'Device A' } });
     const stale = await store.publish({ ...request, inputId: 'refine-1', modelOutput: { walkthrough: {
       title: 'Ignored generated title', intro: '', stops: [{ id: 's1', title: 'First', explanationMarkdown: 'Updated', changeRefs: ['c1'] }], otherChangeRefs: [],
     } } });
     expect(stale).toMatchObject({ success: false, errorCode: 'revision_conflict', latestRevision: 1 });
-    await store.beginRefinement({ ...request, expectedRevision: 1, output: 'walkthrough', stopIds: ['s1'], inputId: 'refine-2' });
+    await store.beginInput({ ...request, expectedRevision: 1, outputs: ['walkthrough'], stopIds: ['s1'], inputId: 'refine-2' });
     for (const ref of ['other-comparison:c1', 'change-1']) {
       expect(await store.publish({ ...request, inputId: 'refine-2', modelOutput: { walkthrough: {
         title: 'Wrong', intro: '', stops: [{ id: 's1', title: 'First', explanationMarkdown: 'Updated', changeRefs: [ref] }], otherChangeRefs: [],
@@ -719,7 +943,7 @@ describe('saved SCM result owner', () => {
   it.each([false, true])('publishes targeted prose and generated titles, preserving manual titles (%s) and unselected output', async (manualTitle) => {
     const { store, request } = await setup();
     if (manualTitle) await store.edit({ ...request, expectedRevision: 0, edit: { kind: 'renameStop', stopId: 's1', title: 'Personal title' } });
-    await store.beginRefinement({ ...request, expectedRevision: manualTitle ? 1 : 0, output: 'walkthrough', stopIds: ['s1'], inputId: 'refine' });
+    await store.beginInput({ ...request, expectedRevision: manualTitle ? 1 : 0, outputs: ['walkthrough'], stopIds: ['s1'], inputId: 'refine' });
     const updated = await store.publish({ ...request, inputId: 'refine', modelOutput: { walkthrough: {
       title: 'Parcours', intro: 'Modifications', stops: [{ id: 's1', title: 'Préserver l’état', explanationMarkdown: 'Explication affinée', changeRefs: ['c1'] }], otherChangeRefs: [],
     } } });

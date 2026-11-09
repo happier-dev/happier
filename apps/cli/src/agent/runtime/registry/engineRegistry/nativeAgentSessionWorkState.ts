@@ -1,7 +1,6 @@
 import { SessionWorkStateItemV1Schema, readSessionWorkStateV1FromMetadata, writeSessionWorkStateV1ToMetadata } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateV1';
 import { buildDeterministicSessionWorkStateItemId } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateItemIds';
 import { mergeSessionWorkStateV1 } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateMerge';
-import { resolveSessionWorkStatePrimaryItemId } from '@happier-dev/protocol/sessions/work/state/sessionWorkStatePrimary';
 import type { SessionWorkStateItemKindV1, SessionWorkStateTruncationV1, SessionWorkStateV1 } from '@happier-dev/protocol';
 import type {
     WorkStatePublisher,
@@ -15,8 +14,6 @@ import type { HostRuntimeLimitMeasurementRecorder } from '@/agent/runtime/state/
 import { deterministicStringify } from '@/utils/deterministicJson';
 import { logger } from '@/ui/logger';
 
-const MAX_ITEMS_PER_SOURCE = 100;
-const MAX_SOURCE_JSON_BYTES = 256 * 1024;
 const SOURCE_PREFIX_MARKER = '__happier_source_prefix__';
 
 type WorkStateSourceDeclaration = Readonly<{
@@ -132,10 +129,9 @@ function validateAndNormalizePublication(params: Readonly<{
     const { request } = params;
     if (!Number.isSafeInteger(request.sourceSequence) || request.sourceSequence < 0) return null;
     if (!Number.isSafeInteger(request.observedAtMs) || request.observedAtMs < 0) return null;
-    if (request.items.length > MAX_ITEMS_PER_SOURCE) return null;
     if (
         request.truncation?.reason === 'itemLimit'
-        && (request.items.length !== MAX_ITEMS_PER_SOURCE || request.truncation.omittedCount <= 0)
+        && request.truncation.omittedCount <= 0
     ) return null;
     if (
         request.truncation?.omittedCount !== undefined
@@ -170,7 +166,6 @@ function validateAndNormalizePublication(params: Readonly<{
         ...(truncation ? { truncation } : {}),
     };
     const fingerprint = deterministicStringify(normalizedForFingerprint);
-    if (Buffer.byteLength(fingerprint, 'utf8') > MAX_SOURCE_JSON_BYTES) return null;
     return {
         fingerprint,
         items,
@@ -247,11 +242,6 @@ export function createNativeAgentSessionWorkStateService(params: Readonly<{
                     request: Parameters<WorkStatePublisher['publish']>[0],
                     options?: Parameters<WorkStatePublisher['publish']>[1],
                 ) {
-                    // Capture the producer before the publication queue severs
-                    // its stack. This contains no Goal content or credentials.
-                    const goalProducerStack = declaration.itemKinds.includes('goal')
-                        ? new Error('Goal source producer').stack
-                        : undefined;
                     let resolveResult!: (result: Awaited<ReturnType<WorkStatePublisher['publish']>>) => void;
                     const result = new Promise<Awaited<ReturnType<WorkStatePublisher['publish']>>>((resolve) => {
                         resolveResult = resolve;
@@ -314,7 +304,6 @@ export function createNativeAgentSessionWorkStateService(params: Readonly<{
                                 occurrenceId: params.occurrenceId,
                                 sourceSequence: request.sourceSequence,
                                 observedAtMs: request.observedAtMs,
-                                producerStack: goalProducerStack,
                                 goals: normalized.items.filter(item => item.kind === 'goal').map(item => ({
                                     id: item.id, status: item.status,
                                     tokenBudget: item.tokenBudget ?? null, updatedAt: item.updatedAt,
@@ -354,25 +343,15 @@ export function createNativeAgentSessionWorkStateService(params: Readonly<{
                                     nextOwned,
                                     ownedItemIdPrefixes: declaration.itemKinds.map((kind) => ownedItemPrefix(kind, sourceFamily)),
                                 });
-                                const withPrimary = normalized.primaryItemId
-                                    ? {
-                                        ...merged,
-                                        primaryItemId: resolveSessionWorkStatePrimaryItemId(
-                                            merged.items,
-                                            current?.primaryItemId,
-                                            { preferItemIds: [normalized.primaryItemId] },
-                                        ),
-                                    }
-                                    : merged;
                                 params.recordRuntimeLimitMeasurement?.({
                                     family: 'native-work-state-aggregate',
                                     decodedBytes: Buffer.byteLength(
-                                        JSON.stringify(withPrimary),
+                                        JSON.stringify(merged),
                                         'utf8',
                                     ),
-                                    itemCount: withPrimary.items.length,
+                                    itemCount: merged.items.length,
                                 });
-                                return writeSessionWorkStateV1ToMetadata(metadata, withPrimary as SessionWorkStateV1);
+                                return writeSessionWorkStateV1ToMetadata(metadata, merged as SessionWorkStateV1);
                             });
                         } catch {
                             resolveResult({

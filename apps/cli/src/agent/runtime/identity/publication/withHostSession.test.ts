@@ -247,6 +247,7 @@ describe('withHostSessionRuntimeIdentityPublication', () => {
 
   it('publishes live capability facts supplied by an external Agent Session runtime', async () => {
     const runtimeCapabilities = {
+      backend: { session: { media: { acceptsImageInput: { supported: true } } } },
       sessionCapabilities: {
         sessionFork: {
           conversation: 'supported' as const,
@@ -271,7 +272,10 @@ describe('withHostSessionRuntimeIdentityPublication', () => {
       identity: {
         runtimeDescriptor: null,
         runtimeCapabilities: {
-          backend: { sessions: { supported: true } },
+          backend: { executionRun: { supported: true }, session: {
+            media: { emitsSessionMedia: { supported: true } },
+            contextCompaction: { manualTrigger: { supported: true } },
+          } },
         },
         runtimeFacets: null,
       },
@@ -283,8 +287,11 @@ describe('withHostSessionRuntimeIdentityPublication', () => {
     expect(published).toContainEqual({
       fact: 'runtimeCapabilities',
       value: {
-        backend: { sessions: { supported: true } },
         ...runtimeCapabilities,
+        backend: { executionRun: { supported: true }, session: {
+          media: { emitsSessionMedia: { supported: true }, acceptsImageInput: { supported: true } },
+          contextCompaction: { manualTrigger: { supported: true } },
+        } },
       },
     });
   });

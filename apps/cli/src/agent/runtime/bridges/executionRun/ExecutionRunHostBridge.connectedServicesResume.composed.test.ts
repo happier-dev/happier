@@ -23,6 +23,56 @@ import { createExecutionRunRuntime } from './runtime/create';
 // Resolve the real native owner during collection, as its existing owner tests
 // do, instead of charging its first source transform to the behavior deadline.
 import '@/agent/runtime/registry/engineRegistry/runtimeCore';
+import 'fake-indexeddb/auto';
+import { installVitestRnShim } from '../../../../../../ui/sources/dev/vitestRnShim';
+import { createVoiceTurnStreaming } from '../../../../../../ui/sources/voice/runtime/execution/voiceTurnStreaming';
+import { createVoiceRunRecovery } from '../../../../../../ui/sources/voice/runtime/execution/voiceRunRecovery';
+import type { VoiceAgentHandle } from '../../../../../../ui/sources/voice/agent/types';
+import { storage } from '../../../../../../ui/sources/sync/domains/state/storage';
+import { createSessionFixture } from '../../../../../../ui/sources/dev/testkit/fixtures/sessionFixtures';
+import { normalizeVoiceSettingsLocalDelta } from '../../../../../../ui/sources/sync/domains/settings/voiceSettingsPersistence';
+import { readLocalConversationVoiceSettings, writeVoiceProviderSettingsConfig } from '../../../../../../ui/sources/sync/domains/settings/voiceSettings';
+import { createRpcCallError } from '../../../../../../ui/sources/sync/runtime/rpcErrors';
+
+// The CLI harness has no native theme runtime. Keep the UI owners real beneath
+// the same canonical platform boundary used by the existing composed Voice tests.
+await vi.hoisted(async () => {
+  const { installVitestRnShim } = await import(new URL('../../../../../../ui/sources/dev/vitestRnShim.ts', import.meta.url).href);
+  installVitestRnShim();
+});
+vi.mock('react-native-unistyles', async () => {
+  const { createUnistylesMock } = await import('../../../../../../ui/sources/dev/testkit/mocks/unistyles');
+  return createUnistylesMock();
+});
+vi.mock('expo-updates', async () => {
+  const { createExpoUpdatesMock } = await import('../../../../../../ui/sources/dev/testkit/mocks/expoUpdates');
+  return createExpoUpdatesMock();
+});
+vi.mock('@shopify/react-native-skia', async () => {
+  const { createReactNativeSkiaMock } = await import('../../../../../../ui/sources/dev/testkit/mocks/reactNativeSkia');
+  return createReactNativeSkiaMock();
+});
+vi.mock('expo-file-system', async () => {
+  const { createExpoFileSystemFileMock } = await import('../../../../../../ui/sources/dev/testkit/mocks/expoFileSystem');
+  return createExpoFileSystemFileMock().module;
+});
+vi.mock('expo-file-system', async () => {
+  const { createExpoFileSystemFileMock } = await import('../../../../../../ui/sources/dev/testkit/mocks/expoFileSystem');
+  return createExpoFileSystemFileMock().module;
+});
+vi.mock('react-native-typography', async () => {
+  const { createReactNativeTypographyMock } = await import('../../../../../../ui/sources/dev/testkit/mocks/reactNativeTypography');
+  return createReactNativeTypographyMock();
+});
+vi.mock('@shopify/react-native-skia', async () => {
+  const { createReactNativeSkiaMock } = await import('../../../../../../ui/sources/dev/testkit/mocks/reactNativeSkia');
+  return createReactNativeSkiaMock();
+});
+installVitestRnShim();
+vi.mock('expo-updates', async () => {
+  const { createExpoUpdatesMock } = await import('../../../../../../ui/sources/dev/testkit/mocks/expoUpdates');
+  return createExpoUpdatesMock();
+});
 
 const { directory, originalHome } = await vi.hoisted(async () => {
   const [{ mkdtemp }, { tmpdir }, { join }] = await Promise.all([
@@ -162,7 +212,18 @@ describe('connected execution-run resume custody', () => {
           emitCheckpoint();
           return { dispose() { listener = null; } };
         },
-        async send() { return { status: 'admitted' }; },
+        async send(input) {
+          const turnId = input.delivery.turnId;
+          listener?.({ kind: 'input-accepted', sessionId: request.sessionId, sequence: ++sequence,
+            emittedAtMs: sequence, inputIds: input.inputIds, delivery: input.delivery });
+          listener?.({ kind: 'turn-start', sessionId: request.sessionId, sequence: ++sequence,
+            emittedAtMs: sequence, turnId, startedBy: 'host' });
+          listener?.({ kind: 'message-delta', sessionId: request.sessionId, sequence: ++sequence,
+            emittedAtMs: sequence, turnId, channel: 'assistant', text: 'Fresh Voice reply.' });
+          listener?.({ kind: 'turn-complete', sessionId: request.sessionId, sequence: ++sequence,
+            emittedAtMs: sequence, turnId });
+          return { status: 'admitted' };
+        },
         async cancel({ turnId }) { return { status: 'requested', turnId }; },
         async dispose() { listener = null; },
       };
@@ -269,7 +330,14 @@ describe('connected execution-run resume custody', () => {
       transport.materialize.mockClear();
       const queries: SessionExecutionRunBrokerAuthorityResponseV1[] = [];
       const activations: string[] = [];
-      transport.materialize.mockImplementation(async (request: { runId: string; connectedServices: unknown }) => {
+      const materializationOccurrences: Array<{ actual: string | undefined; expected: string | undefined }> = [];
+      const resumeMaterializations: Array<NonNullable<ReturnType<ExecutionRunHostBridge['captureResumeMaterialization']>>> = [];
+      transport.materialize.mockImplementation(async (request: { runId: string; connectedServices: unknown; controllerOccurrenceId?: string }) => {
+        materializationOccurrences.push({ actual: request.controllerOccurrenceId,
+          expected: bridge!.readExecutionRunOccurrenceWitnessReader().readCurrentRunOccurrence(request.runId)?.occurrenceId });
+        const resume = request.controllerOccurrenceId
+          ? bridge!.captureResumeMaterialization(request.runId, request.controllerOccurrenceId) : null;
+        if (resume) resumeMaterializations.push(resume);
         if (intent === 'agent') {
         const authority = bridge!.resolveLiveBrokerAuthority({ v: 1, executionRunId: request.runId,
           expectedOccurrenceId: null, expectedDirectMaterialUse: { resourceId: 'direct-resource',
@@ -304,7 +372,7 @@ describe('connected execution-run resume custody', () => {
         // Prepare the actual, empty attached Session prompt sources through the
         // real prompt owner; this fixture has no network-owned Account overlays.
         resolveVoicePromptPreparation: async (args) => await resolveCliVoicePromptPreparation({ ...args,
-          sessionMetadata: parentSession.getMetadataSnapshot(), accountEntries: [], profileEntries: [],
+          sessionMetadata: parentSession.getMetadataSnapshot(), accountEntries: [], profileEntries: [], projectEntries: [],
           directory: args.workingDirectory ?? undefined }),
         // This is the same daemon generation-check transport boundary as materialization.
         checkConnectedServicesGenerationCurrent: async ({ registration }) => ({
@@ -324,6 +392,10 @@ describe('connected execution-run resume custody', () => {
             : { source: 'connected' as const, selection: 'profile' as const, profileId: 'voice-profile' }),
         } } } });
       await providerOpened;
+      for (const occurrence of materializationOccurrences) {
+        expect(occurrence.actual).toEqual(expect.any(String));
+        expect(occurrence.actual).toBe(occurrence.expected);
+      }
       phase = 'initial provider checkpoint';
       await vi.waitFor(() => {
         emitCheckpoint?.();
@@ -346,27 +418,123 @@ describe('connected execution-run resume custody', () => {
       await bridge.waitForTerminal(started.runId);
       phase = 'successful resume';
       await expect(bridge.ensure(started.runId, { resume: true })).resolves.toEqual({ ok: true });
+      const resumedMaterialization = resumeMaterializations.at(-1);
+      expect(resumedMaterialization).toBeDefined();
+      if (!resumedMaterialization) throw new Error('The native resume did not carry its canonical materialization');
+      expect(resumedMaterialization.isCurrent()).toBe(true);
+      expect(bridge.captureResumeMaterialization(started.runId, resumedMaterialization.occurrenceId)).toBeNull();
+      for (const occurrence of materializationOccurrences) {
+        expect(occurrence.actual).toEqual(expect.any(String));
+        expect(occurrence.actual).toBe(occurrence.expected);
+      }
       expect(queries).toHaveLength(intent === 'agent' ? 2 : 0);
       const registration = bridge.get(started.runId)?.launch?.connectedServicesRegistration;
       expect(registration?.activationId).toBe(activations.at(-1));
       expect((await listExecutionRunMarkersForRehydration()).find((marker) => marker.runId === started.runId))
         .toMatchObject({ status: 'running', executionRunConnectedServicesCleanupReceiptV1: { activationId: activations.at(-1) } });
 
+      if (intent === 'voice_agent') {
+        const currentBridge = bridge;
+        const previousUi = storage.getState();
+        const sessionId = 'voice-parent-session';
+        const session = createSessionFixture({ id: sessionId, metadata: { ...createSessionFixture().metadata!,
+          agentRuntimeFacetsV1: { v: 1, transcriptSource: { supported: true, followLeaseSupported: true } } } });
+        const local = readLocalConversationVoiceSettings(previousUi.settings.voice);
+        storage.getState().applySettingsLocal(normalizeVoiceSettingsLocalDelta({ voice: writeVoiceProviderSettingsConfig(
+          previousUi.settings.voice, 'local_conversation', { ...local, streaming: { ...local.streaming, enabled: true },
+            agent: { ...local.agent, resumabilityMode: 'provider_resume',
+              transcript: { ...local.agent.transcript, persistenceMode: 'persistent' } } },
+        ) }, previousUi.settings));
+        storage.setState({ sessions: { ...previousUi.sessions, [sessionId]: session } });
+        const unused = async (): Promise<never> => { throw new Error('Unexpected Voice transport method'); };
+        // This is the UI-to-runner network boundary. The cached-handle owner,
+        // stream producer, lifecycle, native runtime and materialization stay real.
+        const handle: VoiceAgentHandle = { backend: 'daemon', rpcSessionId: sessionId,
+          voiceAgentId: started.runId, metadataSessionId: sessionId, transcriptEpoch: 0, agentBackendId: agentId,
+          accountLifetime: { scope: { serverId: 'voice-test-home', accountId: 'voice-test-account' },
+            isCurrent: () => true, onRetire: () => ({ dispose() {} }) },
+          client: { start: unused, sendTurn: unused, welcome: unused, commit: unused, stop: unused,
+            async startTurnStream(request) {
+              const result = await currentBridge.startTurnStream(request.voiceAgentId, { message: request.userText,
+                ...(request.resume === true ? { resume: true } : {}) });
+              if (!result.ok) throw createRpcCallError(result);
+              return { streamId: result.streamId };
+            },
+            async readTurnStream(request) {
+              const result = await currentBridge.readTurnStream(request.voiceAgentId, request);
+              if (!result.ok) throw createRpcCallError(result);
+              return result;
+            },
+            async cancelTurnStream(request) {
+              const result = await currentBridge.cancelTurnStream(request.voiceAgentId, request);
+              if (!result.ok) throw createRpcCallError(result);
+              return result;
+            },
+          } };
+        const createHandle = vi.fn(async () => handle);
+        const context = { voiceAttemptExplicitContextBySessionId: new Map<string, string[]>(),
+          deferredTargetSessionContextBySessionId: new Map<string, string | null>(),
+          latestAutomaticUiContextBySessionId: new Map<string, string>() };
+        const recovery = createVoiceRunRecovery({ ...context, createHandle,
+          voiceAgentBySessionId: new Map([[sessionId, handle]]), voiceAgentInitBySessionId: new Map() });
+        const voice = createVoiceTurnStreaming({ ...context, getVoiceAgentHandle: recovery.getVoiceAgentHandle,
+          resetCachedHandle: recovery.resetCachedHandle, interruptActiveTurn() {},
+          trackActiveTurn: async (_sessionId, task) => task(), voiceAgentTurnAbortControllerBySessionId: new Map() });
+        try {
+          for (const terminal of ['failed', 'cancelled'] as const) {
+            phase = `ordinary cached Voice input after ${terminal}`;
+            await currentBridge.stop(started.runId);
+            await currentBridge.waitForTerminal(started.runId);
+            if (terminal === 'failed') {
+              // Seed the terminal snapshot before the cached-input boundary.
+              // Native failure detection is a separate owner contract; this
+              // regression covers ordinary input to either retained status.
+              const retained = currentBridge.get(started.runId);
+              if (!retained) throw new Error('Missing retained Voice Run');
+              retained.status = 'failed';
+            }
+            expect(currentBridge.getPublic(started.runId)?.status).toBe(terminal);
+            const occurrence = currentBridge.readExecutionRunOccurrenceWitnessReader().readCurrentRunOccurrence(started.runId);
+            const materializations = transport.materialize.mock.calls.length;
+            const opens = providerRequests.length;
+            const refused = await voice.sendTurn(sessionId, 'Ordinary input').then(() => null, (error: unknown) => error);
+            expect(refused).toMatchObject({ rpcErrorCode: 'execution_run_not_allowed' });
+            expect(transport.materialize.mock.calls).toHaveLength(materializations);
+            expect(providerRequests).toHaveLength(opens);
+            expect(currentBridge.readExecutionRunOccurrenceWitnessReader().readCurrentRunOccurrence(started.runId)).toEqual(occurrence);
+            expect(createHandle).not.toHaveBeenCalled();
+            await expect(currentBridge.ensure(started.runId, { resume: true })).resolves.toEqual({ ok: true });
+            await expect(voice.sendTurn(sessionId, 'Fresh input after explicit recovery')).resolves.toMatchObject({ assistantText: 'Fresh Voice reply.' });
+            expect(transport.materialize.mock.calls).toHaveLength(materializations + 1);
+          }
+        } finally { storage.setState({ settings: previousUi.settings, sessions: previousUi.sessions }); }
+      }
+
       await bridge.stop(started.runId);
       await bridge.waitForTerminal(started.runId);
+      expect(resumedMaterialization.isCurrent()).toBe(false);
       // The evolved recovery owner deliberately omits transient registrations.
       // Failure must preserve that actual retained launch, not resurrect an
       // already-released runtime registration from the preceding occurrence.
       await bridge.recoverRetainedRuns();
       const retainedLaunch = bridge.get(started.runId)?.launch;
       const retainedStatus = bridge.get(started.runId)?.status;
-      const terminalMarker = (await listExecutionRunMarkersForRehydration()).find((marker) => marker.runId === started.runId);
+      const priorTerminalMarker = (await listExecutionRunMarkersForRehydration()).find((marker) => marker.runId === started.runId);
       phase = 'failed provider load';
       failLoad = true;
-      await expect(bridge.ensure(started.runId, { resume: true })).resolves.toMatchObject({ ok: false });
-      expect(bridge.get(started.runId)?.launch).toEqual(retainedLaunch);
-      expect(bridge.get(started.runId)?.status).toBe(retainedStatus);
-      expect((await listExecutionRunMarkersForRehydration()).find((marker) => marker.runId === started.runId)).toEqual(terminalMarker);
+      await expect(bridge.ensure(started.runId, { resume: true })).resolves.toMatchObject({
+        ok: false, errorCode: intent === 'agent' ? 'execution_run_failed' : 'execution_run_not_allowed',
+      });
+      const terminalMarker = (await listExecutionRunMarkersForRehydration()).find((marker) => marker.runId === started.runId);
+      if (intent === 'agent') {
+        expect(bridge.get(started.runId)?.launch).toEqual({ ...retainedLaunch, connectedServicesSelectionAgent: agent });
+        expect(bridge.get(started.runId)).toMatchObject({ status: 'failed', error: { code: 'execution_run_failed' } });
+        expect(terminalMarker).toMatchObject({ status: 'failed', errorCode: 'execution_run_failed' });
+      } else {
+        expect(bridge.get(started.runId)?.launch).toEqual(retainedLaunch);
+        expect(bridge.get(started.runId)?.status).toBe(retainedStatus);
+        expect(terminalMarker).toEqual(priorTerminalMarker);
+      }
 
       failLoad = false;
       let releaseLoad!: () => void;

@@ -4,11 +4,14 @@ import { AcpBackend } from '../AcpBackend';
 import { writeAcpTestAgentScript } from '../testkit/subprocessHarness';
 import type { AgentMessage } from '../../core';
 import { withTempDir } from '@/testkit/fs/tempDir';
+import { createFxConfigOptionsFixture } from '../testkit/fxConfigOptionsFixture';
+import { applyAcpRuntimeSessionConfigOption, applyAcpRuntimeSessionModel } from '../runtime/sessionControls/applySessionControls';
 
-function writeFakeAcpAgentScript(params: { dir: string }): string {
+function writeFakeAcpAgentScript(params: { dir: string; capturedConfig?: boolean; nativeModels?: boolean }): string {
   const src = `
     const decoder = new TextDecoder();
     let buf = '';
+    let capturedConfig = ${params.capturedConfig ? JSON.stringify(createFxConfigOptionsFixture()) : 'null'};
 
     function send(obj) {
       process.stdout.write(JSON.stringify(obj) + '\\n');
@@ -40,6 +43,12 @@ function writeFakeAcpAgentScript(params: { dir: string }): string {
         }
 
         if (method === 'session/new') {
+          if (capturedConfig) {
+            ok(id, { sessionId: 'test-session', configOptions: capturedConfig,
+              ...(${params.nativeModels === true} ? { models: { currentModelId: 'native-model', availableModels: [{ modelId: 'native-model', name: 'Native model' }] } } : {}),
+            });
+            continue;
+          }
           ok(id, {
             sessionId: 'test-session',
             configOptions: [
@@ -68,12 +77,26 @@ function writeFakeAcpAgentScript(params: { dir: string }): string {
         if (method === 'session/set_config_option') {
           const configId = params && params.configId;
           const value = params && params.value;
-          if (configId === 'reject') {
-            send({ jsonrpc: '2.0', id, error: { code: -32000, message: 'option rejected' } });
-            continue;
-          }
           if (configId === 'clear') {
             ok(id, { configOptions: [] });
+            continue;
+          }
+          if (capturedConfig) {
+            if (configId === 'provider' && value === 'gateway') {
+              send({ jsonrpc: '2.0', id, error: { code: -32600, message: 'fx needs access to Vercel AI Gateway. Run fx login to sign in, fx setup to use an API key, or set AI_GATEWAY_API_KEY.' } });
+              continue;
+            }
+            if (configId === 'provider') capturedConfig = ${JSON.stringify(createFxConfigOptionsFixture())};
+            capturedConfig.find((option) => option.id === configId).currentValue = value;
+            if (configId === 'model' && value === 'gpt-6-luna') {
+              const effort = capturedConfig.find((option) => option.id === 'effort');
+              effort.options = effort.options.filter((choice) => choice.value !== 'ultra');
+            }
+            ok(id, { configOptions: capturedConfig });
+            continue;
+          }
+          if (configId === 'reject') {
+            send({ jsonrpc: '2.0', id, error: { code: -32000, message: 'option rejected' } });
             continue;
           }
           const nextTelemetry = configId === 'telemetry' ? value : 'false';
@@ -90,6 +113,17 @@ function writeFakeAcpAgentScript(params: { dir: string }): string {
           continue;
         }
 
+        if (method === 'session/prompt' && capturedConfig) {
+          if (params.prompt.some((block) => block.text === 'withdraw configuration')) capturedConfig = [];
+          else capturedConfig.find((option) => option.id === 'fast').currentValue = 'true';
+          send({ jsonrpc: '2.0', method: 'session/update', params: {
+            sessionId: params.sessionId,
+            update: { sessionUpdate: 'config_option_update', configOptions: capturedConfig },
+          } });
+          ok(id, { stopReason: 'end_turn' });
+          continue;
+        }
+
         ok(id, {});
       }
     });
@@ -103,6 +137,83 @@ function writeFakeAcpAgentScript(params: { dir: string }): string {
 }
 
 describe('AcpBackend session configOptions', () => {
+  it('retains an independent native model catalog when a config selector is withdrawn', async () => {
+    await withTempDir('happier-acp-native-models-config-clear-', async (dir) => {
+      const backend = new AcpBackend({ agentName: 'test', cwd: dir, command: process.execPath, args: [writeFakeAcpAgentScript({ dir, capturedConfig: true, nativeModels: true })] });
+      try {
+        const { sessionId } = await backend.startSession();
+        const before = backend.getSessionModelState();
+        expect(before?.currentModelId).toBe('native-model');
+        await backend.setSessionConfigOption(sessionId, 'clear', '1');
+        expect(backend.getSessionModelState()).toBe(before);
+      } finally { await backend.dispose(); }
+    });
+  });
+  it('propagates a settled model rejection without a second config write', async () => {
+    await withTempDir('happier-acp-no-config-fallback-', async (dir) => {
+      const backend = new AcpBackend({ agentName: 'test', cwd: dir, command: process.execPath, args: [writeFakeAcpAgentScript({ dir })] });
+      try {
+        const { sessionId } = await backend.startSession();
+        const before = backend.getSessionConfigOptionsState();
+        await expect(applyAcpRuntimeSessionModel({ provider: 'test', getSessionId: () => sessionId, ensureBackend: async () => backend }, 'model-b'))
+          .rejects.toThrow(/did not return model state/);
+        expect(backend.getSessionConfigOptionsState()).toBe(before);
+      } finally { await backend.dispose(); }
+    });
+  });
+
+  it.each(['', ' ', '  opaque-value  '])('preserves config string values through runtime dispatch (%j)', async (value) => {
+    await withTempDir('happier-acp-runtime-config-value-', async (dir) => {
+      const backend = new AcpBackend({ agentName: 'test', cwd: dir, command: process.execPath, args: [writeFakeAcpAgentScript({ dir })] });
+      try {
+        const { sessionId } = await backend.startSession();
+        await applyAcpRuntimeSessionConfigOption({ provider: 'test', getSessionId: () => sessionId, ensureBackend: async () => backend }, 'telemetry', value);
+        expect(backend.getSessionConfigOptionsState()?.find((option) => option.id === 'telemetry')?.currentValue).toBe(value);
+      } finally { await backend.dispose(); }
+    });
+  });
+  it('refreshes model-dependent state from every full snapshot and retains it on rejected provider changes', async () => {
+    await withTempDir('happier-acp-captured-config-', async (dir) => {
+      const backend = new AcpBackend({
+        agentName: 'test', cwd: dir, command: process.execPath,
+        args: [writeFakeAcpAgentScript({ dir, capturedConfig: true })],
+      });
+      const snapshots: AgentMessage[] = [];
+      backend.onMessage((message) => {
+        if (message.type === 'event' && (message.name === 'session_models_state' || message.name === 'config_options_state' || message.name === 'config_options_update')) snapshots.push(message);
+      });
+      try {
+        const { sessionId } = await backend.startSession();
+        expect(backend.getSessionModelState()?.currentModelId).toBe('gpt-6.1-sol');
+        const initialSnapshots = snapshots.length;
+        await backend.setSessionConfigOption(sessionId, 'provider', 'codex');
+        expect(snapshots).toHaveLength(initialSnapshots);
+        await backend.setSessionModel(sessionId, 'gpt-6-luna');
+        const selectedModel = () => backend.getSessionModelState()?.availableModels.find((model) => model.id === backend.getSessionModelState()?.currentModelId);
+        expect(selectedModel()?.id).toBe('gpt-6-luna');
+        expect(selectedModel()?.modelOptions?.find((option) => option.id === 'effort')?.options?.map((choice) => choice.value)).not.toContain('ultra');
+        await backend.setSessionConfigOption(sessionId, 'provider', 'codex');
+        expect(selectedModel()?.id).toBe('gpt-6.1-sol');
+        expect(selectedModel()?.modelOptions?.find((option) => option.id === 'effort')?.options?.map((choice) => choice.value)).toContain('ultra');
+        const before = { models: backend.getSessionModelState(), config: backend.getSessionConfigOptionsState() };
+        await expect(backend.setSessionConfigOption(sessionId, 'provider', 'gateway')).rejects.toThrow(/needs access/);
+        expect({ models: backend.getSessionModelState(), config: backend.getSessionConfigOptionsState() }).toEqual(before);
+        await backend.sendPrompt(sessionId, 'observe configuration notification');
+        await backend.waitForResponseComplete();
+        expect(selectedModel()?.modelOptions?.find((option) => option.id === 'fast')?.currentValue).toBe('true');
+        expect(backend.getSessionConfigOptionsState()?.find((option) => option.id === 'provider')?.currentValue).toBe('codex');
+        await backend.sendPrompt(sessionId, 'withdraw configuration');
+        await backend.waitForResponseComplete();
+        expect(backend.getSessionModelState()).toBeNull();
+        expect(snapshots).toContainEqual({ type: 'event', name: 'session_models_state', payload: null });
+        await backend.setSessionConfigOption(sessionId, 'provider', 'codex');
+        expect(backend.getSessionModelState()?.currentModelId).toBe('gpt-6.1-sol');
+        await backend.setSessionConfigOption(sessionId, 'clear', '1');
+        expect(backend.getSessionModelState()).toBeNull();
+        expect(backend.getSessionConfigOptionsState()).toEqual([]);
+      } finally { await backend.dispose(); }
+    });
+  });
   it('captures configOptions from newSession and can set a config option', async () => {
     await withTempDir('happier-acp-config-options-', async (dir) => {
       const scriptPath = writeFakeAcpAgentScript({ dir });

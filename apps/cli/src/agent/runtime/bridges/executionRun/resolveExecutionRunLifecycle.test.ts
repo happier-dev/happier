@@ -39,6 +39,17 @@ function run(overrides: Partial<ExecutionRunState> = {}): ExecutionRunState {
 }
 
 describe('resolveExecutionRunLifecycle', () => {
+  it.each(['failed', 'succeeded', 'cancelled', 'timeout'] as const)('keeps %s recovery explicit while projecting its retained checkpoint', status => {
+    const retained = run({ status, runClass: 'long_lived' });
+    expect(resolveExecutionRunLifecycle(retained, null).projection.state).toBe('recoverable');
+    expect(resolveExecutionRunLifecycle(retained, null, 'input')).toMatchObject({
+      projection: { state: 'unavailable' }, unavailableReason: 'explicit_resume_required',
+    });
+    const controller = { kind: 'backend', cancelled: false } as never as ExecutionRunController;
+    expect(resolveExecutionRunLifecycle(retained, controller, 'input').projection.state).toBe('unavailable');
+    expect(resolveExecutionRunLifecycle({ ...retained, status: 'running' }, controller, 'input').projection.state).toBe('current');
+    expect(resolveExecutionRunLifecycle({ ...retained, status: 'running' }, null, 'input').projection.state).toBe('recoverable');
+  });
   it('distinguishes a current controller from controller-less recovery', () => {
     const controller = { kind: 'backend', cancelled: false } as never as ExecutionRunController;
     expect(resolveExecutionRunLifecycle(run({ status: 'running' }), controller).projection)

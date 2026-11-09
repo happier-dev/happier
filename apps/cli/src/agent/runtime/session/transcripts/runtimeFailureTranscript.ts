@@ -1,4 +1,5 @@
 import type { AgentSessionRuntimeEvent, SessionRuntimeIssueV1 } from '@happier-dev/protocol';
+import { readSessionRuntimeIssueNativeAuthAgentId } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import type { ACPProvider } from '@/api/session/sessionMessageTypes';
 import { classifyPrimarySessionRuntimeIssue } from '../errors/classifyPrimarySessionRuntimeIssue';
 import { isForegroundTurnRuntimeTranscriptEvent } from '../events/runtimeTranscriptScope';
@@ -26,7 +27,8 @@ function runtimeIssueFromFailureEvent(event: RuntimeFailureEvent, provider: ACPP
 function formatRuntimeIssueTranscriptMessage(issue: SessionRuntimeIssueV1, providerName: string, kind: RuntimeFailureEvent['kind']): string {
   const providerLabel = issue.agentId?.trim() || providerName.trim() || 'Agent';
   const detail = issue.sanitizedPreview?.trim() || issue.code.trim() || issue.source;
-  if (issue.source === 'permission_blocked') return detail;
+  if (issue.source === 'permission_blocked' || issue.source === 'team_credential'
+    || readSessionRuntimeIssueNativeAuthAgentId(issue)) return detail;
   return `${providerLabel} ${kind === 'input-rejected' ? 'input rejected' : 'turn failed'}: ${detail}`;
 }
 
@@ -35,12 +37,15 @@ export function createRuntimeFailureTranscriptProjector(params: Readonly<{
   session: RuntimeTranscriptProjectionSession;
   provider: ACPProvider;
   providerName: string;
-}>): (event: RuntimeFailureProjectionEvent, terminalSourceMessage?: FailureMarkerReceipt) => Promise<FailureMarkerReceipt | null> | null {
+}>): (event: RuntimeFailureProjectionEvent, projection?: Readonly<{
+  terminalSourceMessage?: FailureMarkerReceipt;
+  issue: SessionRuntimeIssueV1;
+}>) => Promise<FailureMarkerReceipt | null> | null {
   const projectedDiagnostics = new Set<string>();
   const projectedLifecycleMarkers = new Map<string, FailureMarkerReceipt>();
   let lastAssistantMessage: Readonly<{ turnId: string; text: string }> | null = null;
 
-  return (event, terminalSourceMessage) => {
+  return (event, projection) => {
     if (event.sessionId !== params.session.sessionId) return null;
     if (event.kind === 'transcript-message-committed' && event.role === 'assistant' && isForegroundTurnRuntimeTranscriptEvent(event)) {
       lastAssistantMessage = { turnId: event.turnId, text: event.text.trim() };
@@ -51,16 +56,18 @@ export function createRuntimeFailureTranscriptProjector(params: Readonly<{
       return null;
     }
     if (event.kind !== 'turn-failed' && event.kind !== 'input-rejected') return null;
-    const causeAlreadyVisible = event.kind === 'turn-failed' && lastAssistantMessage?.turnId === event.turnId
+    const causeAlreadyVisible = !projection?.issue.teamCredential
+      && event.kind === 'turn-failed' && lastAssistantMessage?.turnId === event.turnId
       && Boolean(event.diagnostic.message?.trim()) && lastAssistantMessage.text === event.diagnostic.message?.trim();
     if (event.kind === 'turn-failed') lastAssistantMessage = null;
-    const issue = runtimeIssueFromFailureEvent(event, params.provider);
+    const issue = projection?.issue ?? runtimeIssueFromFailureEvent(event, params.provider);
     const details = event.diagnostic.details;
     const requestErrorCode = details && typeof details === 'object' && !Array.isArray(details)
       && 'requestErrorCode' in details && typeof details.requestErrorCode === 'number' && Number.isSafeInteger(details.requestErrorCode)
       ? details.requestErrorCode : null;
     const meta = {
-      source: 'runtime', runtimeIssueCode: issue.code, runtimeIssueSource: issue.source,
+      source: 'runtime', runtimeIssueCode: issue.teamCredential?.reasonCode ?? issue.code, runtimeIssueSource: issue.source,
+      runtimeIssueV1: issue,
       ...(requestErrorCode === null ? {} : { runtimeIssueRequestErrorCode: requestErrorCode }),
       ...(issue.agentId ? { runtimeIssueProvider: issue.agentId } : {}),
       ...(issue.agentTurnId ? { runtimeIssueProviderTurnId: issue.agentTurnId } : {}),
@@ -84,7 +91,7 @@ export function createRuntimeFailureTranscriptProjector(params: Readonly<{
       if (event.kind === 'turn-failed') {
         const previous = projectedLifecycleMarkers.get(event.turnId);
         if (previous) return previous;
-        const receipt = terminalSourceMessage ?? await commitRuntimeTurnFailureMarker({
+        const receipt = projection?.terminalSourceMessage ?? await commitRuntimeTurnFailureMarker({
           session: params.session, provider: params.provider, event, meta,
           provenance: { kind: 'non_dependent', source: 'background' },
         });

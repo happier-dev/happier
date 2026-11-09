@@ -172,14 +172,17 @@ export async function prepareSessionInputForProviderDispatch(input: Readonly<{
     runFollowDeliveries?: PermissionModeQueuedPrompt['followDeliveries'];
   } = {}) => {
     const rendered = renderSessionInputContextPromptV1({
-      provenanceBlock: input.prompt.inputContextBlock ?? '',
+      ...(input.prompt.inputContextBlock ? { provenanceBlock: input.prompt.inputContextBlock } : {}),
+      inputProvenance: input.prompt.inputProvenance,
+      returnedAnswer: input.prompt.returnedAnswer,
       ...context.promptContext,
       ...optionalContext,
       returnedAnswers: [...input.prompt.returnedAnswerContext ?? [],
         ...(input.prompt.returnedAnswer ? [{ reply: input.prompt.returnedAnswer,
           text: projectSessionInputReferencesV1({ text: input.transformedUserText, references: context.promptContext.references }).text }] : [])],
       transformedUserText: input.prompt.returnedAnswer ? '' : input.transformedUserText,
-      ...(input.providerNativeCommand ? { userTextPlacement: 'beforeContext' as const } : {}),
+      ...(input.providerNativeCommand ? { userTextPlacement: 'beforeContext' as const }
+        : input.prompt.discussionAddressing ? { userTextPlacement: 'alreadyRendered' as const } : {}),
     });
     const runFollowNotices = (optionalContext.runFollowDeliveries ?? []).map(({ delivery }) => renderRunFollowNotice(delivery)).filter(Boolean);
     // Keep primary slash/native command grammar untouched in queue custody.

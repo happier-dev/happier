@@ -5,7 +5,6 @@ function createMockResolvedContributionRegistry(params?: Readonly<{
   actions?: ResolvedContributionRegistry['actions'];
 }>): ResolvedContributionRegistry {
   return {
-    backupDestinations: [],
     agents: [],
     actions: params?.actions ?? [],
     resources: [],
@@ -23,7 +22,6 @@ function createMockResolvedContributionRegistry(params?: Readonly<{
 
 const { getResolvedContributionRegistry } = vi.hoisted(() => ({
   getResolvedContributionRegistry: vi.fn<() => ResolvedContributionRegistry>(() => ({
-    backupDestinations: [],
     agents: [],
     actions: [],
     resources: [],
@@ -59,8 +57,7 @@ const {
     execute,
   };
 });
-const { callSessionRpc, ensureCliActionPolicySettings } = vi.hoisted(() => ({
-  callSessionRpc: vi.fn(),
+const { ensureCliActionPolicySettings } = vi.hoisted(() => ({
   ensureCliActionPolicySettings: vi.fn(async () => undefined),
 }));
 
@@ -80,16 +77,12 @@ vi.mock('@/session/actions/ensureCliActionPolicySettings', () => ({
   ensureCliActionPolicySettings,
 }));
 
-vi.mock('@/plugins/projection/registry/createResolvedContributionRegistry', () => ({
+vi.mock('@/plugins/projection/registry/builtIn/snapshot', () => ({
   getResolvedContributionRegistry,
 }));
 
 vi.mock('@/daemon/controlClient', () => ({
   readDaemonPluginCatalog,
-}));
-
-vi.mock('@/session/transport/rpc/sessionRpc', () => ({
-  callSessionRpc,
 }));
 
 import { callBuiltInHappierTool } from './callBuiltInHappierTool';
@@ -184,82 +177,6 @@ describe('callBuiltInHappierTool', () => {
       { backendTargetKeys: ['agent:codex'], instructions: 'Plan this change.', sessionId: 'sess-1' },
       { defaultSessionId: 'sess-1', surface: 'cli', actionsSettings: { v: 1, actions: {} } },
     );
-  });
-
-  it('routes the internal Agent bridge to the live Session tool owner without reconstructing authority', async () => {
-    resolveSessionTransportContext.mockResolvedValueOnce({
-      ok: true,
-      sessionId: 'sess-1',
-      rawSession: { id: 'sess-1', machineId: 'machine-1', metadata: { permissionMode: 'safe-yolo' } },
-      ctx: null,
-      mode: 'plain' as const,
-    });
-    callSessionRpc.mockResolvedValueOnce({ ok: true, result: { items: [] } });
-
-    const { callBuiltInHappierTool } = await import('./callBuiltInHappierTool');
-    await callBuiltInHappierTool({
-      credentials: { token: 'token', encryption: null },
-      sessionId: 'sess-1',
-      toolName: 'action_execute',
-      args: {
-        actionId: 'memory.search',
-        input: { query: { v: 1, query: 'handoff', scope: { type: 'global' }, mode: 'hints' } },
-      },
-      surface: 'agent',
-      toolCallId: 'pi-tool-call-1',
-    });
-
-    expect(callSessionRpc).toHaveBeenCalledWith({
-      token: 'token',
-      sessionId: 'sess-1',
-      method: 'session.agentTool.call.v1',
-      request: {
-        toolName: 'action_execute',
-        args: {
-          actionId: 'memory.search',
-          input: { query: { v: 1, query: 'handoff', scope: { type: 'global' }, mode: 'hints' } },
-        },
-        toolCallId: 'pi-tool-call-1',
-      },
-      mode: 'plain',
-      ctx: null,
-      timeoutMs: expect.any(Number),
-    });
-    expect(createCliActionExecutorFromCredentials).not.toHaveBeenCalled();
-    expect(execute).not.toHaveBeenCalled();
-  });
-
-  it('does not decrypt mutable Session metadata in the subprocess before live authorization', async () => {
-    resolveSessionTransportContext.mockResolvedValueOnce({
-      ok: true,
-      sessionId: 'sess-1',
-      rawSession: {
-        id: 'sess-1',
-        machineId: 'machine-1',
-        metadata: 'not-valid-encrypted-metadata',
-      },
-      ctx: { type: 'plain' as const },
-      mode: 'e2ee' as const,
-    });
-
-    const { callBuiltInHappierTool } = await import('./callBuiltInHappierTool');
-    callSessionRpc.mockResolvedValueOnce({ ok: false, errorCode: 'causal_permission_authority_invalid', error: 'causal_permission_authority_invalid' });
-    const result = await callBuiltInHappierTool({
-      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
-      sessionId: 'sess-1',
-      toolName: 'action_execute',
-      args: {
-        actionId: 'session.message.send',
-        input: { sessionId: 'sess-1', message: 'should not be sent' },
-      },
-      surface: 'agent',
-      toolCallId: 'pi-tool-call-1',
-    });
-
-    expect(result).toEqual({ ok: false, errorCode: 'causal_permission_authority_invalid', error: 'causal_permission_authority_invalid' });
-    expect(callSessionRpc).toHaveBeenCalledOnce();
-    expect(createCliActionExecutorFromCredentials).not.toHaveBeenCalled();
-    expect(execute).not.toHaveBeenCalled();
   });
 
   it('fails closed for explicit plugin action ids that are not exposed by the authoritative registry', async () => {

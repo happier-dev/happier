@@ -58,9 +58,11 @@ function mergeOptions(
       id: option.id,
       name: option.name,
       ...(option.description === undefined ? {} : { description: option.description }),
+      ...(option.category === undefined ? {} : { category: option.category }),
       type: option.type,
       currentValue: option.currentValue,
       ...(option.options === undefined ? {} : { options: [...option.options] }),
+      ...(option.groups === undefined ? {} : { groups: option.groups.map(group => ({ ...group, options: [...group.options] })) }),
       // Keep the producer-declared override rule with its current option contribution.
       ...(option.overridesWhenOn === undefined
         ? {}
@@ -153,7 +155,8 @@ function mergeState(params: Readonly<{
     params.base?.currentModelId,
   ];
   const currentModelId = candidates.find((candidate) =>
-    typeof candidate === 'string' && candidate.length > 0) ?? availableModels[0]?.id ?? 'default';
+    typeof candidate === 'string' && candidate.length > 0);
+  if (!currentModelId) return null;
   return {
     v: 1,
     agentId: params.agentId,
@@ -191,7 +194,7 @@ export function createSessionRuntimeModelsPublisher(params: Readonly<{
 }>): Readonly<{
   publishActiveSelection(input: Readonly<{
     selection: ProviderBoundModelRef;
-    activeSelectionV1: SessionActiveModelSelection;
+    activeSelectionV1: SessionActiveModelSelection | null;
     publishActive(): Promise<void>;
   }>): Promise<void>;
   releaseActiveSelectionAuthority(input: Readonly<{
@@ -203,6 +206,21 @@ export function createSessionRuntimeModelsPublisher(params: Readonly<{
 }> {
   let stopped = false;
   let runtime = params.source.read();
+  const applyStartupTargetFacts = (
+    metadata: Metadata,
+    target: AuthorizedSessionModelTransitionTarget,
+  ): Metadata => {
+    const currentModelId = runtime.currentModelId;
+    // The runtime owns the observation; the admitted launch target supplies
+    // descriptors/binding without becoming a second current-model producer.
+    const observedMetadata = !stateForAgent(metadata.sessionModelsV1 ?? null, params.agentId)
+      && typeof currentModelId === 'string' && currentModelId.length > 0
+      ? { ...metadata, sessionModelsV1: { v: 1 as const, agentId: params.agentId,
+          updatedAt: 0, currentModelId, availableModels: [] } }
+      : metadata;
+    return applyActiveModelFacts(observedMetadata, target, params.agentId,
+      params.initialActiveSelection ?? null);
+  };
   // Current-model/context telemetry does not observe the available catalog again.
   const catalogFingerprint = (snapshot: AgentSessionModelsSnapshot): string => JSON.stringify(
     snapshot.models?.map(({ contextWindowTokens: _context, ...model }) => model) ?? null,
@@ -215,8 +233,7 @@ export function createSessionRuntimeModelsPublisher(params: Readonly<{
   let initialActiveTarget = params.initialActiveTarget ?? null;
   const metadataSnapshot = params.session.getMetadataSnapshot();
   const initialMetadata = initialActiveTarget && metadataSnapshot
-    ? applyActiveModelFacts(metadataSnapshot, initialActiveTarget, params.agentId,
-      params.initialActiveSelection ?? null)
+    ? applyStartupTargetFacts(metadataSnapshot, initialActiveTarget)
     : metadataSnapshot;
   let canonicalBase = stateForAgent(
     initialMetadata?.sessionModelsV1 ?? null,
@@ -234,6 +251,7 @@ export function createSessionRuntimeModelsPublisher(params: Readonly<{
   let terminalError: unknown = null;
   let authoritativeSelection =
     params.initialActiveSelection
+    && params.initialActiveSelection.source === 'runtime_apply'
     && params.runnerProcessIdentity
     && params.initialActiveSelection.runner.pid
       === params.runnerProcessIdentity.pid
@@ -244,6 +262,7 @@ export function createSessionRuntimeModelsPublisher(params: Readonly<{
       ? params.initialActiveSelection
       : null;
   let publicationSuppressed = false;
+  let providerBindingAwaitingRuntimeConfirmation = false;
   let publicationRequestedWhileSuppressed = false;
 
   const stopAcceptingPublications = (): void => {
@@ -283,6 +302,9 @@ export function createSessionRuntimeModelsPublisher(params: Readonly<{
     const agentTargetKey = params.agentTargetKey;
     if (!runner || !agentTargetKey) return null;
     const bindingState = readSessionProviderBindingMetadataStateV1(metadata);
+    // Configuring a different Provider does not prove its materialization from
+    // a shared model id. Native observations can still report their actual id.
+    if (providerBindingAwaitingRuntimeConfirmation && bindingState.kind !== 'absent') return null;
     let providerConnectionId: ProviderBoundModelRef['providerConnectionId'];
     if (bindingState.kind === 'absent') {
       providerConnectionId = null;
@@ -330,8 +352,7 @@ export function createSessionRuntimeModelsPublisher(params: Readonly<{
       const startupTarget = initialActiveTarget;
       const observedMetadata = params.session.getMetadataSnapshot();
       const metadata = startupTarget && observedMetadata
-        ? applyActiveModelFacts(observedMetadata, startupTarget, params.agentId,
-          params.initialActiveSelection ?? null)
+        ? applyStartupTargetFacts(observedMetadata, startupTarget)
         : observedMetadata;
       const observedCurrent = observedMetadata?.sessionModelsV1 ?? null;
       const current = stateForAgent(metadata?.sessionModelsV1 ?? null, params.agentId);
@@ -378,8 +399,7 @@ export function createSessionRuntimeModelsPublisher(params: Readonly<{
       lastPublished = desired;
       await params.session.updateMetadataAsCurrentPublisher((metadata) => {
         const current = startupTarget
-          ? applyActiveModelFacts(metadata, startupTarget, params.agentId,
-            params.initialActiveSelection ?? null)
+          ? applyStartupTargetFacts(metadata, startupTarget)
           : metadata;
         if (desired) return { ...current, sessionModelsV1: desired };
         const { sessionModelsV1: _removed, ...rest } = current;
@@ -429,9 +449,10 @@ export function createSessionRuntimeModelsPublisher(params: Readonly<{
           );
         }
         const previousAuthority = authoritativeSelection;
+        const previousBindingConfirmation = providerBindingAwaitingRuntimeConfirmation;
         const ownRunner = params.runnerProcessIdentity;
         if (
-          !ownRunner
+          input.activeSelectionV1 && (!ownRunner
           || ownRunner.pid !== input.activeSelectionV1.runner.pid
           || ownRunner.processStartTimeMs
             !== input.activeSelectionV1.runner.processStartTimeMs
@@ -440,19 +461,22 @@ export function createSessionRuntimeModelsPublisher(params: Readonly<{
           || input.selection.providerConnectionId
             !== input.activeSelectionV1.selection.providerConnectionId
           || input.selection.modelId
-            !== input.activeSelectionV1.selection.modelId
+            !== input.activeSelectionV1.selection.modelId)
         ) {
           throw new Error(
             'Active model publication requires the current host process witness and exact selection',
           );
         }
-        authoritativeSelection = input.activeSelectionV1;
+        authoritativeSelection = input.activeSelectionV1?.source === 'runtime_apply'
+          ? input.activeSelectionV1 : null;
+        providerBindingAwaitingRuntimeConfirmation = input.activeSelectionV1 === null;
         publicationSuppressed = true;
         publicationRequestedWhileSuppressed = false;
         try {
           await input.publishActive();
         } catch (error) {
           authoritativeSelection = previousAuthority;
+          providerBindingAwaitingRuntimeConfirmation = previousBindingConfirmation;
           throw error;
         } finally {
           publicationSuppressed = false;
@@ -461,7 +485,8 @@ export function createSessionRuntimeModelsPublisher(params: Readonly<{
       ownOperation(operation);
       await operation;
       const shouldPublish =
-        publicationRequestedWhileSuppressed || authoritativeSelection !== null;
+        publicationRequestedWhileSuppressed || authoritativeSelection !== null
+        || providerBindingAwaitingRuntimeConfirmation;
       publicationRequestedWhileSuppressed = false;
       if (shouldPublish) publish();
       await pending;
@@ -489,6 +514,7 @@ export function createSessionRuntimeModelsPublisher(params: Readonly<{
         return;
       }
       authoritativeSelection = null;
+      providerBindingAwaitingRuntimeConfirmation = false;
       publish();
       await pending;
       throwTerminalError();

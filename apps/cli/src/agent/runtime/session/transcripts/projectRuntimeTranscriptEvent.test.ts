@@ -29,6 +29,21 @@ type EnqueueAgentMessageCommitted = NonNullable<
 type CommittedAgentMessageBody = Parameters<EnqueueAgentMessageCommitted>[1];
 type CommittedToolCallBody = Extract<CommittedAgentMessageBody, { type: 'tool-call' }>;
 
+it('retains the host Turn stamp when failure diagnostic metadata accompanies a provider marker', async () => {
+  const { commitRuntimeTurnFailureMarker } = await import('./projectRuntimeTranscriptEvent');
+  const writes: unknown[] = [];
+  const session: RuntimeTranscriptProjectionSession = { sessionId: 'session-1',
+    enqueueAgentMessageCommitted: async (_provider, _body, options) => {
+      writes.push(options);
+      return { persisted: true, delivered: true, committedSequence: 7 };
+    } };
+  await commitRuntimeTurnFailureMarker({ session, provider: 'codex',
+    event: { turnId: 'host-turn', agentTurnId: 'provider-turn', emittedAtMs: 1 },
+    meta: { source: 'runtime', runtimeIssueCode: 'native_failed' } });
+  expect(writes).toEqual([expect.objectContaining({ meta: expect.objectContaining({
+    runtimeTurnId: 'host-turn', runtimeIssueCode: 'native_failed' }) })]);
+});
+
 function createCommittedAgentMessageCapture() {
   const bodies: CommittedAgentMessageBody[] = [];
   const enqueueAgentMessageCommitted = vi.fn<EnqueueAgentMessageCommitted>(async (_provider, body) => {
@@ -57,6 +72,186 @@ function canonicalRuntimeEvent(input: Readonly<Record<string, unknown>>): AgentS
 }
 
 describe('projectRuntimeTranscriptEvent', () => {
+  it('validates a tool payload once at ingress across transcript, turn and terminal consumers', async () => {
+    const { AgentSessionRuntimeEventSchema } = await import('@happier-dev/protocol/runtime/agentSessionV1');
+    const { createAgentSessionTurnInvariant } = await import('../turn/agentSessionTurnInvariant');
+    const { createSessionTurnLifecycle } = await import('../turn/lifecycle');
+    const { mapRuntimeMessageToTerminalLifecycleObservation } = await import('../../terminal/runtimeMessageObservationAdapter');
+    const { createRuntimeTranscriptProjector } = await import('./projectRuntimeTranscriptEvent');
+    const invariant = createAgentSessionTurnInvariant({ sessionId: 'session-1' });
+    const project = createRuntimeTranscriptProjector();
+    const capture = createCommittedAgentMessageCapture();
+    const session = { sessionId: 'session-1', enqueueAgentMessageCommitted: capture.enqueueAgentMessageCommitted };
+    const lifecycle = createSessionTurnLifecycle({ session });
+    for (const input of [
+      { kind: 'input-accepted', inputIds: ['input-1'], delivery: { kind: 'newTurn', turnId: 'turn-1' } },
+      { kind: 'turn-start', turnId: 'turn-1', startedBy: 'host' },
+      { kind: 'tool-call', turnId: 'turn-1', toolCallId: 'call-1', toolName: 'Read', input: {} },
+    ]) {
+      const observation = invariant.observe({ ...input, sessionId: 'session-1', emittedAtMs: 1, sequence: ++nextRuntimeEventSequence });
+      if (observation.status !== 'accepted') throw new Error('Expected valid ingress');
+      await project({ session, provider: 'codex', event: observation.event });
+      lifecycle.observeRuntimeEvent(observation.event);
+    }
+    // Instrument the real parser without replacing it: this measures repeated
+    // payload traversal, not collaborator wiring or a mocked schema verdict.
+    const parses = vi.spyOn(AgentSessionRuntimeEventSchema, 'safeParse');
+    try {
+      const output = { text: 'large valid tool content '.repeat(10_000) };
+      const observation = invariant.observe({ kind: 'tool-result', sessionId: 'session-1',
+        turnId: 'turn-1', toolCallId: 'call-1', output, emittedAtMs: 2, sequence: ++nextRuntimeEventSequence });
+      if (observation.status !== 'accepted') throw new Error('Expected valid tool result');
+      await project({ session, provider: 'codex', event: observation.event });
+      lifecycle.observeRuntimeEvent(observation.event);
+      expect(mapRuntimeMessageToTerminalLifecycleObservation({ agentId: 'codex', message: observation.event })).toBeNull();
+      expect(capture.bodies).toContainEqual(expect.objectContaining({ type: 'tool-result', output }));
+      expect(parses).toHaveBeenCalledTimes(1);
+    } finally {
+      parses.mockRestore();
+    }
+  });
+
+  it('preserves large committed text and file edits below the runtime event envelope through admission and projection', async () => {
+    const { createRuntimeTranscriptProjector } = await import('./projectRuntimeTranscriptEvent');
+    const capture = createCommittedAgentMessageCapture();
+    const session: RuntimeTranscriptProjectionSession = {
+      sessionId: 'large-content',
+      enqueueAgentMessageCommitted: capture.enqueueAgentMessageCommitted,
+    };
+    const project = createRuntimeTranscriptProjector();
+    const text = 'x'.repeat(512 * 1_024 + 1);
+    const oldContent = 'o'.repeat(1_000_001);
+    const newContent = 'n'.repeat(1_000_001);
+
+    const committed = canonicalRuntimeEvent({ kind: 'transcript-message-committed',
+      sessionId: session.sessionId, emittedAtMs: 1, messageId: 'large-message',
+      role: 'assistant', text });
+    const edit = canonicalRuntimeEvent({ kind: 'file-edit', sessionId: session.sessionId,
+      emittedAtMs: 2, editId: 'large-edit', path: '/tmp/large-file', oldContent, newContent });
+
+    expect(await project({ session, provider: 'codex', event: committed })).toMatchObject({ projected: true });
+    expect(await project({ session, provider: 'codex', event: edit })).toMatchObject({ projected: true });
+    expect(capture.bodies).toEqual([
+      expect.objectContaining({ type: 'message', message: text }),
+      expect.objectContaining({ type: 'file-edit', oldContent, newContent }),
+    ]);
+  });
+
+  it('stores Provider credential guidance once through public failure publication', async () => {
+    const { surfacePrimarySessionRuntimeIssue } = await import('../errors/surfacePrimarySessionRuntimeIssue');
+    const { createProviderErrorV1 } = await import('@happier-dev/protocol/providers/errors');
+    const { createRuntimeFailureTranscriptProjector } = await import('./runtimeFailureTranscript');
+    const { normalizeRawMessage } = await import('@happier-dev/session-core/raw');
+    const stored: NonNullable<ReturnType<typeof normalizeRawMessage>>[] = [];
+    const project = createRuntimeFailureTranscriptProjector({ provider: 'codex', providerName: 'Codex', session: {
+      sessionId: 'provider-auth', enqueueAgentMessageCommitted: async (provider, body, opts) => {
+        const normalized = normalizeRawMessage(opts.localId, opts.localId, 1,
+          buildAcpAgentMessageEnvelope({ provider, body, meta: opts.meta }), { seq: 1 });
+        if (normalized) stored.push(normalized);
+        return { persisted: true, delivered: true, committedSequence: 1 };
+      },
+    } });
+    await surfacePrimarySessionRuntimeIssue({ provider: 'codex', cause: 'session_error',
+      sessionTurnId: 'provider-turn', occurredAt: 1, error: createProviderErrorV1('provider_endpoint_auth_required'),
+      publishRuntimeEvent: async event => { await project({ ...event, sessionId: 'provider-auth' }); },
+    });
+    expect(reducer(createReducer(), stored, null).messages).toEqual([expect.objectContaining({ kind: 'agent-text',
+      text: expect.stringContaining('The Provider endpoint requires a credential.'),
+      meta: expect.objectContaining({ runtimeIssueV1: expect.objectContaining({ source: 'agent_session_error',
+        code: 'provider_endpoint_auth_required' }) }),
+    })]);
+    expect(JSON.stringify(stored)).toContain('Add a Saved Secret to the Provider connection.');
+  });
+
+  it('stores one visible native sign-in issue per real Codex 401 without republishing an observed failure', async () => {
+    const { createRuntimeFailureTranscriptProjector } = await import('./runtimeFailureTranscript');
+    const { createRuntimeTranscriptProjector } = await import('./projectRuntimeTranscriptEvent');
+    const { createExecutionRunDiagnosticError, projectExecutionRunError } = await import('../../bridges/executionRun/errors');
+    const { normalizeRawMessage } = await import('@happier-dev/session-core/raw');
+    const history: Array<{ body: CommittedAgentMessageBody; localId: string; meta?: Record<string, unknown> }> = [];
+    const session: RuntimeTranscriptProjectionSession = { sessionId: 'codex-native-auth',
+      enqueueAgentMessageCommitted: async (_provider, body, opts) => {
+        history.push({ body, localId: opts.localId, meta: opts.meta });
+        return { persisted: true, delivered: true, committedSequence: history.length };
+      } };
+    const handlers = new Map<string, (params: unknown) => void | Promise<void>>();
+    let turnStarts = 0;
+    const client: DisposableCodexAppServerClient = {
+      launchFeatures: { realtimeConversationAdvertised: false },
+      onNativeEvent: () => () => undefined,
+      request: async method => {
+        if (method === 'thread/start') return { thread: { id: 'native-thread' } };
+        if (method === 'turn/start') return { turnId: `native-turn-${++turnStarts}` };
+        if (method === 'account/read') return { account: null };
+        if (method === 'account/rateLimits/read') return { rateLimits: null };
+        throw new Error(`Unexpected native request: ${method}`);
+      },
+      notify: async () => undefined,
+      registerRequestHandler: () => () => undefined,
+      registerNotificationHandler: (method, handler) => { handlers.set(method, handler); return () => handlers.delete(method); },
+      onExit: () => () => undefined,
+      dispose: async () => undefined,
+    };
+    // Substitute only the external Codex JSON-RPC process and transcript storage.
+    const runtime = createCodexAppServerRuntime({ happierSessionId: session.sessionId, directory: '/tmp',
+      host: { baseProcessEnv: {}, logger: { debug() {}, warn() {} }, createClient: async () => client } });
+    const native = createCodexNativeAppServerSessionRuntime(runtime, session.sessionId);
+    const bridge = createKeyedStreamedTranscriptBridge({ provider: 'codex', createSessionForStream: () => session,
+      initialCheckpointDelayMs: null, checkpointIntervalMs: null, checkpointMinChars: null,
+      liveSnapshotIntervalMs: null, liveSnapshotMinChars: null });
+    const project = createRuntimeTranscriptProjector();
+    const projectFailure = createRuntimeFailureTranscriptProjector({ session, provider: 'codex', providerName: 'Codex' });
+    const failures: Extract<AgentSessionRuntimeEventV1, { kind: 'turn-failed' }>[] = [];
+    let projection = Promise.resolve();
+    native.watch(event => {
+      if (event.kind === 'turn-failed') failures.push(event);
+      projection = projection.then(async () => {
+        await project({ session, provider: 'codex', runtimeMessageDeltaBridge: bridge, event });
+        await projectFailure(event);
+      });
+    });
+    try {
+      for (let turn = 1; turn <= 2; turn += 1) {
+        await native.send({ inputIds: [`input-${turn}`], input: { text: 'hello' },
+          delivery: { kind: 'newTurn', turnId: `host-turn-${turn}` } });
+        const complete = handlers.get('turn/completed');
+        if (!complete) throw new Error('Missing native completion handler');
+        await complete({ threadId: 'native-thread', turn: { id: `native-turn-${turn}`, status: 'failed', error: {
+          message: 'Missing bearer authentication. PRIVATE_BODY',
+          codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 401 } },
+        } } });
+        await vi.waitFor(() => expect(failures).toHaveLength(turn));
+        await projection;
+        const failure = failures[turn - 1]!;
+        expect(failure.diagnostic).toMatchObject({ code: 'provider_endpoint_auth_required', details: { source: 'auth_error' } });
+        expect(projectExecutionRunError(createExecutionRunDiagnosticError(failure.diagnostic, failure.emittedAtMs, 'codex')))
+          .toMatchObject({ code: 'provider_endpoint_auth_required', runtimeIssueV1: { source: 'auth_error',
+            sanitizedPreview: 'Sign in to Codex or choose a Codex account.' } });
+        const writesBeforeReplay = history.length;
+        for (let replay = 0; replay < 10; replay += 1) await projectFailure(failure);
+        expect(history).toHaveLength(writesBeforeReplay);
+        const normalized = history.flatMap(({ body, localId, meta }, index) => {
+          const row = normalizeRawMessage(localId, localId, index + 1,
+            buildAcpAgentMessageEnvelope({ provider: 'codex', body, meta }), { seq: index + 1 });
+          return row ? [row] : [];
+        });
+        const visible = reducer(createReducer(), normalized, null).messages;
+        expect(visible).toHaveLength(turn);
+        expect(visible).toEqual(Array.from({ length: turn }, () => expect.objectContaining({ kind: 'agent-text',
+          text: 'Sign in to Codex or choose a Codex account.', meta: expect.objectContaining({ runtimeIssueV1:
+            expect.objectContaining({ code: 'provider_endpoint_auth_required', source: 'auth_error' }) }) })));
+        expect(history.filter(row => row.body.type === 'message')).toHaveLength(turn);
+        expect(history.filter(row => row.body.type === 'turn_failed')).toHaveLength(turn);
+        expect(JSON.stringify(history)).not.toContain('PRIVATE_');
+        expect(turnStarts).toBe(turn);
+      }
+    } finally {
+      await native.dispose();
+      await projection;
+      bridge.clear();
+    }
+  });
+
   it.each(['direct', 'stateful'] as const)('admits each delta once through the %s projector at transcript scale', async (mode) => {
     const { createRuntimeTranscriptProjector, projectRuntimeTranscriptEvent } = await import('./projectRuntimeTranscriptEvent');
     const capture = createCommittedAgentMessageCapture();
@@ -70,7 +265,7 @@ describe('projectRuntimeTranscriptEvent', () => {
     try {
       for (let sequence = 0; sequence < 1_000; sequence += 1) {
         // Observe the raw ingress field without replacing the schema, projector or writer.
-        const event = { kind: 'message-delta', sessionId: session.sessionId, turnId: 'turn-cost',
+        const event: AgentSessionRuntimeEventV1 = { kind: 'message-delta', sessionId: session.sessionId, turnId: 'turn-cost',
           messageId: 'message-cost', channel: 'assistant', sequence, emittedAtMs: sequence,
           get text() { sourceTextReads += 1; return 'a'; } };
         expect(await project({ session, provider: 'codex', runtimeMessageDeltaBridge: bridge, event }))
@@ -125,6 +320,7 @@ describe('projectRuntimeTranscriptEvent', () => {
     const requests: string[] = [];
     const client: DisposableCodexAppServerClient = {
       launchFeatures: { realtimeConversationAdvertised: false },
+      onNativeEvent: () => () => undefined,
       request: async method => {
         requests.push(method);
         if (method === 'thread/start') return { thread: { id: 'native-thread' } };
@@ -1300,13 +1496,15 @@ describe('projectRuntimeTranscriptEvent', () => {
     });
   });
 
-  it('projects canonical turn cancellations through the durable transcript queue', async () => {
+  it('retains a deferred cancellation receipt without waiting beyond durable transcript custody', async () => {
     const { projectRuntimeTranscriptEvent } = await import('./projectRuntimeTranscriptEvent');
+    let commit!: (original: { localId: string; committedSequence: number }) => void;
+    const whenCommitted = new Promise<{ localId: string; committedSequence: number }>(resolve => { commit = resolve; });
     const session = {
       sessionId: 'session-1',
       sendUserTextMessage: vi.fn(),
       sendAgentMessageCommitted: vi.fn(async () => undefined),
-      enqueueAgentMessageCommitted: vi.fn(async () => ({ persisted: true as const, delivered: false as const })),
+      enqueueAgentMessageCommitted: vi.fn(async () => ({ persisted: true as const, delivered: false as const, whenCommitted })),
     };
     const runtimeMessageDeltaBridge = createKeyedStreamedTranscriptBridge({ provider: 'opencode', createSessionForStream: () => session });
 
@@ -1322,7 +1520,10 @@ describe('projectRuntimeTranscriptEvent', () => {
         agentTurnId: 'agent-turn-1',
         cause: 'user',
       }),
-    })).resolves.toEqual({ projected: true, kind: 'turn-cancelled' });
+    })).resolves.toEqual({ projected: true, kind: 'turn-cancelled', terminalSourceMessage: {
+      localId: 'agent-turn-1:turn_cancelled', whenCommitted,
+    } });
+    commit({ localId: 'agent-turn-1:turn_cancelled', committedSequence: 42 });
 
     expect(session.enqueueAgentMessageCommitted).toHaveBeenCalledWith(
       'opencode',

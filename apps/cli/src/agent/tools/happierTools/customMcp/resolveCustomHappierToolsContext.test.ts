@@ -12,7 +12,7 @@ import { resolveCustomHappierToolsContext } from './resolveCustomHappierToolsCon
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 it('refuses custom-tool material revoked at the captured Home instead of using a stale SavedSecret resource', async () => {
-  const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'custom-mcp-account' })).toString('base64url')}.signature`, encryption: null };
+  const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'custom-mcp-account' })).toString('base64url')}.signature`, encryption: null, credentialProvenance: 'stored_session' as const };
   const resourceId = 'revoked-custom-mcp-resource';
   const ref = formatSavedSecretCatalogReferenceV1({ kind: 'shared_resource', id: resourceId });
   const resource = { resourceId, ownerAccountId: 'custom-mcp-account', displayName: 'Custom key', kind: 'apiKey' as const,
@@ -42,6 +42,6 @@ it('refuses custom-tool material revoked at the captured Home instead of using a
     return { status: 200, data: { resources: [] } };
   });
   const input = { credentials, accountSettingsSnapshot: snapshot,
-    operationContext, machineId: 'machine', directory: '/workspace', processEnv: {} };
+    operationContext, machineId: 'machine', directory: '/workspace', processEnv: {}, localWorkflow: true };
   await expect(resolveCustomHappierToolsContext(input)).rejects.toMatchObject({ reason: 'reference_forbidden', reference: ref });
 });

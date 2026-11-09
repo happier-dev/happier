@@ -1,10 +1,10 @@
-import { AgentIdV1Schema } from '@happier-dev/protocol';
 import { logger } from '@/ui/logger';
 import { sanitizeConnectedServiceRuntimeFailureClassification } from '@/daemon/connectedServices/runtimeAuth/sanitizeConnectedServiceRuntimeFailureClassification';
 import type { ConnectedServiceRuntimeFailureClassification } from '@/daemon/connectedServices/runtimeAuth/types';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { AgentIdV1Schema } from '@happier-dev/protocol';
 import { withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
-import { sanitizeSessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { readAgentStartupFailureDetails, sanitizeSessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 import { readRuntimeTurnFailureAlreadySurfacedEvent } from '@/agent/runtime/turns/runtimeTurnOperations';
 import type { ExecutionRunState } from './executionRunTypes';
@@ -166,11 +166,12 @@ export function sanitizeExecutionRunError(
   if (error instanceof Error) sanitized.name = error.name;
   const code = readExecutionRunErrorCode(error);
   const runtimeIssueV1 = readExecutionRunRuntimeIssue(error);
+  const details = readAgentStartupFailureDetails(error);
   const uxDiagnostic = readConnectedServiceUxDiagnosticFromError(error);
-  return Object.assign(sanitized, code ? { code } : {}, runtimeIssueV1 ? { runtimeIssueV1: {
+  return Object.assign(sanitized, code ? { code } : {}, details ? { details } : {}, runtimeIssueV1 ? { runtimeIssueV1: {
     ...runtimeIssueV1,
     ...(runtimeIssueV1.sanitizedPreview ? { sanitizedPreview: sanitize(runtimeIssueV1.sanitizedPreview) } : {}),
-  } } : {}, uxDiagnostic ? { uxDiagnostic, details: { uxDiagnostic } } : {});
+  } } : {}, uxDiagnostic ? { uxDiagnostic, details: { ...details, uxDiagnostic } } : {});
 }
 
 export function createExecutionRunCodedError(code: string, message: string): Error {

@@ -44,6 +44,7 @@ export async function prepareSessionFollowSourceKey(input: Readonly<{
     machineId: input.machineId,
   });
   try {
+    // Unlike apps/ui/sources/components/sessions/follow/prepareSessionFollowSourceKey.ts, CLI has no Machine store: exact transport admission precedes deferred key requirements.
     const response = await callExactMachineRpc({
       credentials: input.credentials,
       machineId: input.machineId,

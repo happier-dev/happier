@@ -1,5 +1,5 @@
-import { projectRuntimeCompactionEvent } from './projectRuntimeCompactionEvent';
 import { isForegroundTurnRuntimeTranscriptEvent, isSessionScopedRuntimeTranscriptEvent } from '../events/runtimeTranscriptScope';
+import { projectRuntimeCompactionEvent } from './projectRuntimeCompactionEvent';
 import type { AgentSessionRuntimeEvent } from '@happier-dev/protocol/runtime';
 import type { AgentSessionSkillDelivery } from '@happier-dev/plugin-sdk/agents/runtime';
 import { AgentSessionRuntimeEventSchema } from '@happier-dev/protocol/runtime/agentSessionV1';
@@ -122,8 +122,8 @@ export type RuntimeTranscriptProjectionResult =
       | 'tool-progress'
       | 'tool-call'
       | 'mcp-tool-usage'
-      | 'context-compaction'
       | 'skill-usage'
+      | 'context-compaction'
       | 'tool-result'
       | 'file-edit'
       | 'turn-complete'
@@ -135,6 +135,8 @@ export type RuntimeTranscriptProjectionResult =
     projected: false;
     reason: 'unsupported_event' | 'session_mismatch' | 'ephemeral_not_accepted';
   }>;
+
+type TerminalSourceMessageReceipt = NonNullable<Extract<RuntimeTranscriptProjectionResult, { projected: true }>['terminalSourceMessage']>;
 
 // Foreground streaming and native file follow share the Session's ordered
 // projection and its active stream writer. Retain exact live receipts beside
@@ -254,21 +256,26 @@ function buildRuntimeToolLocalId(event: Readonly<{
 function commitRuntimeTurnCancellation(
   params: Parameters<typeof projectRuntimeTranscriptEvent>[0],
   event: Extract<AgentSessionRuntimeEvent, { kind: 'turn-cancelled' }>,
-): Promise<TranscriptMessageCommitResult> | undefined {
+): Promise<TerminalSourceMessageReceipt> | undefined {
   if (!params.provider || !params.runtimeMessageDeltaBridge || params.questionWaitTurnId === event.turnId) return undefined;
   const markerId = event.agentTurnId ?? event.turnId;
+  const localId = `${markerId}:turn_cancelled`;
   return commitRequiredRuntimeTranscriptMessage({
     session: params.session,
     provider: params.provider,
     body: { type: 'turn_cancelled', id: markerId },
-    localId: `${markerId}:turn_cancelled`,
+    localId,
     meta: { source: 'runtime', runtimeEventKind: event.kind, runtimeTurnId: event.turnId },
     createdAt: event.emittedAtMs,
     updatedAt: event.emittedAtMs,
     provenance: { kind: 'non_dependent', source: 'external' },
     eventKind: event.kind,
     ...(params.admission === undefined ? {} : { admission: params.admission }),
-  });
+  }).then(result => ({ localId,
+    ...(result.committedSequence === undefined ? {} : { committedSequence: result.committedSequence }),
+    ...(result.personalFollow ? { personalFollow: result.personalFollow } : {}),
+    ...(result.whenCommitted ? { whenCommitted: result.whenCommitted } : {}),
+  }));
 }
 
 /** The one typed failed-turn marker writer for native output and host failures. */
@@ -285,7 +292,7 @@ export async function commitRuntimeTurnFailureMarker(params: Readonly<{
   const result = await commitRequiredRuntimeTranscriptMessage({
     session: params.session, provider: params.provider,
     body: { type: 'turn_failed', id: markerId }, localId,
-    meta: params.meta ?? { source: 'runtime', runtimeEventKind: 'turn-failed', runtimeTurnId: params.event.turnId },
+    meta: { ...params.meta, source: 'runtime', runtimeEventKind: 'turn-failed', runtimeTurnId: params.event.turnId },
     createdAt: params.event.emittedAtMs, updatedAt: params.event.emittedAtMs,
     provenance: params.provenance ?? { kind: 'non_dependent', source: 'external' },
     eventKind: 'turn-failed',
@@ -303,7 +310,7 @@ export async function commitRuntimeTurnFailureMarker(params: Readonly<{
 
 /** Foreground calls retain correction custody until their native result arrives. */
 export function createRuntimeTranscriptProjector(): (
-  params: Parameters<typeof projectRuntimeTranscriptEvent>[0] & Readonly<{ priorProjection?: Promise<void> }>,
+  params: AdmittedRuntimeTranscriptProjectionParams & Readonly<{ priorProjection?: Promise<void> }>,
 ) => Promise<RuntimeTranscriptProjectionResult> {
   const pendingCalls = new Map<string, {
     sessionId: string;
@@ -314,12 +321,8 @@ export function createRuntimeTranscriptProjector(): (
   return (input) => {
     const bound = bindSessionTranscriptProjection(input);
     const { state } = bound;
-    const parsed = AgentSessionRuntimeEventSchema.safeParse(bound.params.event);
-    if (!parsed.success) {
-      return enqueueSessionTranscriptProjection(state, async () => ({ projected: false, reason: 'unsupported_event' }));
-    }
-    const event = parsed.data;
-    const params = { ...bound.params, event };
+    const params = bound.params;
+    const event = params.event;
     if (event.sessionId !== params.session.sessionId) {
       return enqueueSessionTranscriptProjection(state, () => projectRuntimeTranscriptEventNow(params));
     }
@@ -714,7 +717,7 @@ export function projectRuntimeTranscriptEvent(params: Readonly<{
 
 async function projectRuntimeTranscriptEventNow(
   params: AdmittedRuntimeTranscriptProjectionParams,
-  cancellationMarker?: Promise<TranscriptMessageCommitResult>,
+  cancellationMarker?: Promise<TerminalSourceMessageReceipt>,
 ): Promise<RuntimeTranscriptProjectionResult> {
   const event = params.event;
   if (event.sessionId !== params.session.sessionId) {
@@ -739,7 +742,7 @@ async function projectRuntimeTranscriptEventNow(
 
 async function projectRuntimeTranscriptEventContent(
   params: AdmittedRuntimeTranscriptProjectionParams,
-  cancellationMarker?: Promise<TranscriptMessageCommitResult>,
+  cancellationMarker?: Promise<TerminalSourceMessageReceipt>,
 ): Promise<RuntimeTranscriptProjectionResult> {
   const event = params.event;
   if (event.kind === 'context-compaction') return projectRuntimeCompactionEvent({ ...params, event });
@@ -1082,8 +1085,9 @@ async function projectRuntimeTranscriptEventContent(
     if (params.questionWaitTurnId === event.turnId) {
       return { projected: true, kind: event.kind };
     }
-    await marker;
-    return { projected: true, kind: event.kind, ...assistantReceipt };
+    const terminalSourceMessage = await marker;
+    return { projected: true, kind: event.kind, ...assistantReceipt,
+      ...(terminalSourceMessage ? { terminalSourceMessage } : {}) };
   }
   if (event.kind !== 'transcript-message-committed' || event.role !== 'user' && !params.provider) {
     return { projected: false, reason: 'unsupported_event' };

@@ -1,4 +1,4 @@
-import { classifyWorkerUpdateEventV1, resolveWorkerUpdateWakeV1, SessionUpdatePostInputV1Schema, WorkerUpdateV1Schema, workerDeliverableResultMaxLengthV1, workerDeliverablesBelongToSessionV1 } from '@happier-dev/protocol/sessions/relations/workerUpdateV1';
+import { composeExecutionRunWorkerUpdateV1, SessionUpdatePostInputV1Schema, workerDeliverableResultMaxLengthV1, workerDeliverablesBelongToSessionV1 } from '@happier-dev/protocol/sessions/relations/workerUpdateV1';
 import type { RetainedExecutionRunWorkerUpdate } from '@/daemon/executionRunRegistry';
 import type { ExecutionRunState } from './executionRunTypes';
 import { resolveWorkerUpdateFollowDeliveryV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
@@ -6,8 +6,6 @@ import { resolveWorkerUpdateFollowDeliveryV1 } from '@happier-dev/protocol/sessi
 /** A projection of canonical terminal Run state; no additional result or status owner. */
 export function composeExecutionRunWorkerUpdate(run: ExecutionRunState, terminalEventId: string): RetainedExecutionRunWorkerUpdate | null {
   if (!run.sessionId || run.status === 'running' || run.notifyParentOnCompletion !== true) return null;
-  const event = classifyWorkerUpdateEventV1({ workerKind: 'execution_run', ownerState: run.status });
-  if (!event) return null;
   const parsed = SessionUpdatePostInputV1Schema.safeParse(run.latestToolResult);
   const report = parsed.success && workerDeliverablesBelongToSessionV1(parsed.data.deliverables, run.sessionId) ? parsed.data : null;
   const deliverables = report?.deliverables;
@@ -18,17 +16,14 @@ export function composeExecutionRunWorkerUpdate(run: ExecutionRunState, terminal
     : summary ?? (run.latestToolResult !== undefined ? JSON.stringify(run.latestToolResult) ?? ''
       : run.summary ?? run.error?.message ?? '');
   const resultMaxLength = workerDeliverableResultMaxLengthV1(deliverables);
-  const update = WorkerUpdateV1Schema.parse({
-    v: 1, workerKind: 'execution_run', workerId: run.runId,
-    ownerState: run.status, wake: resolveWorkerUpdateWakeV1(event),
+  const update = composeExecutionRunWorkerUpdateV1({
+    runId: run.runId, sessionId: run.sessionId, status: run.status,
     ...((run.status === 'failed' || run.status === 'timeout') && run.error?.runtimeIssueV1
       ? { runtimeIssueV1: run.error.runtimeIssueV1 } : {}),
     ...(run.effectiveEngine ? { engine: run.effectiveEngine } : {}),
-    headline: `Background run ${run.status}`,
     result: result.slice(0, resultMaxLength),
     ...(deliverables ? { deliverables } : {}),
     ...(result.length > resultMaxLength ? { truncated: true } : {}),
-    transcriptPointer: { kind: 'execution_run', sessionId: run.sessionId, runId: run.runId },
     canInspect: run.retentionPolicy === 'resumable',
   });
   // Only retained predecessor runs lack a captured policy. New starts bind it

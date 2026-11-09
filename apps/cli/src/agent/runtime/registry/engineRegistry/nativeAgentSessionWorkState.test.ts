@@ -110,7 +110,7 @@ function createHarness(
 }
 
 describe('native Agent work-state measurement boundary', () => {
-    it('accepts exactly 256 KiB, rejects +1 without persistence, and records source plus aggregate bytes', async () => {
+    it('measures valid source publications beyond the former host byte cutoff', async () => {
         const exactSummaryCharacters = findSummaryCharactersForBytes(MAX_SOURCE_JSON_BYTES);
         expect(normalizedBytes(exactSummaryCharacters)).toBe(MAX_SOURCE_JSON_BYTES);
         expect(normalizedBytes(exactSummaryCharacters + 1)).toBe(MAX_SOURCE_JSON_BYTES + 1);
@@ -134,12 +134,29 @@ describe('native Agent work-state measurement boundary', () => {
         const oversizeSamples: HostRuntimeLimitMeasurementSample[] = [];
         const oversize = createHarness(oversizeSamples);
         await expect(oversize.publisher.publish(buildRequest(exactSummaryCharacters + 1)))
-            .resolves.toMatchObject({
-                status: 'conflict',
-                diagnostic: { code: 'agent_work_state_invalid_publication' },
-            });
-        expect(oversize.readMetadata()).not.toHaveProperty('sessionWorkStateV1');
-        expect(oversizeSamples).toEqual([]);
+            .resolves.toMatchObject({ status: 'applied' });
+        expect(oversizeSamples[0]).toMatchObject({
+            family: 'native-work-state-source',
+            decodedBytes: MAX_SOURCE_JSON_BYTES + 1,
+            itemCount: 100,
+        });
+        expect(oversize.readMetadata()).toHaveProperty('sessionWorkStateV1.items', expect.any(Array));
+    });
+
+    it('preserves all valid source items and producer-declared omissions beyond the former item cutoff', async () => {
+        const harness = createHarness([]);
+        const request = buildRequest(0);
+        request.items.push({ ...request.items[0]!, localId: 'task-100', title: 'Task 100' });
+        await expect(harness.publisher.publish({
+            ...request,
+            truncation: { reason: 'itemLimit', omittedCount: 2 },
+        })).resolves.toMatchObject({ status: 'applied' });
+        expect(harness.readMetadata()).toHaveProperty('sessionWorkStateV1.items', expect.arrayContaining([
+            expect.objectContaining({ title: 'Task 100' }),
+        ]));
+        expect(harness.readMetadata()).toHaveProperty('sessionWorkStateV1.truncated', {
+            reason: 'item_limit', omittedCount: 2,
+        });
     });
 
     it('measures the merged aggregate across independently declared sources', async () => {

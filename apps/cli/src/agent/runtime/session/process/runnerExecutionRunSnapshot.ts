@@ -14,7 +14,8 @@ import { dispatchCurrentAgentRuntimeDaemonServiceRequest } from './agentRuntimeD
 import type { AgentRuntimeDaemonServiceRequestV1, AgentRuntimeDaemonServiceResponseV1 } from './agentRuntimeDaemonServiceProtocol';
 import type { RunnerExecutionRunSnapshotV1 } from './executionRunSnapshotProtocol';
 import { ExecutionRunScmCommitMessageScopeV1Schema } from '@happier-dev/protocol/execution/runs/startRequest';
-import { ProviderErrorCodeV1Schema, type ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import type { ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { readTeamCredentialLaunchFailureCode } from '@/session/services/sessionTeamCredentialLaunchError';
 import { createProviderRedactionLease } from '@/providers/spawn/redaction';
 import { createExecutionRunCodedError } from '@/agent/runtime/bridges/executionRun/errors';
 import type { ExecutionRunProviderLaunchServices } from '@/agent/runtime/bridges/executionRun/runtime/providerLaunch';
@@ -87,8 +88,8 @@ export function createRunnerExecutionRunSnapshotResolver(input: Readonly<{ sessi
         createRequest: token => ({ v: 1, context: { token, sessionId: input.sessionId,
           ...(executionRunSnapshotId ? { executionRunSnapshotId } : {}) }, operation }) });
       if (!response.ok) {
-        const code = ProviderErrorCodeV1Schema.safeParse(response.error.code);
-        if (code.success || response.error.code === 'execution_run_child_choice_required') {
+        const code = readTeamCredentialLaunchFailureCode(response.error.code);
+        if (code || response.error.code === 'execution_run_child_choice_required') {
           throw Object.assign(createExecutionRunCodedError(response.error.code, response.error.code), { code: response.error.code });
         }
         return unavailable();
@@ -174,9 +175,9 @@ export function createRunnerExecutionRunSnapshotResolver(input: Readonly<{ sessi
         path, expectedSessionId: input.sessionId });
       if (!ready || ready.capability !== current.capability || ready.httpPort !== current.httpPort) return unavailable();
       let released = false;
-      const readNativeOfferedModel: ExecutionRunNativeOfferedModelReader = async request => {
+      const readNativeOfferedModel: ExecutionRunNativeOfferedModelReader = async (request, signal) => {
         const result = await dispatch({ kind: 'execution_run.native_offered_model.read_v1', ...request,
-          backendTarget: readBackendTargetRefV2(request.backendTarget) }, snapshot.snapshotId);
+          backendTarget: readBackendTargetRefV2(request.backendTarget) }, snapshot.snapshotId, signal);
         if (result.kind !== 'execution_run.native_offered_model') return unavailable();
         return result.model ?? undefined;
       };

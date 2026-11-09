@@ -26,7 +26,6 @@ export async function publishExecutionRunTurn(args: Readonly<{
   finishedAtMs: number;
   diagnostic?: Readonly<{ code: string; message?: string }>;
   started?: boolean;
-  admittedInputId?: string;
   controller: ExecutionRunBackendController;
   controllers: ReadonlyMap<string, unknown>;
   runs: Map<string, ExecutionRunState>;
@@ -54,14 +53,13 @@ export async function publishExecutionRunTurn(args: Readonly<{
       .find((turn) => turn?.turnId === args.turnId)?.inputIds,
     ...(run.structuredMeta ? { previousStructuredMeta: run.structuredMeta } : {}),
   };
-  let completion = args.admittedInputId ? await profile.onRetainedInputAdmitted?.({ start: run, localId: args.admittedInputId })
-    : args.started ? await profile.onStarted?.(params) : args.diagnostic
+  let completion = args.started ? await profile.onStarted?.(params) : args.diagnostic
     ? await profile.onTurnFailed?.({ ...params, diagnostic: args.diagnostic })
     : await profile.onTurnComplete?.(params);
   if (!completion || !current()) return false;
   const projected = await materializeReviewFindings({ run,
     toolResult: { output: completion.toolResultOutput, meta: completion.toolResultMeta },
-    structuredMeta: completion.structuredMeta, expectFindings: !args.started && !args.admittedInputId && (completion.status === 'succeeded'
+    structuredMeta: completion.structuredMeta, expectFindings: !args.started && (completion.status === 'succeeded'
       || completion.structuredMeta?.kind === 'review_findings.v2' || completion.structuredMeta?.kind === 'review_findings.v1'),
     reviewComments: args.reviewComments,
     workflowRunId: args.controller.workflowRunId ?? args.controller.workflowObservation?.workflowRunId,
@@ -90,11 +88,16 @@ export async function publishExecutionRunTurn(args: Readonly<{
       };
     }
   }
-  if (run.sessionId !== null && profile.transcriptMaterialization !== 'none' && completion.transcriptMaterialization !== 'none') {
+  const completedTurn = [args.controller.currentInputTurn, args.controller.lastInputTurn]
+    .find(turn => turn?.turnId === args.turnId);
+  const answerAlreadyCommitted = profile.transcriptMaterialization === 'completion'
+    && completedTurn?.committedResultLocalId !== undefined;
+  if (run.sessionId !== null && profile.transcriptMaterialization !== 'none'
+    && completion.transcriptMaterialization !== 'none' && !answerAlreadyCommitted) {
     await args.sendAcp(args.parentProvider, {
       type: 'message', message: completion.summary, sidechainId: run.sidechainId,
     }, { meta: {
-      ...(!args.started && !args.admittedInputId ? { runtimeTurnId: args.turnId } : {}),
+      ...(!args.started ? { runtimeTurnId: args.turnId } : {}),
       ...(completion.toolResultMeta ?? {}),
       ...(completion.structuredMeta ? { happier: completion.structuredMeta } : {}),
     } });
@@ -107,7 +110,7 @@ export async function publishExecutionRunTurn(args: Readonly<{
     completion.structuredMeta?.kind === EXECUTION_RUN_KIND_BY_INTENT.scm_diff_summary
       ? readScmDiffSummaryIntent(completion.toolResultMeta?.scmResultUpdate).status : undefined,
   );
-  const successfulCurrentPublication = !args.started && !args.admittedInputId
+  const successfulCurrentPublication = !args.started
     && completion.structuredMeta !== undefined && !hasPublicationNotice
     && (!projected.materialization || projected.materialization.status === 'materialized');
   const clearPreviousOperationError = successfulCurrentPublication && (latest.error?.code === 'execution_run_send_outcome_unknown'
@@ -155,10 +158,7 @@ export async function publishExecutionRunTurn(args: Readonly<{
       // A transport exception cannot prove that Pending/native admission did not happen.
       admission = { status: 'outcomeUnknown', message: error instanceof Error ? error.message : String(error) };
     }
-    if (admission.status === 'accepted' && current()) {
-      await publishExecutionRunTurn({ ...args, started: false, diagnostic: undefined, rawText: '',
-        admittedInputId: completion.nextInput.localId });
-    } else if (current()) {
+    if (admission.status !== 'accepted' && current()) {
       const code = admission.status === 'outcomeUnknown' ? 'execution_run_send_outcome_unknown'
         : admission.code ?? 'execution_run_not_allowed';
       const message = admission.message ?? `Analysis part admission ${admission.status}: ${admission.code ?? code}`;

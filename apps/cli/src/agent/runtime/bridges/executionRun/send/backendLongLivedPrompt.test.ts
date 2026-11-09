@@ -14,6 +14,8 @@ import { createExecutionRunCodedError } from '@/agent/runtime/bridges/executionR
 import { createExactTurnUsageAccumulator } from '@/usage/exactTurnUsage';
 import { createRuntimeTurnFailureAlreadySurfacedError } from '@/agent/runtime/turns/runtimeTurnOperations';
 import { settleExecutionRunController } from '../settleExecutionRunController';
+import { projectExecutionRunPublicState } from '../publicState';
+import { observeWorkflowDetachedExecutionRunInput } from '@/daemon/workflows/stepExecution';
 
 function createResumableBackendHarness(): Readonly<{
   runtime: ExecutionRunHostRuntime;
@@ -360,6 +362,40 @@ describe('sendBackendLongLivedRun (resume)', () => {
       { text: expect.stringContaining('required result schema') },
       { localId: 'workflow-input-1', resultContract },
     );
+  });
+
+  it('leaves the settled turn\'s text on the public read the daemon observes', async () => {
+    let controller!: ExecutionRunBackendController;
+    const { runtime } = createTestExecutionRunHostRuntime({
+      deliverInput: async () => {
+        controller.buffer = 'Final turn text';
+        return { status: 'admitted' as const };
+      },
+      waitForTurnCompletion: async () => undefined,
+    });
+    const run = createLongLivedResumableRun({ status: 'running', intent: 'agent' });
+    const runs = new Map([[run.runId, run]]);
+    controller = {
+      kind: 'backend', controllerOccurrenceId: 'long-lived-text-turn', backend: runtime, backendSupportsResume: true,
+      runtimeId: 'child_runtime_active', buffer: '', sidechainStreamBuffer: '', sidechainStreamKey: '',
+      streamWriter: null, cancelled: false, turnCount: 0, turnEpoch: 0, turnInFlight: false,
+      turnCancelReason: null, turnCancelEpoch: null, admittedLiveInterventions: [], admittedLiveInterventionsSignal: null,
+      lastMarkerWriteAtMs: 0, failureSignal: failureSignal(), pendingHostBarrier: Promise.resolve(),
+      terminalPromise: new Promise<void>(() => {}), resolveTerminal: () => {},
+    };
+
+    await expect(sendBackendLongLivedRun({
+      runId: run.runId, params: { message: 'Implement it.', localInputId: 'workflow-input-1' }, runs,
+      controllers: new Map([[run.runId, controller]]), budgetRegistry: null, createRuntime: () => runtime, maxTurns: null,
+      getNowMs: () => 123, finishRun: async () => undefined, sendAcp: async () => {}, parentProvider: 'codex',
+      streamedTranscriptSession: null, writeActivityMarker: async () => undefined,
+    })).resolves.toEqual({ ok: true });
+    await vi.waitFor(() => expect(controller.lastInputTurn?.state).toBe('completed'));
+
+    await expect(observeWorkflowDetachedExecutionRunInput({
+      runId: run.runId, localInputId: 'workflow-input-1',
+      get: async () => ({ run: projectExecutionRunPublicState(runs.get(run.runId)!, controller) }),
+    })).resolves.toEqual({ kind: 'completed', result: 'Final turn text' });
   });
 
   it('binds a fresh Workflow interaction store only to the exact active input turn and releases it at retirement', async () => {

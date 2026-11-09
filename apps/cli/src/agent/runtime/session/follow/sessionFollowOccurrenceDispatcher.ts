@@ -60,13 +60,16 @@ import { resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
 import { createSessionFollowSourceFactsRead } from './sessionFollowSourceFacts';
 export type { SessionFollowAccountOccurrence } from './sessionFollowRuleSourceEvidence';
 export type SessionFollowReceiverRangeResult = Readonly<{ receiverSessionIds: readonly string[] }>;
+export type SessionFollowReceiverRangeRequest = Readonly<{ destinationSessionId: string;
+  observations: readonly SessionFollowSessionPendingObservationV1[]; sourceSessionId?: string;
+  originalOccurrence?: SessionFollowRuleSourceOccurrenceV1 | SessionFollowAccountOccurrence }>;
 export type { SessionFollowRunOccurrence } from '@/daemon/sessions/sessionActivityChangedContract';
 type AccountFollowSourceRange = Readonly<{ sourceSessionId?: string; source?: RunFollowOriginalV1['source'];
   workflowRunIds?: readonly string[]; discussionIds?: readonly string[]; configurationChanged?: boolean; outputsOnly?: boolean }>;
 export type SessionFollowOccurrenceDispatch = Readonly<
   { occurrence: SessionFollowRuleSourceOccurrenceV1 | SessionFollowRunOccurrence; destinationSessionId?: never; contextSessionId?: string }
   | { occurrence: SessionFollowAccountOccurrence; destinationSessionId: string }
-  | { observations: readonly SessionFollowSessionPendingObservationV1[]; destinationSessionId: string; sourceSessionId?: string; occurrence?: never }
+  | (SessionFollowReceiverRangeRequest & { sourcePublisher?: SessionFollowRuleSourceOccurrenceV1['sourcePublisher']; occurrence?: never })
   | { sourceSessionIdChanged: string; followSourceChanged?: false; followReceiverAvailabilityChanged?: boolean;
     contextSessionId?: string; occurrence?: never; destinationSessionId?: never }
   | { accountFollowSourcesChanged: AccountFollowSourceRange; occurrence?: never; destinationSessionId?: never }
@@ -80,6 +83,9 @@ export function createSessionFollowOccurrenceDispatcher(input: Readonly<{
   machineId: string; installationId: string; signal: AbortSignal;
   isCurrent: () => Promise<boolean>;
   subscribeInvalidation: (listener: (change?: SessionFollowRuleInvalidation) => void) => () => void;
+  /** Source publication hands Session delivery to the receiver's retained requester owner. */
+  dispatchReceiverRange: (request: SessionFollowReceiverRangeRequest,
+    sourcePublisher?: SessionFollowRuleSourceOccurrenceV1['sourcePublisher']) => Promise<void>;
   /** Borrowed from the already-retained requester Account lifetime, never an installed Account substitute. */
   rulesCache?: ReturnType<typeof createAccountSessionFollowRuleCache>;
   runRoutes?: ReturnType<typeof createAccountRunFollowRoutes>;
@@ -398,7 +404,7 @@ export function createSessionFollowOccurrenceDispatcher(input: Readonly<{
         const [accountEncryption, source] = sourceTransport
           ? [sourceTransport.accountEncryptionCurrentness, sourceTransport.rawSession] as const
           : await Promise.all([
-          fetchAccountEncryptionCurrentness({ token: input.credentials.token, serverBaseUrl: input.serverHttpBaseUrl, signal: input.signal }),
+          fetchAccountEncryptionCurrentness({ credentials: input.credentials, token: input.credentials.token, serverBaseUrl: input.serverHttpBaseUrl, signal: input.signal }),
           fetchSessionById({ reason: 'follow-occurrence', token: input.credentials.token, sessionId: occurrence.sourceSessionId,
             serverUrl: input.serverHttpBaseUrl, signal: input.signal }),
         ]);
@@ -686,7 +692,7 @@ export function createSessionFollowOccurrenceDispatcher(input: Readonly<{
             // A source notification can arrive after an earlier admission failed.
             // Reuse catch-up's ordered traversal before admitting this receiver's
             // next original; its own seq - 1 baseline cannot prove that prefix.
-            await dispatchReceiverRange({ destinationSessionId, sourceSessionId: original.sourceSessionId,
+            await input.dispatchReceiverRange({ destinationSessionId, sourceSessionId: original.sourceSessionId,
               originalOccurrence: original,
               observations: ordinary.routes.filter(route => route.destinationSessionId === destinationSessionId) },
               'sourcePublisher' in original ? original.sourcePublisher : undefined);
@@ -769,9 +775,7 @@ export function createSessionFollowOccurrenceDispatcher(input: Readonly<{
       return personalFollow ? { personalFollow } : {};
       } finally { finishWork?.(workOutcome, workWaitingFor); }
   };
-  const dispatchReceiverRange = async (request: Readonly<{ destinationSessionId: string;
-    observations: readonly SessionFollowSessionPendingObservationV1[]; sourceSessionId?: string;
-    originalOccurrence?: SessionFollowRuleSourceOccurrenceV1 | SessionFollowAccountOccurrence }>,
+  const dispatchReceiverRange = async (request: SessionFollowReceiverRangeRequest,
     sourcePublisher?: SessionFollowRuleSourceOccurrenceV1['sourcePublisher']): Promise<SessionFollowReceiverRangeResult> => {
     const noOriginalTurns: SessionFollowSessionPendingObservationV1[] = [];
     const diagnostic = { entry: 'receiver_range' as const, destinationSessionId: request.destinationSessionId,
@@ -1111,7 +1115,7 @@ export function createSessionFollowOccurrenceDispatcher(input: Readonly<{
         const unresolved = known.filter(candidate => candidate.match === 'unavailable').map(candidate => candidate.rule);
         if (unresolved.length) {
           const [encryption, source] = await Promise.allSettled([
-            fetchAccountEncryptionCurrentness({ token: input.credentials.token, serverBaseUrl: input.serverHttpBaseUrl, signal: input.signal }),
+            fetchAccountEncryptionCurrentness({ credentials: input.credentials, token: input.credentials.token, serverBaseUrl: input.serverHttpBaseUrl, signal: input.signal }),
             fetchSessionById({ reason: 'follow-occurrence', token: input.credentials.token, sessionId: sourceSessionId,
               serverUrl: input.serverHttpBaseUrl, signal: input.signal }),
           ]);

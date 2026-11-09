@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { prepareSessionInputForProviderDispatch } from '@/agent/runtime/turns/prepareSessionInputForProviderDispatch';
 import { parseSpecialCommand } from '@/cli/parsers/specialCommands';
+import { formatFileReviewNoteV1 } from '@happier-dev/protocol/messages/structured/fileReviewNoteV1';
 
 import {
   appendNextTurnContextToQueuedPrompt,
@@ -30,7 +31,11 @@ describe('combinePermissionModeQueuedPrompts', () => {
     expect(input.text).toBe(primary);
     const prepared = await prepareSessionInputForProviderDispatch({ prompt: input, transformedUserText: input.text,
       providerNativeCommand: primary.startsWith('/'), signal: new AbortController().signal, localId: 'actual' });
-    expect(prepared.renderPrompt()).toBe(primary.startsWith('/') ? primary : `${primary}\n\nReview facts`);
+    expect(prepared.renderPrompt()).toBe(primary.startsWith('/') ? primary
+      : `${primary}\n\n<happier_review_note>${JSON.stringify({ text:
+        'The person reviewing your work discarded your changes in "app.ts". Do not reapply them unless asked.',
+      })}</happier_review_note>`);
+    expect(queue.getContextOnlyMessages().map(note => note.localId)).toEqual(['note']);
     expect(input.localIds).toEqual(['actual']);
   });
   it('adds only newly joined file review note text when a composed input is requeued', async () => {
@@ -52,8 +57,9 @@ describe('combinePermissionModeQueuedPrompts', () => {
     expect(requeued.text).toBe('Continue');
     const prepared = await prepareSessionInputForProviderDispatch({ prompt: requeued, transformedUserText: requeued.text,
       providerNativeCommand: false, signal: new AbortController().signal, localId: 'actual' });
-    expect(prepared.renderPrompt().split(first.text)).toHaveLength(2);
-    expect(prepared.renderPrompt().split(second.text)).toHaveLength(2);
+    for (const item of [first, second]) {
+      expect(prepared.renderPrompt().split(JSON.stringify({ text: formatFileReviewNoteV1(item.fileReviewNote!, 'agent') }))).toHaveLength(2);
+    }
     expect(requeued.fileReviewNoteContext?.map(note => note.localId)).toEqual(['note-1', 'note-2']);
     expect(requeued.localIds).toEqual(['actual']);
     expect(requeued.userMessageSeqs).toEqual([3]);

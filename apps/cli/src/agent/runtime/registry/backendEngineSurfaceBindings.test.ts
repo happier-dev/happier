@@ -847,6 +847,7 @@ describe('resolveBackendExecutionSurfacesFromNativeAgentRuntime', () => {
     expect(resolveLaunch).toHaveBeenCalledWith({
       sessionId: 'session-1',
       cwd: '/repo',
+      launchEnvironment: { values: { HOST_ENV: 'one', ISOLATED_ENV: 'two' }, unset: ['HOST_REMOVE'] },
       metadata: {
         runtimeDescriptorV1: {
           v: 1,

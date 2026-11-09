@@ -4,7 +4,12 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { zodSchemaToJsonSchemaObject } from '@happier-dev/protocol/actions/actionInputJsonSchema';
 import { z } from 'zod/mini';
 
-import { resolveSessionNativeToolDescriptors } from './resolveSessionNativeToolBridge';
+import { isSessionAgentToolAvailable, resolveSessionNativeToolDescriptors } from './resolveSessionNativeToolBridge';
+import { Session } from 'node:inspector';
+import { HAPPIER_BUILT_IN_TOOL_NAMES } from './catalog';
+import { listBuiltInHappierTools } from './listBuiltInHappierTools';
+import { resolveActionsSettingsWithEnvironmentOverride } from '@/settings/actionsSettings';
+import { isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
 import { projectMcpToolInputJsonSchema } from '@/mcp/server/projectMcpToolInputJsonSchema';
 import { projectSessionBoundActionToolInputSchema } from './actionToolContext';
 import type { ProjectedPluginToolCatalogEntry } from '@/plugins/runtime/toolCatalog';
@@ -20,8 +25,55 @@ afterEach(() => {
   else process.env.HAPPIER_ACTIONS_SETTINGS_V1 = originalActionsSettingsEnv;
 });
 
+describe('isSessionAgentToolAvailable', () => {
+  it('evaluates only the named tool, matching membership in the whole admitted catalog', async () => {
+    const accountSettings = { actionsSettingsV1: { v: 1, actions: { 'session.title.set': { enabled: false } } } };
+    const whole = (settings: Readonly<Record<string, unknown>>) => {
+      const actionsSettings = resolveActionsSettingsWithEnvironmentOverride(settings);
+      return listBuiltInHappierTools({
+        surface: 'agent', actionsSettings,
+        isActionEnabled: id => isActionEnabledByActionsSettings(id, actionsSettings, { surface: 'agent', placement: null }),
+      }).map(tool => tool.name);
+    };
+    for (const settings of [{}, accountSettings]) {
+      const listed = new Set(whole(settings));
+      // Every candidate name, listed or not, must answer exactly as the full catalog does.
+      for (const toolName of [...HAPPIER_BUILT_IN_TOOL_NAMES, 'no_such_tool']) {
+        expect([toolName, isSessionAgentToolAvailable({ toolName, accountSettings: settings, codingPromptBehavior: undefined })])
+          .toEqual([toolName, listed.has(toolName)]);
+      }
+    }
+
+    const inspector = new Session();
+    const post = <T,>(method: string, params?: Record<string, unknown>) => new Promise<T>((resolve, reject) => {
+      inspector.post(method, params ?? {}, (error, result) => error ? reject(error) : resolve(result as T));
+    });
+    inspector.connect();
+    try {
+      await post('Profiler.enable');
+      await post('Profiler.startPreciseCoverage', { callCount: true, detailed: false });
+      await post('Profiler.takePreciseCoverage');
+      isSessionAgentToolAvailable({ toolName: 'session_compact', accountSettings: {} });
+      const coverage = await post<{ result: Array<{ functions: Array<{ functionName: string; ranges: Array<{ count: number }> }> }> }>('Profiler.takePreciseCoverage');
+      const evaluated = coverage.result.flatMap(script => script.functions)
+        .filter(fn => fn.functionName === 'isDirectManualToolAvailable')
+        .reduce((total, fn) => total + (fn.ranges[0]?.count ?? 0), 0);
+      expect(evaluated).toBe(1);
+    } finally {
+      await post('Profiler.stopPreciseCoverage').catch(() => undefined);
+      inspector.disconnect();
+    }
+  });
+});
+
 describe('resolveSessionNativeToolDescriptors', () => {
-  it('projects an external daemon Action tool from the admitted catalog and fails closed when it is omitted', () => {
+  it('omits the native extension inventory when built-in Happier tools are disabled', () => {
+    expect(resolveSessionNativeToolDescriptors({ accountSettings: {}, sessionId: 'restricted-session',
+      happierToolsEnabled: false, memoryRecallGuidanceEnabled: true,
+      sessionMemoryEnabled: true, isServerFeatureEnabled: () => true }).map(tool => tool.name)).toEqual([]);
+  });
+
+  it('applies shared exposure settings to admitted external daemon Action tools and fails closed on omission', () => {
     const pluginToolCatalog: readonly ProjectedPluginToolCatalogEntry[] = [{
       toolId: 'dev.leads-fixture/record-analysis',
       actionId: 'dev.leads-fixture/actions/record-analysis',
@@ -36,15 +88,24 @@ describe('resolveSessionNativeToolDescriptors', () => {
       },
       surfaces: ['agent'],
     }];
-    const resolve = (catalog: readonly ProjectedPluginToolCatalogEntry[]) => resolveSessionNativeToolDescriptors({
-      accountSettings: {}, sessionId: 'embed-created-session', sessionMachineId: 'machine-1',
+    const resolve = (catalog: readonly ProjectedPluginToolCatalogEntry[], accountSettings: Readonly<Record<string, unknown>> = {}) => resolveSessionNativeToolDescriptors({
+      accountSettings, sessionId: 'embed-created-session', sessionMachineId: 'machine-1',
       memoryRecallGuidanceEnabled: false, pluginToolCatalog: catalog,
     });
-
-    expect(resolve(pluginToolCatalog)).toEqual(expect.arrayContaining([
+    const directSettings = { actionsSettingsV1: { v: 1, actions: {
+      'dev.leads-fixture/actions/record-analysis': { toolExposureModes: { agent: 'direct' } },
+    } } };
+    const authoredDirectCatalog = pluginToolCatalog.map(tool => ({ ...tool, toolExposure: { agent: 'direct' as const } }));
+    expect(resolve(pluginToolCatalog).map(tool => tool.name)).not.toContain('leads_record_analysis');
+    expect(resolve(pluginToolCatalog).map(tool => tool.name)).toContain('action_execute');
+    expect(resolve(pluginToolCatalog, directSettings)).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: 'leads_record_analysis', title: 'Record lead analysis' }),
     ]));
-    expect(resolve([]).map((tool) => tool.name)).not.toContain('leads_record_analysis');
+    expect(resolve(authoredDirectCatalog).map(tool => tool.name)).toContain('leads_record_analysis');
+    expect(resolve(authoredDirectCatalog, { actionsSettingsV1: { v: 1, actions: {
+      'dev.leads-fixture/actions/record-analysis': { toolExposureModes: { agent: 'discoverable_only' } },
+    } } }).map(tool => tool.name)).not.toContain('leads_record_analysis');
+    expect(resolve([], directSettings).map((tool) => tool.name)).not.toContain('leads_record_analysis');
   });
 
   it('reuses repeated Board input definitions in the native Agent descriptor', () => {

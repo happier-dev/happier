@@ -134,6 +134,9 @@ export function createCatalogHostSessionRuntimePlan<
             ...(createdNativeRuntime.runtimeDescriptorV1
               ? { runtimeDescriptorV1: createdNativeRuntime.runtimeDescriptorV1 }
               : {}),
+            ...(createdNativeRuntime.runtimeCapabilities
+              ? { runtimeCapabilities: createdNativeRuntime.runtimeCapabilities }
+              : {}),
             ...(createdNativeRuntime.admittedProviderBindingHandoff
               ? {
                   admittedProviderBindingHandoff:

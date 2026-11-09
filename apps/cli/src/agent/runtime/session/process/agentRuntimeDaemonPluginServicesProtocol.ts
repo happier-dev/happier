@@ -24,6 +24,7 @@ import type {
     SessionProviderBindingMetadataV1,
 } from '@happier-dev/protocol';
 import { PluginInvocableActionIdSchema } from '@happier-dev/protocol/actions/pluginActionSurface';
+import { FileDownloadDestinationV1Schema } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import {
     AgentRuntimeDaemonServiceTurnWitnessV1Schema,
 } from './agentRuntimeDaemonServiceTurnWitness';
@@ -914,6 +915,14 @@ export const RUNNER_DAEMON_PLUGIN_SERVICE_OPERATION_V1_SCHEMAS = [
         ...OptionalWitnessSchema,
         operation: RunnerDaemonProviderOperationIdV1Schema,
         request: RunnerDaemonPluginServiceWireValueV1Schema,
+    })),
+    lazyZodSchema(() => z.strictObject({
+        kind: z.literal('plugin_fs.prepare_download_v1'),
+        ...OperationBaseSchema,
+        ...OptionalWitnessSchema,
+        name: z.string(),
+        bytes: Base64Schema,
+        destination: FileDownloadDestinationV1Schema,
     })),
     lazyZodSchema(() => z.strictObject({
         kind: z.literal('plugin_fs.read_file_v1'),

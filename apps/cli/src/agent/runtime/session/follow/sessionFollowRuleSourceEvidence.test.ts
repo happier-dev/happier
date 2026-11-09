@@ -4,6 +4,7 @@ import { buildAcpAgentMessageEnvelope } from '@/api/session/acpMessageEnvelope';
 import { sealSessionStoredContent } from '@/session/transport/encryption/sessionEncryptionContext';
 import type { RawTranscriptRow } from '@/session/replay/fetchEncryptedTranscriptMessages';
 import { buildTrustedHostSessionInputAdmissionV1, settleSessionInputRequestV1, settleSessionMessageProvenanceV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { readOpenedSessionFollowOriginalV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleOccurrenceV1';
 
 const source = { serverId: 'home', ownerAccountId: 'alice', origin: { kind: 'none' },
   metadata: { projectId: 'payments', bot: { kind: 'bot' } } } as const;
@@ -56,14 +57,28 @@ describe('committed Follow source originals', () => {
   const read = (row: RawTranscriptRow & Readonly<{ inputAdmissionReceipt?: unknown }>, mode: 'plain' | 'e2ee' = 'plain') =>
     readCommittedSessionFollowSourceOccurrence({ ...scope, row, mode, ctx: mode === 'e2ee' ? ctx : null });
 
+  it('admits an opened original for browser and CLI consumers with identical host Turn and protected provenance semantics', () => {
+    const opened = { role: 'agent', content: { type: 'event', id: 'ready', data: { type: 'ready', completedTurnId: 'host-turn' } } };
+    const row = rowFor(opened, 'plain');
+    expect(readOpenedSessionFollowOriginalV1({ ...scope, row, opened })).toEqual(read(row));
+    const admission = buildTrustedHostSessionInputAdmissionV1('ui');
+    const receipt = { v: 1, issuer: 'authenticatedAccount', actorAccountId: 'bob', sessionRelationship: 'sharedEditor',
+      admittedTarget: { homeId: 'home', accountId: 'alice', sessionId: 'source', machineId: 'machine', installationId: 'installation' } } as const;
+    const human = { role: 'user', content: { type: 'text', text: 'Private human direction' }, meta: {
+      happierInputAuthorityV1: settleSessionInputRequestV1({ request: admission.request, currentSessionPermissionCeiling: 'default', inputAdmissionReceipt: receipt }),
+      happierProvenanceV1: settleSessionMessageProvenanceV1({ request: admission.request, requestedProvenance: admission.provenance, inputAdmissionReceipt: receipt }),
+    } };
+    const humanRow = { ...rowFor(human, 'plain'), messageRole: 'user', inputAdmissionReceipt: receipt };
+    expect(readOpenedSessionFollowOriginalV1({ ...scope, row: humanRow, opened: human })).toEqual(read(humanRow));
+    expect(readOpenedSessionFollowOriginalV1({ ...scope, row: { ...humanRow, inputAdmissionReceipt: undefined }, opened: human }))
+      .toEqual({ status: 'not_semantic' });
+  });
+
   it.each(['plain', 'e2ee'] as const)('recovers exact %s originals through the source schema and crypto, not authored evidence or private facts', mode => {
     const originals = [
       [buildAcpAgentMessageEnvelope({ provider: 'codex', body: { type: 'message', message: 'Source answer' } }), { kind: 'message' }],
-      [buildAcpAgentMessageEnvelope({ provider: 'codex', body: { type: 'task_complete', id: 'turn' } }), { kind: 'finished' }],
-      [buildAcpAgentMessageEnvelope({ provider: 'codex', body: { type: 'turn_failed', id: 'turn' } }), { kind: 'failed_or_stopped' }],
       [{ role: 'agent', content: { type: 'event', id: 'goal', data: { type: 'goal-changed' } } }, { kind: 'goal_changed' }],
       [{ role: 'agent', content: { type: 'event', id: 'report', data: { type: 'worker-report', summary: 'Published' } } }, { kind: 'update_posted' }],
-      [{ role: 'agent', content: { type: 'event', id: 'ready', data: { type: 'ready', completedTurnId: 'host-turn' } } }, { kind: 'finished' }],
     ] as const;
     for (const [payload, event] of originals) {
       const result = read(rowFor({ ...payload, meta: { happierFollowRuleEvidenceV1: {
@@ -73,6 +88,17 @@ describe('committed Follow source originals', () => {
       expect(result).toEqual({ status: 'occurrence', occurrence: { sourceSessionId: 'source',
         sourceMessage: { localId: 'source-original', seq: 7 }, evidence: { v: 1, ownerAccountId: 'alice', event,
           facts: { serverId: 'home', kind: 'session', startedBy: 'you', source: 'persisted' } } } });
+    }
+  });
+
+  it.each(['plain', 'e2ee'] as const)('selects the host Turn from exact %s ready evidence without treating native ids as host identities', mode => {
+    const ready = { role: 'agent', content: { type: 'event', id: 'ready', data: { type: 'ready', completedTurnId: 'host-turn' } } };
+    expect(read(rowFor(ready, mode), mode)).toMatchObject({ status: 'occurrence', occurrence: {
+      sourceSessionId: 'source', sourceTurn: { id: 'host-turn', status: 'completed' }, evidence: { event: { kind: 'finished' } },
+    } });
+    for (const type of ['task_complete', 'turn_failed', 'turn_cancelled'] as const) {
+      expect(read(rowFor(buildAcpAgentMessageEnvelope({ provider: 'codex', body: { type, id: 'provider-turn' } }), mode), mode))
+        .toEqual({ status: 'not_semantic' });
     }
   });
 

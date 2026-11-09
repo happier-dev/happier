@@ -20,6 +20,7 @@ function appendPluginDiagnostics(
             code: 'engine_plugin_registry_diagnostic',
             message: diagnostic.message,
             detailCode: diagnostic.code,
+            ...(diagnostic.details === undefined ? {} : { details: diagnostic.details }),
             backendId: backend.id,
             agentId: agent.id,
             pluginId: backend.pluginId,
@@ -37,7 +38,7 @@ function appendPluginDiagnostics(
 export async function resolvePluginBackendSurfaceHandlers(params: Readonly<{
     backend: ResolvedAgentRuntimeContribution;
     agent: ResolvedAgentContribution;
-    runtimeRegistry: ResolvedExecutablePluginRuntimeRegistry;
+    runtimeRegistry: Pick<ResolvedExecutablePluginRuntimeRegistry, 'pluginDiagnosticsByPluginId'>;
     hasRegisteredAgentRuntime?: boolean;
 }>): Promise<Readonly<{
     diagnostics: readonly EngineResolutionDiagnostic[];

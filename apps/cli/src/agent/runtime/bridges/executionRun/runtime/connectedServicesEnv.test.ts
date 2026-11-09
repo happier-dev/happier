@@ -585,7 +585,7 @@ describe('resolveExecutionRunConnectedServicesEnv', () => {
         expect(deps.resolveSessionSpawnDefaults).not.toHaveBeenCalled();
         expect(loggerInfoMock).toHaveBeenCalledWith(
             expect.stringContaining('proceeding native'),
-            expect.objectContaining({ agentId: 'codex' }),
+            expect.objectContaining({ agentId: 'codex', reason: 'no_connected_selection' }),
         );
     });
 

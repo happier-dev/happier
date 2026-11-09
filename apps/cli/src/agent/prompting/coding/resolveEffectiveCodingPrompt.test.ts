@@ -12,6 +12,7 @@ import type { ProfileCatalogSnapshotV1 } from '@happier-dev/protocol/profiles/pr
 import { buildMemoryRecallGuidanceBlockV1 } from '@happier-dev/protocol/prompts/memoryRecallGuidanceV1';
 import { PromptStackEntryV1Schema } from '@happier-dev/protocol/prompts/library/promptStacksV1';
 import { readSessionInputPromptUserTextV1 } from '@happier-dev/protocol/prompts/systemPromptBaseV1';
+import { HAPPIER_VISUAL_ACTION_GUIDANCE, HAPPIER_VISUAL_AUTHORING_GUIDANCE } from '@/agent/tools/happierTools/runtime/visualActionPromptGuidance';
 
 import {
   resolveAgentCompositionPromptText,
@@ -76,6 +77,43 @@ function createCredentials(): DataKeyCredentials {
 }
 
 describe('resolveEffectiveCodingPromptText', () => {
+  it.each(['native_mcp', 'native_extension', 'shell_bridge'] as const)('omits unavailable built-in tool guidance through %s', async toolDelivery => {
+    const result = await resolveEffectiveCodingPromptPlan({ toolDelivery, settings: {}, profileId: null,
+      toolDeliverySessionId: 'restricted-session', toolDeliveryDirectory: '/repo', memoryRecallGuidanceEnabled: true,
+      sessionMetadata: { mcpSelectionV1: { happierToolsEnabled: false } } });
+    expect(result.text).not.toContain('change_title');
+    expect(result.text).not.toContain('memory_search');
+    expect(result.text).not.toContain(HAPPIER_VISUAL_ACTION_GUIDANCE);
+    expect(result.text).not.toContain('action_execute');
+    expect(result.text).toContain('Linked workspace files');
+  });
+
+  it.each(['native_mcp', 'native_extension', 'shell_bridge'] as const)('preserves an existing title under initial policy through %s', async toolDelivery => {
+    const args = { settings: { codingPromptBehaviorV1: { sessionTitleUpdates: 'initial' } }, profileId: null,
+      sessionMetadata: { summary: { text: 'Original task', updatedAt: 1 } }, toolDelivery,
+      toolDeliverySessionId: 'continued-session', toolDeliveryDirectory: '/repo', memoryRecallGuidanceEnabled: false };
+    const continued = await resolveEffectiveCodingPromptPlan(args);
+    expect(continued.text).not.toContain('change_title');
+    expect(continued.text).toContain('Linked workspace files');
+    // Prompt policy must not disable the tool preference used for explicit renames.
+    expect(continued.codingPromptBehavior.sessionTitleUpdates).toBe('initial');
+    expect((await resolveEffectiveCodingPromptPlan({ ...args,
+      sessionMetadata: { summary: { text: '  ', updatedAt: 1 } },
+    })).text).toContain('change_title');
+    expect((await resolveEffectiveCodingPromptPlan({ ...args,
+      settings: { codingPromptBehaviorV1: { sessionTitleUpdates: 'ongoing' } },
+    })).text).toContain('change_title');
+  });
+
+  it.each(['native_mcp', 'native_extension', 'shell_bridge'] as const)('delivers the shared visual Action guide once through %s', async toolDelivery => {
+    const result = await resolveEffectiveCodingPromptPlan({ toolDelivery, settings: {}, profileId: null,
+      memoryRecallGuidanceEnabled: false, toolDeliverySessionId: 'visual-session', toolDeliveryDirectory: '/repo' });
+    // Assert prompt delivery from the real composition owner, independent of the guide's wording.
+    expect(result.text).toContain(HAPPIER_VISUAL_ACTION_GUIDANCE);
+    expect(result.text).toContain(HAPPIER_VISUAL_AUTHORING_GUIDANCE);
+    expect(result.text.indexOf(HAPPIER_VISUAL_AUTHORING_GUIDANCE)).toBe(result.text.lastIndexOf(HAPPIER_VISUAL_AUTHORING_GUIDANCE));
+    expect(result.text.indexOf(HAPPIER_VISUAL_ACTION_GUIDANCE)).toBe(result.text.lastIndexOf(HAPPIER_VISUAL_ACTION_GUIDANCE));
+  });
   it('keeps unreproducible prepared plugin plans inspectable in a native user echo', async () => {
     const result = await resolveEffectiveCodingPromptPlan({ toolDelivery: 'native_mcp', settings: {}, profileId: null,
       memoryRecallGuidanceEnabled: false,

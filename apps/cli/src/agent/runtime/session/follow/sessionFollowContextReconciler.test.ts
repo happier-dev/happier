@@ -20,6 +20,8 @@ import { SessionFollowInputV1Schema } from '@happier-dev/protocol/sessions/follo
 import { SessionFollowSourceProjectionResponseV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowSourceProjectionV1';
 import { createSessionFollowSourceMaterialResolver } from './sessionFollowSourceMaterialResolver';
 import { projectSessionFollowFrontierFromSourceV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowFrontierV1';
+import { measureSessionFollowUtf8Bytes, resolveSessionFollowContextUtf8AllowanceV1 } from './sessionFollowContextBudget';
+import { renderSessionInputContextPromptV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
 
 const frontier = {
   transcriptSeq: 2,
@@ -99,6 +101,21 @@ function originalInputFixture(texts: readonly string[]) {
 }
 
 describe('Session Follow context reconciler', () => {
+  it('preserves complete admitted originals and exact ACK custody when the provider window is unknown', async () => {
+    const original = 'Complete original é😀'.repeat(1_000);
+    const f = originalInputFixture([original]);
+    try {
+      const allowance = resolveSessionFollowContextUtf8AllowanceV1({ requiredPrompt: 'user input', activeModelId: null, contextUsage: null });
+      const prepared = await f.reconcile({ signal: new AbortController().signal, followDeliveries: f.deliveries,
+        maxFollowContextUtf8Bytes: allowance.maxUtf8Bytes });
+      expect(prepared?.updates[0]?.recentMessages[0]?.text).toBe(original);
+      expect(prepared?.representedFollowLocalInputIds).toEqual(['original-input-1']);
+      expect(f.acknowledgements).toEqual([]);
+      prepared!.acknowledgeAccepted({ kind: 'admitted_input', ...f.deliveries[0]! });
+      await vi.waitFor(() => expect(f.acknowledgements).toHaveLength(1));
+      expect(f.acknowledgements[0]).toMatchObject({ localInputId: 'original-input-1', consumed: { ...zeroFrontier, transcriptSeq: 1 } });
+    } finally { f.dispose(); }
+  });
   it.each(['execution_run', 'workflow_run'] as const)('rechecks current %s mode without losing the original on Important to Quiet', async kind => {
     const delivery = SessionFollowInputV1Schema.parse({ v: 1, delivery: 'wake', event: { kind: 'failed_or_stopped' },
       original: kind === 'execution_run'
@@ -199,6 +216,7 @@ describe('Session Follow context reconciler', () => {
   });
 
   it('uses only admitted original custody when ordinary and manager observations also expose the same report', async () => {
+    const reportText = 'One committed report é😀'.repeat(240);
     const delivery = SessionFollowInputV1Schema.parse({ v: 1, delivery: 'next_turn',
       original: { sourceSessionId: 'source', sourceMessage: { localId: 'report-original', seq: 1 } },
       event: { kind: 'update_posted' } });
@@ -235,7 +253,7 @@ describe('Session Follow context reconciler', () => {
           latestReadyEventAt: null, meaningfulActivityAt: null, agentStateVersion: 0 },
         messages: [{ seq: 1, localId: 'committed-report', createdAt: 1,
           messageRole: 'agent', content: { t: 'plain', v: { role: 'agent',
-            content: { type: 'event', data: { type: 'worker-report', summary: 'One committed report',
+            content: { type: 'event', data: { type: 'worker-report', summary: reportText,
               deliverables: [{ kind: 'workspace_file', sessionId: 'source', path: 'result.md' }] } } } } }],
         hasMore: false,
       }) },
@@ -246,14 +264,23 @@ describe('Session Follow context reconciler', () => {
       const omitted = await reconcile({ signal, maxFollowContextUtf8Bytes: 1,
         followDeliveries: [{ delivery, localInputId: 'accepted-follow', userMessageSeq: 17 }] });
       expect(omitted?.representedFollowLocalInputIds ?? []).toEqual([]);
-      const prepared = await reconcile({ signal,
+      const prepared = await reconcile({ signal, maxFollowContextUtf8Bytes: 1_024,
         followDeliveries: [{ delivery, localInputId: 'accepted-follow', userMessageSeq: 17,
           followMatches: [{ kind: 'relation', relation: 'manager' }, { kind: 'relation', relation: 'follower' }, { kind: 'rule' }],
         }] });
       expect(prepared?.representedFollowLocalInputIds).toEqual(['accepted-follow']);
       expect(prepared?.workerUpdates).toEqual([expect.objectContaining({ ownerState: 'published',
-        result: 'One committed report', deliverables: [{ kind: 'workspace_file', sessionId: 'source', path: 'result.md' }],
+        truncated: true, deliverables: [{ kind: 'workspace_file', sessionId: 'source', path: 'result.md' }],
         transcriptPointer: { kind: 'session', sessionId: 'source', seq: 1 } })]);
+      expect(prepared!.workerUpdates![0]!.result!.length).toBeLessThan(reportText.length);
+      expect(measureSessionFollowUtf8Bytes(renderSessionInputContextPromptV1({
+        sessionFollowUpdates: prepared!.updates, workerUpdates: prepared!.workerUpdates, transformedUserText: '',
+      }))).toBeLessThanOrEqual(1_024);
+      const unbounded = await reconcile({ signal, maxFollowContextUtf8Bytes: resolveSessionFollowContextUtf8AllowanceV1({
+        requiredPrompt: '', activeModelId: null, contextUsage: null,
+      }).maxUtf8Bytes, followDeliveries: [{ delivery, localInputId: 'accepted-follow', userMessageSeq: 17 }] });
+      expect(unbounded?.workerUpdates?.[0]?.result).toBe(reportText);
+      expect(acknowledgements).toEqual([]);
       expect(prepared?.workerUpdateEvents).toMatchObject([{ followInputLocalId: 'accepted-follow', followMatches: [
         { kind: 'relation', relation: 'manager' }, { kind: 'relation', relation: 'follower' }, { kind: 'rule' },
       ] }]);

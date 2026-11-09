@@ -26,6 +26,12 @@ import { projectExecutionRunPublicState } from './publicState';
 import { ExecutionRunGetResponseSchema, isExecutionRunActive } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { createExecutionRunOccurrenceWitnessRegistry, projectExecutionRunInputTurns } from './runOccurrenceWitness';
 import { materializeActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
+import { createDeferred } from '@/testkit/async/deferred';
+import { createDaemonControlApp } from '@/daemon/controlServer';
+import { admitDaemonExecutionRunStart } from '@/daemon/controlClient';
+import { deriveConnectedServiceRunMaterializeToken } from '@/daemon/connectedServices/runs/capabilityToken';
+import { createDaemonAdmissionDrain, EXECUTION_RUN_ADMISSION_PATH } from '@/daemon/lifecycle/admissionDrain';
+import { createManagedActivityInventory, readMachineMaintenanceAdmission } from '@/daemon/lifecycle/managedActivity';
 
 // Retained lifecycle and marker publication exercise real isolated filesystem custody.
 let directory: string;
@@ -41,6 +47,75 @@ afterEach(() => {
 });
 
 describe('execution run start transcript custody', () => {
+  it('keeps pending daemon admission visible to maintenance without consuming run capacity', async () => {
+    const drain = createDaemonAdmissionDrain();
+    const requestReceived = createDeferred();
+    const admissionReply = createDeferred();
+    const controlToken = 'pending-admission-test';
+    const app = createDaemonControlApp({
+      getChildren: () => [], stopSession: async () => ({ status: 'not_found' as const }),
+      spawnSession: async () => { throw new Error('Run admission cannot spawn a Session'); },
+      requestShutdown: () => {}, onHappySessionWebhook: () => {},
+      controlToken, machineId: 'machine', admissionDrain: drain,
+      verifyRunMaterializeToken: token => token === deriveConnectedServiceRunMaterializeToken(controlToken),
+    });
+    // Hold only the HTTP boundary; the actual client, route and drain decide admission.
+    app.addHook('onRequest', async request => {
+      if (request.url === EXECUTION_RUN_ADMISSION_PATH) {
+        requestReceived.resolve();
+        await admissionReply.promise;
+      }
+    });
+    const budgetRegistry = new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: null, maxConcurrentOneShotTasks: null });
+    const inventory = createManagedActivityInventory({ producers: [budgetRegistry.getLiveWorkProducer()] });
+    const runs = new Map<string, ExecutionRunState>();
+    const controllers = new Map<string, ExecutionRunController>();
+    const voiceAgentManager = new VoiceAgentManager({ createRuntime: () => {
+      throw new Error('Refused admission cannot create a native runtime');
+    } });
+    let releaseDrain: (() => void) | undefined;
+    let rejected: Promise<void> | undefined;
+    try {
+      await app.listen({ host: '127.0.0.1', port: 0 });
+      const address = app.server.address();
+      if (!address || typeof address === 'string') throw new Error('Expected daemon control listener');
+      expect(await readMachineMaintenanceAdmission(inventory)).toEqual({ kind: 'eligible' });
+      rejected = expect(startExecutionRun({
+        params: { sessionId: 'session-1', intent: 'delegate', backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+          instructions: 'Pending work', permissionMode: 'read_only', retentionPolicy: 'ephemeral',
+          runClass: 'bounded', ioMode: 'request_response' },
+        parentProvider: 'claude', sendAcp: async () => {}, streamedTranscriptSession: null,
+        createRuntime: () => { throw new Error('Refused admission cannot launch'); }, getNowMs: Date.now,
+        admitStart: () => admitDaemonExecutionRunStart({ target: { pid: process.pid, httpPort: address.port, controlToken } }),
+        budgetRegistry, runs, controllers, enqueueMarkerWrite: async (_id, write) => { await write(); },
+        writeActivityMarker: async () => {}, finishRun: async () => {}, executeBoundedRun: async () => {},
+        send: async () => ({ ok: true }), voiceAgentManager,
+      })).rejects.toMatchObject({ code: 'daemon_draining', details: { executionRunStart: { runCreation: 'noRunCreated' } } });
+      await requestReceived.promise;
+      releaseDrain = drain.beginTemporaryDrain();
+      expect(await readMachineMaintenanceAdmission(inventory)).toEqual({ kind: 'blocked', reasons: ['execution_run'] });
+      expect(budgetRegistry.getInFlightSnapshot()).toEqual({ executionRuns: 0, oneShotTasks: 0 });
+      expect(runs.size).toBe(0);
+      expect(await listExecutionRunMarkers()).toEqual([]);
+      admissionReply.resolve();
+      await rejected;
+      expect(await readMachineMaintenanceAdmission(inventory)).toEqual({ kind: 'eligible' });
+      expect(runs.size).toBe(0);
+      expect(controllers.size).toBe(0);
+      expect(await listExecutionRunMarkers()).toEqual([]);
+      expect(drain.isQuiescing()).toBe(true);
+    } finally {
+      releaseDrain ??= drain.beginTemporaryDrain();
+      admissionReply.resolve();
+      try { await rejected; }
+      finally {
+        releaseDrain();
+        inventory.dispose();
+        await app.close();
+        await voiceAgentManager.dispose();
+      }
+    }
+  });
   it.each(['bob', 'carol', null])('retains requester %s and the exact detached initial input before native admission', async accountId => {
     const attribution = materializeActionRequestAttributionV1({ requestRef: 'workflow-initial',
       requester: accountId ? { serverId: 'home', accountId } : null,

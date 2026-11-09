@@ -64,6 +64,8 @@ export type ResolveEffectiveCodingPromptArgs = Omit<CliPromptStackSystemAppendIn
   memoryMachineId?: string | null;
   sessionTitleToolAvailable?: boolean;
   sessionMetadata?: unknown;
+  /** Title presence basis the plan producer holds for its native conversation. */
+  sessionTitled?: boolean;
   createdAsBot?: boolean;
   toolPromptContributions?: readonly ToolPromptContribution[];
   /**
@@ -324,6 +326,7 @@ export async function resolveEffectiveCodingPromptPlan(
     sessionCompactionToolName: toolDelivery === 'native_extension' ? 'session_compact' : 'mcp__happier__session_compact',
     createdAsBot: args.createdAsBot,
     sessionMetadata: args.sessionMetadata,
+    ...(args.sessionTitled === undefined ? {} : { sessionTitled: args.sessionTitled }),
   });
   const stackResult = await resolveCliPromptStackSystemAppendBlocks({
     ...args,
@@ -347,7 +350,6 @@ export async function resolveEffectiveCodingPromptPlan(
   const toolDeliveryBlocks = (() => {
     const sessionId = typeof args.toolDeliverySessionId === 'string' ? args.toolDeliverySessionId.trim() : '';
     const directory = typeof args.toolDeliveryDirectory === 'string' ? args.toolDeliveryDirectory.trim() : '';
-    if (toolDelivery !== 'shell_bridge' || !sessionId || !directory) return [] satisfies PromptBlockV1[];
     return resolveCodingToolDeliveryBlocks({
       delivery: toolDelivery,
       sessionId,
@@ -355,6 +357,8 @@ export async function resolveEffectiveCodingPromptPlan(
       settings: promptSettings,
       sessionTitleToolAvailable,
       createdAsBot: args.createdAsBot,
+      sessionMetadata: args.sessionMetadata,
+      ...(args.sessionTitled === undefined ? {} : { sessionTitled: args.sessionTitled }),
       memoryRecallGuidance: {
         enabled: memoryRecallGuidanceEnabled,
         machineId: args.memoryMachineId ?? null,

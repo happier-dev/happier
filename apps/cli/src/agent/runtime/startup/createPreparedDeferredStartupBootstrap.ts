@@ -70,6 +70,7 @@ export async function createPreparedDeferredStartupBootstrap(params: Readonly<{
   createInitialRegisteredSessionStateFieldMutations?: DeferredStartupRegisteredStateMutationFactory;
   transformSessionInputBeforeCommit?: ApiSessionClientOptions['transformSessionInputBeforeCommit'];
   afterComposerAttachmentMessageAccepted?: ApiSessionClientOptions['afterComposerAttachmentMessageAccepted'];
+  createPendingMessageComposerAdmissionControls?: (sessionId: string) => ApiSessionClientOptions['pendingMessageComposerAdmissionControls'];
   machineAdmissionTransport?: ApiSessionClientOptions['machineAdmissionTransport'];
   initializeBackendApiContext?: DeferredStartupBackendApiContextInitializer;
 }>): Promise<TimedDeferredStartupBootstrapResult<DeferredStartupBootstrapResult>> {
@@ -128,6 +129,7 @@ export async function createPreparedDeferredStartupBootstrap(params: Readonly<{
     transformSessionInputBeforeCommit: params.transformSessionInputBeforeCommit,
     afterComposerAttachmentMessageAccepted:
       params.afterComposerAttachmentMessageAccepted,
+    createPendingMessageComposerAdmissionControls: params.createPendingMessageComposerAdmissionControls,
     machineAdmissionTransport: params.machineAdmissionTransport,
     initializeBackendApiContext: params.initializeBackendApiContext,
   });

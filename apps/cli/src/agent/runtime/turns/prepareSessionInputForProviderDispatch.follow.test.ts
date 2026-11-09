@@ -10,7 +10,7 @@ describe('Follow at the final provider input boundary', () => {
         : { source: { kind, runId: 'failed-run' }, revision: 2 } });
     const followDeliveries = [{ delivery, localInputId: 'follow-input', userMessageSeq: 1 }];
     const prepared = await prepareSessionInputForProviderDispatch({
-      prompt: { text: 'Followed source changed.', followDeliveries }, transformedUserText: 'Followed source changed.',
+      prompt: { text: 'Followed source changed.', localId: 'follow-input', followDeliveries }, transformedUserText: 'Followed source changed.',
       providerNativeCommand: false, signal: new AbortController().signal, localId: 'follow-input',
     });
     const prompt = prepared.renderPrompt({ runFollowDeliveries: followDeliveries });

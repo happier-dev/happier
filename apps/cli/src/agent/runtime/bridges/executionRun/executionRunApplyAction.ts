@@ -143,6 +143,7 @@ export async function applyExecutionRunAction(args: Readonly<{
       },
       ...(run.display ? { display: run.display } : {}),
       permissionMode: args.effectiveCallerPermissionMode ?? run.permissionMode,
+      approvalProfileId: run.approvalProfileId ?? null,
       ...(args.causalPermissionAuthority
         ? { causalPermissionAuthority: args.causalPermissionAuthority }
         : {}),
@@ -197,7 +198,7 @@ export async function applyExecutionRunAction(args: Readonly<{
           if (e.code === 'VOICE_AGENT_NOT_FOUND') return { ok: false, errorCode: 'execution_run_not_found', error: e.message };
           return { ok: false, errorCode: 'execution_run_failed', error: e.message };
         }
-        return { ok: false, errorCode: 'execution_run_failed', error: e instanceof Error ? e.message : 'Commit failed' };
+        return { ok: false, errorCode: readExecutionRunErrorCode(e) ?? 'execution_run_failed', error: e instanceof Error ? e.message : 'Commit failed' };
       }
     }
     if (actionId === 'voice_agent.welcome') {

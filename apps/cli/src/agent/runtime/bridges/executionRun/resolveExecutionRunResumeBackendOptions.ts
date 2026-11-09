@@ -22,6 +22,7 @@ import type { ExecutionRunState } from './executionRunTypes';
 export type ExecutionRunResumeBackendOptions = Readonly<{
   workspaceWrites?: 'allow' | 'deny';
   modelId?: string;
+  modelSelectionSource?: 'explicit' | 'inherited';
   modelSelection?: ProviderBoundModelRef;
   teamCredentialModel?: TeamCredentialProviderModelSelectionV1;
   sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
@@ -39,6 +40,8 @@ export function resolveExecutionRunResumeBackendOptions(args: Readonly<{
   const launch = run.launch ?? null;
   return {
     ...(run.workspaceWrites !== undefined ? { workspaceWrites: run.workspaceWrites === 'allow' ? 'allow' : 'deny' } : {}),
+    // Historical lifecycle labels do not prove an explicit model operand.
+    modelSelectionSource: launch?.selectionSource === 'explicit' ? 'explicit' : 'inherited',
     ...(launch?.modelId ? { modelId: launch.modelId } : {}),
     ...(launch?.modelSelection ? { modelSelection: launch.modelSelection } : {}),
     ...(launch?.teamCredentialModel ? { teamCredentialModel: launch.teamCredentialModel } : {}),

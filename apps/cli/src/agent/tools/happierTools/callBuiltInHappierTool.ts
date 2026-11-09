@@ -5,15 +5,16 @@ import { createChangeTitleToolHandler } from './createChangeTitleToolHandler';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 import { readDaemonPluginCatalog } from '@/daemon/controlClient';
-import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
-import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { resolveMcpToolCallRequestTimeoutMs } from '@/mcp/mcpToolCallRequestOptions';
 import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { ensureCliActionPolicySettings } from '@/session/actions/ensureCliActionPolicySettings';
+import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { resolveMcpToolCallRequestTimeoutMs } from '@/mcp/mcpToolCallRequestOptions';
+import { supportsSessionMcpLocalTransport } from '@/mcp/runtime/sessionMcpLocalTransport';
 
 function normalizeNativeAgentToolResponse(value: unknown): Awaited<ReturnType<typeof dispatchBuiltInHappierTool>> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -24,12 +25,8 @@ function normalizeNativeAgentToolResponse(value: unknown): Awaited<ReturnType<ty
     return { ok: true, result: response.result };
   }
   if (response.ok === false && typeof response.errorCode === 'string' && typeof response.error === 'string') {
-    return {
-      ok: false,
-      errorCode: response.errorCode,
-      error: response.error,
-      ...(Object.prototype.hasOwnProperty.call(response, 'details') ? { details: response.details } : {}),
-    };
+    return { ok: false, errorCode: response.errorCode, error: response.error,
+      ...(Object.prototype.hasOwnProperty.call(response, 'details') ? { details: response.details } : {}) };
   }
   return { ok: false, errorCode: 'invalid_action_transport_output', error: 'invalid_action_transport_output' };
 }
@@ -39,6 +36,7 @@ export async function callBuiltInHappierTool(params: Readonly<{
   sessionId: string;
   toolName: string;
   args: unknown;
+  /** Retained current-user Windows bridge. POSIX Agent calls use Session MCP. */
   surface?: 'cli' | 'agent';
   toolCallId?: string | null;
   /** Tool-call or command cancellation; omitted programmatic callers live until process exit. */
@@ -47,6 +45,9 @@ export async function callBuiltInHappierTool(params: Readonly<{
   readCredentials?: () => Promise<StoredCredentials | null>;
 }>): Promise<Awaited<ReturnType<typeof dispatchBuiltInHappierTool>>> {
   params.signal?.throwIfAborted();
+  if (params.surface === 'agent' && supportsSessionMcpLocalTransport()) {
+    return { ok: false, errorCode: 'not_authenticated', error: 'Authenticated Session MCP context is required.' };
+  }
   const credentialSnapshot = params.readCredentials
     ? await params.readCredentials().catch(() => null)
     : params.credentials;
@@ -91,23 +92,16 @@ export async function callBuiltInHappierTool(params: Readonly<{
     };
   }
   const { rawSession, sessionId } = sessionTarget;
-  const surface = params.surface ?? 'cli';
-  if (surface === 'agent') {
+  if (params.surface === 'agent') {
     const request = {
       token: credentialSnapshot.token,
       sessionId,
       method: SESSION_RPC_METHODS.SESSION_AGENT_TOOL_CALL_V1,
-      request: {
-        toolName: params.toolName,
-        args: params.args,
-        ...(typeof params.toolCallId === 'string' && params.toolCallId.trim().length > 0
-          ? { toolCallId: params.toolCallId.trim() }
-          : {}),
+      request: { toolName: params.toolName, args: params.args,
+        ...(typeof params.toolCallId === 'string' && params.toolCallId.trim()
+          ? { toolCallId: params.toolCallId.trim() } : {}),
       },
-      timeoutMs: resolveMcpToolCallRequestTimeoutMs({
-        toolName: params.toolName,
-        args: params.args,
-      }),
+      timeoutMs: resolveMcpToolCallRequestTimeoutMs({ toolName: params.toolName, args: params.args }),
       ...(params.signal ? { signal: params.signal } : {}),
     };
     const response = await callSessionRpc(sessionTarget.mode === 'plain'
@@ -115,6 +109,7 @@ export async function callBuiltInHappierTool(params: Readonly<{
       : { ...request, mode: 'e2ee', ctx: sessionTarget.ctx });
     return normalizeNativeAgentToolResponse(response);
   }
+  const surface = 'cli';
   const callerPermissionMode = null;
   const sessionMachineId = typeof rawSession.machineId === 'string' && rawSession.machineId.trim().length > 0
     ? rawSession.machineId.trim()

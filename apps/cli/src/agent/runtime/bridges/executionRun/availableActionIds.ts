@@ -20,13 +20,13 @@ export function getExecutionRunAvailableActionIds(
         run.profileSourceCustody,
       )
     : resolveExecutionRunIntentProfile(run.intent);
-  if (!profile.listAvailableActionIds) return [];
+  if (!profile.listAvailableActionIds) return ['approval_profile.set'];
 
   const actionIds = profile.listAvailableActionIds({
     start: buildExecutionRunProfileStartParams(run),
     structuredMeta: run.structuredMeta ?? null,
     controllerKind: controller?.kind ?? null,
   });
-  return actionIds.filter((actionId) => actionId !== 'reviews.comments.create'
-    || (run.status === 'succeeded' && run.sessionId !== null));
+  return [...actionIds.filter((actionId) => actionId !== 'reviews.comments.create'
+    || (run.status === 'succeeded' && run.sessionId !== null)), 'approval_profile.set'];
 }

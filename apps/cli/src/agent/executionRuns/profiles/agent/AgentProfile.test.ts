@@ -22,7 +22,7 @@ describe('AgentProfile', () => {
   it('exposes general detached execution without delegate output semantics', () => {
     expect(AgentProfile).toMatchObject({
       intent: 'agent',
-      transcriptMaterialization: 'none',
+      transcriptMaterialization: 'completion',
     });
     expect(AgentProfile.supportsDetached).toBe(true);
     expect(AgentProfile.buildPrompt(start)).toBe('Implement the requested change.');

@@ -8,8 +8,119 @@ import { sendReadyWithPushNotification } from './sendReadyWithPushNotification';
 import { createNotificationAccountSnapshotFixture } from '@/testkit/notificationAccountSnapshot';
 import { createReadyNotificationDispatcher } from './createReadyNotificationDispatcher';
 import type { SessionPersonalFollowCommit } from '@/api/session/sessionClientPort';
+import axios from 'axios';
+import * as persistence from '@/persistence';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { emptyAccountSettingsHistoryCaptureResponse } from '@/settings/accountSettings/emptyAccountSettingsHistoryCapture.testkit';
+import { logger } from '@/ui/logger';
+import { sendAgentRequestPushNotificationAsync } from '@/settings/notifications/permissionRequestPush';
 
 describe('ready notification Account catalog admission', () => {
+  it.each(['interrupt', 'important', 'retired', 'credentials-retired', 'unreachable', 'request'] as const)(
+    'demands the runner Account channel row without borrowing another lifetime (%s)', async outcome => {
+    resetActiveAccountSettingsSnapshotForTests();
+    const home = 'https://runner-ready-catalog.example';
+    const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'runner-ready-account' })).toString('base64url')}.signature`, encryption: null };
+    await runWithServerHttpBaseUrl(home, async () => {
+      const snapshot = { source: 'network' as const, settings: accountSettingsParse({}), rawSettings: {},
+        settingsVersion: 7, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(credentials) };
+      setActiveAccountSettingsSnapshot(snapshot); // A fresh runner has preferences, not the daemon's row catalog.
+      let catalogReads = 0;
+      let settled = false;
+      const sent: unknown[][] = [];
+      const receipt = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
+      const readCredentials = vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue(outcome === 'credentials-retired'
+        ? { ...credentials, token: 'another-account' } : credentials);
+      const get = vi.spyOn(axios, 'get').mockImplementation(async input => {
+        const url = new URL(String(input));
+        expect(url.origin).toBe(home);
+        if (url.pathname === '/v1/account/encryption/currentness') return { status: 200, data: {
+          mode: 'plain', version: 1, settingsVersion: 7, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+        if (url.pathname === '/v1/account/entity-rows/notification-channels') {
+          catalogReads += 1;
+          if (outcome === 'retired') setActiveAccountSettingsSnapshot({ ...snapshot, scopeKey: 'another-account' });
+          return outcome === 'unreachable' ? { status: 503, data: {} } : { status: 200, data: {
+            status: 'present', revision: 1, content: { t: 'plain', v: { v: 1, channels: [
+              NotificationChannelRecordV1Schema.parse({ v: 1, id: 'runner-push', kind: 'expo_push', topics: {} }),
+            ] } } } };
+        }
+        if (url.pathname === '/v2/account/settings') return { status: 200, data: { version: 7, content: { t: 'plain', v: {} } } };
+        if (url.pathname === '/v2/account/settings/history') return { status: 200, data: { snapshots: [] } };
+        if (url.pathname === '/v1/account/saved-secrets/resources/materials') return { status: 200, data: { resources: [] } };
+        const empty = emptyAccountSettingsHistoryCaptureResponse(url.pathname);
+        if (empty) return empty;
+        throw new Error(`Unexpected notification HTTP boundary: ${url.pathname}`);
+      });
+      try {
+        const pushSender = {
+            fetchSessionNotificationContext: async (id: string) => {
+              const session = createSessionNotificationContextFixture(id);
+              return { ...session, viewer: { ...session.viewer!, follow: { ...session.viewer!.follow,
+                policy: { preset: outcome === 'important' ? 'important' as const : 'everything' as const } } } };
+            },
+            readAccountSessionDeliveryMutedScopes: async () => [],
+            sendToAllDevicesAsync: async (...args: unknown[]) => { sent.push(args); return true; },
+          };
+        if (outcome === 'request') {
+          await expect(sendAgentRequestPushNotificationAsync({ pushSender, settings: snapshot.settings,
+            sessionId: 'cold-request', requestId: 'cold-question', toolName: 'AskUserQuestion', kind: 'user_action',
+          })).resolves.toEqual({ status: 'delivered' });
+        } else {
+          await sendReadyWithPushNotification({ session: { sessionId: `cold-ready-${outcome}`,
+            enqueueSessionEventCommitted: async () => ({ persisted: true, delivered: true, localId: `original-${outcome}`, committedSequence: 5 }) },
+            pushSender, waitingForCommandLabel: 'Agent', logPrefix: '[cold-ready]', loggerDebug: () => { settled = true; } });
+        }
+        await vi.waitFor(() => expect(receipt.mock.calls.filter(([message]) => message === '[activityNotifications] Dispatch outcome')).toHaveLength(1));
+        const delivered = outcome === 'interrupt' || outcome === 'request';
+        expect(catalogReads).toBe(outcome === 'credentials-retired' ? 0 : 1);
+        if (delivered) await vi.waitFor(() => expect(sent).toHaveLength(1));
+        else if (outcome !== 'important') await vi.waitFor(() => expect(settled).toBe(true));
+        expect(sent).toHaveLength(delivered ? 1 : 0);
+        const result = receipt.mock.calls.find(([message]) => message === '[activityNotifications] Dispatch outcome')?.[1];
+        expect(result).toMatchObject({ attemptedChannels: delivered ? 1 : 0,
+          deliveredChannels: delivered ? 1 : 0, failedChannels: 0 });
+        if (delivered || outcome === 'important') expect(result).not.toHaveProperty('cause');
+        else expect(result).toHaveProperty('cause.errorCode', 'notification_channel_catalog_unavailable');
+      } finally { receipt.mockRestore(); get.mockRestore(); readCredentials.mockRestore(); resetActiveAccountSettingsSnapshotForTests(); }
+    });
+  });
+  it('does not send a late rich ready after its terminal Turn personal effect was accepted', async () => {
+    resetActiveAccountSettingsSnapshotForTests();
+    setActiveAccountSettingsSnapshot(createNotificationAccountSnapshotFixture());
+    const sent: unknown[][] = [];
+    const personalFollow = { sourceSessionId: 'ready-source', accepted: true as const,
+      sourceMessage: { localId: 'late-ready', seq: 41, policies: [{ preset: 'everything' as const }] } };
+    try {
+      await sendReadyWithPushNotification({ session: { sessionId: 'ready-source', enqueueSessionEventCommitted: async () => ({
+        persisted: true, delivered: true, localId: 'late-ready', committedSequence: 41, personalFollow,
+      }) }, completedTurn: { turnId: 'host-turn' }, pushSender: {
+        fetchSessionNotificationContext: async id => createSessionNotificationContextFixture(id),
+        readAccountSessionDeliveryMutedScopes: async () => [],
+        sendToAllDevicesAsync: async (...args: unknown[]) => { sent.push(args); return true; },
+      }, waitingForCommandLabel: 'Agent', logPrefix: '[late-ready-test]' });
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(sent).toEqual([]);
+    } finally { resetActiveAccountSettingsSnapshotForTests(); }
+  });
+  it('does not mistake absent source-message evidence for an accepted ready original', async () => {
+    resetActiveAccountSettingsSnapshotForTests();
+    setActiveAccountSettingsSnapshot(createNotificationAccountSnapshotFixture());
+    const sent: unknown[][] = [];
+    try {
+      await sendReadyWithPushNotification({ session: { sessionId: 'no-message-original', enqueueSessionEventCommitted: async () => ({
+        persisted: true, delivered: true, personalFollow: { sourceSessionId: 'no-message-original', accepted: true },
+      }) }, pushSender: {
+        fetchSessionNotificationContext: async id => {
+          const session = createSessionNotificationContextFixture(id);
+          return { ...session, viewer: { ...session.viewer!, follow: { ...session.viewer!.follow, policy: { preset: 'everything' as const } } } };
+        },
+        readAccountSessionDeliveryMutedScopes: async () => [],
+        sendToAllDevicesAsync: async (...args: unknown[]) => { sent.push(args); return true; },
+      }, waitingForCommandLabel: 'Agent', logPrefix: '[absent-message-evidence]' });
+      await vi.waitFor(() => expect(sent).toHaveLength(1));
+    } finally { resetActiveAccountSettingsSnapshotForTests(); }
+  });
   it.each([false, true])('keeps durable publication independent of its original ACK and cancellation=%s', async cancelled => {
     resetActiveAccountSettingsSnapshotForTests();
     setActiveAccountSettingsSnapshot(createNotificationAccountSnapshotFixture());

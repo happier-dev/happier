@@ -6,8 +6,10 @@ import { createHappierMcpBridge } from '@/agent/runtime/createHappierMcpBridge'
 import { resolveRunnerMcpServers } from '@/mcp/runtime/resolveRunnerMcpServers'
 import type { HappyMcpSessionClient } from '@/mcp/startHappyServer'
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol'
+import { buildCodexAppServerConfigOverrides } from '@happier-dev/plugins-codex/agent/runtime/appServer/config/overrides'
 import { projectPath } from '@/projectPath'
 import { createApiSessionClientFixture, createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures'
+import { createEnvKeyScope } from '@/testkit/env/envScope'
 
 const cliProjectRoot = projectPath()
 
@@ -31,7 +33,8 @@ vi.mock('node:fs', async (importOriginal) => {
   }
 })
 
-vi.mock('@/utils/spawnHappyCLI', () => ({
+vi.mock('@/utils/spawnHappyCLI', async importOriginal => ({
+  ...await importOriginal<typeof import('@/utils/spawnHappyCLI')>(),
   resolveTsxImportHookPath: vi.fn(() => '/repo/node_modules/tsx/dist/esm/index.mjs'),
   resolveCliTsxTsconfigPath: vi.fn(() => '/repo/tsconfig.json'),
 }))
@@ -45,10 +48,23 @@ vi.mock('@/mcp/startHappyServer', () => ({
 }))
 
 const originalActionSettingsEnv = process.env.HAPPIER_ACTIONS_SETTINGS_V1
+const toolEnvironmentScope = createEnvKeyScope(['AGENT_BROWSER_IDLE_TIMEOUT_MS', 'PRIVATE_BRIDGE_ENV'])
 
 describe('createHappierMcpBridge', () => {
+  it('omits native built-in tools after the Session opt-out', async () => {
+    vi.mocked(existsSync).mockImplementation(pathLike => String(pathLike).endsWith('/package-dist/mcp/bridges/happierMcpStdioBridge.mjs'))
+    const session = createMutableApiSessionClientFixture({ metadata: { mcpSelectionV1: {
+      v: 1, managedServersEnabled: false, happierToolsEnabled: false,
+      forceIncludeServerIds: [], forceExcludeServerIds: [],
+    } } })
+    const bridge = await createHappierMcpBridge(session)
+    expect(bridge.mcpServers).toEqual({})
+    expect(startHappyServerMock).not.toHaveBeenCalled()
+  })
+
   beforeEach(() => {
     delete process.env.HAPPIER_ACTIONS_SETTINGS_V1
+    toolEnvironmentScope.patch({ AGENT_BROWSER_IDLE_TIMEOUT_MS: undefined, PRIVATE_BRIDGE_ENV: undefined })
     vi.mocked(existsSync).mockReset()
     vi.mocked(existsSync).mockReturnValue(false)
     requireJavaScriptRuntimeExecutableMock.mockReset()
@@ -63,11 +79,52 @@ describe('createHappierMcpBridge', () => {
   })
 
   afterAll(() => {
+    toolEnvironmentScope.restore()
     if (originalActionSettingsEnv === undefined) {
       delete process.env.HAPPIER_ACTIONS_SETTINGS_V1
     } else {
       process.env.HAPPIER_ACTIONS_SETTINGS_V1 = originalActionSettingsEnv
     }
+  })
+
+  it.each([
+    ['default', '300000'],
+    ['custom', '420000'],
+    ['authored override', '900000'],
+    ['authored empty value', ''],
+    ['Off', undefined],
+  ] as const)('carries the captured %s tool idle value into the native MCP launch config', async (_label, value) => {
+    toolEnvironmentScope.patch({ AGENT_BROWSER_IDLE_TIMEOUT_MS: value, PRIVATE_BRIDGE_ENV: 'must-not-leak' })
+    vi.mocked(existsSync).mockImplementation(pathLike => (
+      String(pathLike).endsWith('/package-dist/mcp/bridges/happierMcpStdioBridge.mjs')
+    ))
+
+    const { mcpServers } = await createHappierMcpBridge(createApiSessionClientFixture())
+    const overrides = buildCodexAppServerConfigOverrides(mcpServers)
+    if (value === undefined) {
+      expect(mcpServers.happier.env).toBeUndefined()
+      expect(overrides.some(override => override.startsWith('mcp_servers.happier.env='))).toBe(false)
+    } else {
+      expect(mcpServers.happier.env).toEqual({ AGENT_BROWSER_IDLE_TIMEOUT_MS: value })
+      expect(overrides).toContain(`mcp_servers.happier.env={AGENT_BROWSER_IDLE_TIMEOUT_MS=${JSON.stringify(value)}}`)
+    }
+    expect(overrides.join('\n')).not.toContain('PRIVATE_BRIDGE_ENV')
+  })
+
+  it('preserves source runtime and Action settings alongside captured tool idle values', async () => {
+    toolEnvironmentScope.patch({ AGENT_BROWSER_IDLE_TIMEOUT_MS: '420000' })
+    vi.mocked(existsSync).mockImplementation(pathLike => (
+      String(pathLike).endsWith('/src/mcp/bridges/happierMcpStdioBridge.ts')
+    ))
+    const actionsSettingsProvider = { getActionsSettings: () => normalizeActionsSettingsV1({
+      v: 1, actions: { 'session.list': { enabled: false } },
+    }) }
+    const { mcpServers } = await createHappierMcpBridge(createApiSessionClientFixture(), { actionsSettingsProvider })
+    expect(mcpServers.happier.env).toEqual({
+      AGENT_BROWSER_IDLE_TIMEOUT_MS: '420000',
+      TSX_TSCONFIG_PATH: '/repo/tsconfig.json',
+      HAPPIER_ACTIONS_SETTINGS_V1: JSON.stringify(actionsSettingsProvider.getActionsSettings()),
+    })
   })
 
   it('binds the Run absolute depth without borrowing its parent Session depth', async () => {
@@ -151,6 +208,22 @@ describe('createHappierMcpBridge', () => {
     })
   })
 
+  it('retains the existing loopback URL launcher for non-isolated Windows Sessions', async () => {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+    vi.mocked(existsSync).mockImplementation(pathLike => (
+      String(pathLike).endsWith('/package-dist/mcp/bridges/happierMcpStdioBridge.mjs')
+    ))
+    Object.defineProperty(process, 'platform', { ...platform, value: 'win32' })
+    try {
+      const session = createApiSessionClientFixture()
+      const { mcpServers } = await createHappierMcpBridge(session)
+      expect(mcpServers.happier.args?.slice(-2)).toEqual(['--url', 'http://127.0.0.1:12345'])
+      expect(mcpServers.happier.env).toBeUndefined()
+      expect(startHappyServerMock).toHaveBeenCalledWith(session,
+        expect.not.objectContaining({ localTransport: expect.anything() }))
+    } finally { Object.defineProperty(process, 'platform', platform) }
+  })
+
   it('passes the action settings snapshot to the bridge stdio process', async () => {
     const previousActionSettings = process.env.HAPPIER_ACTIONS_SETTINGS_V1
     process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({
@@ -199,13 +272,13 @@ describe('createHappierMcpBridge', () => {
 
     const { mcpServers } = await createHappierMcpBridge(session, { accountSettings })
 
-    expect(startHappyServerMock).toHaveBeenCalledWith(session, {
+    expect(startHappyServerMock).toHaveBeenCalledWith(session, expect.objectContaining({
       credentials: null,
       sessionCredentials: null,
       authorityScope: 'account',
       accountSettings,
       getAccountSettings: null,
-    })
+    }))
     expect(mcpServers.happier.env).toEqual({
       HAPPIER_ACTIONS_SETTINGS_V1: JSON.stringify(accountSettings.actionsSettingsV1),
     })
@@ -261,8 +334,9 @@ describe('createHappierMcpBridge', () => {
         args: [
           '--no-warnings',
           '--no-deprecation',
+          '--conditions=happier-source',
           '--import',
-          '/repo/node_modules/tsx/dist/esm/index.mjs',
+          expect.stringMatching(/registerSourceRuntime\.mjs$/),
           join(cliProjectRoot, 'src', 'mcp', 'bridges', 'happierMcpStdioBridge.ts'),
           '--url',
           'http://127.0.0.1:12345',
@@ -294,8 +368,9 @@ describe('createHappierMcpBridge', () => {
       args: [
         '--no-warnings',
         '--no-deprecation',
+        '--conditions=happier-source',
         '--import',
-        '/repo/node_modules/tsx/dist/esm/index.mjs',
+        expect.stringMatching(/registerSourceRuntime\.mjs$/),
         join(cliProjectRoot, 'src', 'mcp', 'bridges', 'happierMcpStdioBridge.ts'),
         '--url',
         'http://127.0.0.1:12345',
@@ -353,12 +428,12 @@ describe('createHappierMcpBridge', () => {
 
     await createHappierMcpBridge(session, { credentials })
 
-    expect(startHappyServerMock).toHaveBeenCalledWith(session, {
+    expect(startHappyServerMock).toHaveBeenCalledWith(session, expect.objectContaining({
       credentials,
       sessionCredentials: credentials,
       authorityScope: 'account',
       accountSettings: null,
       getAccountSettings: null,
-    })
+    }))
   })
 })

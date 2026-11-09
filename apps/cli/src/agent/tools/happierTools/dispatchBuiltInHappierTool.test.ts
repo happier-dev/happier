@@ -5,6 +5,7 @@ import {
   ActionDefinitionV1Schema,
   createActionExecutor,
   SessionSpawnNewInputV2Schema,
+  projectSessionSpawnNewActionInputV2,
 } from '@happier-dev/protocol';
 
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
@@ -181,6 +182,22 @@ describe('built-in Happier tools', () => {
       }
       return { ...definition.inputSchema, ...(Object.keys(definitions).length ? { definitions } : {}) };
     };
+    const draftResult = await dispatchBuiltInHappierTool({ toolName: 'action_spec_get',
+      args: { id: 'template.draft' }, sessionId: 'sess-1',
+      deps: { changeTitle: async () => ({ success: true }), executeActionByToolName } });
+    expect(draftResult.ok, JSON.stringify(draftResult)).toBe(true);
+    if (!draftResult.ok) throw new Error(`Expected draft discovery: ${draftResult.errorCode}`);
+    const draftDefinition = ActionDefinitionV1Schema.parse(
+      PUBLIC_ACTION_OUTPUT_SCHEMAS['action.spec.get'].parse(draftResult.result).actionSpec);
+    const validateDraft = new Ajv({ strict: false, validateFormats: false }).compile(await readCompleteInputSchema(draftResult.result));
+    const draftInput = { sourceSessionRef: { serverId: 'home', sessionId: 'sess-1' },
+      content: { v: 1, identity: { name: 'Helper', description: 'Reusable helper' },
+        instructions: { markdown: 'Help with work.' }, memoryRules: [], skills: [],
+        needs: { software: [], connectedAccounts: [], mcpServers: [] } } };
+    expect(validateDraft(draftInput), JSON.stringify(validateDraft.errors)).toBe(true);
+    expect(validateDraft({ ...draftInput, expectedRevision: { headerVersion: 1, bodyVersion: 1 } })).toBe(false);
+    expect(draftDefinition.inputHints?.fields.some(field => field.path.startsWith('expectedRevision'))).toBe(false);
+
     const listResult = await dispatchBuiltInHappierTool({
       toolName: 'action_spec_search',
       args: { query: 'review' },
@@ -236,16 +253,16 @@ describe('built-in Happier tools', () => {
     if (!definition.inputSchema) throw new Error('Expected spawn input schema');
     // Exercise the published schema, including references, rather than requiring inline serialization.
     const validate = new Ajv({ strict: false, validateFormats: false }).compile(await readCompleteInputSchema(spawnGetResult.result));
-    const input = SessionSpawnNewInputV2Schema.parse({
+    const input = projectSessionSpawnNewActionInputV2(SessionSpawnNewInputV2Schema.parse({
       executionTarget: { serverId: 'active', machineId: 'machine-1' },
       directory: { kind: 'path', path: '/workspace/project' },
       agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
       organizationPlacement: { folderId: null, tagIds: [] },
       agentSessionStartupInstructionsV1: { v: 1, id: 'fixture.instructions', revision: 1, instructions: 'Inspect the workspace.' },
-    });
+    }));
     expect(validate(input), JSON.stringify(validate.errors)).toBe(true);
     expect(validate({ ...input, executionTarget: { ...input.executionTarget, serverId: 'x'.repeat(192) } })).toBe(false);
-    expect(validate({ ...input, organizationPlacement: { folderId: null, tagIds: Array.from({ length: 501 }, (_, i) => `tag-${i}`) } })).toBe(false);
+    expect(validate({ ...input, organizationPlacement: { sectionId: null, tagIds: Array.from({ length: 501 }, (_, i) => `tag-${i}`) } })).toBe(false);
     for (const revision of [0, 2_147_483_648]) {
       expect(validate({ ...input, agentSessionStartupInstructionsV1: { ...input.agentSessionStartupInstructionsV1, revision } })).toBe(false);
     }
@@ -558,78 +575,51 @@ describe('built-in Happier tools', () => {
     expect(executeActionByToolName).not.toHaveBeenCalled();
   });
 
-  it('rejects disabled action_execute calls before execution', async () => {
-    const executeActionByToolName = vi.fn(async () => ok({ unreachable: true }));
+  describe('action_execute through the real tool bridge', () => {
+    const composed = (input: Readonly<{ isActionEnabled?: (id: string) => boolean; surface?: 'cli' | 'agent';
+      actionsSettings?: ReturnType<typeof ActionsSettingsV1Schema.parse> }> = {}) => {
+      const execute = vi.fn(async () => ({ ok: true as const, result: { executed: true } }));
+      const bridge = createActionToolExecutorBridge({ executor: { execute } as never, surface: input.surface ?? 'agent',
+        isActionEnabled: input.isActionEnabled, getActionsSettings: () => input.actionsSettings ?? null });
+      const dispatch = (actionId: string, actionInput: unknown) => dispatchBuiltInHappierTool({
+        toolName: 'action_execute', args: { actionId, input: actionInput }, sessionId: 'sess-1',
+        surface: input.surface, actionsSettings: input.actionsSettings,
+        deps: { changeTitle: async () => ({ success: true }), isActionEnabled: input.isActionEnabled,
+          executeActionByToolName: bridge.executeActionByToolName },
+      });
+      return { execute, dispatch };
+    };
 
-    const result = await dispatchBuiltInHappierTool({
-      toolName: 'action_execute',
-      args: { actionId: 'review.start', input: { sessionId: 'sess-1' } },
-      sessionId: 'sess-1',
-      deps: {
-        changeTitle: async () => ({ success: true }),
-        executeActionByToolName,
-        isActionEnabled: (id) => id !== 'review.start',
-      },
+    it('admits an enabled target with one availability decision', async () => {
+      const isActionEnabled = vi.fn((_id: string) => true);
+      const { execute, dispatch } = composed({ isActionEnabled });
+      isActionEnabled.mockClear();
+      await expect(dispatch('review.start', { sessionId: 'sess-1' })).resolves.toMatchObject({ ok: true });
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect(isActionEnabled.mock.calls.filter(([id]) => id === 'review.start')).toHaveLength(1);
     });
 
-    expectActionDisabled(result);
-    expect(executeActionByToolName).not.toHaveBeenCalled();
-  });
-
-  it('rejects action_execute when the action is unavailable on the current surface', async () => {
-    const executeActionByToolName = vi.fn(async () => ok({ unreachable: true }));
-
-    const result = await dispatchBuiltInHappierTool({
-      toolName: 'action_execute',
-      args: { actionId: 'account.plugins.data.erase', input: { pluginId: 'example.plugin' } },
-      sessionId: 'sess-1',
-      surface: 'cli',
-      deps: {
-        changeTitle: async () => ({ success: true }),
-        executeActionByToolName,
-      },
+    it('refuses a disabled target before execution', async () => {
+      const { execute, dispatch } = composed({ isActionEnabled: (id) => id !== 'review.start' });
+      expectActionDisabled(await dispatch('review.start', { sessionId: 'sess-1' }));
+      expect(execute).not.toHaveBeenCalled();
     });
 
-    expect(result).toMatchObject({
-      ok: false,
-      errorCode: 'action_disabled',
-      error: 'Action is disabled',
-      details: {
-        actionId: 'account.plugins.data.erase',
-        surface: 'cli',
-        reason: 'unsupported_surface',
-      },
-    });
-    expect(executeActionByToolName).not.toHaveBeenCalled();
-  });
-
-  it('rejects action_execute when explicit action settings disable the target action', async () => {
-    const executeActionByToolName = vi.fn(async () => ok({ unreachable: true }));
-    const actionsSettings = ActionsSettingsV1Schema.parse({
-      v: 1,
-      actions: {
-        'subagents.plan.start': {
-          disabledSurfaces: ['agent'],
-        },
-      },
+    it('refuses a target unavailable on the current surface', async () => {
+      const { execute, dispatch } = composed({ surface: 'cli' });
+      await expect(dispatch('account.plugins.data.erase', { pluginId: 'example.plugin' })).resolves.toMatchObject({
+        ok: false, errorCode: 'action_disabled', error: 'Action is disabled',
+        details: { actionId: 'account.plugins.data.erase', surface: 'cli', reason: 'unsupported_surface' },
+      });
+      expect(execute).not.toHaveBeenCalled();
     });
 
-    const result = await dispatchBuiltInHappierTool({
-      toolName: 'action_execute',
-      args: {
-        actionId: 'subagents.plan.start',
-        input: { backendTargetKeys: ['agent:codex'], instructions: 'Plan.' },
-      },
-      sessionId: 'sess-1',
-      actionsSettings,
-      deps: {
-        changeTitle: async () => ({ success: true }),
-        executeActionByToolName,
-      },
+    it('refuses a target disabled by explicit action settings', async () => {
+      const { execute, dispatch } = composed({ actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {
+        'subagents.plan.start': { disabledSurfaces: ['agent'] } } }) });
+      expectActionDisabled(await dispatch('subagents.plan.start', { backendTargetKeys: ['agent:codex'], instructions: 'Plan.' }));
+      expect(execute).not.toHaveBeenCalled();
     });
-
-    expectActionDisabled(result);
-    expect(executeActionByToolName).not.toHaveBeenCalled();
   });
 
   it('dispatches action_execute through the shared action executor hook', async () => {

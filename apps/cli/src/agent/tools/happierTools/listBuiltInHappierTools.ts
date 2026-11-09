@@ -55,8 +55,9 @@ export function listAdmittedSessionRunReadActionIds(
   return Object.freeze(SESSION_RUN_PROMPT_READ_ACTION_IDS_V1.filter((actionId) => admitted.has(actionId)));
 }
 
-export function listBuiltInHappierTools(params?: Readonly<{
+type HappierToolAdmissionParams = Readonly<{
   surface?: BuiltInHappierToolsSurface;
+  happierToolsEnabled?: boolean;
   registry?: ResolvedContributionRegistry;
   pluginToolCatalog?: readonly ProjectedPluginToolCatalogEntry[];
   isActionEnabled?: (id: ActionId) => boolean;
@@ -66,7 +67,19 @@ export function listBuiltInHappierTools(params?: Readonly<{
   /** Undefined preserves Account-host exposure; Session hosts provide their choice. */
   sessionMemoryEnabled?: boolean;
   requiredDirectActionIds?: readonly ActionId[];
-}>) {
+}>;
+
+export function listBuiltInHappierTools(params?: HappierToolAdmissionParams) {
+  return admitHappierTools(params);
+}
+
+/** Same decision as membership in the full list, for a caller that needs one name. */
+export function isBuiltInHappierToolAdmitted(toolName: string, params?: HappierToolAdmissionParams): boolean {
+  return admitHappierTools(params, toolName).length > 0;
+}
+
+function admitHappierTools(params: HappierToolAdmissionParams | undefined, onlyToolName?: string) {
+  if (params?.happierToolsEnabled === false) return [];
   const surface = params?.surface ?? 'agent';
   const shouldReadEnvSettings = !params?.isActionEnabled && !Object.prototype.hasOwnProperty.call(params ?? {}, 'actionsSettings');
   const actionsSettings = params?.actionsSettings ?? (shouldReadEnvSettings ? readActionsSettingsFromEnv() as ActionsSettingsV1 : null);
@@ -83,13 +96,17 @@ export function listBuiltInHappierTools(params?: Readonly<{
     }
   };
   const catalog = createActionToolCatalog(params);
-  return dedupeToolsByName(filterBuiltInToolsForSurface([
+  const candidates = [
     ...HAPPIER_BUILT_IN_TOOLS,
     ...listPluginActionBackedTools({
       registry: params?.registry,
       pluginToolCatalog: params?.pluginToolCatalog,
     }, catalog),
-  ], {
+  ];
+  // Admission is decided per tool, so a named query needs only that name's candidates.
+  return dedupeToolsByName(filterBuiltInToolsForSurface(onlyToolName === undefined
+    ? candidates
+    : candidates.filter(tool => tool.name === onlyToolName), {
     surface,
     isActionEnabled,
     actionsSettings,

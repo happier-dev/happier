@@ -116,7 +116,6 @@ describe('withExecutionRunRuntimeIdentityPublication', () => {
         executionRun: { supported: false },
         session: {
           media: {
-            acceptsImageInput: { supported: false },
             emitsSessionMedia: { supported: false },
             nativeImageGeneration: { supported: false },
           },

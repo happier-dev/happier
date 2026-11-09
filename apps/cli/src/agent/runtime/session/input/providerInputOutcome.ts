@@ -1,4 +1,3 @@
-import type { ProviderBoundModelRef } from '@happier-dev/protocol';
 import type { AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
 
 type NativeInputAcceptedEvent = Extract<
@@ -107,10 +106,6 @@ export type SessionProviderInputOutcome =
         providerTurnId?: string;
         providerDeliveryKind?: RuntimeAcceptedOutcome['delivery']['kind'];
         acceptedAtMs?: number;
-        appliedModel?: Readonly<{
-            provider: string;
-            selection: ProviderBoundModelRef;
-        }>;
     }>)
     | (SessionProviderInputOutcomeIdentity & Readonly<{
         kind: 'rejected_before_effect';
@@ -355,11 +350,6 @@ export function normalizeHostProviderInputOutcome(
  */
 export function createSessionProviderInputOutcomeNormalizer(params: Readonly<{
     getTarget(): SessionProviderInputOutcomeTarget;
-    takeAppliedModel?(localId: string): Readonly<{
-        provider: string;
-        selection: ProviderBoundModelRef;
-    }> | null;
-    discardAppliedModel?(localId: string): void;
     /** Exact retained inputs actually represented by this host-prepared dispatch. */
     readRepresentedPendingInputs?(localId: string): readonly SessionProviderInputOutcomeIdentity[];
     observeAcceptedEffect?(localId: string, pendingSettlement?: Promise<void>): void;
@@ -405,17 +395,14 @@ export function createSessionProviderInputOutcomeNormalizer(params: Readonly<{
             outcome.kind === 'rejected_before_effect'
             && isSessionProviderInputOutcomeTerminal(outcome)
         ) {
-            params.discardAppliedModel?.(outcome.localId);
             params.discardAcceptedEffect?.(outcome.localId);
         }
         if (outcome.kind === 'accepted') {
-            const appliedModel = params.takeAppliedModel?.(outcome.localId) ?? null;
             let settlement: void | Promise<boolean | void>;
             try {
-                const accepted = appliedModel ? { ...outcome, appliedModel } : outcome;
                 settlement = precedingSettlement
-                    ? precedingSettlement.then(() => target.observeProviderInputSettlement(accepted))
-                    : target.observeProviderInputSettlement(accepted);
+                    ? precedingSettlement.then(() => target.observeProviderInputSettlement(outcome))
+                    : target.observeProviderInputSettlement(outcome);
             } catch (error) {
                 params.observeAcceptedEffect?.(outcome.localId);
                 throw error;

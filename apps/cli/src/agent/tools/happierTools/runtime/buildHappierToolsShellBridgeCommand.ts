@@ -5,26 +5,26 @@ import {
 } from '@happier-dev/agents/process/shellCommand';
 import { parseHappierToolsShellBridgeCommand } from '@happier-dev/protocol/tools/happierToolsShellBridge';
 import type { HappierToolsShellBridgeCommand } from '@happier-dev/protocol';
-import { resolveHappierToolsShellBridgeContextEnv } from './resolveHappierToolsShellBridgeContextEnv';
+import { configuration } from '@/configuration';
+import { resolveHappierRuntimeContextEnvFromConfiguration } from '@/utils/env/resolveHappierRuntimeContextEnvFromConfiguration';
+import { supportsSessionMcpLocalTransport } from '@/mcp/runtime/sessionMcpLocalTransport';
 
 /**
  * Build the POSIX shell command a shell_bridge provider runs to invoke
  * `happier tools ...`.
  *
- * By default this command stays clean and relies on the provider shell's inherited
- * environment. Set HAPPIER_SHELL_BRIDGE_CONTEXT_ENV=home or full to inline the
- * non-secret Happier runtime context for environments whose shell startup files
- * clobber the inherited Happier home/server selection.
+ * POSIX inherits Session MCP context from its admitted Agent launch. Windows
+ * keeps its existing opt-in, non-secret home/server context for current-user tools.
  *
  * `launchSpec.env` (e.g. TSX_TSCONFIG_PATH in dev) is the launch-mechanism env for
- * this specific CLI invocation and is merged after the context.
+ * this specific CLI invocation.
  */
 /**
  * Every command this module generates is run by an Agent's shell, never typed by
  * the operator, so the provenance marker belongs to the generated shape itself
  * rather than to each caller. Stamping it here keeps the producer, the exact
  * recognizer below and the `happier tools` dispatcher agreeing on one fact: the
- * invocation is Agent automation even when it can read stored human credentials.
+ * invocation is Agent automation, including the retained Windows credentialed path.
  */
 function withAgentBridgeMarker(args: readonly string[]): string[] {
   const [subcommand, ...rest] = args;
@@ -35,12 +35,17 @@ function withAgentBridgeMarker(args: readonly string[]): string[] {
 export function buildHappierToolsShellBridgeCommand(args: readonly string[]): string {
   const launchSpec = buildHappyCliSubprocessLaunchSpec(['tools', ...withAgentBridgeMarker(args)]);
   const command = buildPosixShellCommand([launchSpec.filePath, ...launchSpec.args]);
-  const env = {
-    ...resolveHappierToolsShellBridgeContextEnv(),
-    ...(launchSpec.env ?? {}),
-  };
+  const env = { ...resolveHappierToolsShellBridgeContextEnv(), ...(launchSpec.env ?? {}) };
   if (Object.keys(env).length === 0) return command;
   return `${buildPosixShellEnvironmentAssignments(env)} ${command}`;
+}
+
+function resolveHappierToolsShellBridgeContextEnv(): Record<string, string> {
+  if (supportsSessionMcpLocalTransport() || configuration.shellBridgeContextEnvMode === 'off') return {};
+  const context = resolveHappierRuntimeContextEnvFromConfiguration();
+  if (configuration.shellBridgeContextEnvMode === 'full') return context;
+  const homeDir = context.HAPPIER_HOME_DIR;
+  return typeof homeDir === 'string' && homeDir.trim() ? { HAPPIER_HOME_DIR: homeDir } : {};
 }
 
 function buildCanonicalBridgeArgs(command: HappierToolsShellBridgeCommand): string[] {

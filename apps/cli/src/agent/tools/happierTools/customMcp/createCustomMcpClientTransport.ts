@@ -1,4 +1,6 @@
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
+import type { PrepareMcpStdioTransport } from '@/mcp/runtime/supervisedStdioTransport';
 
 import type { McpServerConfig } from '@/agent';
 
@@ -15,10 +17,23 @@ function hasResume(value: unknown): value is Readonly<{ resume: () => void }> {
   return typeof value === 'object' && value !== null && 'resume' in value && typeof value.resume === 'function';
 }
 
-export function createCustomMcpClientTransport(
+export async function createCustomMcpClientTransport(
   config: McpServerConfig,
   processEnv: NodeJS.ProcessEnv,
-): StdioClientTransport {
+  options: Readonly<{ signal?: AbortSignal; prepareTransport?: PrepareMcpStdioTransport }> = {},
+): Promise<Transport> {
+  options.signal?.throwIfAborted();
+  if (options.prepareTransport) {
+    const prepared = await options.prepareTransport(config, options.signal);
+    try {
+      options.signal?.throwIfAborted();
+      prepared.stderr?.resume();
+      return prepared.transport;
+    } catch (error) {
+      await prepared.transport.close();
+      throw error;
+    }
+  }
   const transport = new StdioClientTransport({
     command: config.command,
     args: config.args ?? [],

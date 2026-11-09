@@ -25,6 +25,8 @@ import { resolveSessionProjectPromptStack } from '@/agent/prompting/coding/sessi
 import { normalizeLegacySessionModeMetadataCompat } from './startup/normalizeLegacySessionModeMetadataCompat';
 import type { SessionCapabilitySelectionV1 } from '@happier-dev/protocol/reach/sessionCapabilitySelectionV1';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
+import type { SessionMetadataMutationContext } from '@/session/metadata/updateSessionMetadataWithRetry';
+import type { SessionTeamCredentialBindingIntentV1 } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 
 export type PermissionModeOverride = MergePermissionModeOverride | null;
 
@@ -134,12 +136,13 @@ export function buildModelOverride(opts: {
 }
 
 export function applyStartupMetadataUpdateToSession(opts: {
-  session: { updateMetadata: (updater: (current: Metadata) => Metadata) => Promise<void> | void };
+  session: { updateMetadata: (updater: (current: Metadata, context?: SessionMetadataMutationContext) => Metadata) => Promise<void> | void };
   next: Metadata;
   nowMs?: number;
   permissionModeOverride: PermissionModeOverride;
   sessionModeOverride?: SessionModeOverride;
   modelOverride?: ModelOverride;
+  capturedTeamCredentialBinding?: SessionTeamCredentialBindingIntentV1 | null;
   metadataKeysToUnsetOnAttach?: readonly string[] | null;
   attachMetadataIdentityPolicy?: SessionAttachMetadataIdentityPolicy | null;
   appliedCapabilitySelection?: SessionCapabilitySelectionV1 | 'preserved_process';
@@ -149,7 +152,7 @@ export function applyStartupMetadataUpdateToSession(opts: {
   const nowMs = typeof opts.nowMs === 'number' ? opts.nowMs : Date.now();
 
   try {
-    const result = opts.session.updateMetadata((currentMetadata) =>
+    const result = opts.session.updateMetadata((currentMetadata, context) =>
       mergeSessionMetadataForStartup({
         current: normalizeLegacySessionModeMetadataCompat(currentMetadata),
         next: normalizeLegacySessionModeMetadataCompat(opts.next),
@@ -157,6 +160,8 @@ export function applyStartupMetadataUpdateToSession(opts: {
         permissionModeOverride: opts.permissionModeOverride ?? null,
         sessionModeOverride: opts.sessionModeOverride ?? null,
         modelOverride: opts.modelOverride ?? null,
+        capturedTeamCredentialBinding: opts.capturedTeamCredentialBinding,
+        acceptedTeamCredentialBinding: context?.acceptedTeamCredentialBinding,
         metadataKeysToUnsetOnAttach: opts.metadataKeysToUnsetOnAttach ?? null,
         attachMetadataIdentityPolicy: opts.attachMetadataIdentityPolicy ?? null,
         appliedCapabilitySelection: opts.appliedCapabilitySelection,

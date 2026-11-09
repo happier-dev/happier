@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { expect, it, vi } from 'vitest';
-import type { AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentSessionRuntimeContext, AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
 import { createPlainSessionOwnerMetadataEnvelopeV1, projectSessionSharedMetadataV1 } from '@happier-dev/protocol';
 import { createCodexAppServerRuntime, waitForCodexAppServerRuntimeTurnCompletion } from '../../../../../../../packages/plugins/codex/src/agent/runtime/appServer/runtime';
 import { createCodexNativeAppServerSessionRuntime } from '../../../../../../../packages/plugins/codex/src/agent/runtime/appServer/native';
@@ -12,6 +12,7 @@ import { createSessionMessage } from '../../../../../../server/sources/app/sessi
 import { buildAcpAgentMessageEnvelope } from '@/api/session/acpMessageEnvelope';
 import { createRuntimeTranscriptProjector, type RuntimeTranscriptProjectionSession } from './projectRuntimeTranscriptEvent';
 import { createSessionTurnLifecycle } from '../turn/lifecycle';
+import { createNativeAgentSessionOperations } from '../../registry/engineRegistry/nativeAgentSession';
 
 it.each([0, 1])('revises a terminal missing-result snapshot without reopening its turn (late clock delta %i)', async lateClockDelta => {
   const harness = await createLightSqliteHarness({ tempDirPrefix: 'happier-late-codex-tool-',
@@ -37,6 +38,7 @@ it.each([0, 1])('revises a terminal missing-result snapshot without reopening it
     // The native JSON-RPC process is the only substituted runtime boundary.
     const client: DisposableCodexAppServerClient = {
       launchFeatures: { realtimeConversationAdvertised: false },
+      onNativeEvent: () => () => undefined,
       request: async (method) => {
         if (method === 'thread/start') return { thread: { id: 'thread-1' } };
         if (method === 'turn/start') return { turnId: `turn-${++turnNumber}` };
@@ -53,7 +55,13 @@ it.each([0, 1])('revises a terminal missing-result snapshot without reopening it
     const runtime = createCodexAppServerRuntime({ happierSessionId: session.id, directory: '/tmp',
       host: { baseProcessEnv: {}, logger: { debug: vi.fn(), warn: vi.fn() }, createClient: async () => client } });
     const native = createCodexNativeAppServerSessionRuntime(runtime, session.id);
-    disposeRuntime = () => native.dispose();
+    const host = createNativeAgentSessionOperations(native, session.id,
+      undefined, undefined, undefined, undefined, undefined, {
+        context: {} as AgentSessionRuntimeContext, cwd: '/tmp', connectedAccounts: [],
+        capabilities: { open: ['create'], delivery: ['newTurn', 'steer'], cancel: false },
+        cancellation: { declared: false }, configuration: { declared: false }, compaction: { capability: null },
+      });
+    disposeRuntime = () => host.resetOrDisposeRuntime('runtime_recovery');
     const events: AgentSessionRuntimeEvent[] = [];
     const writes: Array<{ localId: string; createdAt?: number; updatedAt?: number }> = [];
     const project = createRuntimeTranscriptProjector();
@@ -73,7 +81,7 @@ it.each([0, 1])('revises a terminal missing-result snapshot without reopening it
     };
     let projection = Promise.resolve();
     const lifecycle = createSessionTurnLifecycle({ session: { sessionId: session.id } });
-    native.watch(event => {
+    host.subscribeRuntimeEvents(event => {
       events.push(event);
       projection = projection.then(async () => { await project({ session: transcriptSession, provider: 'codex', event }); });
       lifecycle.observeRuntimeEvent(event);
@@ -84,7 +92,7 @@ it.each([0, 1])('revises a terminal missing-result snapshot without reopening it
       await handler(params);
       await projection;
     };
-    await runtime.send({ text: 'Read the worker status' }, { turnId: 'host-turn-1' });
+    await host.sendTurnPrompt('Read the worker status', { localId: 'input-1', turnId: 'host-turn-1' });
     const callId = 'exec-5ec2aa46-7f05-4440-8b2d-675433e4ced9';
     await notify('item/started', { threadId: 'thread-1', turnId: 'turn-1', item: { id: callId,
       type: 'mcpToolCall', server: 'happier', tool: 'action_execute', arguments: { actionId: 'session.status.get', input: {} } } });
@@ -97,7 +105,7 @@ it.each([0, 1])('revises a terminal missing-result snapshot without reopening it
     expect(synthetic).toHaveLength(2);
     expect(synthetic[1]?.content).toMatchObject({ v: { content: { data: { type: 'tool-result', isError: true } } } });
 
-    await runtime.send({ text: 'An independent next turn' }, { turnId: 'host-turn-2' });
+    await host.sendTurnPrompt('An independent next turn', { localId: 'input-2', turnId: 'host-turn-2' });
     now += lateClockDelta;
     const late = { threadId: 'thread-1', turnId: 'turn-1', item: { id: callId, type: 'mcpToolCall',
       server: 'happier', tool: 'action_execute', arguments: {}, result: { content: [{ type: 'text', text: '{"ok":true}' }], isError: false } } };

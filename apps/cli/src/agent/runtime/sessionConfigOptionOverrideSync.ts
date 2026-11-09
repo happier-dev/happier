@@ -1,4 +1,5 @@
 import type { Metadata } from '@/api/types';
+import type { AgentSessionModelsSnapshot, AgentSessionModelsSource } from '@happier-dev/plugin-sdk/agents/runtime';
 import {
   isRuntimeConfigUpdateOutcomeApplied,
   type RuntimeConfigUpdateOutcomeV1,
@@ -7,7 +8,16 @@ import {
   LEGACY_ACP_CONFIG_OPTION_OVERRIDES_KEY,
   SESSION_CONFIG_OPTION_OVERRIDES_KEY,
 } from '@happier-dev/agents/session/state/bindings/metadataKeys';
-import { readAcpConfigOptionIntentFromMetadata } from '@happier-dev/agents/session/state/metadataReaders';
+import { readAcpConfigOptionIntentFromMetadata, readSessionModelSelectionV2FromMetadata } from '@happier-dev/agents/session/state/metadataReaders';
+import { readSessionModelSelectionIntentSourceV1, type ProviderBoundModelRef } from '@happier-dev/protocol/providers/model-selection';
+import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents/runtime/identity/resolveAgentIdFromSessionMetadata';
+import {
+  readMetadataAliasValue,
+  SESSION_MODELS_STATE_KEY,
+  LEGACY_ACP_SESSION_MODELS_STATE_KEY,
+  SESSION_CONFIG_OPTIONS_STATE_KEY,
+  LEGACY_ACP_CONFIG_OPTIONS_STATE_KEY,
+} from '@happier-dev/agents/session/controls/metadataKeys';
 import { clearAcpConfigOptionIntentSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
 import { logger } from '@/ui/logger';
 
@@ -44,6 +54,51 @@ function collectConfigOptionIdsFromMetadata(metadata: Readonly<Record<string, un
   return Array.from(configIds);
 }
 
+function resolveUnavailableModelOptionIds(
+  metadata: Readonly<Record<string, unknown>> | null | undefined,
+  modelSelection?: Pick<ProviderBoundModelRef, 'modelId' | 'providerConnectionId'>,
+  models?: AgentSessionModelsSnapshot,
+): ReadonlySet<string> {
+  const unavailable = new Set<string>();
+  const catalog = readMetadataAliasValue<Metadata['sessionModelsV1']>(metadata,
+    SESSION_MODELS_STATE_KEY, LEGACY_ACP_SESSION_MODELS_STATE_KEY);
+  const availableModels = models?.models ?? (
+    catalog?.agentId === resolveAgentIdFromSessionMetadata(metadata) ? catalog?.availableModels : undefined
+  );
+  if (!availableModels || (!models?.models && !Array.isArray(availableModels))) return unavailable;
+  const source = readSessionModelSelectionIntentSourceV1({
+    canonical: metadata?.modelSelectionIntentV1, legacy: metadata?.modelOverrideV1,
+  });
+  const intent = source.status === 'canonical' || source.status === 'legacy' ? source.intent : null;
+  const v2Intent = readSessionModelSelectionV2FromMetadata(metadata);
+  const providerBound = modelSelection
+    ? modelSelection.providerConnectionId !== null
+    : v2Intent ? v2Intent.ref.source !== 'native'
+      : intent && 'selection' in intent && intent.selection?.providerConnectionId != null;
+  // Provider descriptors have their own exact option authority; a native row
+  // with the same id cannot decide their controls (or a retained Provider row's).
+  if (providerBound || catalog?.activeSelectionV1?.selection.providerConnectionId != null) return unavailable;
+  const selectedModelId = modelSelection?.modelId ?? v2Intent?.ref.modelId
+    ?? (intent && ('selection' in intent ? intent.selection?.modelId : intent.modelId))
+    ?? models?.currentModelId ?? catalog?.currentModelId;
+  const selected = availableModels.find(model => model.id === selectedModelId
+    || model.extendedContextModelId === selectedModelId);
+  if (!selected) return unavailable;
+
+  // The catalog declares which controls are model-scoped. An absent control on
+  // the selected model is inapplicable; an unknown catalog supplies no decision.
+  for (const model of availableModels) {
+    for (const option of model.modelOptions ?? []) unavailable.add(option.id);
+  }
+  for (const option of selected.modelOptions ?? []) unavailable.delete(option.id);
+  const sessionOptions = readMetadataAliasValue<Metadata['sessionConfigOptionsV1']>(metadata,
+    SESSION_CONFIG_OPTIONS_STATE_KEY, LEGACY_ACP_CONFIG_OPTIONS_STATE_KEY);
+  if (sessionOptions?.agentId === resolveAgentIdFromSessionMetadata(metadata)) {
+    for (const option of sessionOptions.configOptions) unavailable.delete(option.id);
+  }
+  return unavailable;
+}
+
 export function resolveSessionConfigOptionOverridesFromMetadataSnapshot(opts: Readonly<{
   metadata: Readonly<Record<string, unknown>> | null | undefined;
 }>): ConfigOptionOverrideCandidate[] {
@@ -59,6 +114,18 @@ export function resolveSessionConfigOptionOverridesFromMetadataSnapshot(opts: Re
 
   out.sort((a, b) => (a.updatedAt - b.updatedAt) || a.configId.localeCompare(b.configId));
   return out;
+}
+
+/** Runtime projection only: retained intent remains available when models change. */
+export function resolveApplicableSessionConfigOptionOverridesFromMetadataSnapshot(opts: Readonly<{
+  metadata: Readonly<Record<string, unknown>> | null | undefined;
+  modelSelection?: Pick<ProviderBoundModelRef, 'modelId' | 'providerConnectionId'>;
+  models?: AgentSessionModelsSnapshot;
+}>): ConfigOptionOverrideCandidate[] {
+  const candidates = resolveSessionConfigOptionOverridesFromMetadataSnapshot(opts);
+  if (candidates.length === 0) return candidates;
+  const unavailable = resolveUnavailableModelOptionIds(opts.metadata, opts.modelSelection, opts.models);
+  return candidates.filter(candidate => !unavailable.has(candidate.configId));
 }
 
 function isSameConfigOptionOverrideValue(left: ConfigOptionValueId, right: ConfigOptionValueId): boolean {
@@ -103,6 +170,7 @@ export function createSessionConfigOptionOverrideSynchronizer(params: Readonly<{
     ) => Promise<RuntimeConfigUpdateOutcomeV1 | void>;
   };
   isStarted: () => boolean;
+  models?: Pick<AgentSessionModelsSource, 'read'>;
   onConfigOptionRejected?: (rejection: SessionConfigOptionRejection) => void | Promise<void>;
 }>): {
   syncFromMetadata: () => void;
@@ -172,9 +240,15 @@ export function createSessionConfigOptionOverrideSynchronizer(params: Readonly<{
   };
 
   const syncFromMetadata = (): void => {
-    const candidates = resolveSessionConfigOptionOverridesFromMetadataSnapshot({
+    const candidates = resolveApplicableSessionConfigOptionOverridesFromMetadataSnapshot({
       metadata: params.session.getMetadataSnapshot(),
+      // Declarations are available before native readback can publish a current model.
+      models: params.models?.read(),
     });
+    const candidateIds = new Set(candidates.map(candidate => candidate.configId));
+    for (const configId of pendingByConfigId.keys()) {
+      if (!candidateIds.has(configId)) pendingByConfigId.delete(configId);
+    }
     if (candidates.length === 0) return;
 
     for (const candidate of candidates) {

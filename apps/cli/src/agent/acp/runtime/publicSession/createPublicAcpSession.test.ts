@@ -25,6 +25,7 @@ import { createCodexAgentRuntime } from '../../../../../../../packages/plugins/c
 import { createGeminiAgentRuntime } from '../../../../../../../packages/plugins/gemini/src/agent/runtime/factory';
 import { createCustomAcpAgentRuntime } from '../../../../../../../packages/plugins/custom-acp/src/agent/runtime/factory';
 import { createKiloAgentRuntime } from '../../../../../../../packages/plugins/kilo/src/agent/runtime/factory';
+import { FX_SESSION_UPDATES } from '../../../../../../../packages/plugins/fx/src/agent/acp/sessionUpdates';
 import { PLUGIN_MANIFEST as GEMINI_PLUGIN_MANIFEST } from '../../../../../../../packages/plugins/gemini/src/manifest';
 import { createGeminiConnectedServiceRuntimeAuthAdapter } from '../../../../../../../packages/plugins/gemini/src/agent/connectedServices/runtimeAuthAdapter';
 import { handleGrokPromptComplete, GROK_PROMPT_COMPLETE_METHOD } from '../../../../../../../packages/plugins/grok/src/agent/acp/completion';
@@ -49,13 +50,16 @@ import type {
 
 import { TestInteractions } from '@/agent/acp/testkit/interactionsFixture';
 import { writeAcpTestAgentScript } from '@/agent/acp/testkit/subprocessHarness';
+import { createFxConfigOptionsFixture } from '@/agent/acp/testkit/fxConfigOptionsFixture';
 import { createAcpExecutionRunRuntimeContextFixture, createAcpSessionRuntimeContextFixture } from '@/agent/acp/testkit/runtimeContextFixture';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 import { createAcpRequestFailureLogRecord } from '@/agent/acp/withRetry';
 import { requestAcpHistoryExtension } from '@/agent/acp/history/acpHistoryExtensionMethods';
 import { createAcpToolIdentity } from '@/agent/acp/toolCalls';
+import { SHARED_RAW_ACP_TOOL_TRANSITIONS } from '@/agent/acp/toolCalls/testing/rawTransitionFixture';
 import { createNativeAgentSessionPublications } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionPublications';
 import { createAgentSessionTurnInvariant } from '@/agent/runtime/session/turn/agentSessionTurnInvariant';
+import { AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1 } from '@happier-dev/protocol/runtime/agentSessionLimitsV1';
 import { createRuntimeFailureTranscriptProjector } from '@/agent/runtime/session/transcripts/runtimeFailureTranscript';
 import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 import { TranscriptRawAgentContentV1Schema } from '@happier-dev/protocol/sessions/messages/transcriptRawRecordV1';
@@ -104,6 +108,7 @@ function writePublicComposerAgent(dir: string): string {
       const decoder = new TextDecoder();
       let buffer = '';
       const scenario = process.env.PUBLIC_ACP_SCENARIO || 'completed';
+      const capturedStandardToolUpdates = ${JSON.stringify(SHARED_RAW_ACP_TOOL_TRANSITIONS.filter(fixture => fixture.expected.toolName === 'write_file').flatMap(fixture => fixture.updates))};
       if (process.env.PUBLIC_ACP_ENV_CAPTURE) {
         writeFileSync(process.env.PUBLIC_ACP_ENV_CAPTURE, JSON.stringify({
           baseUrl: process.env.AGY_ACP_CCPA_BASE_URL ?? null,
@@ -166,11 +171,26 @@ function writePublicComposerAgent(dir: string): string {
       let historyLoadedOnThisConnection = false;
       const lifecycleMethods = [];
       const selectedOptions = {};
+      // FX 0.0.14 session/new capture, 2026-10-27; E-fx-live-probe.md §3.
+      let configCatalog = ${JSON.stringify(createFxConfigOptionsFixture())};
       const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
       const modeState = () => ({ currentModeId: 'default', availableModes: [
         { id: 'default', name: 'Default' }, { id: 'auto_edit', name: 'Auto edit' }, { id: 'yolo', name: 'YOLO' },
       ] });
       const ok = (id, result) => {
+        if (result.sessionId && scenario === 'config-catalog') {
+          result.configOptions = configCatalog;
+          send({ jsonrpc: '2.0', method: 'session/update', params: {
+            sessionId: result.sessionId, update: { sessionUpdate: 'available_commands_update', availableCommands: [] },
+          } });
+        }
+        if (result.sessionId && scenario.startsWith('configuration-update-candidates-')) {
+          const ids = scenario.endsWith('legacy') ? ['legacy', 'ask']
+            : scenario.endsWith('both') ? ['legacy', 'ask', 'preferred', 'unrestricted']
+              : scenario.endsWith('unmatched') ? ['unrestricted']
+                : ['preferred', 'ask', 'unrestricted'];
+          result.modes = { currentModeId: ids[0], availableModes: ids.map(id => ({ id, name: id })) };
+        }
         if (scenario === 'mode-publication') {
           if (result.protocolVersion) result.agentCapabilities = { loadSession: true };
           if (result.sessionId) result.modes = modeState();
@@ -264,7 +284,9 @@ function writePublicComposerAgent(dir: string): string {
             initializeMetadata = request.params.clientCapabilities?._meta ?? null;
             ok(request.id, {
               protocolVersion: 1,
-              agentCapabilities: scenario === 'media' || scenario === 'structured-steer'
+              agentCapabilities: scenario.startsWith('declared-steer')
+                ? { _meta: { acme: { steering: scenario !== 'declared-steer-unavailable' } } }
+                : scenario === 'media' || scenario === 'structured-steer'
                 ? { promptCapabilities: { image: true } }
                 : scenario === 'capabilities'
                   ? {
@@ -335,6 +357,12 @@ function writePublicComposerAgent(dir: string): string {
               continue;
             }
             openedMcpServers = request.params.mcpServers;
+            if (scenario === 'fx-session-updates') {
+              send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'provider-created',
+                update: { sessionUpdate: 'session_info_update', _meta: { fx: { modelResponseRecovery: {
+                  state: 'active', attempt: 99, cause: 'rate_limit',
+                } } } } } });
+            }
             ok(request.id, scenario === 'provider-models' || scenario === 'provider-models-context'
               ? {
                   sessionId: 'provider-created',
@@ -426,6 +454,23 @@ function writePublicComposerAgent(dir: string): string {
               ok(request.id, {});
             }
           } else if (request.method === 'session/set_config_option') {
+            if (scenario === 'config-catalog') {
+              if (request.params.configId === 'provider' && request.params.value === 'gateway') {
+                send({ jsonrpc: '2.0', id: request.id, error: { code: -32600,
+                  message: 'fx needs access to Vercel AI Gateway. Run fx login to sign in, fx setup to use an API key, or set AI_GATEWAY_API_KEY.' } });
+                continue;
+              }
+              if (request.params.configId === 'provider' && request.params.value === 'codex') {
+                configCatalog = ${JSON.stringify(createFxConfigOptionsFixture())};
+              }
+              configCatalog = configCatalog.map(option => ({ ...option,
+                currentValue: option.id === request.params.configId ? request.params.value : option.currentValue,
+                ...(option.id === 'effort' && request.params.configId === 'model'
+                  ? { options: option.options.filter(choice => request.params.value !== 'gpt-6-luna' || choice.value !== 'ultra') } : {}),
+              }));
+              ok(request.id, { configOptions: configCatalog });
+              continue;
+            }
             selectedOptions[request.params.configId] = request.params.value;
             if (request.params.configId === 'model') selectedModel = request.params.value;
             ok(request.id, scenario === 'projected-config-models'
@@ -621,6 +666,18 @@ function writePublicComposerAgent(dir: string): string {
             ok(request.id, { success: true });
           } else if (request.method === 'session/prompt') {
             const sessionId = request.params.sessionId;
+            if (scenario === 'malformed-publication') {
+              update(sessionId, 'accepted output');
+              continue;
+            }
+            if (scenario === 'config-catalog') {
+              const withdraw = request.params.prompt.some(block => block.type === 'text' && block.text === 'withdraw catalog');
+              configCatalog = withdraw ? [] : configCatalog.map(option => option.id === 'fast' ? { ...option, currentValue: 'false' } : option);
+              updateRaw(sessionId, { sessionUpdate: 'config_option_update', configOptions: configCatalog });
+              updateRaw(sessionId, { sessionUpdate: 'available_commands_update', availableCommands: withdraw ? [] : [{ name: 'review', description: 'Review changes' }] });
+              ok(request.id, { stopReason: 'end_turn' });
+              continue;
+            }
             if (scenario === 'opencode-quota-error' || scenario === 'opencode-generation-error') {
               // OpenCode v1.19.0 acp/service.ts:839-892 and acp/error.ts:86-93:
               // completed generation failures become session/prompt internal errors, without output.
@@ -709,6 +766,10 @@ function writePublicComposerAgent(dir: string): string {
               ok(request.id, { stopReason: 'end_turn' });
             } else if (scenario === 'refused') {
               ok(request.id, { stopReason: 'refusal' });
+            } else if (scenario === 'unknown-stop-reason') {
+              ok(request.id, { stopReason: 'future_stop', usage: {
+                inputTokens: 17, outputTokens: 7, cacheReadTokens: 5, cacheWriteTokens: 2, reasoningTokens: 3,
+              } });
             } else if (scenario === 'prompt-rejected-before-effect' || scenario === 'prompt-connection-rejected' || scenario === 'prompt-long-rejected') {
               send({
                 jsonrpc: '2.0',
@@ -828,6 +889,30 @@ function writePublicComposerAgent(dir: string): string {
                   });
                 }
               }
+            } else if (scenario.startsWith('declared-steer')) {
+              if (!request.params._meta?.acme?.steer) {
+                if (delayedPrompt !== null) {
+                  update(sessionId, 'missing steer opt-in');
+                  ok(request.id, { stopReason: 'end_turn' });
+                  continue;
+                }
+                delayedPrompt = request.id;
+                update(sessionId, 'primary active');
+                continue;
+              }
+              if (scenario !== 'declared-steer-dropped') {
+                updateRaw(sessionId, {
+                  sessionUpdate: 'user_message_chunk', messageId: 'steer-echo',
+                  content: { type: 'text', text: request.params.prompt[0].text },
+                  _meta: { acme: { steering: { requestId: request.id } } },
+                });
+                update(sessionId, 'steered');
+              }
+              ok(delayedPrompt, { stopReason: 'end_turn' });
+              delayedPrompt = null;
+              ok(request.id, { stopReason: 'end_turn', _meta: { acme: {
+                steering: scenario === 'declared-steer-dropped' ? 'dropped' : 'absorbed',
+              } } });
             } else if (scenario === 'permission-after-steer') {
               permissionAfterSteerPromptCount += 1;
               if (permissionAfterSteerPromptCount === 1) {
@@ -924,7 +1009,7 @@ function writePublicComposerAgent(dir: string): string {
                     sessionUpdate: 'tool_call',
                     toolCallId: 'index-workspace-1',
                     title: 'Unknown tool',
-                    kind: 'investigation',
+                    kind: 'other',
                     rawInput: { locations: ['/workspace'] },
                   },
                 },
@@ -942,6 +1027,30 @@ function writePublicComposerAgent(dir: string): string {
               ok(request.id, { stopReason: 'end_turn' });
             } else if (scenario === 'auth' || scenario === 'auth-dynamic') {
               update(sessionId, JSON.stringify({ lifecycleMethods, initializeMetadata, newSessionMetadata }));
+              ok(request.id, { stopReason: 'end_turn' });
+            } else if (scenario === 'captured-standard-tool-name') {
+              for (const raw of capturedStandardToolUpdates) updateRaw(sessionId, raw);
+              ok(request.id, { stopReason: 'end_turn' });
+            } else if (scenario === 'plugin-session-updates' || scenario === 'fx-session-updates') {
+              // Generic plugin codec contract; native vectors and provenance
+              // belong to the plugin's own source tests.
+              for (const recovery of [
+                { state: 'active', kind: 'retry', attempt: 2, delaySeconds: 3, cause: 'rate_limit' },
+                { state: 'paused', kind: 'terminal_provider_error', requiredAction: 'retry' },
+                { state: 'recovered', kind: 'retry' },
+                { state: 'failed', kind: 'terminal_provider_error' },
+                null,
+              ]) send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId,
+                update: { sessionUpdate: 'session_info_update', _meta: scenario === 'fx-session-updates'
+                  ? { fx: { modelResponseRecovery: recovery } } : { example: { recovery } } } } });
+              send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId,
+                update: { sessionUpdate: 'tool_call', toolCallId: 'opaque-call',
+                  title: 'search', kind: 'other', status: 'pending', rawInput: {} } } });
+              send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId,
+                update: { sessionUpdate: 'tool_call_update', toolCallId: 'opaque-call', status: 'completed', rawOutput: 'found' } } });
+              send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId,
+                update: { sessionUpdate: 'tool_call_update', toolCallId: 'opaque-call', name: 'lookup',
+                  _meta: { example: { toolCall: { internal: false, mcp: { server: 'docs', tool: 'lookup' } } } } } } });
               ok(request.id, { stopReason: 'end_turn' });
             } else if (scenario === 'tool-hooks') {
               send({
@@ -1025,6 +1134,21 @@ function writePublicComposerAgent(dir: string): string {
             } else {
               ok(request.id, {});
             }
+          } else if (request.method === 'acme/malformed_publication') {
+            ok(request.id, {});
+            updateRaw(request.params.sessionId, {
+              sessionUpdate: 'tool_call',
+              toolCallId: 'x'.repeat(${AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1.providerIdMaxCodeUnits + 1}),
+              title: 'Read', kind: 'read', status: 'in_progress', rawInput: { path: 'file.ts' },
+            });
+          } else if (request.method === 'acme/probe_permission') {
+            permissionPrompt = request.id;
+            permissionSession = request.params.sessionId;
+            send({ jsonrpc: '2.0', id: 'permission-1', method: 'session/request_permission', params: {
+              sessionId: permissionSession,
+              toolCall: { toolCallId: 'ongoing-turn-tool', kind: 'execute', toolName: 'Bash', rawInput: { command: 'pwd' } },
+              options: [{ optionId: 'allow-once', kind: 'allow_once', name: 'Allow once' }],
+            } });
           } else if (request.method === 'x.ai/interject') {
             if (request.params.content) update(request.params.sessionId, JSON.stringify(request.params.content));
             update(
@@ -1139,7 +1263,7 @@ function createFixture(
       transport: {
         kind: 'stdio',
         executable: { kind: 'systemTool', id: 'fixture-acp' },
-        timeouts: { initializeMs: 2_000, idleMs: 20, toolCallMs: 2_000 },
+        timeouts: { initializeMs: 2_000, idleMs: 20 },
       },
     },
   };
@@ -1237,6 +1361,100 @@ function createHistoryDefinition(): AgentAcpRuntimeDefinition {
 }
 
 describe('createPublicAcpSession', () => {
+  it('preserves the captured standard tool name across sparse updates in public events', async () => {
+    await withTempDir('happier-public-acp-standard-tool-', async dir => {
+      const fixture = createFixture(dir, 'captured-standard-tool-name');
+      const session = await createPublicAcpSession({ kind: 'create', sessionId: 'standard-tool', cwd: dir },
+        fixture.options, fixture.dependencies);
+      const events: AgentSessionRuntimeEvent[] = [];
+      const subscription = session.watch(event => { events.push(event); });
+      try {
+        await session.send({ inputIds: ['input'], input: { text: 'probe' }, delivery: { kind: 'newTurn', turnId: 'turn' } });
+        await collectUntil(events, 'turn-complete');
+        expect(events.filter(event => event.kind === 'tool-call').at(-1)).toMatchObject({
+          toolName: 'write_file', input: { path: 'probe-ok.txt', content: 'ok', _acp: { name: 'write_file' } },
+        });
+        expect(events.filter(event => event.kind === 'tool-result')).toMatchObject([{ toolCallId: '<T1>' }]);
+      } finally { subscription.dispose(); await session.dispose(); }
+    });
+  });
+  it('projects plugin ACP update diagnostics and MCP identity without changing turn lifecycle', async () => {
+    await withTempDir('happier-public-acp-plugin-updates-', async dir => {
+      const fixture = createFixture(dir, 'plugin-session-updates');
+      const diagnostics: unknown[] = [];
+      const definition = {
+        mcp: { policy: 'drop' as const },
+        sessionUpdates: {
+          project(update: JsonValue) {
+            if (!update || typeof update !== 'object' || Array.isArray(update)) return null;
+            const input = update as Readonly<Record<string, JsonValue>>;
+            const meta = input._meta;
+            if (!meta || typeof meta !== 'object' || Array.isArray(meta)) return null;
+            const native = (meta as Readonly<Record<string, JsonValue>>).example;
+            if (!native || typeof native !== 'object' || Array.isArray(native)) return null;
+            const extension = native as Readonly<Record<string, JsonValue>>;
+            if (input.sessionUpdate === 'session_info_update') {
+              return { diagnostic: { code: 'provider_recovery', severity: 'info' as const,
+                message: 'Provider recovery', details: extension.recovery ?? null } };
+            }
+            return { toolMetadata: { internal: false, mcp: { server: 'docs', tool: 'lookup' } } };
+          },
+        },
+      };
+      const session = await createPublicAcpSession({ kind: 'create', sessionId: 'plugin-updates', cwd: dir },
+        { ...fixture.options, definition }, { ...fixture.dependencies,
+          transcripts: { async publishSessionEvent(event: unknown) { diagnostics.push(event); return { status: 'custodied' as const }; } } });
+      const events: AgentSessionRuntimeEvent[] = [];
+      const subscription = session.watch(event => { events.push(event); });
+      try {
+        await session.send({ inputIds: ['plugin-input'], input: { text: 'probe' }, delivery: { kind: 'newTurn', turnId: 'plugin-turn' } });
+        await collectUntil(events, 'turn-complete');
+        await session.drainPendingPublications();
+        expect(diagnostics).toHaveLength(5);
+        expect(diagnostics[0]).toMatchObject({ type: 'message', diagnostic: { details: { state: 'active', attempt: 2, delaySeconds: 3 } } });
+        expect(events.filter(event => event.kind === 'tool-call').at(-1)).toMatchObject({ toolName: 'mcp__docs__lookup', input: { _acp: { mcp: { server: 'docs', tool: 'lookup' }, internal: false } } });
+        const results = events.filter(event => event.kind === 'tool-result');
+        expect(results).toHaveLength(2);
+        expect(new Set(results.map(event => event.toolCallId)).size).toBe(1);
+        expect(events.filter(event => event.kind === 'turn-complete')).toHaveLength(1);
+        expect(events.filter(event => event.kind === 'turn-failed')).toEqual([]);
+      } finally { subscription.dispose(); await session.dispose(); }
+    });
+  });
+  it('projects FX native recovery through the real ACP transport after turn admission', async () => {
+    await withTempDir('happier-public-acp-fx-retry-', async dir => {
+      const fixture = createFixture(dir, 'fx-session-updates');
+      const diagnostics: unknown[] = [];
+      const session = await createPublicAcpSession({ kind: 'create', sessionId: 'fx-retry', cwd: dir },
+        { ...fixture.options, definition: { mcp: { policy: 'drop' }, sessionUpdates: FX_SESSION_UPDATES } },
+        { ...fixture.dependencies, transcripts: { async publishSessionEvent(event: unknown) {
+          diagnostics.push(event); return { status: 'custodied' as const };
+        } } });
+      const events: AgentSessionRuntimeEvent[] = [];
+      const subscription = session.watch(event => { events.push(AgentSessionRuntimeEventSchema.parse(event)); });
+      try {
+        await session.drainPendingPublications();
+        expect(diagnostics).toContainEqual(expect.objectContaining({
+          diagnostic: expect.objectContaining({ details: expect.objectContaining({ attempt: 99 }) }),
+        }));
+        expect(events.filter(event => event.kind === 'turn-progress')).toEqual([]);
+        await session.send({ inputIds: ['fx-input'], input: { text: 'probe' },
+          delivery: { kind: 'newTurn', turnId: 'fx-turn' } });
+        await collectUntil(events, 'turn-complete');
+        expect(events.filter(event => event.kind === 'turn-progress')
+          .map(event => ({ turnId: event.turnId, retry: event.retry ?? null }))).toEqual([
+          { turnId: 'fx-turn', retry: { attempt: 2, reason: 'rate_limited' } },
+          { turnId: 'fx-turn', retry: null },
+          { turnId: 'fx-turn', retry: null },
+        ]);
+        expect(events.findIndex(event => event.kind === 'turn-start'))
+          .toBeLessThan(events.findIndex(event => event.kind === 'turn-progress'));
+        expect(events.filter(event => event.kind === 'turn-complete')).toHaveLength(1);
+        expect(events.filter(event => event.kind === 'turn-failed' || event.kind === 'turn-cancelled')).toEqual([]);
+      } finally { subscription.dispose(); await session.dispose(); }
+    });
+  });
+
   it('rejects a valid unsupported MCP policy update without treating the SDK carrier as malformed', async () => {
     await withTempDir('happier-public-acp-mcp-update-', async dir => {
       const fixture = createFixture(dir, 'completed');
@@ -1272,6 +1490,7 @@ describe('createPublicAcpSession', () => {
       expect(failure).toBeInstanceOf(Error);
       const record = createAcpRequestFailureLogRecord({ operation: 'NewSession', error: failure });
       expect(record).toEqual({ operation: 'NewSession', failureKind: 'provider_rejection',
+        requestErrorMessage: expect.any(String),
         requestErrorCode: scenario === 'agy-auth-wrong-code' ? -32603 : -32000,
         ...(scenario === 'agy-auth-setup' ? { authenticationSetupFailure: true } : {}),
       });
@@ -1454,12 +1673,12 @@ describe('createPublicAcpSession', () => {
 
   it.each(['mapped', 'unmapped'] as const)('enforces raw ACP input policy before native prompts despite an explicit wider mode (%s)', async (mapping) => {
     await withTempDir('happier-public-acp-input-policy-', async dir => {
-      const fixture = createFixture(dir, 'configuration-update');
+      const fixture = createFixture(dir, 'configuration-update-candidates-current');
       const authored = applyAcpBackendUpsertV1({ settings: undefined, nowMs: 1, backend: {
         id: 'raw-policy', name: 'raw-policy', title: 'Raw policy',
         launch: { kind: 'command', command: 'fixture-agent', args: [] },
         runtime: { permissionModeMapping: {
-          default: null, yolo: 'bypass', plan: 'plan', 'safe-yolo': 'smart', 'read-only': mapping === 'mapped' ? 'ask' : null,
+          default: null, yolo: 'bypass', plan: 'plan', 'safe-yolo': 'smart', 'read-only': mapping === 'mapped' ? ['missing', 'ask'] : null,
         } },
       } });
       expect(authored).toMatchObject({ ok: true });
@@ -1558,7 +1777,7 @@ describe('createPublicAcpSession', () => {
           HOST_ONLY_VALUE: 'kept',
         },
         unsetEnv: ['REMOVED_VALUE'],
-        timeouts: { initializeMs: 2_000, idleMs: 20, toolCallMs: 2_000 },
+        timeouts: { initializeMs: 2_000, idleMs: 20 },
       }));
       const session = await createPublicAcpSession({
         kind: 'create',
@@ -1865,10 +2084,11 @@ describe('createPublicAcpSession', () => {
     });
   });
 
-  it('projects one terminal provider output through the existing session media service exactly once', async () => {
+  it.each([1, 9])('projects all %i images from one terminal provider output through the existing session media service exactly once', async (imageCount) => {
     await withTempDir('happier-public-acp-generated-media-', async (dir) => {
       const fixture = createFixture(dir, 'generated-media');
       const mediaPath = path.join(dir, 'generated', 'generated.png');
+      const mediaPaths = Array.from({ length: imageCount }, (_, index) => path.join(dir, 'generated', `generated-${index}.png`));
       const session = await createPublicAcpSession({
         kind: 'create',
         sessionId: 'host-generated-media',
@@ -1888,7 +2108,7 @@ describe('createPublicAcpSession', () => {
               }
               const output = rawOutput as Readonly<Record<string, unknown>>;
               if (output.type !== 'ImageGen' || output.path !== mediaPath) return null;
-              return [{ rootPath: path.dirname(mediaPath), path: mediaPath }];
+              return mediaPaths.map(imagePath => ({ rootPath: path.dirname(mediaPath), path: imagePath }));
             },
           },
         },
@@ -1903,20 +2123,17 @@ describe('createPublicAcpSession', () => {
         });
         await collectUntil(events, 'turn-complete');
         await waitForCondition(
-          () => fixture.publishGeneratedMedia.mock.calls.length === 1,
+          () => fixture.publishGeneratedMedia.mock.calls.length === imageCount,
           { timeoutMs: 2_000, intervalMs: 10, label: 'generated media publication' },
         );
 
-        expect(fixture.registerMediaSourceRoot).toHaveBeenCalledOnce();
+        expect(fixture.registerMediaSourceRoot).toHaveBeenCalledTimes(imageCount);
         expect(fixture.registerMediaSourceRoot).toHaveBeenCalledWith({
           rootPath: path.dirname(mediaPath),
         });
-        expect(fixture.publishGeneratedMedia).toHaveBeenCalledOnce();
-        expect(fixture.publishGeneratedMedia).toHaveBeenCalledWith(expect.objectContaining({
-          path: mediaPath,
-          toolCallId: 'generated-image-1',
-        }));
-        expect(fixture.disposeMediaSourceRoot).toHaveBeenCalledOnce();
+        expect(fixture.publishGeneratedMedia.mock.calls.map(([input]) => input.path)).toEqual(mediaPaths);
+        expect(fixture.publishGeneratedMedia.mock.calls.every(([input]) => input.toolCallId === 'generated-image-1')).toBe(true);
+        expect(fixture.disposeMediaSourceRoot).toHaveBeenCalledTimes(imageCount);
       } finally {
         subscription.dispose();
         await session.dispose();
@@ -2060,7 +2277,82 @@ describe('createPublicAcpSession', () => {
     });
   });
 
-  it('publishes provider-authoritative models and model-scoped options instead of stale host selection', async () => {
+  it('applies standalone ACP configuration before the requested model and its scoped options on creation', async () => {
+    await withTempDir('happier-public-acp-config-order-', async (dir) => {
+      const fixture = createFixture(dir, 'config-catalog');
+      const session = await createPublicAcpSession({ kind: 'create', sessionId: 'host-config-order', cwd: dir,
+        configuration: {
+          mode: { value: null, updatedAtMs: 0 }, model: { value: 'gpt-6-luna', updatedAtMs: 1 },
+          permissionIntent: { value: null, updatedAtMs: 0 }, options: {
+            provider: { value: 'codex', updatedAtMs: 1 }, fast: { value: 'true', updatedAtMs: 1 },
+          },
+        },
+      }, { ...fixture.options, definition: { mcp: { policy: 'drop' }, modelConfigOptionId: 'model' } }, fixture.dependencies);
+      try {
+        expect(fixture.readModels()).toMatchObject({ currentModelId: 'gpt-6-luna', models: expect.arrayContaining([
+          expect.objectContaining({ id: 'gpt-6-luna', modelOptions: expect.arrayContaining([
+            expect.objectContaining({ id: 'fast', currentValue: 'true' }),
+          ]) }),
+        ]) });
+      } finally { await session.dispose(); }
+    });
+  });
+
+  it('publishes full ACP configuration catalogs, setter responses, notification refresh and live commands', async () => {
+    await withTempDir('happier-public-acp-config-catalog-', async (dir) => {
+      const fixture = createFixture(dir, 'config-catalog');
+      const session = await createPublicAcpSession({ kind: 'create', sessionId: 'host-config-catalog', cwd: dir }, {
+        ...fixture.options, definition: { mcp: { policy: 'drop' }, modelConfigOptionId: 'model' },
+      }, fixture.dependencies);
+      const events: AgentSessionRuntimeEvent[] = [];
+      const subscription = session.watch(event => { events.push(event); });
+      const configEvents = () => events.filter(event => event.kind === 'config-options');
+      const update = (model: string | null, options: Record<string, { value: string; updatedAtMs: number }>, at: number) => session.updateConfiguration!({
+        mode: { value: null, updatedAtMs: 0 }, model: { value: model, updatedAtMs: at },
+        permissionIntent: { value: null, updatedAtMs: 0 }, options,
+      });
+      try {
+        await vi.waitFor(() => expect(configEvents().at(-1)).toMatchObject({ modelConfigOptionId: 'model', configOptions: createFxConfigOptionsFixture() }));
+        expect(events).toContainEqual(expect.objectContaining({ kind: 'available-commands', commands: [] }));
+        expect(fixture.readModels()).toMatchObject({ currentModelId: 'gpt-6.1-sol', models: expect.arrayContaining([
+          expect.objectContaining({ id: 'gpt-6.1-sol', modelOptions: expect.arrayContaining([
+            expect.objectContaining({ id: 'effort' }), expect.objectContaining({ id: 'fast', currentValue: 'false' }),
+          ]) }),
+        ]) });
+
+        await expect(update('gpt-6-luna', {}, 1)).resolves.toMatchObject({ status: 'applied' });
+        await vi.waitFor(() => expect(configEvents().at(-1)).toMatchObject({ configOptions: expect.arrayContaining([
+          expect.objectContaining({ id: 'model', currentValue: 'gpt-6-luna' }),
+          expect.objectContaining({ id: 'effort', options: createFxConfigOptionsFixture().find(option => option.id === 'effort')!.options.filter(choice => choice.value !== 'ultra') }),
+        ]) }));
+        await expect(update('gpt-6-luna', { fast: { value: 'true', updatedAtMs: 2 } }, 1)).resolves.toMatchObject({ status: 'applied' });
+        await vi.waitFor(() => expect(configEvents().at(-1)).toMatchObject({ configOptions: expect.arrayContaining([
+          expect.objectContaining({ id: 'fast', currentValue: 'true' }),
+        ]) }));
+        const lastGood = configEvents().at(-1);
+        await expect(update('gpt-6-luna', { provider: { value: 'gateway', updatedAtMs: 3 } }, 1)).resolves.toMatchObject({
+          status: 'rejected', diagnostic: { code: 'acp_configuration_update_failed', message: expect.stringContaining('Vercel AI Gateway') },
+        });
+        expect(configEvents().at(-1)).toBe(lastGood);
+        expect(fixture.readModels().currentModelId).toBe('gpt-6-luna');
+
+        await session.send({ inputIds: ['config-refresh'], input: { text: 'refresh' }, delivery: { kind: 'newTurn', turnId: 'config-refresh' } });
+        await collectUntil(events, 'turn-complete');
+        expect(configEvents().at(-1)).toMatchObject({ configOptions: expect.arrayContaining([
+          expect.objectContaining({ id: 'fast', currentValue: 'false' }),
+        ]) });
+        expect(events).toContainEqual(expect.objectContaining({ kind: 'available-commands', commands: [{ name: 'review', description: 'Review changes' }] }));
+        await session.send({ inputIds: ['config-withdraw'], input: { text: 'withdraw catalog' }, delivery: { kind: 'newTurn', turnId: 'config-withdraw' } });
+        await vi.waitFor(() => expect(configEvents().at(-1)).toMatchObject({ configOptions: [] }));
+        expect(configEvents().at(-1)).not.toHaveProperty('modelConfigOptionId');
+        expect(fixture.readModels()).toMatchObject({ models: [], currentModelId: 'gpt-6-luna' });
+        await vi.waitFor(() => expect(events.filter(event => event.kind === 'available-commands').at(-1)).toMatchObject({ commands: [] }));
+        expect(events.every(event => AgentSessionRuntimeEventSchema.safeParse(event).success)).toBe(true);
+      } finally { subscription.dispose(); await session.dispose(); }
+    });
+  });
+
+  it('publishes provider-authoritative models and model-scoped options without a requested selection', async () => {
     await withTempDir('happier-public-acp-models-', async (dir) => {
       const fixture = createFixture(dir, 'provider-models');
       const session = await createPublicAcpSession({
@@ -2069,7 +2361,7 @@ describe('createPublicAcpSession', () => {
         cwd: dir,
         configuration: {
           mode: { value: null, updatedAtMs: 1 },
-          model: { value: 'stale-host', updatedAtMs: 1 },
+          model: { value: null, updatedAtMs: 1 },
           permissionIntent: { value: null, updatedAtMs: 1 },
           options: {},
         },
@@ -2398,7 +2690,7 @@ describe('createPublicAcpSession', () => {
         kind: 'create', sessionId: 'host-provider-model-update', cwd: dir,
         configuration: {
           mode: { value: null, updatedAtMs: 1 },
-          model: { value: 'stale-host', updatedAtMs: 1 },
+          model: { value: null, updatedAtMs: 1 },
           permissionIntent: { value: null, updatedAtMs: 1 },
           options: { reasoning_effort: { value: 'high', updatedAtMs: 1 } },
         },
@@ -2915,13 +3207,14 @@ describe('createPublicAcpSession', () => {
         if (opened.session) {
           await opened.session.send({ inputIds: ['gemini-input'], input: { text: 'hello' }, delivery: { kind: 'newTurn', turnId: 'gemini-turn' } });
         }
-        await waitForCondition(() => events.some(event => event.kind === 'input-rejected' || event.kind === 'run-failed'),
+        await waitForCondition(() => events.some(event => event.kind === 'input-rejected' || event.kind === 'turn-failed' || event.kind === 'run-failed'),
           { timeoutMs: 5000, intervalMs: 10, label: 'Gemini native numeric failure' });
-        const failure = events.find(event => event.kind === 'input-rejected' || event.kind === 'run-failed');
+        const failure = events.find(event => event.kind === 'input-rejected' || event.kind === 'turn-failed' || event.kind === 'run-failed');
         if (!failure || !('diagnostic' in failure) || !failure.diagnostic) throw new Error('Expected native failed diagnostic');
-        expect(failure.diagnostic).toMatchObject({ code: 'acp_input_rejected_before_effect', details: { requestErrorCode } });
+        expect(failure.diagnostic).toMatchObject({ code: requestErrorCode === -32603 ? 'acp_turn_failed' : 'acp_input_rejected_before_effect', details: { requestErrorCode } });
         expect(readFileSync(promptCountPath, 'utf8')).toBe('1');
-        expect(events.some(event => event.kind === 'input-accepted' || event.kind === 'run-complete')).toBe(false);
+        expect(events.some(event => event.kind === 'input-accepted')).toBe(requestErrorCode === -32603);
+        expect(events.some(event => event.kind === 'run-complete')).toBe(false);
         expect(JSON.stringify(failure)).not.toContain('private-provider-token');
         const adapter = createGeminiConnectedServiceRuntimeAuthAdapter();
         const classification = adapter.classifyRuntimeAuthFailure({ target: { agentId: 'gemini' }, error: failure.diagnostic,
@@ -2963,8 +3256,6 @@ describe('createPublicAcpSession', () => {
           timeouts: {
             initMs: 2_000,
             idleMs: 20,
-            toolCallMs: 2_000,
-            investigationToolCallMs: 4_000,
           },
           toolNameInference: {
             patterns: [{ name: 'read', patterns: ['read'], inputFields: ['locations'] }],
@@ -3303,6 +3594,46 @@ describe('createPublicAcpSession', () => {
   });
 
 
+  it.each([
+    ['current', 'safe-yolo', 'preferred'],
+    ['legacy', 'safe-yolo', 'legacy'],
+    ['both', 'safe-yolo', 'preferred'],
+    ['current', 'read-only', 'ask'],
+    ['unmatched', 'safe-yolo', null],
+  ] as const)('applies advertised permission candidates for %s / %s', async (version, permissionIntent, expectedMode) => {
+    await withTempDir('happier-public-acp-permission-candidates-', async dir => {
+      const fixture = createFixture(dir, `configuration-update-candidates-${version}`);
+      const opening = createPublicAcpSession({
+        kind: 'create', sessionId: 'host-permission-candidates', cwd: dir,
+        configuration: {
+          mode: { value: null, updatedAtMs: 1 }, model: { value: null, updatedAtMs: 1 },
+          permissionIntent: { value: permissionIntent, updatedAtMs: 1 }, options: {},
+        },
+      }, { ...fixture.options, definition: { mcp: { policy: 'drop' }, permissionModeMapping: {
+        default: null, 'read-only': 'ask', 'safe-yolo': ['preferred', 'legacy'],
+      } } }, fixture.dependencies);
+      if (expectedMode === null) {
+        const failure = await opening.then(async session => {
+          await session.dispose();
+          return null;
+        }, (error: unknown) => error);
+        expect(failure).toMatchObject({ code: 'acp_permission_intent_unsupported' });
+        return;
+      }
+      const session = await opening;
+      const events: AgentSessionRuntimeEvent[] = [];
+      const subscription = session.watch(event => events.push(event));
+      try {
+        await session.send({ inputIds: ['permission-candidates'], input: { text: 'report configuration' },
+          delivery: { kind: 'newTurn', turnId: 'permission-candidates' } });
+        await collectUntil(events, 'turn-complete');
+        expect(events).toContainEqual(expect.objectContaining({ kind: 'message-delta',
+          text: JSON.stringify({ selectedMode: expectedMode, selectedModel: null, selectedOptions: {} }),
+        }));
+      } finally { subscription.dispose(); await session.dispose(); }
+    });
+  });
+
   it.each(['create', 'resume'] as const)('preserves explicit native mode precedence through %s, permission changes, and clear', async (kind) => {
     await withTempDir('happier-public-acp-mode-precedence-', async (dir) => {
       const fixture = createFixture(dir, 'configuration-update-clear-retry');
@@ -3568,9 +3899,16 @@ describe('createPublicAcpSession', () => {
           turnId: 'turn-permission',
           text: JSON.stringify({ outcome: { outcome: 'selected', optionId: 'allow-once' } }),
         }));
-        expect(events.filter((event) => (
-          event.kind === 'tool-call' && event.toolCallId === 'tool-call-1'
-        ))).toHaveLength(1);
+        const toolCalls = events.filter((event) => event.kind === 'tool-call');
+        expect(new Set(toolCalls.map((event) => event.toolCallId))).toEqual(new Set(['tool-call-1']));
+        for (const event of toolCalls) {
+          expect(event).toMatchObject({
+            turnId: 'turn-permission',
+            toolName: 'execute',
+            input: expect.objectContaining({ command: 'pwd' }),
+          });
+          expect(event.sequence).toBeLessThan(events.find((candidate) => candidate.kind === 'turn-complete')!.sequence);
+        }
       } finally {
         subscription.dispose();
         await session.dispose();
@@ -3647,7 +3985,7 @@ describe('createPublicAcpSession', () => {
         })).resolves.toEqual({ status: 'admitted' });
         await collectUntil(events, 'turn-complete');
 
-        expect(events.map((event) => event.kind)).toEqual([
+        expect(events.map(event => event.kind)).toEqual([
           'provider-session-id',
           'input-accepted',
           'turn-start',
@@ -3790,7 +4128,7 @@ describe('createPublicAcpSession', () => {
         })).resolves.toEqual({ status: 'admitted' });
         await collectUntil(events, 'turn-failed');
 
-        expect(events.map((event) => event.kind)).toEqual([
+        expect(events.map(event => event.kind)).toEqual([
           'provider-session-id',
           'input-accepted',
           'turn-start',
@@ -3880,6 +4218,41 @@ describe('createPublicAcpSession', () => {
         expect(events.some((event) => event.kind === 'input-accepted' || event.kind.startsWith('turn-'))).toBe(false);
         const invariant = createAgentSessionTurnInvariant({ sessionId: 'host-effect-unobserved' });
         expect(events.map((event) => invariant.observe(event).status)).toEqual(events.map(() => 'accepted'));
+      } finally {
+        subscription.dispose();
+        await session.dispose();
+      }
+    });
+  });
+
+  it('fails an admitted ACP turn before ending after a malformed publication', async () => {
+    await withTempDir('happier-public-acp-malformed-publication-', async dir => {
+      const fixture = createFixture(dir, 'malformed-publication');
+      const sessionId = 'host-malformed-publication';
+      const session = await createPublicAcpSession({ kind: 'create', sessionId, cwd: dir }, fixture.options, fixture.dependencies);
+      const events: AgentSessionRuntimeEvent[] = [];
+      const invariant = createAgentSessionTurnInvariant({ sessionId });
+      const observations: string[] = [];
+      const subscription = session.watch(event => {
+        events.push(event);
+        observations.push(invariant.observe(event).status);
+      });
+      try {
+        await session.send({ inputIds: ['malformed-input'], input: { text: 'begin' },
+          delivery: { kind: 'newTurn', turnId: 'malformed-turn' } });
+        await collectUntil(events, 'message-delta');
+        await session.requestExtension('acme/malformed_publication', { sessionId: 'provider-created' });
+        await collectUntil(events, 'runtime-ended');
+        expect(events.filter(event => event.kind === 'turn-failed' || event.kind === 'runtime-ended')).toMatchObject([
+          { kind: 'turn-failed', turnId: 'malformed-turn', diagnostic: { code: 'agent_runtime_event_invalid' } },
+          { kind: 'runtime-ended', cause: 'protocolError', diagnostic: { code: 'agent_runtime_event_invalid' } },
+        ]);
+        expect(events.filter(event => event.kind === 'message-delta')).toMatchObject([{ text: 'accepted output' }]);
+        expect(observations.every(status => status === 'accepted')).toBe(true);
+        await expect(session.send({ inputIds: ['after-failure'], input: { text: 'must not reach ACP' },
+          delivery: { kind: 'newTurn', turnId: 'after-failure' } })).resolves.toMatchObject({
+          status: 'unavailable', retryable: false, diagnostic: { code: 'agent_runtime_event_invalid' },
+        });
       } finally {
         subscription.dispose();
         await session.dispose();
@@ -4113,6 +4486,78 @@ describe('createPublicAcpSession', () => {
     });
   });
 
+  it.each(['absorbed', 'dropped', 'unavailable'] as const)('honors declared steering capability and %s custody without echoing another user entry', async (outcome) => {
+    await withTempDir('happier-public-acp-declared-steer-', async (dir) => {
+      const fixture = createFixture(dir, `declared-steer-${outcome}`);
+      const steer = {
+        method: 'session/prompt',
+        buildParams: ({ providerSessionId, content }: { providerSessionId: string; content: readonly JsonValue[] }) => ({
+          sessionId: providerSessionId, prompt: [...content], _meta: { acme: { steer: true } },
+        }),
+        isSupported: (capabilities: JsonValue) => {
+          const caps = capabilities as { _meta?: { acme?: { steering?: boolean } } };
+          return caps._meta?.acme?.steering === true;
+        },
+        isAccepted: (response: JsonValue) => (response as { _meta?: { acme?: { steering?: string } } })._meta?.acme?.steering === 'absorbed',
+        isRejected: (response: JsonValue) => (response as { _meta?: { acme?: { steering?: string } } })._meta?.acme?.steering === 'dropped',
+      };
+      const session = await createPublicAcpSession({ kind: 'create', sessionId: 'host-declared-steer', cwd: dir }, {
+        ...fixture.options, definition: { mcp: { policy: 'pass_through' }, delivery: { steer } },
+      }, fixture.dependencies);
+      const events: AgentSessionRuntimeEvent[] = [];
+      const subscription = session.watch(event => { events.push(event); });
+      try {
+        await session.send({ inputIds: ['primary'], input: { text: 'primary' }, delivery: { kind: 'newTurn', turnId: 'turn-primary' } });
+        await waitForCondition(() => events.some(event => event.kind === 'message-delta' && event.text === 'primary active'),
+          { timeoutMs: 5_000, intervalMs: 10, label: 'declared steer primary turn active' });
+        const result = await session.send({ inputIds: ['steer'], input: { text: 'Instead reply steered.' }, delivery: { kind: 'steer', turnId: 'turn-primary' } });
+        if (outcome === 'unavailable') {
+          expect(result).toMatchObject({ status: 'unsupported', retryable: false });
+          expect(events.some(event => event.kind === 'input-accepted' && event.inputIds.includes('steer'))).toBe(false);
+        } else {
+          expect(result.status).toBe('admitted');
+          await collectUntil(events, 'turn-complete');
+          if (outcome === 'absorbed') {
+            await waitForCondition(() => events.some(event => event.kind === 'input-accepted' && event.inputIds.includes('steer')),
+              { timeoutMs: 5_000, intervalMs: 10, label: 'declared steer input accepted' });
+            expect(events.filter(event => event.kind === 'input-accepted' && event.inputIds.includes('steer'))).toHaveLength(1);
+            expect(events.filter(event => event.kind === 'message-delta' && event.text === 'steered')).toHaveLength(1);
+          } else {
+            await session.drainPendingPublications();
+            expect(events).toContainEqual(expect.objectContaining({ kind: 'input-rejected', inputIds: ['steer'], retryable: true }));
+            expect(events.some(event => event.kind === 'input-custody-unknown')).toBe(false);
+          }
+          expect(events.filter(event => event.kind === 'turn-start')).toHaveLength(1);
+          expect(events.filter(event => event.kind === 'message-delta' && event.text === 'Instead reply steered.')).toHaveLength(0);
+        }
+      } finally {
+        subscription.dispose();
+        await session.dispose();
+      }
+    });
+  });
+
+  it('preserves active input permission authority when steer projection refuses before write', async () => {
+    await withTempDir('happier-public-acp-unrepresentable-steer-', async dir => {
+      const fixture = createFixture(dir, 'permission-after-steer');
+      const session = await createPublicAcpSession({ kind: 'create', sessionId: 'host-steer', cwd: dir }, {
+        ...fixture.options, definition: { mcp: { policy: 'drop' }, delivery: { steer: {
+          method: 'acme/unsupported-steer', buildParams: () => null, isAccepted: () => false,
+        } } },
+      }, fixture.dependencies);
+      try {
+        await session.send({ inputIds: ['primary'], input: { text: 'primary' }, delivery: { kind: 'newTurn', turnId: 'turn-primary' },
+          causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'read-only' } });
+        await expect(session.send({ inputIds: ['unrepresentable'], input: { text: 'steer' }, delivery: { kind: 'steer', turnId: 'turn-primary' },
+          causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'safe-yolo' } })).resolves.toMatchObject({ status: 'unsupported' });
+        await session.requestExtension('acme/probe_permission', { sessionId: session.getProviderSessionId() });
+        expect(fixture.requestInteraction).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ permissionContext: {
+          turnId: 'turn-primary', causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'read-only' },
+        } }));
+      } finally { await session.dispose(); }
+    });
+  });
+
   it('uses a provider steer extension instead of a concurrent session prompt when configured', async () => {
     await withTempDir('happier-public-acp-provider-steer-', async (dir) => {
       const fixture = createFixture(dir, 'grok-interject');
@@ -4343,12 +4788,19 @@ describe('createPublicAcpSession', () => {
       expect(requestExtension.mock.calls.map(([method]) => method)).toEqual(methods);
     });
 
+    it('uses the complete declared history-method list until a method succeeds', async () => {
+      const declaredMethods = Array.from({ length: 9 }, (_, index) => `x.test/fork-${index}`);
+      const requestExtension = vi.fn(async (method: string) => {
+        if (method !== declaredMethods.at(-1)) throw RequestError.methodNotFound(method);
+        return { newSessionId: 'provider-history-forked' };
+      });
+      await expect(requestAcpHistoryExtension({ methods: declaredMethods, params, requestExtension }))
+        .resolves.toEqual({ newSessionId: 'provider-history-forked' });
+      expect(requestExtension.mock.calls.map(([method]) => method)).toEqual(declaredMethods);
+    });
+
     it.each([
       { label: 'empty', methods: [] },
-      {
-        label: 'oversized',
-        methods: Array.from({ length: 9 }, (_, index) => `x.test/fork-${index}`),
-      },
       {
         label: 'malformed',
         methods: ['x.ai/session/fork', 'not-namespaced'],
@@ -4769,6 +5221,53 @@ describe('createPublicAcpSession', () => {
     });
   });
 
+  it.each([false, true])('settles an unknown prompt stop reason through the declared projector when available (%s)', async (withProjector) => {
+    await withTempDir('happier-public-acp-unknown-stop-', async (dir) => {
+      const fixture = createFixture(dir, 'unknown-stop-reason');
+      const session = await createPublicAcpSession({ kind: 'create', sessionId: 'unknown-stop', cwd: dir },
+        {
+          ...fixture.options,
+          definition: {
+            mcp: { policy: 'drop' },
+            usage: {
+              projectPromptUsage({ usage }) {
+                if (!usage || typeof usage !== 'object' || Array.isArray(usage)) return null;
+                return { ...usage, totalTokens: 24 };
+              },
+            },
+            ...(withProjector ? { sessionUpdates: {
+              project: () => null,
+              projectStopReason: (stopReason: string) => stopReason === 'future_stop' ? 'max_tokens' as const : null,
+            } } : {}),
+          },
+        }, fixture.dependencies);
+      const events: AgentSessionRuntimeEvent[] = [];
+      const subscription = session.watch(event => { events.push(event); });
+      try {
+        await session.send({ inputIds: ['unknown-input'], input: { text: 'continue' },
+          delivery: { kind: 'newTurn', turnId: 'unknown-turn' } });
+        await waitForCondition(() => events.some(event => event.kind === 'turn-complete'
+          || event.kind === 'turn-failed' || event.kind === 'turn-cancelled'),
+          { timeoutMs: 5000, intervalMs: 10, label: 'unknown stop terminal' });
+        expect(events.filter(event => event.kind === 'turn-complete'
+          || event.kind === 'turn-failed' || event.kind === 'turn-cancelled')).toEqual([
+          expect.objectContaining(withProjector
+            ? { kind: 'turn-complete', turnId: 'unknown-turn' }
+            : { kind: 'turn-cancelled', turnId: 'unknown-turn', cause: 'unknown', diagnostic: {
+              code: 'acp_unknown_stop_reason', severity: 'warning', details: { stopReason: 'future_stop' },
+            } }),
+        ]);
+        expect(events).toContainEqual(expect.objectContaining({
+          kind: 'usage-observed', source: 'acp-prompt-usage',
+          tokens: { total: 24, input: 17, output: 7, cacheRead: 5, cacheWrite: 2, reasoning: 3 },
+        }));
+      } finally {
+        subscription.dispose();
+        await session.dispose();
+      }
+    });
+  });
+
   it('maps official refusal to turn-failed and cancellation to one turn-cancelled terminal', async () => {
     await withTempDir('happier-public-acp-terminals-', async (dir) => {
       const refusedFixture = createFixture(dir, 'refused');
@@ -4931,12 +5430,12 @@ describe('createPublicAcpSession', () => {
           delivery: { kind: 'newTurn', turnId: 'turn-pre-ack-cancel' },
         });
         await new Promise((resolve) => setTimeout(resolve, 50));
-        expect(events.map((event) => event.kind)).toEqual(['provider-session-id']);
+        expect(events.map(event => event.kind)).toEqual(['provider-session-id']);
         await expect(session.cancel?.({ turnId: 'turn-pre-ack-cancel', reason: 'user' }))
           .resolves.toEqual({ status: 'requested', turnId: 'turn-pre-ack-cancel' });
         await expect(sending).resolves.toEqual({ status: 'admitted' });
         await collectUntil(events, 'turn-cancelled');
-        expect(events.map((event) => event.kind)).toEqual([
+        expect(events.map(event => event.kind)).toEqual([
           'provider-session-id',
           'input-accepted',
           'turn-start',
@@ -5282,7 +5781,26 @@ describe('createPublicAcpSession', () => {
         await collectUntil(events, 'turn-complete');
 
         expect(evidenceResults).toEqual([true]);
-        expect(events.map((event) => event.kind)).toEqual([
+        // Accumulator refinements retain the same durable tool identity.
+        const seenToolCalls = new Set<string>();
+        const lifecycleEvents = events.filter((event) => {
+          if (event.kind !== 'tool-call') return true;
+          const identity = `${event.turnId}:${event.toolCallId}`;
+          if (seenToolCalls.has(identity)) return false;
+          seenToolCalls.add(identity);
+          return true;
+        });
+        const toolCalls = events.filter((event) => event.kind === 'tool-call');
+        expect(new Set(toolCalls.map((event) => event.toolCallId))).toEqual(new Set(['pre-response-tool']));
+        for (const event of toolCalls) {
+          expect(event).toMatchObject({
+            turnId: 'turn-pre-response-turn',
+            toolName: 'read',
+            input: expect.objectContaining({ path: '/workspace/README.md' }),
+          });
+          expect(event.sequence).toBeLessThan(events.find((candidate) => candidate.kind === 'tool-result')!.sequence);
+        }
+        expect(lifecycleEvents.map(event => event.kind)).toEqual([
           'provider-session-id',
           'input-accepted',
           'turn-start',
@@ -5487,6 +6005,7 @@ describe('createPublicAcpSession', () => {
       const session = await createPublicAcpSession({
         kind: 'create', sessionId: 'host-media', cwd: dir,
       }, fixture.options, fixture.dependencies);
+      expect(session.runtimeCapabilities).toMatchObject({ backend: { session: { media: { acceptsImageInput: { supported: true } } } } });
       const events: AgentSessionRuntimeEvent[] = [];
       const subscription = session.watch((event) => { events.push(event); });
       try {
@@ -5556,6 +6075,7 @@ describe('createPublicAcpSession', () => {
       const unsupported = await createPublicAcpSession({
         kind: 'create', sessionId: 'host-media-unsupported', cwd: dir,
       }, unsupportedFixture.options, unsupportedFixture.dependencies);
+      expect(unsupported.runtimeCapabilities).toMatchObject({ backend: { session: { media: { acceptsImageInput: { supported: false } } } } });
       try {
         await expect(unsupported.send({
           inputIds: ['input-media-unsupported'],
@@ -5803,7 +6323,7 @@ describe('createPublicAcpSession', () => {
           transport: {
             kind: 'webSocket',
             url: `ws://127.0.0.1:${address.port}/acp`,
-            timeouts: { initializeMs: 2_000, idleMs: 20, toolCallMs: 2_000 },
+            timeouts: { initializeMs: 2_000, idleMs: 20 },
           },
           definition: createHistoryDefinition(),
         }, fixture.dependencies);
@@ -5891,7 +6411,7 @@ describe('createPublicAcpSession', () => {
           transport: {
             kind: 'webSocket',
             url: `ws://127.0.0.1:${address.port}/acp`,
-            timeouts: { initializeMs: 2_000, idleMs: 20, toolCallMs: 2_000 },
+            timeouts: { initializeMs: 2_000, idleMs: 20 },
           },
         }, fixture.dependencies);
         const events: AgentSessionRuntimeEvent[] = [];
@@ -5968,7 +6488,7 @@ describe('createPublicAcpSession', () => {
             kind: 'tcp',
             host: '127.0.0.1',
             port: address.port,
-            timeouts: { initializeMs: 2_000, idleMs: 20, toolCallMs: 2_000 },
+            timeouts: { initializeMs: 2_000, idleMs: 20 },
           },
         }, fixture.dependencies);
         const events: AgentSessionRuntimeEvent[] = [];

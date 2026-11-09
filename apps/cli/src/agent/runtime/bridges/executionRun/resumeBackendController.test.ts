@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { ExecutionRunState } from '@/agent/runtime/bridges/executionRun/executionRunTypes';
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
-import { resumeBackendControllerForResumableRun } from '@/agent/runtime/bridges/executionRun/resumeBackendController';
+import { captureExecutionRunResumeMaterialization, resumeBackendControllerForResumableRun,
+  type ExecutionRunResumeMaterializationAuthority } from '@/agent/runtime/bridges/executionRun/resumeBackendController';
 import { createTestExecutionRunHostRuntime } from './testkit/runtime';
 import { startExecutionRun } from './startExecutionRun';
 import { VoiceAgentManager } from '@/agent/voice/agent/VoiceAgentManager';
@@ -51,6 +52,7 @@ describe('resumeBackendControllerForResumableRun', () => {
     };
     const runs = new Map([[run.runId, run]]);
     const controllers = new Map();
+    const materializationAuthorities: ExecutionRunResumeMaterializationAuthority[] = [];
     const common = {
       runId: run.runId,
       run,
@@ -66,6 +68,11 @@ describe('resumeBackendControllerForResumableRun', () => {
           },
           provisionRuntime: async () => {
             provisionCount += 1;
+            const controller = controllers.get(run.runId);
+            const authority = captureExecutionRunResumeMaterialization({ runId: run.runId,
+              occurrenceId: controller.controllerOccurrenceId, controllers });
+            expect(authority).not.toBeNull();
+            if (authority) materializationAuthorities.push(authority);
             return { runtimeId: `runtime_${runtimeCount}` };
           },
         }).runtime;
@@ -93,6 +100,12 @@ describe('resumeBackendControllerForResumableRun', () => {
     expect(provisionCount).toBe(1);
     expect(controllers.get(run.runId)?.kind).toBe('backend');
     expect(runs.get(run.runId)?.error).toBeUndefined();
+    const authority = materializationAuthorities[0];
+    expect(captureExecutionRunResumeMaterialization({ runId: run.runId,
+      occurrenceId: authority.occurrenceId, controllers })).toBeNull();
+    expect(authority.isCurrent()).toBe(true);
+    controllers.get(run.runId)!.cancelled = true;
+    expect(authority.isCurrent()).toBe(false);
   });
 
   it('retires a provisioned runtime when the exact resume occurrence was stopped before provisioning settled', async () => {
@@ -316,7 +329,7 @@ describe('resumeBackendControllerForResumableRun', () => {
     });
     expect(transientFailure).toMatchObject({
       ok: false,
-      errorCode: 'execution_run_failed',
+      errorCode: 'connected_service_run_materialization_blocked',
       resumeFailureKind: 'indeterminate',
     });
 

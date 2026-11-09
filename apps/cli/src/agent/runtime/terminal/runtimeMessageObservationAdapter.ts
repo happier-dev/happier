@@ -1,4 +1,3 @@
-import { AgentSessionRuntimeEventSchema } from '@happier-dev/protocol/runtime/agentSessionV1';
 import type { AgentSessionRuntimeEvent } from '@happier-dev/protocol';
 
 import type {
@@ -20,11 +19,9 @@ function readCancellationDetail(event: RuntimeTurnCancelledEvent): string | unde
 
 export function mapRuntimeMessageToTerminalLifecycleObservation(params: Readonly<{
   agentId: AgentId;
-  message: unknown;
+  message: AgentSessionRuntimeEvent;
 }>): TerminalLifecycleObservation | null {
-  const parsed = AgentSessionRuntimeEventSchema.safeParse(params.message);
-  if (!parsed.success) return null;
-  const event = parsed.data;
+  const event = params.message;
 
   if (event.kind === 'turn-start') {
     return {

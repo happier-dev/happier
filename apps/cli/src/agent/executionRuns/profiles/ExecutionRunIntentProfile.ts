@@ -135,6 +135,10 @@ export type ExecutionRunProfilePrepareStartParams = Readonly<{
   cwd: string;
   /** Offered-model truth from the host probe, never caller-authored intent input. */
   contextWindowTokens?: number;
+  /** Effective runtime input budget after the prepared host prefix, in Unicode scalar values. */
+  maxInputUnicodeCharacters?: number;
+  /** Demands the exact prepared context only when this profile will size an input. */
+  resolveMaxInputUnicodeCharacters?: () => Promise<number | undefined>;
   /** Runner preparations reach SCM through their retained daemon snapshot. */
   resolveReviewScmScope?: (input: Readonly<{ cwd: string; intentInput?: unknown }>) => Promise<ReviewScmScopeV1>;
   loadScmCommitMessageContext?: (input: ScmCommitMessageContextInput) => Promise<ScmCommitMessageContext>;
@@ -143,7 +147,8 @@ export type ExecutionRunProfilePrepareStartParams = Readonly<{
 
 export type ExecutionRunIntentProfile = Readonly<{
   intent: ExecutionRunIntent;
-  transcriptMaterialization: 'full' | 'none';
+  /** Completion-only profiles publish decoded answers without streaming the raw model output. */
+  transcriptMaterialization: 'full' | 'completion' | 'none';
   /**
    * Detached scope is an explicit profile capability. Existing Session-shaped
    * profiles retain their established Session semantics unless they opt in.
@@ -153,17 +158,20 @@ export type ExecutionRunIntentProfile = Readonly<{
   prepareStartParams?: (
     params: ExecutionRunProfilePrepareStartParams,
   ) => Promise<Readonly<Record<string, unknown>> | undefined> | Readonly<Record<string, unknown>> | undefined;
+  /** Refines captured input after context preparation; launch policy and lifecycle are already fixed. */
+  finalizeStartParams?: (
+    params: ExecutionRunProfilePrepareStartParams,
+  ) => Promise<Readonly<Pick<ExecutionRunStartRequest, 'instructions' | 'intentInput'>> | undefined>
+    | Readonly<Pick<ExecutionRunStartRequest, 'instructions' | 'intentInput'>> | undefined;
   onBoundedComplete: (params: ExecutionRunProfileBoundedCompleteParams) => ExecutionRunProfileBoundedCompleteResult;
   /** Publish an already prepared artifact after the retained runtime is established. */
   onStarted?: (params: ExecutionRunProfileBoundedCompleteParams) => ExecutionRunProfileBoundedCompleteResult | null | Promise<ExecutionRunProfileBoundedCompleteResult | null>;
   /** Bind output revisions through the existing input owner before any provider effect. */
   onBeforeRetainedInput?: (params: Readonly<{ start: ExecutionRunProfileStartParams; localId: string }>) => Promise<void>;
-  /** Publish progress only after the incumbent Pending owner confirms acceptance. */
-  onRetainedInputAdmitted?: (params: Readonly<{ start: ExecutionRunProfileStartParams; localId: string }>) =>
-    Promise<ExecutionRunProfileBoundedCompleteResult | null>;
   buildInitialInputContext?: (params: Readonly<{ start: ExecutionRunProfileStartParams; structuredMeta?: ExecutionRunStructuredMeta }>) => string;
   onTerminal?: (params: Readonly<{ start: ExecutionRunProfileStartParams; status: 'failed' | 'cancelled';
-    finishedAtMs: number; structuredMeta?: ExecutionRunStructuredMeta }>) =>
+    finishedAtMs: number; structuredMeta?: ExecutionRunStructuredMeta;
+    diagnostic?: Readonly<{ code: string; message?: string }> }>) =>
     Pick<ExecutionRunProfileBoundedCompleteResult, 'toolResultOutput' | 'structuredMeta'> | null |
     Promise<Pick<ExecutionRunProfileBoundedCompleteResult, 'toolResultOutput' | 'structuredMeta'> | null>;
   /** Valid structured output from a retained turn. Ordinary prose returns null. */

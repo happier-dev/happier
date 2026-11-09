@@ -8,6 +8,8 @@ import { configuration } from '@/configuration';
 import { classifyHomeReadPreparationError } from './homeReadPreparationError';
 import { logger } from '@/ui/logger';
 import { artifactListResponse } from '@/testkit/http/artifactHome';
+import { projectAccountRowReadResponse } from '@/testkit/http/projectAccountRows';
+import type { ProjectAccountRowV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { clearActiveAccountSettingsSnapshot, setActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken,
   commitActivePromptLibraryCatalog, commitActiveProfileCatalog } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -78,7 +80,7 @@ describe('resolveCliVoicePromptStackBlocks', () => {
 
   it.each(['Instructions', ''])('receipts only the admitted reserved Session instruction entry (%j)', async markdown => {
     await installExactHomeIdentity('home', 'srv_receipt_home');
-    const args = { sessionId: 'target', serverId: 'home', accountEntries: [], profileEntries: [],
+    const args = { sessionId: 'target', serverId: 'home', accountEntries: [], profileEntries: [], projectEntries: [],
       sessionMetadata: { work: { promptStack: [{ ...entry('session.instructions'), required: true }] } },
       readArtifactHeader: async () => ({ header: { v: 1, kind: 'prompt_doc.v2', title: 'Instructions' } }),
       readArtifact: async () => doc('session.instructions', markdown) };
@@ -173,7 +175,7 @@ describe('resolveCliVoicePromptStackBlocks', () => {
         encryptionMode: 'plain', metadataVersion: 0, agentState: null, agentStateVersion: 0, pendingCount: 0,
         pendingVersion: 0, share: null, metadata: JSON.stringify(metadata), dataEncryptionKey: null } } };
     });
-    const args = { credentials, serverId: configuration.activeServerId, profileId: 'voice-profile', accountEntries: [], profileEntries: [],
+    const args = { credentials, serverId: configuration.activeServerId, machineId: 'machine', profileId: 'voice-profile', accountEntries: [], profileEntries: [],
       ...(suppliedSnapshot ? { sessionMetadata: controlMetadata(),
         roleContext: { availableRoles: [], notes: 'CONTROL_ROLE_NOTES' } } : {}),
       readArtifactHeader: async () => ({ header: { v: 1, kind: 'prompt_doc.v2', title: 'Instructions' } }),
@@ -242,7 +244,7 @@ describe('resolveCliVoicePromptStackBlocks', () => {
         });
         const outcome = await resolveCliVoicePromptStackBlocks({
           credentials: { token: 'control-home-reader', encryption: null }, serverId: relationship === 'same' ? 'srv_voice_target' : 'control',
-          serverUrl: 'https://control.example.test', sessionId: 'history-session',
+          serverUrl: 'https://control.example.test', sessionId: 'history-session', machineId: 'machine',
           accountEntries: [], profileEntries: [],
           readArtifactHeader: async () => ({ header: { v: 1, kind: 'prompt_doc.v2', title: 'Instructions' } }),
           readArtifact: async ref => doc(ref.artifactId, 'EXACT_TARGET_HOME'),
@@ -258,7 +260,7 @@ describe('resolveCliVoicePromptStackBlocks', () => {
       reloadConfiguration();
     }
   });
-  it('uses real target Account Profile Project Session and conversational Role owners in canonical order', async () => {
+  it.each(['ids', 'path', 'unregistered', 'unavailable'] as const)('uses real target Account Profile Project Session and conversational Role owners in canonical order (%s)', async association => {
     const serverId = configuration.activeServerId;
     const credentials = { token: 'four-layer-target-reader', encryption: null };
     const scopeKey = resolveAccountSettingsScopeKey(credentials);
@@ -270,13 +272,20 @@ describe('resolveCliVoicePromptStackBlocks', () => {
     commitActiveProfileCatalog({ ...bound, catalog: { status: 'ready', authority: 'active', control: null, controlRevision: 'absent',
       referenceGuardRevision: 'absent', diagnostics: [], records: ['target-profile', 'voice-profile'].map(id => ({ revision: 1,
         record: { v: 1, id, enabled: true, secretBindings: {}, skillSeeds: [], definition: { kind: 'artifact', artifactId: `${id}-definition` }, promptStack: [entry(id)] } })) } });
-    const workspaceKey = { kind: 'workspace-ref', serverId, id: 'checkout' };
-    const projectKey = { kind: 'project-organization', serverId, projectKey: 'project' };
-    vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { status: 'listed', coverage: 'complete', rows: [
+    const workspaceKey = { kind: 'workspace-ref', serverId, id: 'checkout' } satisfies ProjectAccountRowV1['key'];
+    const projectKey = { kind: 'project-organization', serverId, projectKey: 'project' } satisfies ProjectAccountRowV1['key'];
+    const projectRows = [
       { key: workspaceKey, revision: 1, content: { t: 'plain', v: { key: workspaceKey,
         value: { id: 'checkout', serverId, machineId: 'machine', rootPath: '/repo', projectKey: 'project', createdAtMs: 1 } } } },
       { key: projectKey, revision: 1, content: { t: 'plain', v: { key: projectKey, value: { promptStack: [entry('project')] } } } },
-    ] } });
+    ] satisfies readonly ProjectAccountRowV1[];
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+      if (association === 'unavailable') throw Object.assign(new Error('Project Home unavailable'), { code: 'ECONNRESET' });
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/read')) return projectAccountRowReadResponse(projectRows, body);
+      if (path.endsWith('/list')) return { status: 200, data: { status: 'listed', coverage: 'complete', rows: projectRows } };
+      throw new Error(`Unexpected Project Account POST ${path}`);
+    });
     vi.spyOn(axios, 'get').mockImplementation(async url => {
       const path = new URL(String(url)).pathname;
       if (path === '/v1/account/encryption/currentness') return { status: 200, data: { mode: 'plain', version: 0,
@@ -286,19 +295,26 @@ describe('resolveCliVoicePromptStackBlocks', () => {
       return { status: 200, data: { session: { id: 'ordinary-target', seq: 1, createdAt: 1, updatedAt: 1, active: true,
         activeAt: 1, archivedAt: null, encryptionMode: 'plain', metadataVersion: 0, agentState: null, agentStateVersion: 0,
         pendingCount: 0, pendingVersion: 0, share: null, dataEncryptionKey: null, metadata: JSON.stringify({
-          profileId: 'target-profile', workspaceId: 'checkout', projectId: 'project', machineId: 'machine', path: '/repo',
+          profileId: 'target-profile', ...(association === 'ids' ? { workspaceId: 'checkout', projectId: 'project' } : {}),
+          machineId: 'machine', path: association === 'unregistered' ? '/unregistered' : '/repo',
           work: { promptStack: [entry('session')], sessionRolesV1: { roleId: 'builder', inheritedFrom: 'lead', overrides: {}, notes: 'ROLE_NOTES',
             sessionRoles: { builder: { ...BUILT_IN_ROLES_V1.builder, roleId: 'builder', instructions: 'ROLE_PERSONA', workspaceWrites: 'allow' } } } },
         }) } } };
     });
-    const blocks = await resolveCliVoicePromptStackBlocks({ credentials, serverId, sessionId: 'ordinary-target', profileId: 'voice-profile',
+    const preparation = resolveCliVoicePromptStackBlocks({ credentials, serverId, sessionId: 'ordinary-target', profileId: 'voice-profile',
       readArtifactHeader: async () => ({ header: { v: 1, kind: 'prompt_doc.v2', title: 'Instructions' } }),
       readArtifact: async ref => doc(ref.artifactId, ref.artifactId) });
-    expect(blocks.slice(0, 4)).toEqual(['account', 'target-profile', 'project', 'session']);
-    expect(blocks[4]).toContain('ROLE_PERSONA');
-    expect(blocks[4]).toContain('ROLE_NOTES');
+    if (association === 'unavailable') {
+      await expect(preparation).rejects.toMatchObject({ reason: 'unavailable' });
+      return;
+    }
+    const blocks = await preparation;
+    const layers = association === 'unregistered' ? ['account', 'target-profile', 'session'] : ['account', 'target-profile', 'project', 'session'];
+    expect(blocks.slice(0, layers.length)).toEqual(layers);
+    expect(blocks[layers.length]).toContain('ROLE_PERSONA');
+    expect(blocks[layers.length]).toContain('ROLE_NOTES');
     expect(blocks.join('\n')).not.toContain('voice-profile');
-    expect(blocks[4]).not.toContain('lead_session_id');
+    expect(blocks[layers.length]).not.toContain('lead_session_id');
   });
   it('keeps explicit hidden global Voice free of misleading control Profile Project Session and Role facts', async () => {
     const hidden = buildSystemSessionMetadataV1({ key: VOICE_CONVERSATION_SYSTEM_SESSION_KEY, hidden: true });
@@ -323,7 +339,7 @@ describe('resolveCliVoicePromptStackBlocks', () => {
         } }) } } };
     });
     const blocks = await resolveCliVoicePromptStackBlocks({ credentials: { token: 'notes-only-reader', encryption: null },
-      sessionId: 'notes-target', accountEntries: [], profileEntries: [], readArtifact: async () => null });
+      sessionId: 'notes-target', machineId: 'machine', accountEntries: [], profileEntries: [], readArtifact: async () => null });
     expect(blocks).toHaveLength(1);
     expect(blocks[0]).toContain('NOTES_ONLY_PERSONA');
   });

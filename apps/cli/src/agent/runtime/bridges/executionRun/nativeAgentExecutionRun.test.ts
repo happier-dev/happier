@@ -746,7 +746,7 @@ describe('createNativeAgentExecutionRunHostRuntime', () => {
             runId: 'run-pending', controller, authorizeProviderEffect: async () => ({ ok: true }),
         });
         const outcomes: unknown[] = [];
-        const runtimeEvents: AgentSessionRuntimeEvent[] = [];
+        const runtimeEvents: AgentExecutionRunEvent[] = [];
         host.subscribeRuntimeEvents?.((event) => runtimeEvents.push(event));
         delivery.delivery.subscribeProviderInputOutcomes?.((outcome) => outcomes.push(outcome));
         try {

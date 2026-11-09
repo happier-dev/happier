@@ -40,7 +40,7 @@ import { createLocalScmRepositoryFixture } from '@/testkit/scm/scmBackendContrac
 
 // Only HTTP and environment configuration are substituted. Snapshot, protocol,
 // signing, event envelopes, triage mapping, and terminalization remain real.
-vi.mock('axios', () => ({ default: { post: vi.fn(), get: vi.fn(), patch: vi.fn() } }));
+vi.mock('axios', () => ({ default: { defaults: {}, post: vi.fn(), get: vi.fn(), patch: vi.fn() } }));
 const environment = vi.hoisted(() => ({ homeDir: '' }));
 vi.mock('@/configuration', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/configuration')>();
@@ -335,7 +335,7 @@ describe('canonical review Run comments', () => {
     } } });
     expect(runs.get(initial.runId)?.intentInput).not.toHaveProperty('reviewStatus');
   });
-  it('retains the original review publication receipts after the same Run publishes its walkthrough', async () => {
+  it('admits review narration without an admission publication and retains the original review receipts', async () => {
     vi.mocked(axios.post).mockImplementation(async (_url, body) => ({ status: 200, data: { comment: commentForCreate(body), replayed: false } }));
     const comparison = ScmComparisonSchema.parse({ id: 'receipt-comparison', source: { kind: 'workingTree' },
       repository: { rootPath: root }, endpoints: {}, inventory: { state: 'complete', reasons: [], files: [] } });
@@ -347,11 +347,14 @@ describe('canonical review Run comments', () => {
     const controller = { kind: 'backend', cancelled: false } as ExecutionRunBackendController;
     const controllers = new Map([[initial.runId, controller]]);
     let nextLocalId = '';
-    await publishExecutionRunTurn({ runId: initial.runId, turnId: 'review-turn', controller, controllers, runs,
+    const publications: unknown[] = [];
+    await expect(publishExecutionRunTurn({ runId: initial.runId, turnId: 'review-turn', controller, controllers, runs,
       rawText: JSON.stringify({ summary: 'Findings', findings }), finishedAtMs: 2, parentProvider: 'claude',
-      reviewComments: service(), sendAcp: async () => {},
+      reviewComments: service(), sendAcp: async (_provider, message) => { publications.push(message); },
       admitNextInput: async (input) => { nextLocalId = input.localId; return { status: 'accepted' }; },
-    });
+    })).resolves.toBe(true);
+    expect(nextLocalId).not.toBe('');
+    expect(publications).toHaveLength(1);
     expect(runs.get(initial.runId)?.latestToolResult).toMatchObject({ commentIds: ['comment-file-finding', 'comment-global-finding'] });
     await publishExecutionRunTurn({ runId: initial.runId, turnId: 'walkthrough-turn', inputIds: [nextLocalId],
       controller, controllers, runs, rawText: JSON.stringify({ walkthrough: { title: 'Reading', intro: '', stops: [], otherChangeRefs: [] } }),

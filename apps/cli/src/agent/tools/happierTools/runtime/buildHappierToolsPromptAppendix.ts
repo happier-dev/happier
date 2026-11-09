@@ -1,4 +1,5 @@
 import { buildHappierToolsShellBridgeCommand } from '@/agent/tools/happierTools/runtime/buildHappierToolsShellBridgeCommand';
+import { HAPPIER_VISUAL_ACTION_GUIDANCE, HAPPIER_VISUAL_AUTHORING_GUIDANCE } from '@/agent/tools/happierTools/runtime/visualActionPromptGuidance';
 import { DEFAULT_CODING_PROMPT_BEHAVIOR_V1, type CodingPromptSessionTitleUpdatesModeV1 } from '@happier-dev/protocol/prompts/codingPromptBehaviorV1';
 import { buildHappierSessionTitleGuidanceV1 } from '@happier-dev/protocol/prompts/systemPromptBaseV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
@@ -8,6 +9,8 @@ export function buildHappierToolsPromptAppendix(params: Readonly<{
   directory: string;
   sessionTitleUpdatesMode?: CodingPromptSessionTitleUpdatesModeV1;
   sessionTitleToolAvailable?: boolean;
+  sessionMetadata?: unknown;
+  sessionTitled?: boolean;
   createdAsBot?: boolean;
   memoryRecallGuidance?: Readonly<{
     enabled?: boolean;
@@ -112,6 +115,8 @@ Do not use provider-native memory files or ad-hoc workspace search as a substitu
     settings: { codingPromptBehaviorV1: { sessionTitleUpdates: titleMode } },
     sessionTitleToolAvailable: params.sessionTitleToolAvailable,
     createdAsBot: params.createdAsBot,
+    sessionMetadata: params.sessionMetadata,
+    ...(params.sessionTitled === undefined ? {} : { sessionTitled: params.sessionTitled }),
     preferredToolName: 'change_title',
   });
   const renameCommandGuidance = titleGuidance
@@ -121,8 +126,8 @@ Do not use provider-native memory files or ad-hoc workspace search as a substitu
   const visualExample: Record<string, unknown> = JSON.parse(visualSpec.examples!.mcp!.argsExample!);
   const visualCommand = buildHappierToolsShellBridgeCommand([
     'call', '--session-id', params.sessionId, '--directory', params.directory,
-    '--source', 'happier', '--tool', visualSpec.bindings!.mcpToolName!,
-    '--args-json', JSON.stringify({ ...visualExample, sessionId: params.sessionId }), '--json',
+    '--source', 'happier', '--tool', 'action_execute',
+    '--args-json', JSON.stringify({ actionId: visualSpec.id, input: { ...visualExample, sessionId: params.sessionId } }), '--json',
   ]);
   const usageCommand = buildHappierToolsShellBridgeCommand([
     'call', '--session-id', params.sessionId, '--directory', params.directory,
@@ -159,17 +164,15 @@ Do not claim these Happier tools are unavailable without first using the CLI bri
 
 Prefer this exact CLI bridge command form over ad-hoc shell equivalents when the capability exists there.
 
-## Showing visuals
+${HAPPIER_VISUAL_AUTHORING_GUIDANCE}
 
-When a visual communicates the result better, prefer typed declarative charts and tables. Charts map neutral rows through typed x/series/value fields: bar stacks values, area stacks ribbons, and line draws independent series. Each x/series pair names one observation; omit missing observations rather than inventing zero. Existing x/y charts remain the single-series form. Use an HTML bundle otherwise: a self-contained entrypoint plus relative assets, not an HTML-string item. A workspace file or folder can be acquired through the Action's workspace source. Do not start a browser, preview server or screenshot loop to validate declarative content; use the tool's validation result.
-
-Show a visual with \`session.board.item.upsert\` (tool \`${visualSpec.bindings!.mcpToolName!}\`). The normal destination is the transcript; \`board\` or \`both\` needs an explicit first placement. Pin/Unpin changes the same item's layout, not a second copy. Keep its stable item id and use the returned exact revision when updating. For example:
+For a CLI bridge visual, use:
 
 \`${visualCommand}\`
 
+${HAPPIER_VISUAL_ACTION_GUIDANCE}
+
 For live Daily usage in this Session, show the builtin \`usage_daily\` widget with \`${usageCommand}\`. Its declared inputs filter to this Session; set the \`session\` binding value to \`null\` for Account-wide usage. The viewer's current Account reads it through ordinary \`usage.query\` Resource admission, so showing the widget does not disclose the agent's private Account snapshot or require a separate Resource tool call.
 
-After a successful visual, do not restate its contents in prose. A short conclusion or necessary caveat is enough. If admission fails or needs approval, report that outcome; do not claim the visual was shown.
-
-HTML declares no network by default, exact \`networkOrigins\` for bounded access, or \`network: 'open'\` for open access. The user's agent HTML network setting controls new creation: \`allowed\` honors the declaration (the default), \`ask\` requires approval for network, and \`off\` creates a no-network copy with an \`agent_html_network_off\` notice. Missing or malformed settings fail closed to \`ask\`. This setting does not silently rewrite existing visuals. Changing existing HTML's network consequence defaults to approval under the user's explicit Actions policy. Network access never authorizes Actions or Resources: every bridge request still runs with the current viewer's ordinary authority.`;
+`;
 }

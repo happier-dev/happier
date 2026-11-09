@@ -11,7 +11,6 @@ import {
 } from '@/notifications/activity/liveActivity/resolveLiveActivityRemoteSender'
 import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken,
   isActiveAccountSettingsSnapshotLifetimeCurrent } from '@/settings/accountSettings/activeAccountSettingsSnapshot'
-import { createSavedSecretMaterializerFromSnapshotV1 } from '@/settings/secrets/savedSecretCatalog'
 import { logger } from '@/ui/logger'
 import type { ReadyNotificationTurnContext } from './createReadyNotificationDispatcher'
 
@@ -50,8 +49,8 @@ function resolveReadyNotificationSettingsContext(opts: Readonly<{
     return {
       settings: activeSnapshot.settings,
       settingsSecretsReadKeys: activeSnapshot.settingsSecretsReadKeys,
-      notificationChannelCatalog: activeSnapshot.notificationChannelCatalog ?? { status: 'loading' as const },
-      savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(activeSnapshot),
+      // The Activity owner acquires the Account row catalog on demand. Do not
+      // freeze a missing process-local facet as an explicit loading catalog.
       isCurrent: () => incumbent !== null && isActiveAccountSettingsSnapshotLifetimeCurrent(incumbent),
     }
   }
@@ -110,6 +109,10 @@ export async function sendReadyWithPushNotification(opts: {
       if (!committed) return
       const contribution = committed.personalFollow
       const sourceMessage = contribution?.sourceMessage
+      // The original Turn may already have supplied its selected personal
+      // effect before this optional rich marker was committed.
+      if (contribution?.accepted === true && contribution.sourceSessionId === opts.session.sessionId
+        && sourceMessage && sourceMessage.localId === committed.localId && sourceMessage.seq === committed.committedSequence) return
       const admittedRulePolicies = opts.completedTurn && contribution?.sourceSessionId === opts.session.sessionId
         && sourceMessage && sourceMessage.localId === committed.localId && sourceMessage.seq === committed.committedSequence
         ? sourceMessage.policies : undefined

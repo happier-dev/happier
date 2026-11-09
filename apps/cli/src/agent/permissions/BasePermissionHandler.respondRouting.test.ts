@@ -286,6 +286,64 @@ describe('BasePermissionHandler permission-response routing (gap 28/29)', () => 
     expect(session.permissionResponseClaimWriteCount).toBe(1);
   });
 
+  it('binds a provided question answer turn to the published request while preserving ordinary turnless answers', async () => {
+    const session = new FakeSession();
+    const handler = new ProviderEnforcedPermissionHandler(session as never, { logPrefix: '[QuestionTurn]' });
+    const rpc = session.rpcHandlerManager.handlers.get('session.user_action.answer')!;
+    const input = { questions: [{ id: 'branch', question: 'Which branch?', options: [{ id: 'main', label: 'Main' }, { id: 'release', label: 'Release' }] }] };
+    const turnA = handler.handleToolCall('reused-question', 'AskUserQuestion', input, { turnId: 'turn-a' });
+    await vi.waitFor(() => expect(session.agentState.requests['reused-question']).toMatchObject({ turnId: 'turn-a' }));
+    await expect(rpc({ id: 'reused-question', turnId: 'turn-a', approved: true, answers: { branch: ['main'] } })).resolves.toBeUndefined();
+    await expect(turnA).resolves.toMatchObject({ decision: 'approved', answers: { branch: ['main'] } });
+
+    const turnB = handler.handleToolCall('reused-question', 'AskUserQuestion', input, { turnId: 'turn-b' });
+    let turnBSettled = false;
+    void turnB.then(() => { turnBSettled = true; }, () => { turnBSettled = true; });
+    await vi.waitFor(() => expect(session.agentState.requests['reused-question']).toMatchObject({ turnId: 'turn-b' }));
+    await expect(rpc({ id: 'reused-question', turnId: 'turn-a', approved: true, answers: { branch: ['main'] } }))
+      .resolves.toEqual({ ok: false, errorCode: 'permission_request_not_found', requestId: 'reused-question' });
+    expect(turnBSettled).toBe(false);
+    expect(session.agentState.requests['reused-question']).toMatchObject({ turnId: 'turn-b' });
+    await expect(rpc({ id: 'reused-question', turnId: 'turn-b', approved: true, answers: { branch: ['release'] } })).resolves.toBeUndefined();
+    await expect(turnB).resolves.toMatchObject({ decision: 'approved', answers: { branch: ['release'] } });
+
+    const ordinary = handler.handleToolCall('ordinary-question', 'AskUserQuestion', input, { turnId: 'turn-c' });
+    await vi.waitFor(() => expect(session.agentState.requests['ordinary-question']).toMatchObject({ turnId: 'turn-c' }));
+    await expect(rpc({ id: 'ordinary-question', approved: true, answers: { branch: ['main'] } })).resolves.toBeUndefined();
+    await expect(ordinary).resolves.toMatchObject({ decision: 'approved', answers: { branch: ['main'] } });
+    await handler.reset();
+  });
+
+  it('does not write a turn-bound question answer over a replacement published during settlement', async () => {
+    const session = new FakeSession();
+    const handler = new ProviderEnforcedPermissionHandler(session as never, { logPrefix: '[QuestionTurnWrite]' });
+    const pending = handler.handleToolCall('inflight-question', 'AskUserQuestion', {
+      questions: [{ id: 'branch', question: 'Which branch?', options: [{ id: 'main', label: 'Main' }] }],
+    }, { turnId: 'turn-a' });
+    void pending.catch(() => undefined);
+    await vi.waitFor(() => expect(session.agentState.requests['inflight-question']).toMatchObject({ turnId: 'turn-a' }));
+    let release!: () => void;
+    const paused = new Promise<void>((resolve) => { release = resolve; });
+    let reached!: () => void;
+    const writing = new Promise<void>((resolve) => { reached = resolve; });
+    const update = session.updateAgentState.bind(session);
+    session.updateAgentState = async (updater) => {
+      reached();
+      await paused;
+      return update(updater);
+    };
+    const rpc = session.rpcHandlerManager.handlers.get('session.user_action.answer')!;
+    const answering = rpc({ id: 'inflight-question', turnId: 'turn-a', approved: true, answers: { branch: ['main'] } });
+    await writing;
+    session.agentState.requests['inflight-question'] = { ...session.agentState.requests['inflight-question'], turnId: 'turn-b' };
+    release();
+    await expect(answering).resolves.toEqual({ ok: false, errorCode: 'permission_request_not_found', requestId: 'inflight-question' });
+    expect(session.agentState.requests['inflight-question']).toMatchObject({ turnId: 'turn-b' });
+    expect(session.agentState.completedRequests['inflight-question']).toBeUndefined();
+    session.updateAgentState = update;
+    await handler.reset({ scope: 'foreground' });
+  });
+
   it('does not let a delayed answer from turn A settle a reused request id in turn B', async () => {
     const session = new FakeSession();
     const handler = new ProviderEnforcedPermissionHandler(session as any, { logPrefix: '[Test]' });

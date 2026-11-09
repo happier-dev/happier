@@ -410,6 +410,13 @@ export type AgentCatalogEntry = Readonly<{
   resolveNativeCatalogSettingSources?: NonNullable<import('@happier-dev/plugin-sdk/agents/runtime').AgentPreflightSessionControlsContributionV1['resolveNativeCatalogSettingSources']>;
   resolveNativeSkillDirectories?: NonNullable<import('@happier-dev/plugin-sdk/agents/runtime').AgentPreflightSessionControlsContributionV1['resolveNativeSkillDirectories']>;
   resolveNativePluginSkillRoots?: NonNullable<import('@happier-dev/plugin-sdk/agents/runtime').AgentPreflightSessionControlsContributionV1['resolveNativePluginSkillRoots']>;
+  resolveAccountSettingsApplication?: (
+    context?: Readonly<{ pluginSettings: AgentCliSessionCommandPluginSettingsV1 | null }>,
+  ) => Promise<AgentCliSessionCommandPluginSettingsV1 | null>;
+  applyAccountSettings?: (
+    targets: readonly Readonly<{ id: string; directory: string }>[],
+    context?: Readonly<{ pluginSettings: AgentCliSessionCommandPluginSettingsV1 | null }>,
+  ) => Promise<import('@happier-dev/protocol/json/strictJsonValue').JsonValue>;
   resolveProbePluginSettings?: (options?: Readonly<{ signal?: AbortSignal }>) => Promise<AgentCliSessionCommandPluginSettingsV1 | null>;
   /**
    * Optional cache-variant shaper for the dynamic models probe.

@@ -237,10 +237,7 @@ export function createNativeAgentExecutionRunHostServices(params: Readonly<{
                 scope,
                 path: request.transcriptPath,
                 reason: 'providerTranscriptSource',
-                evidence: {
-                    kind: 'sessionStartTranscriptPath',
-                    providerSessionId: request.providerSessionId,
-                },
+                evidence: request.evidence,
             });
         },
     });
@@ -305,6 +302,10 @@ export function createNativeAgentExecutionRunHostServices(params: Readonly<{
             ),
         }),
         hooks: Object.freeze({
+            async observeSessionHook(request: Parameters<AgentExecutionRunHostServicesV1['hooks']['observeSessionHook']>[0]) {
+                assertActive();
+                await sessionHooksOwner.observeSessionHook({ ...request, providerId: params.agentId, scope });
+            },
             async startServer(request: Parameters<AgentExecutionRunHostServicesV1['hooks']['startServer']>[0]) {
                 assertActive();
                 return await sessionHooksOwner.startServer({
@@ -433,10 +434,7 @@ export function createNativeAgentSessionHostServiceOwners(params: Readonly<{
                 scope: { kind: 'session', sessionId: params.sessionId },
                 path: request.transcriptPath,
                 reason: 'providerTranscriptSource',
-                evidence: {
-                    kind: 'sessionStartTranscriptPath',
-                    providerSessionId: request.providerSessionId,
-                },
+                evidence: request.evidence,
             });
         },
     });

@@ -196,7 +196,7 @@ export function createAgentSessionRuntimeEventStream(
     const useRecoveryReserve = admissionOptions.useRecoveryReserve === true;
     if (
       terminalFailure !== undefined
-      && !(useRecoveryReserve && terminalFailure.status === 'overflow')
+      && !(useRecoveryReserve && (terminalFailure.status === 'overflow' || terminalFailure.status === 'invalidEvent'))
     ) return terminalFailure;
 
     const parsed = AgentSessionRuntimeEventSchema.safeParse(event);

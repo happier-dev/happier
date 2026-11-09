@@ -3,7 +3,7 @@ import {
     registerSensitiveDiagnosticValues,
 } from '@happier-dev/protocol';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
-import { createPluginActionHandlerNotStartedError } from '@happier-dev/plugin-sdk/host/registration';
+import { createPluginActionHandlerNotStartedError } from '@happier-dev/cli-common/plugins/registration/actionHandlerInvocation';
 import { describe, expect, it } from 'vitest';
 
 import { projectPluginFailureText } from '@/plugins/runtime/lifecycle/utils';
@@ -19,6 +19,30 @@ import {
 } from './nativeAgentSessionBoundaryError';
 
 describe('native Agent session boundary error sanitization', () => {
+    it.each([false, true])('retains the strict ACP startup diagnostic through boundary reconstruction (forced=%s)', forceSafeShape => {
+        const secret = 'private-startup-diagnostic';
+        const redaction = registerSensitiveDiagnosticValues([secret]);
+        try {
+            const error = Object.assign(new Error('Required MCP server failed to start'), {
+                code: -32602, data: { privatePayload: secret }, diagnostic: {
+                    code: 'acp_session_start_failed', severity: 'error',
+                    message: `Required MCP server failed to start: ${secret}`,
+                    details: { requestErrorCode: -32602, cause: { reason: secret } },
+                },
+            });
+            const sanitized = sanitizeNativeAgentSessionBoundaryError(error, forceSafeShape);
+            expect(sanitized).toMatchObject({ diagnostic: {
+                code: 'acp_session_start_failed', severity: 'error',
+                message: 'Required MCP server failed to start: [REDACTED]',
+                details: { requestErrorCode: -32602, cause: { reason: '[REDACTED]' } },
+            } });
+            expect(sanitized).not.toHaveProperty('data');
+            expect(JSON.stringify(sanitized)).not.toContain(secret);
+            const malformed = Object.assign(new Error('Startup failed'), { diagnostic: { ...error.diagnostic, raw: secret } });
+            expect(sanitizeNativeAgentSessionBoundaryError(malformed, true)).not.toHaveProperty('diagnostic');
+        } finally { redaction.close(); }
+    });
+
     it('preserves only host-proven startup input refusal through forced sanitization', () => {
         const refusal = new SessionStartupInputRefusalError({
             code: 'native_agent_session_mode_unavailable', message: 'The selected native Agent mode is unavailable.',

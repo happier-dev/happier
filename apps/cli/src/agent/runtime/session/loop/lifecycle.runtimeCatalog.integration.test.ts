@@ -61,6 +61,9 @@ import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
 import { createAcpSessionRuntimeContextFixture } from '@/agent/acp/testkit/runtimeContextFixture';
 import { createPublicAcpRuntimeProtocols } from '@/agent/acp/runtime/publicSession/createPublicAcpRuntimeProtocols';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
+import { applyRegisteredSessionStateFieldMutationToMetadata } from '@/api/session/client/transport/mutations/applyRegisteredSessionStateFieldMutation';
+import type { RegisteredSessionStateFieldMutationV1 } from '@/api/session/client/transport/mutations/sessionClientDurableMutationTypes';
+import { projectSessionOwnerCompatibilityViewV1, projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 
 // A real prompt plan reads the Home's Project associations even for an
 // unassociated checkout. Keep that HTTP boundary in-process, not the resolver.
@@ -141,6 +144,213 @@ function loggerReceivedIdentity(value: unknown): boolean {
 }
 
 describe('runSessionLoopLifecycle presence renewal', () => {
+  it('publishes exact-turn retries through shared metadata and clears them on foreground progress, completion and Stop', async () => {
+    const registry = await pluginReloadController.acquireRuntimeRegistry({
+      resolveRuntimeRegistry: async () => resolveExecutablePluginRuntimeRegistry({
+        contributes: getResolvedContributionRegistry(), pluginIds: [],
+      }),
+    });
+    const base = createLifecycleParams({ runPermissionModePromptLoopFn: runPermissionModePromptLoop });
+    const queue = new MessageQueue2<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>(
+      mode => JSON.stringify(mode), { batcher: combinePermissionModeQueuedPrompts });
+    queue.push({ text: 'Continue the first turn', localId: 'retry-composed-first', userMessageSeq: 1 }, { permissionMode: 'default' });
+    const fixture = createMutableApiSessionClientFixture({ sessionId: 'session-1', metadata: createMetadata() });
+    const registeredMutations: RegisteredSessionStateFieldMutationV1[] = [];
+    const session = Object.assign(fixture, {
+      async enqueueRegisteredSessionStateFieldMutation(mutation: RegisteredSessionStateFieldMutationV1) {
+        registeredMutations.push(mutation);
+        fixture.updateMetadata(current => applyRegisteredSessionStateFieldMutationToMetadata(current!, mutation));
+      },
+      async enqueueSessionTurnMutation() {},
+      async enqueueSessionEventCommitted() { return { persisted: true as const, delivered: false as const }; },
+    });
+    let listener: ((event: AgentSessionRuntimeEvent) => void) | undefined;
+    let turnId = '';
+    const emit = (event: Readonly<Record<string, unknown>>) => {
+      if (!listener) throw new Error('Native runtime has no event subscriber');
+      listener(canonicalRuntimeEvent({ sessionId: session.sessionId, emittedAtMs: Date.now(), ...event }));
+    };
+    const provider: AgentSessionRuntime = {
+      async send(request) {
+        turnId = request.delivery.turnId;
+        emit({ kind: 'input-accepted', inputIds: request.inputIds, delivery: request.delivery });
+        emit({ kind: 'turn-start', turnId, startedBy: 'host' });
+        return { status: 'admitted' };
+      },
+      watch(value) { listener = value; return { dispose() { listener = undefined; } }; },
+      dispose() {},
+    };
+    const runtime = createNativeAgentSessionOperations(provider, session.sessionId, undefined, undefined, undefined, undefined, undefined, {
+      context: { signal: new AbortController().signal } as AgentSessionRuntimeContext, cwd: '/workspace', connectedAccounts: [],
+      capabilities: { open: ['create'], delivery: ['newTurn'], cancel: true },
+      cancellation: { declared: true, cancel: async ({ turnId: cancelledTurnId }) => {
+        emit({ kind: 'turn-cancelled', turnId: cancelledTurnId, cause: 'user' });
+        return { status: 'requested', turnId: cancelledTurnId };
+      } },
+      configuration: { declared: false }, compaction: { capability: null },
+    });
+    let stop: (() => Promise<void>) | undefined;
+    let termination: ReturnType<typeof registerRunnerTerminationHandlers> | undefined;
+    const running = runSessionLoopLifecycle({ ...base, session, runtime, hookRuntime: runtime,
+      config: { ...base.config, startRuntimeBeforeFirstPrompt: true, onRuntimeStopReady: value => { stop = value; },
+        lifecycleHooks: { createCheckpointLifecycle: () => ({}) } },
+      permissionModeState: { ...base.permissionModeState, messageQueue: queue },
+      deps: { ...base.deps, cleanupBackendRunResourcesFn: cleanupBackendRunResources,
+        registerRunnerTerminationHandlersFn: options => {
+          termination = registerRunnerTerminationHandlers({ ...options, processLifecycleOwnership: 'caller', sessionExitReport: null, exit: () => undefined });
+          return termination;
+        } },
+    });
+    const readSharedProgress = () => projectSessionSharedMetadataV1({ metadata: fixture.getMetadataSnapshot() }).sessionTurnProgressV1;
+    const progressMutations = () => registeredMutations.filter(mutation => mutation.fieldId === 'runtime.turnProgress');
+    try {
+      await vi.waitFor(() => { expect(listener).toBeTypeOf('function'); expect(stop).toBeTypeOf('function'); });
+      await vi.waitFor(() => expect(turnId, JSON.stringify(base.messageBuffer.getMessages())).not.toBe(''));
+      emit({ kind: 'turn-progress', turnId });
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(readSharedProgress()).toBeUndefined();
+
+      const retry = { attempt: 2, reason: 'connection_failed' as const };
+      const expected = { turnId, phase: 'retrying', ...retry };
+      emit({ kind: 'turn-progress', turnId, retry });
+      await vi.waitFor(() => expect(readSharedProgress()).toEqual(expected));
+      const shared = projectSessionSharedMetadataV1({ metadata: fixture.getMetadataSnapshot() });
+      expect(projectSessionOwnerCompatibilityViewV1({ sharedMetadata: shared, ownerMetadata: { v: 1 } }).sessionTurnProgressV1).toEqual(expected);
+      expect(fixture.getAgentStateSnapshot()).not.toHaveProperty('sessionTurnProgressV1');
+      const publicationsBeforeUnrelatedActivity = progressMutations().length;
+      emit({ kind: 'turn-progress', turnId, retry });
+      emit({ kind: 'turn-start', turnId, startedBy: 'host' });
+      emit({ kind: 'turn-agent-id-observed', turnId, agentTurnId: 'native-retrying-turn' });
+      emit({ kind: 'turn-progress', turnId: 'another-turn' });
+      emit({ kind: 'message-delta', turnId, channel: 'assistant', text: '' });
+      emit({ kind: 'message-delta', turnId, sidechainId: 'child-agent', channel: 'assistant', text: 'Child output' });
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(readSharedProgress()).toEqual(expected);
+      expect(progressMutations()).toHaveLength(publicationsBeforeUnrelatedActivity);
+
+      emit({ kind: 'message-delta', turnId, channel: 'assistant', text: 'The connection recovered.' });
+      await vi.waitFor(() => expect(readSharedProgress()).toBeUndefined());
+      emit({ kind: 'turn-progress', turnId, retry: { attempt: 3, reason: 'server_error' } });
+      await vi.waitFor(() => expect(readSharedProgress()).toMatchObject({ turnId, attempt: 3 }));
+      emit({ kind: 'turn-complete', turnId });
+      await vi.waitFor(() => expect(readSharedProgress()).toBeUndefined());
+
+      const completedTurnId = turnId;
+      queue.push({ text: 'Continue the second turn', localId: 'retry-composed-second', userMessageSeq: 2 }, { permissionMode: 'default' });
+      await vi.waitFor(() => expect(turnId).not.toBe(completedTurnId));
+      emit({ kind: 'turn-progress', turnId, retry: { attempt: 1, reason: 'rate_limited' } });
+      await vi.waitFor(() => expect(readSharedProgress()).toMatchObject({ turnId, attempt: 1 }));
+      fixture.updateMetadata(current => writeSessionExplicitStopV1ToMetadata(current!, {
+        v: 1, cause: 'explicit_stop', requestId: 'retry-composed-stop', requestedAtMs: Date.now(),
+      }));
+      if (!stop) throw new Error('Runtime Stop control is unavailable');
+      await stop();
+      await running;
+      expect(readSharedProgress()).toBeUndefined();
+      expect(progressMutations().at(-1)?.op.kind).toBe('clear');
+    } finally {
+      termination?.requestTermination({ kind: 'signal', signal: 'SIGTERM' });
+      await running.catch(() => undefined);
+      await registry.release();
+    }
+  });
+
+  it.each(['loading', 'rendering'] as const)('keeps remote input live after terminal display %s fails and permits a later mount', async (phase) => {
+    const registry = await pluginReloadController.acquireRuntimeRegistry({
+      resolveRuntimeRegistry: async () => resolveExecutablePluginRuntimeRegistry({
+        contributes: getResolvedContributionRegistry(), pluginIds: [],
+      }),
+    });
+    const base = createLifecycleParams({ runPermissionModePromptLoopFn: runPermissionModePromptLoop });
+    const queue = new MessageQueue2<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>(
+      mode => JSON.stringify(mode), { batcher: combinePermissionModeQueuedPrompts });
+    queue.push({ text: 'Continue remotely', localId: 'terminal-failure-input', userMessageSeq: 1 }, { permissionMode: 'default' });
+    let listener: ((event: AgentSessionRuntimeEvent) => void) | undefined;
+    let delivered!: () => void;
+    const inputDelivered = new Promise<void>(resolve => { delivered = resolve; });
+    const inputIds: string[] = [];
+    // The external Agent runtime is the delivery boundary; its host adapter and prompt loop remain real.
+    const provider: AgentSessionRuntime = {
+      async send(request) {
+        inputIds.push(...request.inputIds);
+        for (const event of [
+          { kind: 'input-accepted', inputIds: request.inputIds, delivery: request.delivery },
+          { kind: 'turn-start', turnId: request.delivery.turnId, startedBy: 'host' },
+          { kind: 'turn-complete', turnId: request.delivery.turnId },
+        ]) listener?.(canonicalRuntimeEvent({ ...event, sessionId: 'session-1', emittedAtMs: 1 }));
+        delivered();
+        return { status: 'admitted' };
+      },
+      watch(value) { listener = value; return { dispose() { listener = undefined; } }; },
+      dispose() {},
+    };
+    const runtime = createNativeAgentSessionOperations(provider, 'session-1', undefined, undefined, undefined, undefined, undefined, {
+      context: { signal: new AbortController().signal } as AgentSessionRuntimeContext, cwd: '/workspace', connectedAccounts: [],
+      capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
+      cancellation: { declared: false }, configuration: { declared: false }, compaction: { capability: null },
+    });
+    const displayFailure = new Error(`terminal ${phase} failed`);
+    let loadAttempts = 0;
+    let renderAttempts = 0;
+    const unmount = vi.fn();
+    const renderFn: NonNullable<SessionLoopLifecycleParams['deps']['renderFn']> = vi.fn(() => {
+      renderAttempts += 1;
+      if (phase === 'rendering' && renderAttempts === 1) throw displayFailure;
+      return { rerender: vi.fn(), unmount, waitUntilExit: async () => undefined, cleanup: vi.fn(), clear: vi.fn() };
+    });
+    const warn = vi.spyOn(logger, 'warnLocalFile');
+    let controller: Parameters<NonNullable<typeof base.config.onTerminalDisplayControllerReady>>[0] | undefined;
+    const params: SessionLoopLifecycleParams = {
+      ...base, runtime, hookRuntime: runtime,
+      config: { ...base.config, processLifecycleOwnership: 'caller', shouldRenderTerminalDisplay: () => true,
+        loadTerminalDisplay: async () => {
+          loadAttempts += 1;
+          if (phase === 'loading' && loadAttempts === 1) throw displayFailure;
+          return () => null;
+        },
+        onTerminalDisplayControllerReady: value => { controller = value; },
+        lifecycleHooks: { createCheckpointLifecycle: () => ({}) },
+      },
+      permissionModeState: { ...base.permissionModeState, messageQueue: queue },
+      deps: { ...base.deps, renderFn, registerKillSessionHandlerFn: undefined,
+        cleanupBackendRunResourcesFn: cleanupBackendRunResources,
+        registerRunnerTerminationHandlersFn: options => registerRunnerTerminationHandlers({
+          ...options, processLifecycleOwnership: 'caller', sessionExitReport: null, exit: () => undefined,
+        }),
+      },
+    };
+    const stdoutDescriptor = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+    const stdinDescriptor = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
+    Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: true });
+    Object.defineProperty(process.stdin, 'isTTY', { configurable: true, value: true });
+    let outcome: Promise<unknown> | undefined;
+    try {
+      outcome = runSessionLoopLifecycle(params).then(() => null, error => error);
+      const arrival = await Promise.race([
+        inputDelivered.then(() => ({ kind: 'delivered' })),
+        outcome.then(error => ({ kind: 'ended', error })),
+      ]);
+      expect(arrival).toEqual({ kind: 'delivered' });
+      expect(inputIds).toEqual(['terminal-failure-input']);
+      expect(base.session.endSessionAndClose).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith('[Test] Failed to show the terminal display', displayFailure);
+      if (!controller) throw new Error('Terminal display controller unavailable');
+      expect(controller.isMounted()).toBe(false);
+      await controller.mount();
+      expect(controller.isMounted()).toBe(true);
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      listener?.(canonicalRuntimeEvent({ kind: 'runtime-ended', sessionId: 'session-1', cause: 'providerEnded', retryable: false, emittedAtMs: 2 }));
+      await outcome;
+      warn.mockRestore();
+      if (stdoutDescriptor) Object.defineProperty(process.stdout, 'isTTY', stdoutDescriptor);
+      else Reflect.deleteProperty(process.stdout, 'isTTY');
+      if (stdinDescriptor) Object.defineProperty(process.stdin, 'isTTY', stdinDescriptor);
+      else Reflect.deleteProperty(process.stdin, 'isTTY');
+      await registry.release();
+    }
+  });
+
   it.each(['unmount', 'terminate'] as const)('does not mount a cold terminal display after %s', async (retirement) => {
     const base = createLifecycleParams();
     const params = { ...base, deps: { ...base.deps } } satisfies SessionLoopLifecycleParams;
@@ -1643,11 +1853,15 @@ describe('runSessionLoopLifecycle runtime transcript projection', () => {
     const base = createLifecycleParams({ runPermissionModePromptLoopFn: runPermissionModePromptLoop });
     const stored = new Map<string, Parameters<NonNullable<typeof base.session.enqueueAgentMessageCommitted>>[1]>();
     const storedOptions = new Map<string, Parameters<NonNullable<typeof base.session.enqueueAgentMessageCommitted>>[2]>();
+    const committedSequences = new Map<string, number>();
     vi.mocked(base.session.enqueueAgentMessageCommitted!).mockImplementation(async (_provider, body, options) => {
       if (!options?.localId) throw new Error('A durable transcript row requires its local identity');
       stored.set(options.localId, body);
       storedOptions.set(options.localId, options);
-      return { persisted: true, delivered: false };
+      // Home ACKs assign one sequence to an original; stream updates keep it.
+      const committedSequence = committedSequences.get(options.localId) ?? committedSequences.size + 1;
+      committedSequences.set(options.localId, committedSequence);
+      return { persisted: true, delivered: true, committedSequence };
     });
     const queue = new MessageQueue2<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>(
       (mode) => JSON.stringify(mode), { batcher: combinePermissionModeQueuedPrompts },
@@ -1912,7 +2126,12 @@ describe('runSessionLoopLifecycle runtime transcript projection', () => {
     expect(requestTermination).toHaveBeenCalledWith({ kind: 'exit', code: 0 });
   });
 
-  it('publishes one native runtime observation to the Host Event broker exactly once', async () => {
+  it.each([
+    { kind: 'runtime-activity-snapshot', refused: false },
+    { kind: 'connected-account-identity-observed', refused: false },
+    { kind: 'connected-account-identity-observed', refused: true },
+  ] as const)(
+    'publishes a native $kind observation and forwards connected-account evidence (refused=$refused)', async ({ kind, refused }) => {
     const baseParams = createLifecycleParams({ policyAgentId: 'codex' });
     let observeNativeEvent!: (event: AgentSessionRuntimeEvent) => void;
     const nativeSession: AgentSessionRuntime = {
@@ -1924,6 +2143,17 @@ describe('runSessionLoopLifecycle runtime transcript projection', () => {
       dispose: vi.fn(),
     };
     const publishHostRuntimeEvent = vi.fn<(event: AgentSessionRuntimeEventV1) => void>();
+    const observationWarning = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    onTestFinished(() => observationWarning.mockRestore());
+    const observeConnectedAccountIdentity = vi.fn(async () => {
+      if (refused) throw new Error('PRIVATE_DAEMON_RESPONSE');
+    });
+    const daemonTurnContributionsBridge = {
+      observeConnectedAccountIdentity,
+      resolvePrompt: vi.fn(), resolveAgentComposition: vi.fn(), resolveComposerReference: vi.fn(),
+      resolveComposerAttachment: vi.fn(), afterComposerAttachmentMessageAccepted: vi.fn(),
+      transformAgentContext: vi.fn(), transformSessionInput: vi.fn(), transformAgentRequest: vi.fn(),
+    };
     const runtime = createNativeAgentSessionOperations(
       nativeSession,
       'session-1',
@@ -1952,7 +2182,11 @@ describe('runSessionLoopLifecycle runtime transcript projection', () => {
       undefined,
       undefined,
     );
-    const event = canonicalRuntimeEvent({
+    const event = canonicalRuntimeEvent(kind === 'connected-account-identity-observed' ? {
+      kind, sessionId: 'session-1', emittedAtMs: 100, observedAtMs: 99,
+      service: { pluginId: 'happier.claude', localId: 'claude-subscription' },
+      nativeSessionId: 'native-1', providerOrganizationId: 'org-1',
+    } : {
       kind: 'runtime-activity-snapshot',
       sessionId: 'session-1',
       emittedAtMs: 1,
@@ -1970,14 +2204,110 @@ describe('runSessionLoopLifecycle runtime transcript projection', () => {
       },
       deps: {
         ...baseParams.deps,
+        daemonTurnContributionsBridge,
         runPermissionModePromptLoopFn: vi.fn(async () => {
           observeNativeEvent(event);
+          if (kind === 'connected-account-identity-observed') {
+            await vi.waitFor(() => expect(observeConnectedAccountIdentity).toHaveBeenCalledOnce());
+            if (refused) await vi.waitFor(() => expect(observationWarning).toHaveBeenCalledOnce());
+          }
         }),
       },
     });
 
     expect(publishHostRuntimeEvent).toHaveBeenCalledOnce();
     expect(publishHostRuntimeEvent).toHaveBeenCalledWith(event);
+    expect(observeConnectedAccountIdentity.mock.calls).toEqual(
+      kind === 'connected-account-identity-observed' ? [[event, { signal: expect.any(AbortSignal) }]] : []);
+    expect(observationWarning.mock.calls).toEqual(refused
+      ? [['[connected-services] Provider account observation was not accepted by the daemon']] : []);
+  });
+
+  it('persists assistant and terminal transcript while ordered connected-account observations await the daemon, then aborts delivery on cleanup', async () => {
+    const base = createLifecycleParams({ policyAgentId: 'codex' });
+    let listener: RuntimeTurnMessageHandler | undefined;
+    vi.mocked(base.runtime.subscribeRuntimeEvents!).mockImplementation(next => {
+      listener = next;
+      return () => undefined;
+    });
+    vi.mocked(base.session.enqueueAgentMessageCommitted).mockResolvedValue({
+      persisted: true, delivered: true, committedSequence: 7,
+    });
+    let releaseFirst!: () => void;
+    const firstReleased = new Promise<void>(resolve => { releaseFirst = resolve; });
+    let releaseSecond!: () => void;
+    const secondReleased = new Promise<void>(resolve => { releaseSecond = resolve; });
+    let finishLoop!: () => void;
+    const loopFinished = new Promise<void>(resolve => { finishLoop = resolve; });
+    const started: Array<string | null> = [];
+    let secondAborted = false;
+    // The daemon transport is outside this runner. Keep transcript, terminal
+    // mutation, observation sequencing and loop cancellation owners real.
+    const observeConnectedAccountIdentity = vi.fn<NonNullable<DaemonAgentRuntimeTurnContributionsBridge['observeConnectedAccountIdentity']>>(
+      async (observation, options) => {
+        started.push(observation.providerOrganizationId);
+        if (observation.providerOrganizationId === 'org-a') await firstReleased;
+        else await new Promise<void>((resolve, reject) => {
+          void secondReleased.then(resolve);
+          const abort = () => { secondAborted = true; reject(options?.signal?.reason); };
+          if (options?.signal?.aborted) abort();
+          else options?.signal?.addEventListener('abort', abort, { once: true });
+        });
+      },
+    );
+    const warning = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    onTestFinished(() => warning.mockRestore());
+    const bridge: DaemonAgentRuntimeTurnContributionsBridge = {
+      observeConnectedAccountIdentity,
+      resolvePrompt: vi.fn(), resolveAgentComposition: vi.fn(), resolveComposerReference: vi.fn(),
+      resolveComposerAttachment: vi.fn(), afterComposerAttachmentMessageAccepted: vi.fn(),
+      transformAgentContext: vi.fn(), transformSessionInput: vi.fn(), transformAgentRequest: vi.fn(),
+    };
+    const running = runSessionLoopLifecycle({
+      ...base,
+      deps: {
+        ...base.deps,
+        daemonTurnContributionsBridge: bridge,
+        runPermissionModePromptLoopFn: vi.fn(async () => {
+          listener?.(canonicalRuntimeEvent({ kind: 'turn-start',
+            sessionId: 'session-1', emittedAtMs: 98, turnId: 'observation-turn', startedBy: 'host' }));
+          for (const [index, providerOrganizationId] of ['org-a', 'org-b'].entries()) {
+            listener?.(canonicalRuntimeEvent({ kind: 'connected-account-identity-observed',
+              sessionId: 'session-1', emittedAtMs: 100 + index, observedAtMs: 99 + index,
+              service: { pluginId: 'happier.claude', localId: 'claude-subscription' },
+              nativeSessionId: 'native-1', providerOrganizationId }));
+          }
+          listener?.(canonicalRuntimeEvent({ kind: 'transcript-message-committed',
+            sessionId: 'session-1', emittedAtMs: 102, turnId: 'observation-turn', messageId: 'assistant-during-observation',
+            role: 'assistant', text: 'The answer remains available.' }));
+          listener?.(canonicalRuntimeEvent({ kind: 'turn-complete',
+            sessionId: 'session-1', emittedAtMs: 103, turnId: 'observation-turn' }));
+          await loopFinished;
+        }),
+      },
+    });
+    try {
+      await vi.waitFor(() => expect(observeConnectedAccountIdentity).toHaveBeenCalledOnce());
+      await vi.waitFor(() => expect(base.session.enqueueAgentMessageCommitted).toHaveBeenCalledWith(
+        'codex', { type: 'message', message: 'The answer remains available.' },
+        expect.objectContaining({ localId: 'assistant-during-observation' }),
+      ));
+      await vi.waitFor(() => expect(base.session.enqueueSessionTurnMutation).toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'complete', turnId: 'observation-turn' }),
+      ));
+      expect(started).toEqual(['org-a']);
+      releaseFirst();
+      await vi.waitFor(() => expect(started).toEqual(['org-a', 'org-b']));
+      finishLoop();
+      await running;
+      expect(secondAborted).toBe(true);
+      expect(warning).not.toHaveBeenCalled();
+    } finally {
+      releaseFirst();
+      releaseSecond();
+      finishLoop();
+      await running;
+    }
   });
 
   it('fans strict agent-session lifecycle classes into Host Events without coupling producer success', async () => {
@@ -3202,14 +3532,14 @@ describe('runSessionLoopLifecycle runtime transcript projection', () => {
     expect(session.enqueueAgentMessageCommitted).toHaveBeenCalledWith(
       'opencode',
       { type: 'turn_failed', id: 'turn-1' },
-      {
+      expect.objectContaining({
         localId: 'turn-1:turn_failed',
         meta: expect.objectContaining({
           source: 'runtime',
           runtimeIssueCode: 'opencode_empty_provider_response',
         }),
         provenance: { kind: 'non_dependent', source: 'background' },
-      },
+      }),
     );
     expect(session.enqueueSessionTurnMutation).toHaveBeenCalledWith(expect.objectContaining({
       action: 'fail',
@@ -3548,8 +3878,8 @@ describe('runSessionLoopLifecycle runtime transcript projection', () => {
     );
     expect(session.enqueueAgentMessageCommitted).toHaveBeenCalledWith(
       'opencode',
-      { type: 'turn_failed', id: 'turn-permission-denied' },
-      expect.objectContaining({ localId: 'turn-permission-denied:turn_failed' }),
+      { type: 'turn_failed', id: hostAgentTurnId },
+      expect.objectContaining({ localId: `${hostAgentTurnId}:turn_failed` }),
     );
     expect(JSON.stringify(session.enqueueAgentMessageCommitted.mock.calls)).not.toContain(spoofedAgentId);
     expect(JSON.stringify(session.enqueueAgentMessageCommitted.mock.calls)).not.toContain(spoofedAgentTurnId);

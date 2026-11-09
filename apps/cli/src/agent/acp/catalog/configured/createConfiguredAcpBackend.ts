@@ -27,6 +27,7 @@ export async function createConfiguredAcpBackend(
     definition: { id: options.backend.backendId, title: options.backend.title, launch: options.backend.launch },
     platform: process.platform, arch: process.arch, env: { ...process.env, ...options.env },
     launchEnv: options.launchEnv,
+    cwd: options.cwd,
   });
   if (launch.kind !== 'ready') throw new Error('Configured ACP launch is not installed or cannot run on this machine');
   const definition = normalizeConfiguredAcpDefinition({

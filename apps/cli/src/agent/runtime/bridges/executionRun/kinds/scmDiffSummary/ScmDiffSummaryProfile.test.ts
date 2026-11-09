@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, expectTypeOf, it } from 'vitest';
+import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -8,16 +8,16 @@ import { createActionExecutor, ExecutionRunSendRequestSchema } from '@happier-de
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { readExecutionRunProtocolV2Support } from '@happier-dev/protocol/execution/runs/protocolSupport';
 import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/model-selection';
-import { SCM_DIFF_SUMMARY_CACHE_SCHEMA_VERSION, ScmDiffSummaryGenerateOutputSchema } from '@happier-dev/protocol/scm/diffSummary';
+import { ScmDiffSummaryGenerateOutputSchema } from '@happier-dev/protocol/scm/diffSummary';
+import * as diffSummaryProtocol from '@happier-dev/protocol/scm/diffSummary';
 import { ScmComparisonSchema, type ScmComparisonSource } from '@happier-dev/protocol/scm/comparison';
 import type { ExecutionRunProfilePrepareStartParams, ExecutionRunProfileStartParams } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
 import { captureScmComparison, deleteCapturedScmComparison } from '@/scm/comparisons/captureScmComparison';
 import { ScmDiffSummaryProfile } from './ScmDiffSummaryProfile';
-import { scmDiffSummaryCacheStore } from '@/agent/executionRuns/tasks/scmDiffSummary/cache/cacheStore';
 import { scmDiffSummaryResultStore } from '@/agent/executionRuns/tasks/scmDiffSummary/results/resultStore';
 import { buildDiffSummaryPrompt } from './buildDiffSummaryPrompt';
 import { parseDiffSummaryModelOutput } from './parseDiffSummaryModelOutput';
-import { advanceDiffSummaryAnalysis } from './advanceDiffSummaryAnalysis';
+import { advanceDiffSummaryAnalysis, planDiffSummaryAnalysis } from './advanceDiffSummaryAnalysis';
 import { prepareSavedReviewWalkthroughInput } from '@/agent/executionRuns/profiles/review/reviewWalkthroughTurn';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
@@ -25,6 +25,10 @@ import { clearActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshot, s
 import { executeScmActionOperation } from '@/scm/actions/executeScmActionOperation';
 import { ScmDiffSummaryResultResponseSchema } from '@happier-dev/protocol/scm/diffSummaryResult';
 import type { ScmActionExecute } from '@happier-dev/protocol';
+import { createCapabilitiesService } from '@/capabilities/service';
+import { executionRunsCapability } from '@/capabilities/registry/toolExecutionRuns';
+import { CHECKLIST_IDS } from '@/capabilities/checklistIds';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
 
 // The loose request's extension index must not erase its named public fields.
 expectTypeOf<ExecutionRunProfilePrepareStartParams['request']['instructions']>().toEqualTypeOf<string | undefined>();
@@ -56,8 +60,66 @@ async function admitInitial(params: ExecutionRunProfileStartParams) {
   return { start: { ...params, intentInput: { ...(params.intentInput as Record<string, unknown>), resultId: saved.resultId } },
     previousStructuredMeta: initial?.structuredMeta };
 }
+async function prepareAnalysis(params: ExecutionRunProfilePrepareStartParams): Promise<Readonly<Record<string, unknown>>> {
+  const early = await ScmDiffSummaryProfile.prepareStartParams!(params);
+  const finalized = await ScmDiffSummaryProfile.finalizeStartParams?.({ ...params,
+    request: { ...params.request, ...early } });
+  return { ...early, ...finalized };
+}
 
 describe('initial generation context', () => {
+  it('parses one model response once through saved publication and its completed envelope', async () => {
+    const admitted = await admitInitial(start(input(['walkthrough'])));
+    const rawText = JSON.stringify({ walkthrough: { title: 'Parsed once', intro: '', stops: [], otherChangeRefs: ['c1'] } });
+    // Call through the JSON boundary: the profile, parser and saved owner all remain real.
+    const parser = vi.spyOn(JSON, 'parse');
+    try {
+      const completed = await ScmDiffSummaryProfile.onTurnComplete!({ ...admitted,
+        turnId: 'parse-once', finishedAtMs: 2, rawText });
+      expect(completed?.toolResultOutput).toMatchObject({ success: true,
+        outputs: { walkthrough: { state: 'complete', value: { title: 'Parsed once', otherChangeRefs: ['change-1'] } } } });
+      expect(parser.mock.calls.filter(([text]) => text === rawText)).toHaveLength(1);
+    } finally { parser.mockRestore(); }
+  });
+
+  it('reads a retained preparation body once and still refuses publication after an intervening edit', async () => {
+    await withTempDir('happier-scm-prepare-read-', async cwd => {
+    execFileSync('git', ['init', '-q'], { cwd });
+    writeFileSync(join(cwd, 'a.ts'), 'const changed = true;\n');
+    const captured = await captureScmComparison({ cwd, source: { kind: 'workingTree' }, sessionId: 'sess-1' });
+    const ref = captured.comparison.inventory.files[0]!.occurrences[0]!.id;
+    const saved = await scmDiffSummaryResultStore.create({ cwd, sessionId: 'sess-1',
+      output: ScmDiffSummaryGenerateOutputSchema.parse({ success: true, sourceKey: captured.comparison.id,
+        comparison: captured.comparison, metadata: captured.metadata,
+        analysis: { suppliedChangeRefs: [ref], analysedChangeRefs: [ref], remainingChangeRefs: [] },
+        requestedOutputs: ['walkthrough'], outputs: { walkthrough: { state: 'complete', value: {
+          title: 'Original', intro: 'Intro', stops: [{ id: 's1', title: 'Stop', explanationMarkdown: 'Before',
+            changeRefs: [ref] }], otherChangeRefs: [],
+        } } } }) });
+    const parse = JSON.parse;
+    let bodies = 0;
+    const spy = vi.spyOn(JSON, 'parse').mockImplementation((text, reviver) => {
+      if (typeof text === 'string' && text.startsWith('{"result":') && text.includes(saved.resultId)) bodies++;
+      return parse(text, reviver);
+    });
+    try {
+      await ScmDiffSummaryProfile.prepareStartParams!({ cwd, sessionId: 'sess-1', request: {
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, modelId: 'test-model', instructions: '', intent: 'scm_diff_summary',
+        permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming',
+        intentInput: { cwd, source: captured.comparison.source, comparisonId: captured.comparison.id,
+          outputs: ['walkthrough'], resultId: saved.resultId, expectedRevision: 0 },
+      } });
+    } finally { spy.mockRestore(); }
+    expect(bodies).toBe(1);
+    const scope = { cwd, sessionId: 'sess-1', resultId: saved.resultId };
+    await scmDiffSummaryResultStore.beginInput({ ...scope, inputId: 'refine-once', expectedRevision: 0, outputs: ['walkthrough'] });
+    await scmDiffSummaryResultStore.edit({ ...scope, expectedRevision: 0, edit: { kind: 'renameWalkthrough', title: 'My title' } });
+    expect(await scmDiffSummaryResultStore.publish({ ...scope, inputId: 'refine-once', modelOutput: { walkthrough: {
+      title: 'Stale', intro: 'Intro', stops: [{ id: 's1', title: 'Stop', explanationMarkdown: 'After', changeRefs: ['c1'] }], otherChangeRefs: [],
+    } } })).toMatchObject({ success: false, errorCode: 'revision_conflict', latestRevision: 1 });
+    });
+  });
+
   it('withholds incomplete structured output from the first streamed character while retaining prose discussion', () => {
     const project = (fullText: string) => ScmDiffSummaryProfile.computeSidechainStreamText!({ fullText });
     for (const text of ['{', '{\n  "', '{\n  "walkthrough"', '`', '``', '```j', '```json\n', '```json\n{', '{"walkthrough":{"title":"Saved"}}']) {
@@ -99,11 +161,17 @@ describe('initial generation context', () => {
         }),
         // Only the remote Run transport/model is replaced. Both Actions pass
         // through the production executor and their actual strict schemas.
-        executionRunCheckProtocolV2: async (_sessionId, requirement, options) => readExecutionRunProtocolV2Support({
-          supported: true, response: { results: { 'tool.executionRuns': { ok: true, data: { protocolVersion: 2,
-            features: { detachedScope: true, startAndWait: true, exactInputResults: true,
-              runScopedAgentBindings: true, secretReferenceOverlay: true } } } } },
-        }, requirement, options?.signal),
+        executionRunCheckProtocolV2: async (_sessionId, requirement, options) => {
+          const env = createEnvKeyScope(['HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED']);
+          env.patch({ HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED: '1' });
+          try {
+            // Use the real producer's describe facts, without native discovery.
+            const capabilities = createCapabilitiesService({ capabilities: [executionRunsCapability],
+              checklists: { [CHECKLIST_IDS.NEW_SESSION]: [], [CHECKLIST_IDS.MACHINE_DETAILS]: [] },
+              buildContext: async () => { throw new Error('Protocol description must not discover native agents'); } });
+            return readExecutionRunProtocolV2Support({ supported: true, response: capabilities.describe() }, requirement, options?.signal);
+          } finally { env.restore(); }
+        },
         executionRunGet: async () => { throw new Error('Retired Run transport is unavailable'); },
         executionRunStart: async (_sessionId, value) => {
           const request = ExecutionRunStartRequestSchema.parse(value);
@@ -127,7 +195,7 @@ describe('initial generation context', () => {
       const response = await executor.execute('scm.diffSummary.discuss', { ...scope, expectedRevision: edited.result.revision,
         stopIds: ['authorization'], message: 'Why is this allowed?', startNew: true },
       { surface: 'cli', bypassApprovals: true, executionRunTargetMachineId: 'machine' });
-      expect(response).toMatchObject({ ok: true, result: { success: true, runId: 'seeded-discussion', seededFromRunId: 'retired-generator' } });
+      expect(response, JSON.stringify(response)).toMatchObject({ ok: true, result: { success: true, runId: 'seeded-discussion', seededFromRunId: 'retired-generator' } });
       expect(initialSummary ?? '').toBe('');
       expect(await scmDiffSummaryResultStore.read(scope)).toEqual(beforeTurn);
       expect(completion).toBeNull();
@@ -220,7 +288,6 @@ async function exerciseSavedContinuation(operation: 'refine' | 'addOutputs' | 'r
 const fence = '`'.repeat(3);
 
 describe('ScmDiffSummaryProfile', () => {
-  beforeEach(() => { scmDiffSummaryCacheStore.clear(); });
 
   it.each([false, true])('persists the generator Connected Services and reuses them when refinement replaces a lost Run (resolved at start=%s)', async connectedRouteAtStartOnly => {
     await exerciseSavedContinuation('replacement', ({ savedConnectedServices, replacementConnectedServices }) => {
@@ -378,6 +445,108 @@ describe('ScmDiffSummaryProfile', () => {
     });
   });
 
+  it('counts Unicode scalars and retains usable parts when integration exceeds the reported input capacity', () => {
+    const metadata = input().metadata;
+    const prompt = '😀'.repeat(4000);
+    expect(planDiffSummaryAnalysis({ comparison, metadata, outputs: ['summary'], prompt,
+      maxInputUnicodeCharacters: 4000 })).toBeNull();
+    expect(() => planDiffSummaryAnalysis({ comparison, metadata, outputs: ['summary'], prompt: 'Explain',
+      maxInputUnicodeCharacters: 0 })).toThrow(/capacity/);
+    const maxInputUnicodeCharacters = [...buildDiffSummaryPrompt({ comparison, metadata, outputs: ['summary'], files: [] })].length;
+    const summaryMarkdown = 'x'.repeat(maxInputUnicodeCharacters + 1);
+    const result = advanceDiffSummaryAnalysis({ start: start({ ...input(), scmMaxInputUnicodeCharacters: maxInputUnicodeCharacters,
+      scmAnalysis: { phase: 'evidence', current: ['change-1'], pending: [], parts: [], supplied: [], analysed: [], failures: [], failedRefs: [] } }),
+      turnId: 'part', rawText: JSON.stringify({ summaryMarkdown }), finishedAtMs: 2 });
+    expect(result?.nextInput).toBeUndefined();
+    expect(result?.toolResultOutput).toMatchObject({ comparison, outputs: { summary: { state: 'partial',
+      value: { summaryMarkdown }, reason: expect.stringContaining('capacity') } } });
+    expect(result?.toolResultOutput).toMatchObject({ outputs: { summary: { reasonCode: 'provider_input_too_large' } } });
+    const modelWindowResult = advanceDiffSummaryAnalysis({ start: start({ ...input(), scmContextWindowTokens: maxInputUnicodeCharacters,
+      scmAnalysis: { phase: 'evidence', current: ['change-1'], pending: [], parts: [], supplied: [], analysed: [], failures: [], failedRefs: [] } }),
+      turnId: 'part', rawText: JSON.stringify({ summaryMarkdown }), finishedAtMs: 2 });
+    expect(modelWindowResult?.nextInput).toBeUndefined();
+    expect(modelWindowResult?.toolResultOutput).toMatchObject({ outputs: { summary: {
+      state: 'partial', reasonCode: 'agent_context_window_exceeded',
+    } } });
+  });
+
+  it('does not demand native budget without prepared generation work', async () => {
+    let budgetDemands = 0;
+    expect(await ScmDiffSummaryProfile.finalizeStartParams?.({ cwd: '/repo', request: start(input()),
+      resolveMaxInputUnicodeCharacters: async () => { budgetDemands++; return 1; } })).toBeUndefined();
+    expect(budgetDemands).toBe(0);
+  });
+
+  it('partitions 215 files by the runtime Unicode input capacity and integrates on the same run', async () => {
+    await withTempDir('happier-scm-runtime-capacity-', async cwd => {
+      execFileSync('git', ['init', '-q'], { cwd });
+      for (let file = 0; file < 215; file++) writeFileSync(join(cwd, `fixture-${file}.js`),
+        Array.from({ length: 60 }, (_, line) => `export const value${line} = '${'x'.repeat(80)}';`).join('\n') + '\n');
+      const captured = await captureScmComparison({ cwd, sessionId: 'sess-1', source: { kind: 'workingTree' } });
+      const maxInputUnicodeCharacters = 1 << 20; // Codex rust-v0.163.0 protocol/user_input.rs.
+      const preparation: ExecutionRunProfilePrepareStartParams = { cwd, sessionId: 'sess-1',
+        resolveMaxInputUnicodeCharacters: async () => maxInputUnicodeCharacters,
+        request: { backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, intent: 'scm_diff_summary',
+          instructions: 'Explain the changes', permissionMode: 'read_only', retentionPolicy: 'resumable',
+          runClass: 'long_lived', ioMode: 'streaming', intentInput: { cwd, source: { kind: 'workingTree' },
+            comparisonId: captured.comparison.id, outputs: ['walkthrough'] } } };
+      const early = await ScmDiffSummaryProfile.prepareStartParams!(preparation);
+      expect(early!.intentInput).not.toHaveProperty('scmAnalysis');
+      const roleGuidance = 'Preserve the admitted role and execution descriptor guidance.\n\n';
+      const prepared = await ScmDiffSummaryProfile.finalizeStartParams?.({ ...preparation,
+        request: { ...preparation.request, ...early, instructions: roleGuidance + String(early!.instructions) } });
+      expect(prepared).toBeDefined();
+      let intentInput = prepared!.intentInput;
+      expect(intentInput).toHaveProperty('scmAnalysis');
+      let instructions = String(prepared!.instructions);
+      let localId: string | undefined;
+      let evidenceParts = 0;
+      let completion;
+      do {
+        expect(instructions.startsWith(roleGuidance)).toBe(true);
+        expect(Array.from(instructions).length).toBeLessThanOrEqual(maxInputUnicodeCharacters);
+        const state = (intentInput as { scmAnalysis: { phase: string; current: string[] } }).scmAnalysis;
+        if (state.phase === 'evidence') evidenceParts++;
+        const refs = state.phase === 'evidence' ? state.current
+          : captured.comparison.inventory.files.flatMap(file => file.occurrences.map(change => change.id));
+        const aliases = captured.comparison.inventory.files.flatMap(file => file.occurrences)
+          .filter(change => refs.includes(change.id)).map(change => change.alias);
+        completion = advanceDiffSummaryAnalysis({ start: start(intentInput), turnId: `part-${evidenceParts}-${state.phase}`,
+          ...(localId ? { inputIds: [localId] } : {}), finishedAtMs: 2,
+          rawText: JSON.stringify({ walkthrough: { title: 'Reading', intro: '', stops: [], otherChangeRefs: aliases } }) });
+        if (!completion?.nextInput) break;
+        ({ instructions, intentInput, localId } = completion.nextInput);
+      } while (completion.nextInput);
+      expect(evidenceParts).toBeGreaterThanOrEqual(2);
+      expect(completion?.toolResultOutput).toMatchObject({ runId: 'run-1',
+        outputs: { walkthrough: { state: 'complete' } }, analysis: { remainingChangeRefs: [] } });
+      await deleteCapturedScmComparison({ cwd, sessionId: 'sess-1', comparisonId: captured.comparison.id });
+    });
+  });
+
+  it.each([
+    { prior: false, code: 'provider_input_too_large', message: 'The provider rejected input that exceeds its character limit.' },
+    { prior: true, code: 'provider_request_rejected', message: 'The provider rejected the start request.' },
+  ])('keeps inventory and prior prose on a typed input refusal ($code, prior output: $prior)', async ({ prior, code, message }) => {
+    await withTempDir('happier-scm-refused-', async cwd => {
+      const scoped = { ...comparison, repository: { rootPath: cwd }, inventory: { ...comparison.inventory,
+        files: [...comparison.inventory.files, { ...comparison.inventory.files[0]!, path: 'b.ts',
+          occurrences: [{ ...comparison.inventory.files[0]!.occurrences[0]!, id: 'change-2', alias: 'c2', path: 'b.ts' }] }] } };
+      const admitted = await admitInitial(start({ ...input(['walkthrough']), cwd, comparison: scoped,
+        ...(prior ? { scmAnalysis: { phase: 'evidence', current: ['change-1'], pending: [{ refs: ['change-2'] }],
+          parts: [], supplied: [], analysed: [], failures: [], failedRefs: [] } } : {}) }));
+      const published = prior ? await ScmDiffSummaryProfile.onTurnComplete!({ ...admitted, turnId: 'completed', finishedAtMs: 2,
+        rawText: JSON.stringify({ walkthrough: { title: 'Published', intro: '', stops: [], otherChangeRefs: ['c1'] } }) }) : null;
+      const settled = await ScmDiffSummaryProfile.onTerminal!({ start: admitted.start, status: 'failed', finishedAtMs: 3,
+        structuredMeta: published?.structuredMeta ?? admitted.previousStructuredMeta,
+        diagnostic: { code, message } });
+      expect(settled?.toolResultOutput).toMatchObject({ comparison: scoped, outputs: { walkthrough: {
+        state: prior ? 'partial' : 'failed', reason: message, reasonCode: code,
+        ...(prior ? { value: { title: 'Published' } } : {}),
+      } } });
+    });
+  });
+
   it.each([false, true])('plans a known-capacity single hunk before admission with exact fragments and same-run part progress (single line: %s)', async (singleLine) => {
     // This fixture must fit the canonical instructions and exact fragment headers
     // (now about 3.6 KB), while still forcing this hunk to arrive in parts.
@@ -392,7 +561,7 @@ describe('ScmDiffSummaryProfile', () => {
     writeFileSync(join(directory, 'large.txt'), singleLine ? 'line-😀'.repeat(500) + '\n'
       : Array.from({ length: 200 }, (_, i) => `line-${i} 😀`).join('\n') + '\n');
     const captured = await captureScmComparison({ cwd: directory, sessionId: 'sess-1', source: { kind: 'workingTree' } });
-    const prepare = await ScmDiffSummaryProfile.prepareStartParams!({ cwd: directory, sessionId: 'sess-1',
+    const prepare = await prepareAnalysis({ cwd: directory, sessionId: 'sess-1',
       contextWindowTokens, request: { backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, intent: 'scm_diff_summary',
         instructions: 'Explain carefully', permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming',
         intentInput: { cwd: directory, comparisonId: captured.comparison.id, source: { kind: 'workingTree' }, outputs: ['summary'],
@@ -418,7 +587,7 @@ describe('ScmDiffSummaryProfile', () => {
     expect(ScmDiffSummaryProfile.buildInitialInputContext?.({ start: start(preparedInput) })).toBe('');
     const completion = advanceDiffSummaryAnalysis({ start: start(preparedInput), turnId: 'known-part', finishedAtMs: 2,
       rawText: JSON.stringify({ summaryMarkdown: 'Part' }) });
-    expect(completion?.toolResultOutput).toMatchObject({ analysis: { parts: { admitted: 1, completed: 1,
+    expect(completion?.toolResultOutput).toMatchObject({ analysis: { parts: { completed: 1,
       total: active.pending.length + 1, phase: 'evidence' } } });
     expect(completion?.nextInput?.instructions).toContain('Fragment offsets');
     expect(completion?.nextInput?.instructions).toContain('Context before');
@@ -452,33 +621,37 @@ describe('ScmDiffSummaryProfile', () => {
     expect(rejected?.nextInput?.instructions).toContain('Keep the existing contract');
     let next = rejected?.nextInput;
     let index = 0;
+    let progress = rejected?.toolResultOutput;
     while (next && (next.intentInput as { scmAnalysis: { phase: string } }).scmAnalysis.phase === 'evidence') {
-      next = advanceDiffSummaryAnalysis({ start: start(next.intentInput), inputIds: [next.localId],
-        turnId: `fallback-${index++}`, finishedAtMs: 3, rawText: JSON.stringify({ summaryMarkdown: 'Part' }) })?.nextInput;
+      const advanced = advanceDiffSummaryAnalysis({ start: start(next.intentInput), inputIds: [next.localId],
+        turnId: `fallback-${index++}`, finishedAtMs: 3, rawText: JSON.stringify({ summaryMarkdown: 'Part' }) });
+      progress = advanced?.toolResultOutput;
+      next = advanced?.nextInput;
     }
+    expect(progress).toMatchObject({ analysis: { parts: { completed: index, total: index, phase: 'merge' } } });
     expect(next?.instructions).toContain(instruction);
     expect(next?.instructions).toContain('Prose language: fr');
     expect(next?.instructions).toContain('Keep the existing contract');
   });
 
-  it('persists confirmed part admissions once without losing the admitted publication basis', async () => {
+  it('publishes no revision for part admission and retains completion progress and the publication basis', async () => {
     const active = { ...input(), scmAnalysis: { phase: 'evidence', current: ['change-1'],
       pending: [{ refs: ['change-1'] }], parts: [], supplied: [], analysed: [], failures: [], failedRefs: [] } };
     const selectedStart = (intentInput: unknown) => ({ ...start(intentInput), modelId: 'selected-parts-model' });
     const admitted = await admitInitial(selectedStart(active));
     const first = await ScmDiffSummaryProfile.onTurnComplete?.({ ...admitted, turnId: 'first-part', finishedAtMs: 2,
       rawText: JSON.stringify({ summaryMarkdown: 'First part' }) });
-    expect(first?.toolResultOutput).toMatchObject({ analysis: { parts: { admitted: 1, completed: 1, total: 2 } },
+    expect(first?.toolResultOutput).toMatchObject({ analysis: { parts: { completed: 1, total: 2 } },
       producer: { modelId: 'selected-parts-model' } });
     const nextStart = selectedStart(first!.nextInput!.intentInput);
+    const output = ScmDiffSummaryGenerateOutputSchema.parse(first?.toolResultOutput);
+    const scope = { cwd: '/repo', sessionId: 'sess-1', resultId: output.resultId! };
+    const beforeAdmission = await scmDiffSummaryResultStore.read(scope);
     await ScmDiffSummaryProfile.onBeforeRetainedInput?.({ start: nextStart, localId: first!.nextInput!.localId });
-    const receipt = await ScmDiffSummaryProfile.onRetainedInputAdmitted?.({ start: nextStart, localId: first!.nextInput!.localId });
-    expect(receipt?.toolResultOutput).toMatchObject({ analysis: { parts: { admitted: 2, completed: 1, total: 2 } } });
-    const current = { ...nextStart, intentInput: receipt!.updatedIntentInput };
-    expect(await ScmDiffSummaryProfile.onRetainedInputAdmitted?.({ start: current, localId: first!.nextInput!.localId })).toBeNull();
-    const second = await ScmDiffSummaryProfile.onTurnComplete?.({ start: current, turnId: 'second-part',
+    expect(await scmDiffSummaryResultStore.read(scope)).toEqual(beforeAdmission);
+    const second = await ScmDiffSummaryProfile.onTurnComplete?.({ start: nextStart, turnId: 'second-part',
       inputIds: [first!.nextInput!.localId], finishedAtMs: 3, rawText: JSON.stringify({ summaryMarkdown: 'Second part' }) });
-    expect(second?.toolResultOutput).toMatchObject({ analysis: { parts: { admitted: 2, completed: 2, total: 2, phase: 'merge' } },
+    expect(second?.toolResultOutput).toMatchObject({ analysis: { parts: { completed: 2, total: 2, phase: 'merge' } },
       producer: { modelId: 'selected-parts-model' } });
   });
 
@@ -677,7 +850,7 @@ describe('ScmDiffSummaryProfile', () => {
     expect(first?.toolResultOutput).toMatchObject({ outputs: { walkthrough: { value: { title: 'First' } } } });
     expect(await ScmDiffSummaryProfile.onTurnComplete?.({ start: params, turnId: 'unadmitted-native', finishedAtMs: 4,
       previousStructuredMeta: first?.structuredMeta, rawText })).toBeNull();
-    await scmDiffSummaryResultStore.beginRefinement({ ...scope, inputId: 'follow-up', output: 'walkthrough',
+    await scmDiffSummaryResultStore.beginInput({ ...scope, inputId: 'follow-up', outputs: ['walkthrough'],
       expectedRevision: ScmDiffSummaryGenerateOutputSchema.parse(first?.toolResultOutput).revision! });
     await ScmDiffSummaryProfile.onBeforeRetainedInput?.({ start: params, localId: 'follow-up' });
     const current = ScmDiffSummaryGenerateOutputSchema.parse(first?.toolResultOutput);
@@ -689,9 +862,6 @@ describe('ScmDiffSummaryProfile', () => {
     expect(await scmDiffSummaryResultStore.read(scope)).toMatchObject({ success: true, result: { output: {
       outputs: { walkthrough: { value: { title: 'New manual edit' } } },
     } } });
-    expect(scmDiffSummaryCacheStore.get({ source: { kind: 'comparison', comparisonId: comparison.id },
-      summarySchemaVersion: SCM_DIFF_SUMMARY_CACHE_SCHEMA_VERSION, resolvedSelector: requested.resolvedSelector,
-      outputs: ['walkthrough'], scopeKey: 'sess-1' })).toMatchObject({ outputs: { walkthrough: { value: { title: 'First' } } } });
   });
 
   it('keeps the admitted initial revision rather than rebasing model kickoff over an intervening manual edit', async () => {
@@ -710,13 +880,7 @@ describe('ScmDiffSummaryProfile', () => {
       result: { revision: 1, canUndo: true, output: { summaryMarkdown: 'My newer manual explanation.', outputs: { summary: { state: 'complete' } } } } });
   });
 
-  it('repairs only requested structured output variants using the captured reference contract', () => {
-    const params = start(input(['walkthrough', 'commitPlan']));
-    const repair = ScmDiffSummaryProfile.buildInvalidOutputRepairPrompt?.({ start: params, rawText: 'Invalid result' }) ?? '';
-    expect(repair.includes('"walkthrough":')).toBe(true);
-    expect(repair.includes('"commitPlan":')).toBe(true);
-    expect(repair.includes('"summaryMarkdown":')).toBe(false);
-    expect(repair.includes('c1')).toBe(true);
+  it('parses requested structured output variants using the captured reference contract', () => {
     expect(parseDiffSummaryModelOutput(JSON.stringify({ walkthrough: { title: 'a', intro: '', stops: [], otherChangeRefs: ['c1'] },
       commitPlan: { groups: [], leftOutChangeRefs: ['c1'] } }), { comparison, requestedOutputs: ['walkthrough', 'commitPlan'], requireCompleteCoverage: true }))
       .toMatchObject({ walkthrough: { otherChangeRefs: ['change-1'] }, commitPlan: { leftOutChangeRefs: ['change-1'] } });
@@ -752,13 +916,15 @@ describe('ScmDiffSummaryProfile', () => {
     } } } });
   });
 
-  it('seeds cached follow-up context from the current capture while retaining the original generation provenance', async () => {
-    const cachedOutput = { success: true, sourceKey: comparison.id, comparison, metadata: input().metadata,
+  it('seeds saved follow-up context from the current capture while retaining the original generation provenance', async () => {
+    const savedOutput = { success: true, sourceKey: comparison.id, comparison, metadata: input().metadata,
       runId: 'original-run', producer: { kind: 'generation', runId: 'original-run' },
       cost: { inputTokens: 17 }, summaryMarkdown: 'Saved explanation.',
       requestedOutputs: ['summary'], outputs: { summary: { state: 'complete', value: { summaryMarkdown: 'Saved explanation.' } } },
       analysis: { suppliedChangeRefs: ['change-1'], analysedChangeRefs: ['change-1'], remainingChangeRefs: [] } };
-    const current = start({ ...input(), cachedOutput });
+    const saved = await scmDiffSummaryResultStore.create({ cwd: '/repo', sessionId: 'sess-1',
+      output: ScmDiffSummaryGenerateOutputSchema.parse(savedOutput) });
+    const current = start({ ...input(), resultId: saved.resultId });
     const restored = await ScmDiffSummaryProfile.onStarted?.({ start: current, rawText: '', finishedAtMs: 2 });
     expect(restored?.toolResultOutput).toMatchObject({ runId: 'run-1', producer: { runId: 'original-run', seededFromRunId: 'original-run' },
       cost: { inputTokens: 17 }, comparison, metadata: input().metadata });
@@ -776,7 +942,7 @@ describe('ScmDiffSummaryProfile', () => {
     expect(prompt.includes(`${marker}-0`)).toBe(true);
   });
 
-  it('keeps the language and evidence boundary on a seeded generator and its repair prompt', async () => {
+  it('keeps the language and evidence boundary on a seeded generator', async () => {
     await withTempDir('happier-scm-language-', async cwd => {
       execFileSync('git', ['init', '-q'], { cwd });
       const captured = await captureScmComparison({ cwd, sessionId: 'sess-1', source: { kind: 'workingTree' } });
@@ -798,10 +964,6 @@ describe('ScmDiffSummaryProfile', () => {
       expect(prepared?.instructions).toContain('references, identifiers, paths, code and enum values');
       expect(prepared?.instructions).toContain('Saved prose');
       expect(prepared?.instructions).toContain('User instructions:\nKeep the saved structure');
-      const repair = await ScmDiffSummaryProfile.buildInvalidOutputRepairPrompt?.({ start: start(prepared?.intentInput),
-        rawText: '' });
-      expect(repair).toContain('Prose language: fr');
-      expect(repair).toContain('Evidence boundary:');
     });
   });
 
@@ -818,11 +980,26 @@ describe('ScmDiffSummaryProfile', () => {
   });
 
   it('publishes walkthrough-only output with captured identities and separate analysis coverage', async () => {
-    const completed = await ScmDiffSummaryProfile.onTurnComplete?.({ ...await admitInitial(start(input(['walkthrough']))),
+    const admitted = await admitInitial(start(input(['walkthrough'])));
+    const baseRevision = ScmDiffSummaryGenerateOutputSchema.parse(admitted.previousStructuredMeta?.payload).revision;
+    // Observational spies retain the real normalizer/schema and saved publication path.
+    const normalization = vi.spyOn(diffSummaryProtocol, 'normalizeScmDiffSummaryModelOutput');
+    const envelopes = vi.spyOn(ScmDiffSummaryGenerateOutputSchema, 'parse');
+    let completed;
+    try {
+      completed = await ScmDiffSummaryProfile.onTurnComplete?.({ ...admitted,
       turnId: 'turn-1', finishedAtMs: 2, rawText: JSON.stringify({ walkthrough: {
         title: 'Read the change', intro: '', stops: [{ id: 'stop-1', title: 'a.ts', explanationMarkdown: 'Updates a.', changeRefs: ['c1'] }],
         otherChangeRefs: [],
       } }) });
+      expect(normalization).toHaveBeenCalledTimes(1);
+      expect(envelopes.mock.calls.filter(([value]) => value && typeof value === 'object'
+        && 'comparison' in value && 'success' in value && value.success === true
+        && 'revision' in value && value.revision === baseRevision)).toHaveLength(1);
+    } finally {
+      normalization.mockRestore();
+      envelopes.mockRestore();
+    }
     const output = ScmDiffSummaryGenerateOutputSchema.parse(completed?.toolResultOutput);
     expect(output).not.toHaveProperty('summaryMarkdown');
     expect(output.outputs?.walkthrough).toMatchObject({ state: 'complete', value: { stops: [{ changeRefs: ['change-1'] }] } });
@@ -853,8 +1030,8 @@ describe('ScmDiffSummaryProfile', () => {
     const edited = await scmDiffSummaryResultStore.edit({ ...scope, expectedRevision: saved.revision!,
       edit: { kind: 'renameWalkthrough', title: 'My title' } });
     if (!edited.success) throw new Error(edited.error);
-    await scmDiffSummaryResultStore.beginRefinement({ ...scope, expectedRevision: edited.result.revision,
-      inputId: 'refine', output: 'walkthrough' });
+    await scmDiffSummaryResultStore.beginInput({ ...scope, expectedRevision: edited.result.revision,
+      inputId: 'refine', outputs: ['walkthrough'] });
     const updated = await ScmDiffSummaryProfile.onTurnComplete?.({ start: start({ ...input(['walkthrough']), resultId: saved.resultId }),
       previousStructuredMeta: completed?.structuredMeta, inputIds: ['refine'], turnId: 'refined-turn', finishedAtMs: 3,
       rawText: JSON.stringify({ walkthrough: { title: 'Updated explanation', intro: 'Refined explanation', stops: [], otherChangeRefs: ['c1'] } }) });
@@ -862,11 +1039,85 @@ describe('ScmDiffSummaryProfile', () => {
       outputs: [{ kind: 'walkthrough', change: 'updated' }], titleEditKept: true,
       updateNotice: { kind: 'generation', revision: edited.result.revision + 1, affectedStopIds: [] } } });
     const refined = ScmDiffSummaryGenerateOutputSchema.parse(updated?.toolResultOutput);
-    await scmDiffSummaryResultStore.beginRefinement({ ...scope, expectedRevision: refined.revision!, inputId: 'unchanged', output: 'walkthrough' });
+    await scmDiffSummaryResultStore.beginInput({ ...scope, expectedRevision: refined.revision!, inputId: 'unchanged', outputs: ['walkthrough'] });
     const unchanged = await ScmDiffSummaryProfile.onTurnComplete?.({ start: start({ ...input(['walkthrough']), resultId: saved.resultId }),
       previousStructuredMeta: updated?.structuredMeta, inputIds: ['unchanged'], turnId: 'unchanged-turn', finishedAtMs: 4,
       rawText: JSON.stringify({ walkthrough: { title: 'Updated explanation', intro: 'Refined explanation', stops: [], otherChangeRefs: ['c1'] } }) });
     expect(unchanged?.toolResultMeta?.scmResultUpdate).toBeUndefined();
+  });
+
+  it.each(['wrapped', 'bare'] as const)('publishes a selected-stop refinement without requiring the model to repeat unrelated reading fields (%s)', async (shape) => {
+    const completed = await ScmDiffSummaryProfile.onTurnComplete?.({ ...await admitInitial(start(input(['walkthrough']))),
+      turnId: 'initial', finishedAtMs: 2, rawText: JSON.stringify({ walkthrough: {
+        title: 'Saved reading', intro: 'Saved introduction', otherChangeRefs: [], stops: [
+          { id: 'selected', title: 'Before', explanationMarkdown: 'Before explanation', changeRefs: ['c1'] },
+          { id: 'unselected', title: 'Keep', explanationMarkdown: 'Keep explanation', changeRefs: [] },
+        ],
+      } }) });
+    const saved = ScmDiffSummaryGenerateOutputSchema.parse(completed?.toolResultOutput);
+    const scope = { cwd: '/repo', sessionId: 'sess-1', resultId: saved.resultId! };
+    await scmDiffSummaryResultStore.beginInput({ ...scope, expectedRevision: saved.revision!,
+      inputId: 'selected-refine', outputs: ['walkthrough'], stopIds: ['selected'] });
+    const walkthrough = { stops: [
+      { id: 'selected', title: 'After', explanationMarkdown: 'After explanation', changeRefs: ['c1'] },
+    ], otherChangeRefs: [] };
+    const rawText = JSON.stringify(shape === 'wrapped' ? { walkthrough } : walkthrough);
+    expect(parseDiffSummaryModelOutput(rawText), 'whole-reading admission still requires its own title and intro').toBeNull();
+    const refined = await ScmDiffSummaryProfile.onTurnComplete?.({ start: start({ ...input(['walkthrough']), resultId: saved.resultId }),
+      previousStructuredMeta: completed?.structuredMeta, inputIds: ['selected-refine'], turnId: 'refined', finishedAtMs: 3,
+      rawText });
+    expect(refined?.toolResultMeta).toMatchObject({ scmResultUpdate: { status: 'published', canUndo: true,
+      outputs: [{ kind: 'walkthrough', change: 'updated' }] } });
+    expect(refined?.toolResultOutput).toMatchObject({ revision: saved.revision! + 1, outputs: { walkthrough: { value: {
+      title: 'Saved reading', intro: 'Saved introduction', stops: [
+        { id: 'selected', title: 'After', explanationMarkdown: 'After explanation' },
+        saved.outputs!.walkthrough!.value!.stops[1],
+      ],
+    } } } });
+    const undone = await scmDiffSummaryResultStore.undo({ ...scope, expectedRevision: saved.revision! + 1 });
+    expect(undone).toMatchObject({ success: true, result: { output: { outputs: saved.outputs } } });
+  });
+
+  it('keeps selected-stop shorthand scoped to its base and validates explicit reading fields', () => {
+    const base = { title: 'Saved reading', intro: 'Saved introduction' };
+    const walkthrough = { title: 'New reading', intro: 'New introduction', stops: [], otherChangeRefs: [] };
+    expect(parseDiffSummaryModelOutput(JSON.stringify(walkthrough), undefined, base)?.walkthrough).toEqual(walkthrough);
+    expect(parseDiffSummaryModelOutput(JSON.stringify(walkthrough))).toBeNull();
+    for (const malformed of [
+      { ...walkthrough, title: null },
+      { ...walkthrough, stops: 'not-an-array' },
+      { ...walkthrough, injectedCommand: 'git commit' },
+      { ...walkthrough, walkthrough: null },
+    ]) expect(parseDiffSummaryModelOutput(JSON.stringify(malformed), undefined, base)).toBeNull();
+  });
+
+  it('settles an unparseable selected-stop reply with a visible invalid-output notice and keeps discussion prose unchanged', async () => {
+    const completed = await ScmDiffSummaryProfile.onTurnComplete?.({ ...await admitInitial(start(input(['walkthrough']))),
+      turnId: 'initial', finishedAtMs: 2, rawText: JSON.stringify({ walkthrough: {
+        title: 'Saved reading', intro: 'Saved introduction', otherChangeRefs: [], stops: [
+          { id: 'selected', title: 'Before', explanationMarkdown: 'Before explanation', changeRefs: ['c1'] },
+        ],
+      } }) });
+    const saved = ScmDiffSummaryGenerateOutputSchema.parse(completed?.toolResultOutput);
+    const scope = { cwd: '/repo', sessionId: 'sess-1', resultId: saved.resultId! };
+    const followupStart = start({ ...input(['walkthrough']), resultId: saved.resultId });
+    const rawText = 'I could not produce the requested refinement.';
+    await scmDiffSummaryResultStore.beginInput({ ...scope, expectedRevision: saved.revision!,
+      inputId: 'invalid-targeted', outputs: ['walkthrough'], stopIds: ['selected'] });
+    const refused = await ScmDiffSummaryProfile.onTurnComplete?.({ start: followupStart,
+      previousStructuredMeta: completed?.structuredMeta, inputIds: ['invalid-targeted'], turnId: 'refused', finishedAtMs: 3, rawText });
+    expect(refused?.toolResultMeta).toMatchObject({ scmResultUpdate: { status: 'invalid_output' } });
+    expect(refused?.summary).toEqual(expect.any(String));
+    expect(refused?.summary).not.toBe('');
+    expect(refused?.toolResultOutput).toEqual(saved);
+    expect(await scmDiffSummaryResultStore.readInput({ ...scope, inputIds: ['invalid-targeted'] })).toBeNull();
+    expect(await scmDiffSummaryResultStore.read(scope)).toMatchObject({ success: true, result: { revision: saved.revision, output: saved } });
+
+    await ScmDiffSummaryProfile.onBeforeRetainedInput?.({ start: followupStart, localId: 'discussion' });
+    const discussed = await ScmDiffSummaryProfile.onTurnComplete?.({ start: followupStart,
+      previousStructuredMeta: completed?.structuredMeta, inputIds: ['discussion'], turnId: 'discussed', finishedAtMs: 4, rawText });
+    expect(discussed).toBeNull();
+    expect(await scmDiffSummaryResultStore.read(scope)).toMatchObject({ success: true, result: { revision: saved.revision, output: saved } });
   });
 
   it('preserves prior output when later structured turns complete another requested output and ignores invalid discussion', async () => {
@@ -886,12 +1137,6 @@ describe('ScmDiffSummaryProfile', () => {
     expect(second?.toolResultOutput).toMatchObject({ summaryMarkdown: 'Useful summary', outputs: {
       summary: { state: 'complete', value: { summaryMarkdown: 'Useful summary' } }, commitPlan: { state: 'complete' },
     } });
-    const cacheKey = { source: { kind: 'comparison' as const, comparisonId: comparison.id },
-      summarySchemaVersion: SCM_DIFF_SUMMARY_CACHE_SCHEMA_VERSION, resolvedSelector: requested.resolvedSelector, scopeKey: 'sess-1' };
-    expect(scmDiffSummaryCacheStore.get({ ...cacheKey, outputs: ['summary'] })).toMatchObject({ requestedOutputs: ['summary'] });
-    expect(scmDiffSummaryCacheStore.get({ ...cacheKey, outputs: ['summary', 'commitPlan'] })).toMatchObject({
-      requestedOutputs: ['summary', 'commitPlan'], outputs: { commitPlan: { state: 'complete' } },
-    });
     await ScmDiffSummaryProfile.onBeforeRetainedInput?.({ start: followupStart, localId: 'chat' });
     expect(await ScmDiffSummaryProfile.onTurnComplete?.({ ...params, inputIds: ['chat'], previousStructuredMeta: second?.structuredMeta,
       rawText: 'An ordinary discussion answer.' })).toBeNull();
@@ -927,8 +1172,8 @@ describe('ScmDiffSummaryProfile', () => {
     } });
   });
 
-  it('reuses only the requested-output cache for a canonical capture and honours bypass', async () => {
-    // Git/disk are genuine boundaries; capture/admission/cache/profile run real logic.
+  it('prepares fresh captured evidence and seeds only a saved result without accepting caller publication scope', async () => {
+    // Git/disk are genuine boundaries; capture/admission/profile run real logic.
     const cwd = mkdtempSync(join(tmpdir(), 'happier-summary-profile-'));
     execFileSync('git', ['init'], { cwd, stdio: 'ignore' });
     writeFileSync(join(cwd, 'a.ts'), 'new\n');
@@ -950,55 +1195,12 @@ describe('ScmDiffSummaryProfile', () => {
     expect(captureFirst?.instructions).toContain('"summaryMarkdown":');
     expect(ExecutionRunScmDiffSummaryInputV1Schema.safeParse(captureFirst?.intentInput).success).toBe(true);
     expect(captureFirst?.instructions).not.toContain('replacement generator');
-    const prepared = await ScmDiffSummaryProfile.prepareStartParams?.({ cwd, sessionId: 'sess-1', request });
-    ScmDiffSummaryProfile.onBoundedComplete({ start: start(prepared?.intentInput, 'fast-summary'), finishedAtMs: 2,
-      rawText: '{"summaryMarkdown":"Cached explanation."}' });
-    const cached = await ScmDiffSummaryProfile.prepareStartParams?.({ cwd, sessionId: 'sess-1', request });
-    expect(cached?.intentInput).toMatchObject({ cachedOutput: { success: true, summaryMarkdown: 'Cached explanation.' } });
-    expect(cached?.instructions).toBe('');
-    const investigated = await ScmDiffSummaryProfile.prepareStartParams!({ cwd, sessionId: 'sess-1', request: {
-      ...request, intentInput: { ...request.intentInput, investigateSurroundingFiles: true } } });
-    expect(investigated?.intentInput).not.toHaveProperty('cachedOutput');
-    expect(investigated?.cwd).not.toBe(cwd);
-    await ScmDiffSummaryProfile.onBoundedComplete({ start: start(investigated?.intentInput, 'fast-summary'), finishedAtMs: 3,
-      rawText: '{"summaryMarkdown":"Investigated explanation."}' });
-    const investigatedCached = await ScmDiffSummaryProfile.prepareStartParams!({ cwd, sessionId: 'sess-1', request: {
-      ...request, intentInput: { ...request.intentInput, investigateSurroundingFiles: true } } });
-    expect(investigatedCached?.intentInput).toMatchObject({ cachedOutput: { summaryMarkdown: 'Investigated explanation.' } });
-    expect(investigatedCached?.cwd).toEqual(expect.any(String));
-    expect(investigatedCached?.permissionMode).toBe('read_only');
-    const otherConnection = await ScmDiffSummaryProfile.prepareStartParams?.({ cwd, sessionId: 'sess-1', request: {
-      ...request, modelSelection: ProviderBoundModelRefSchema.parse({ ...request.modelSelection, providerConnectionId: 'connection-b' }) } });
-    expect(otherConnection?.intentInput).not.toHaveProperty('cachedOutput');
-    const bypassed = await ScmDiffSummaryProfile.prepareStartParams?.({ cwd, sessionId: 'sess-1', request: {
-      ...request, intentInput: { ...request.intentInput, cachePolicy: { mode: 'bypass' },
-        cachedOutput: { success: true, summaryMarkdown: 'Caller-injected saved prose' }, scmAnalysis: { phase: 'done' },
+    const fresh = await ScmDiffSummaryProfile.prepareStartParams?.({ cwd, sessionId: 'sess-1', request: {
+      ...request, intentInput: { ...request.intentInput, scmAnalysis: { phase: 'done' },
         reviewExplanation: { targets: [{ stopId: 'stop', findingRefs: [{ runId: 'review', findingId: 'finding' }] }],
           requestedBy: { kind: 'user', id: 'spoofed-user' }, requestedAtMs: 1 } } } });
-    expect(bypassed?.intentInput).not.toHaveProperty('cachedOutput');
-    expect(bypassed?.intentInput).not.toHaveProperty('scmAnalysis');
-    expect(bypassed?.intentInput).not.toHaveProperty('reviewExplanation');
-    const walkthrough = await ScmDiffSummaryProfile.prepareStartParams?.({ cwd, sessionId: 'sess-1', request: {
-      ...request, intentInput: { ...request.intentInput, outputs: ['walkthrough'] } } });
-    expect(walkthrough?.intentInput).not.toHaveProperty('cachedOutput');
-    expect(String(walkthrough?.instructions).includes('"summaryMarkdown":')).toBe(false);
-    const withoutSelector = await ScmDiffSummaryProfile.prepareStartParams?.({ cwd, sessionId: 'sess-1', request: {
-      ...request, modelId: undefined, modelSelection: undefined, intentInput: { ...request.intentInput, resolvedSelector: { catalogId: 'profile:fast-summary' } } } });
-    ScmDiffSummaryProfile.onBoundedComplete({ start: start(withoutSelector?.intentInput), finishedAtMs: 2,
-      rawText: '{"summaryMarkdown":"Default model explanation."}' });
-    const defaultAgain = await ScmDiffSummaryProfile.prepareStartParams?.({ cwd, sessionId: 'sess-1', request: {
-      ...request, modelId: undefined, modelSelection: undefined, intentInput: { ...request.intentInput, resolvedSelector: { catalogId: 'profile:fast-summary' } } } });
-    expect(defaultAgain?.intentInput).not.toHaveProperty('cachedOutput');
-    const mismatched = await ScmDiffSummaryProfile.prepareStartParams?.({ cwd, sessionId: 'sess-1', request: {
-      ...request, modelId: 'desired-other-model', modelSelection: undefined } });
-    ScmDiffSummaryProfile.onBoundedComplete({ start: start(mismatched?.intentInput, 'actual-different-model'), finishedAtMs: 2,
-      rawText: '{"summaryMarkdown":"Mismatch must not seed desired cache."}' });
-    const mismatchAgain = await ScmDiffSummaryProfile.prepareStartParams?.({ cwd, sessionId: 'sess-1', request: {
-      ...request, modelId: 'desired-other-model', modelSelection: undefined } });
-    expect(mismatchAgain?.intentInput).not.toHaveProperty('cachedOutput');
-    await captureScmComparison({ cwd, source: { kind: 'workingTree' }, sessionId: 'sess-2' });
-    const otherSession = await ScmDiffSummaryProfile.prepareStartParams?.({ cwd, sessionId: 'sess-2', request });
-    expect(otherSession?.intentInput).not.toHaveProperty('cachedOutput');
+    expect(fresh?.intentInput).not.toHaveProperty('scmAnalysis');
+    expect(fresh?.intentInput).not.toHaveProperty('reviewExplanation');
     const refs = captured.comparison.inventory.files.flatMap(file => file.occurrences.map(change => change.id));
     const saved = await scmDiffSummaryResultStore.create({ cwd, sessionId: 'sess-1', output: ScmDiffSummaryGenerateOutputSchema.parse({
       success: true, sourceKey: captured.comparison.id, comparison: captured.comparison, metadata: captured.metadata,

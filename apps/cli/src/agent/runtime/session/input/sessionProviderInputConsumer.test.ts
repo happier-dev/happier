@@ -966,7 +966,7 @@ describe('createSessionProviderInputConsumer', () => {
 
     await expect(consumer.drainPending({ reason: 'test-default-one' })).resolves.toEqual({
       materialized: 1,
-      stoppedReason: 'max_pop_per_wake',
+      stoppedReason: 'materialized',
     });
     expect(materializeNextPendingMessageSafely).toHaveBeenCalledTimes(1);
   });
@@ -1046,10 +1046,10 @@ describe('createSessionProviderInputConsumer', () => {
     const { consumer, materializeNextPendingMessageSafely, queue } = createBoundPendingPromptConsumer();
 
     await expect(Promise.all([
-      consumer.drainPending({ maxPopPerWake: 100, reason: 'pump-concurrent-a' }),
-      consumer.drainPending({ maxPopPerWake: 100, reason: 'pump-concurrent-b' }),
+      consumer.drainPending({ reason: 'pump-concurrent-a' }),
+      consumer.drainPending({ reason: 'pump-concurrent-b' }),
     ])).resolves.toEqual([
-      { materialized: 1, stoppedReason: 'max_pop_per_wake' },
+      { materialized: 1, stoppedReason: 'materialized' },
       { materialized: 0, stoppedReason: 'materialization_blocked' },
     ]);
     expect(materializeNextPendingMessageSafely).toHaveBeenCalledTimes(1);
@@ -1081,7 +1081,7 @@ describe('createSessionProviderInputConsumer', () => {
       },
     });
 
-    const drain = consumer.drainPending({ maxPopPerWake: 100, reason: 'claim-before-close' });
+    const drain = consumer.drainPending({ reason: 'claim-before-close' });
     await started;
     const close = consumer.enforceProviderInputAdmission(generationEpoch('replacement:claim'));
     const closeSettled = vi.fn();
@@ -1153,9 +1153,9 @@ describe('createSessionProviderInputConsumer', () => {
     });
     await Promise.resolve();
 
-    await expect(consumer.drainPending({ maxPopPerWake: 100, reason: 'active-turn-steer-pump' })).resolves.toEqual({
+    await expect(consumer.drainPending({ reason: 'active-turn-steer-pump' })).resolves.toEqual({
       materialized: 1,
-      stoppedReason: 'max_pop_per_wake',
+      stoppedReason: 'materialized',
     });
     expect(materializeNextPendingMessageSafely).toHaveBeenCalledTimes(1);
     releaseProviderTurn();
@@ -1294,7 +1294,6 @@ describe('createSessionProviderInputConsumer', () => {
     expect(result?.message).toBe('from-pending');
     expect(materializeNextPendingMessageSafely).toHaveBeenCalledWith({
       reconcileWhenEmpty: 'throttled',
-      onDiagnosticPhase: expect.any(Function),
     });
     expect(popPendingMessage).not.toHaveBeenCalled();
   });
@@ -1344,7 +1343,7 @@ describe('createSessionProviderInputConsumer', () => {
   });
 
   it.each(['queued_input_preparation', 'pending_handoff', 'pending_provider_custody', 'context_only'] as const)(
-    'identifies a held %s phase without abandoning accepted input', async (phase) => {
+    'retains held %s input without phase timers', async (phase) => {
       vi.useFakeTimers();
       const info = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
       const held = createDeferred<void>();
@@ -1374,12 +1373,12 @@ describe('createSessionProviderInputConsumer', () => {
           ...(phase === 'queued_input_preparation' ? { beforeCollectQueuedBatch: async () => { await held.promise; } } : {}),
           ...(phase === 'pending_handoff' ? { beforePendingMaterialize: async () => { await held.promise; return true; } } : {}),
         });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(vi.getTimerCount()).toBe(0);
         await vi.advanceTimersByTimeAsync(30_000);
-        expect(info).toHaveBeenCalledWith('[pendingQueue] input consumer phase remains unsettled',
-          expect.objectContaining({ phase }));
         held.resolve();
         await expect(input).resolves.toMatchObject({ message: batch.message });
-        expect(info).toHaveBeenCalledWith('[pendingQueue] input consumer slow phase settled',
+        expect(info).not.toHaveBeenCalledWith('[pendingQueue] input consumer slow phase settled',
           expect.objectContaining({ phase }));
       } finally {
         held.resolve();
@@ -1389,7 +1388,7 @@ describe('createSessionProviderInputConsumer', () => {
     },
   );
 
-  it('reports the exact materialization subphase when the canonical owner remains unsettled', async () => {
+  it('leaves materialization subphase waiting with its owner without phase timers', async () => {
     vi.useFakeTimers();
     const infoFileSpy = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
     try {
@@ -1412,7 +1411,7 @@ describe('createSessionProviderInputConsumer', () => {
         },
       });
 
-      const drain = consumer.drainPending({ maxPopPerWake: 1, reason: 'slow-phase-diagnostic-test' });
+      const drain = consumer.drainPending({ reason: 'slow-phase-diagnostic-test' });
       await vi.advanceTimersByTimeAsync(0);
       expect(materializeNextPendingMessageSafely).toHaveBeenCalledTimes(1);
 
@@ -1420,14 +1419,11 @@ describe('createSessionProviderInputConsumer', () => {
       await vi.advanceTimersByTimeAsync(29_999);
       expect(infoFileSpy).not.toHaveBeenCalled();
       await vi.advanceTimersByTimeAsync(1);
-      expect(infoFileSpy).toHaveBeenCalledWith(
-        '[pendingQueue] input consumer phase remains unsettled',
-        expect.objectContaining({ phase: 'materialize.server_claim' }),
-      );
+      expect(vi.getTimerCount()).toBe(0);
 
       materialization.resolve({ type: 'no_pending' });
       await expect(drain).resolves.toMatchObject({ materialized: 0 });
-      expect(infoFileSpy).toHaveBeenCalledWith(
+      expect(infoFileSpy).not.toHaveBeenCalledWith(
         '[pendingQueue] input consumer slow phase settled',
         expect.objectContaining({ phase: 'materialize.server_claim' }),
       );
@@ -1462,7 +1458,6 @@ describe('createSessionProviderInputConsumer', () => {
     expect(materializeNextPendingMessageSafely).toHaveBeenCalledWith({
       reconcileWhenEmpty: 'throttled',
       deliveryTiming: 'after_runtime_idle',
-      onDiagnosticPhase: expect.any(Function),
     });
   });
 
@@ -1492,7 +1487,6 @@ describe('createSessionProviderInputConsumer', () => {
 
     expect(materializeNextPendingMessageSafely).toHaveBeenCalledWith({
       reconcileWhenEmpty: 'skip',
-      onDiagnosticPhase: expect.any(Function),
     });
     expect(reconcilePendingQueueState).not.toHaveBeenCalled();
   });
@@ -1714,14 +1708,13 @@ describe('createSessionProviderInputConsumer', () => {
     });
 
     expect(consumer.drainPending).toEqual(expect.any(Function));
-    await expect(consumer.drainPending({ maxPopPerWake: 5, reason: 'test-drain' })).resolves.toEqual({
+    await expect(consumer.drainPending({ reason: 'test-drain' })).resolves.toEqual({
       materialized: 1,
-      stoppedReason: 'max_pop_per_wake',
+      stoppedReason: 'materialized',
     });
     expect(materializeNextPendingMessageSafely).toHaveBeenCalledWith({
       reconcileWhenEmpty: 'force',
       deliveryTiming: 'after_foreground_ready',
-      onDiagnosticPhase: expect.any(Function),
     });
     expect(popPendingMessage).not.toHaveBeenCalled();
   });
@@ -1742,14 +1735,13 @@ describe('createSessionProviderInputConsumer', () => {
       pendingQueueDeliveryTiming: 'after_runtime_idle',
     } as Parameters<typeof createSessionProviderInputConsumer<never, never>>[0] & { pendingQueueDeliveryTiming: 'after_runtime_idle' });
 
-    await expect(consumer.drainPending({ maxPopPerWake: 5, reason: 'test-runtime-idle-policy' })).resolves.toEqual({
+    await expect(consumer.drainPending({ reason: 'test-runtime-idle-policy' })).resolves.toEqual({
       materialized: 0,
       stoppedReason: 'deferred',
     });
     expect(materializeNextPendingMessageSafely).toHaveBeenCalledWith({
       reconcileWhenEmpty: 'force',
       deliveryTiming: 'after_runtime_idle',
-      onDiagnosticPhase: expect.any(Function),
     });
   });
 
@@ -1787,20 +1779,18 @@ describe('createSessionProviderInputConsumer', () => {
       pendingQueueDeliveryTiming: 'after_runtime_idle',
     });
 
-    await expect(consumer.drainPending({ maxPopPerWake: 1, reason: 'runtime-tail' })).resolves.toEqual({
+    await expect(consumer.drainPending({ reason: 'runtime-tail' })).resolves.toEqual({
       materialized: 1,
-      stoppedReason: 'max_pop_per_wake',
+      stoppedReason: 'materialized',
     });
     expect(materializeNextPendingMessageSafely).toHaveBeenNthCalledWith(1, {
       reconcileWhenEmpty: 'force',
       deliveryTiming: 'after_runtime_idle',
-      onDiagnosticPhase: expect.any(Function),
     });
     expect(materializeNextPendingMessageSafely).toHaveBeenNthCalledWith(2, {
       reconcileWhenEmpty: 'force',
       deliveryTiming: 'after_runtime_idle',
       expectedRuntimeActivityRevision: 42,
-      onDiagnosticPhase: expect.any(Function),
     });
     expect(readRuntimeActivitySnapshotTail).toHaveBeenCalledTimes(1);
     expect(waitForRuntimeActivitySnapshotTailChange).not.toHaveBeenCalled();
@@ -1852,7 +1842,7 @@ describe('createSessionProviderInputConsumer', () => {
       pendingQueueDeliveryTiming: 'after_runtime_idle',
     });
 
-    await expect(consumer.drainPending({ maxPopPerWake: 1, reason: 'pending-runtime-tail' })).resolves.toMatchObject({
+    await expect(consumer.drainPending({ reason: 'pending-runtime-tail' })).resolves.toMatchObject({
       materialized: 1,
     });
     expect(waitForRuntimeActivitySnapshotTailChange).toHaveBeenCalledTimes(1);
@@ -1860,7 +1850,6 @@ describe('createSessionProviderInputConsumer', () => {
       reconcileWhenEmpty: 'force',
       deliveryTiming: 'after_runtime_idle',
       expectedRuntimeActivityRevision: 43,
-      onDiagnosticPhase: expect.any(Function),
     });
   });
 
@@ -1903,7 +1892,7 @@ describe('createSessionProviderInputConsumer', () => {
       pendingQueueDeliveryTiming: 'after_runtime_idle',
     });
 
-    await expect(consumer.drainPending({ maxPopPerWake: 1, reason: 'invalid-runtime-tail' })).resolves.toEqual({
+    await expect(consumer.drainPending({ reason: 'invalid-runtime-tail' })).resolves.toEqual({
       materialized: 0,
       stoppedReason: 'deferred',
     });
@@ -1932,7 +1921,7 @@ describe('createSessionProviderInputConsumer', () => {
       pendingQueueDeliveryTiming: 'after_runtime_idle',
     });
 
-    await expect(consumer.drainPending({ maxPopPerWake: 1, reason: 'urgent-runtime-idle' })).resolves.toMatchObject({
+    await expect(consumer.drainPending({ reason: 'urgent-runtime-idle' })).resolves.toMatchObject({
       materialized: 1,
     });
     expect(materializeNextPendingMessageSafely).toHaveBeenCalledTimes(1);
@@ -1961,14 +1950,14 @@ describe('createSessionProviderInputConsumer', () => {
       resolvePendingQueueDeliveryTiming: () => timing,
     });
 
-    await expect(consumer.drainPending({ maxPopPerWake: 2, reason: 'timing-reread' })).resolves.toEqual({
+    await expect(consumer.drainPending({ reason: 'timing-reread' })).resolves.toEqual({
       materialized: 0,
       stoppedReason: 'error',
     });
     timing = 'after_foreground_ready';
-    await expect(consumer.drainPending({ maxPopPerWake: 2, reason: 'timing-reread-later' })).resolves.toEqual({
+    await expect(consumer.drainPending({ reason: 'timing-reread-later' })).resolves.toEqual({
       materialized: 1,
-      stoppedReason: 'max_pop_per_wake',
+      stoppedReason: 'materialized',
     });
     expect(observedDeliveryTimings).toEqual([
       'after_runtime_idle',
@@ -2016,7 +2005,7 @@ describe('createSessionProviderInputConsumer', () => {
 
     await expect(consumer.drainPending({ reason: 'manual-handled-later-row' })).resolves.toEqual({
       materialized: 1,
-      stoppedReason: 'max_pop_per_wake',
+      stoppedReason: 'materialized',
     });
 
     expect(reconcilePendingProviderInputCustodyBeforeMaterialization).toHaveBeenCalledTimes(1);
@@ -2047,7 +2036,7 @@ describe('createSessionProviderInputConsumer', () => {
     expect(materializeNextPendingMessageSafely).not.toHaveBeenCalled();
   });
 
-  it('blocks drain while a pending-message edit hold is unexpired', async () => {
+  it('blocks drain for a live pending-message edit even after its old metadata timestamp expires', async () => {
     const materializeNextPendingMessageSafely = vi.fn(async () => ({
       type: 'materialized' as const,
       localId: 'local-1',
@@ -2058,8 +2047,8 @@ describe('createSessionProviderInputConsumer', () => {
     const metadataWithHold = writeSessionPendingQueueHoldV1ToMetadata(createTestMetadata(), {
       holdId: 'hold-1',
       localId: 'pending-1',
-      updatedAtMs: Date.now(),
-      expiresAtMs: Date.now() + 60_000,
+      updatedAtMs: 1,
+      expiresAtMs: 2,
     });
 
     const consumer = createDrainConsumer({
@@ -2068,6 +2057,7 @@ describe('createSessionProviderInputConsumer', () => {
       popPendingMessage,
       shouldAttemptPendingMaterialization: () => true,
       getMetadataSnapshot: () => metadataWithHold,
+      getPendingMessageEditHoldIds: () => ['hold-1'],
     });
 
     await expect(consumer.drainPending({ reason: 'test-pending-edit-hold' })).resolves.toEqual({
@@ -2076,6 +2066,26 @@ describe('createSessionProviderInputConsumer', () => {
     });
     expect(materializeNextPendingMessageSafely).not.toHaveBeenCalled();
     expect(popPendingMessage).not.toHaveBeenCalled();
+  });
+
+  it('keeps ordinary Pending available before any edit presence snapshot has arrived', async () => {
+    const consumer = createDrainConsumer({
+      getMetadataSnapshot: () => createTestMetadata(),
+      getPendingMessageEditHoldIds: () => null,
+      waitForMetadataUpdate: async () => false,
+      materializeNextPendingMessageSafely: async () => ({ type: 'no_pending' as const }),
+    });
+    await expect(consumer.drainPending()).resolves.toEqual({ materialized: 0, stoppedReason: 'no_pending' });
+  });
+
+  it('blocks drain as soon as the editing declaration is live, before its metadata acquire arrives', async () => {
+    const consumer = createDrainConsumer({
+      getMetadataSnapshot: () => createTestMetadata(),
+      getPendingMessageEditHoldIds: () => ['admitted-edit'],
+      waitForMetadataUpdate: async () => false,
+      materializeNextPendingMessageSafely: async () => ({ type: 'no_pending' as const }),
+    });
+    await expect(consumer.drainPending()).resolves.toEqual({ materialized: 0, stoppedReason: 'materialization_blocked' });
   });
 
   it('retains Pending input when the Session has a persisted explicit Stop hold', async () => {
@@ -2148,7 +2158,7 @@ describe('createSessionProviderInputConsumer', () => {
       waitForMetadataUpdate: async () => false,
     });
 
-    await expect(consumer.drainPending({ maxPopPerWake: 5, reason: 'test-auth' })).resolves.toEqual({
+    await expect(consumer.drainPending({ reason: 'test-auth' })).resolves.toEqual({
       materialized: 0,
       stoppedReason: 'auth_failure',
     });

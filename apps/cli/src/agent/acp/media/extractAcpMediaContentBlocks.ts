@@ -24,6 +24,8 @@ export type ExtractAcpMediaContentOptions = Readonly<{
 export type ExtractedAcpMediaContent = Readonly<{
   media: SessionMediaBridgeInput[];
   diagnostics: AcpSessionMediaDiagnostic[];
+  /** Preserve non-media tool output without copying image bytes into transcript JSON. */
+  contentWithoutMedia: unknown;
 }>;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -120,15 +122,19 @@ export function extractAcpMediaContentBlocks(
 ): ExtractedAcpMediaContent {
   const media: SessionMediaBridgeInput[] = [];
   const diagnostics: AcpSessionMediaDiagnostic[] = [];
+  const removed = new Set<number>();
+  const items = contentItems(content);
 
-  contentItems(content).forEach((item, contentIndex) => {
-    const rawRecord = asRecord(item);
+  items.forEach((item, contentIndex) => {
+    const wrapper = asRecord(item);
+    const rawRecord = wrapper?.type === 'content' ? asRecord(wrapper.content) : wrapper;
     if (!rawRecord) return;
 
     const anthropicRecord = readAnthropicImage(rawRecord);
     const record = readNestedResource(anthropicRecord ?? rawRecord);
     const type = readString(record.type)?.toLowerCase() ?? null;
     if (type === 'audio') {
+      removed.add(contentIndex);
       diagnostics.push(diagnostic(
         'unsupported_audio',
         contentIndex,
@@ -138,6 +144,9 @@ export function extractAcpMediaContentBlocks(
     }
 
     const declaredMimeType = readMimeType(record);
+    if ((type === 'resource' || type === 'resource_link' || type === 'blob')
+      && ((declaredMimeType && !declaredMimeType.startsWith('image/'))
+        || (!declaredMimeType && typeof record.text === 'string'))) return;
     const isImageLike =
       type === 'image'
       || type === 'resource'
@@ -145,6 +154,7 @@ export function extractAcpMediaContentBlocks(
       || type === 'blob'
       || (declaredMimeType?.startsWith('image/') ?? false);
     if (!isImageLike) return;
+    removed.add(contentIndex);
 
     const data = readData(record);
     const uri = readUri(record);
@@ -208,5 +218,13 @@ export function extractAcpMediaContentBlocks(
     diagnostics.push(diagnostic('malformed_media_block', contentIndex, 'Image media block has no data or URI'));
   });
 
-  return { media, diagnostics };
+  let contentWithoutMedia = content;
+  if (removed.size > 0) {
+    const retained = items.filter((_item, index) => !removed.has(index));
+    const container = asRecord(content);
+    contentWithoutMedia = Array.isArray(content) ? retained
+      : container && Array.isArray(container.content) ? { ...container, content: retained }
+        : [];
+  }
+  return { media, diagnostics, contentWithoutMedia };
 }

@@ -2,7 +2,7 @@ import { EXECUTION_RUN_KIND_BY_INTENT } from '@happier-dev/protocol/execution/ru
 import { z } from 'zod/mini';
 import { ScmComparisonSchema } from '@happier-dev/protocol/scm/comparison';
 import { parseUnifiedDiffHunks } from '@happier-dev/protocol/diff/hunks';
-import { ScmDiffSummaryMetadataSchema, ScmDiffSummaryModelOutputSchema, ScmDiffSummaryGenerateOutputSchema, ScmDiffSummaryOutputKindSchema, ScmDiffSummaryOutputLanguageSchema } from '@happier-dev/protocol/scm/diffSummary';
+import { ScmDiffSummaryMetadataSchema, ScmDiffSummaryModelOutputSchema, ScmDiffSummaryGenerateOutputSchema, ScmDiffSummaryOutputKindSchema, ScmDiffSummaryOutputLanguageSchema, ScmDiffSummaryFailureReasonCodeSchema } from '@happier-dev/protocol/scm/diffSummary';
 import type { ScmComparison, ScmDiffSummaryModelOutput, ScmDiffSummaryOutputs } from '@happier-dev/protocol';
 import type { ExecutionRunProfileTurnCompleteParams, ExecutionRunProfileBoundedCompleteResult } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
 import { buildDiffSummaryPrompt } from './buildDiffSummaryPrompt';
@@ -21,13 +21,14 @@ const AnalysisStateSchema = z.strictObject({
   currentFragment: z.optional(FragmentSchema), pending: z.array(PartSchema),
   parts: z.array(ScmDiffSummaryModelOutputSchema), supplied: z.array(z.string()), analysed: z.array(z.string()),
   failures: z.array(z.string()), failedRefs: z.array(z.string()),
+  failureReasonCode: z.optional(ScmDiffSummaryFailureReasonCodeSchema),
   expectedInputId: z.optional(z.string()),
   instructions: z.optional(z.string()),
+  promptPrefix: z.optional(z.string()),
   outputLanguage: z.optional(ScmDiffSummaryOutputLanguageSchema),
   evidenceContext: z.optional(z.string()),
   taskInstructions: z.optional(z.string()),
-  admitted: z.optional(z.number().check(z.int(), z.nonnegative())), completed: z.optional(z.number().check(z.int(), z.nonnegative())),
-  failedAdmissions: z.optional(z.number().check(z.int(), z.nonnegative())), lastAdmittedInputId: z.optional(z.string()),
+  completed: z.optional(z.number().check(z.int(), z.nonnegative())),
   totalParts: z.optional(z.number().check(z.int(), z.nonnegative())),
 });
 type AnalysisState = z.infer<typeof AnalysisStateSchema>;
@@ -42,20 +43,9 @@ export function readDiffSummaryPartProgress(input: unknown) {
   if (!parsed.success) return undefined;
   const state = parsed.data;
   const completed = state.completed ?? state.parts.length;
-  const admitted = state.admitted ?? completed;
-  return { admitted, completed, total: Math.max(admitted, state.totalParts ??
-    (completed + (state.failedAdmissions ?? 0) + state.pending.length + (state.phase === 'evidence' && state.current.length ? 1 : 0))),
+  return { completed, total: state.totalParts ??
+    (completed + state.pending.length + (state.phase === 'evidence' && state.current.length ? 1 : 0)),
     phase: state.phase };
-}
-
-export function admitDiffSummaryPart(input: unknown, localId: string) {
-  const parsed = AnalysisStateSchema.safeParse(record(input).scmAnalysis);
-  if (!parsed.success || parsed.data.phase !== 'evidence' || parsed.data.lastAdmittedInputId === localId
-    || (parsed.data.expectedInputId && parsed.data.expectedInputId !== localId)) return null;
-  const state = parsed.data;
-  state.admitted = (state.admitted ?? state.parts.length) + 1;
-  state.lastAdmittedInputId = localId;
-  return { ...record(input), scmAnalysis: state };
 }
 
 function record(value: unknown): Readonly<Record<string, unknown>> {
@@ -109,7 +99,7 @@ function evidencePrompt(comparison: ScmComparison, metadata: z.infer<typeof ScmD
   outputs: z.infer<typeof ScmDiffSummaryOutputKindSchema>[], state: AnalysisState): string {
   const part = currentComparison(comparison, state);
   const fragment = state.currentFragment;
-  return buildDiffSummaryPrompt({ comparison: part, metadata, outputs,
+  return (state.promptPrefix ?? '') + buildDiffSummaryPrompt({ comparison: part, metadata, outputs,
     outputLanguage: state.outputLanguage,
     instructions: state.instructions,
     evidenceContext: state.evidenceContext,
@@ -166,25 +156,42 @@ function splitCurrent(comparison: ScmComparison, state: AnalysisState): boolean 
   return true;
 }
 
-/** Known native window only. Charge UTF-8 bytes conservatively as in Follow's measured policy;
- * this is planning, not a tokenizer or a guarantee against provider framing/output overhead.
- * Unknown capacity and indivisible framing keep native admission authoritative. */
+function inputCapacityReasonCode(prompt: string, limits: Readonly<{ contextWindowTokens?: number; maxInputUnicodeCharacters?: number }>) {
+  const { contextWindowTokens, maxInputUnicodeCharacters } = limits;
+  if (contextWindowTokens !== undefined && Number.isSafeInteger(contextWindowTokens) && contextWindowTokens > 0
+    && new TextEncoder().encode(prompt).byteLength > contextWindowTokens) return 'agent_context_window_exceeded' as const;
+  if (maxInputUnicodeCharacters !== undefined && Number.isSafeInteger(maxInputUnicodeCharacters) && maxInputUnicodeCharacters >= 0) {
+    let characters = 0;
+    for (let offset = 0; offset < prompt.length; offset++) {
+      characters += 1;
+      if (characters > maxInputUnicodeCharacters) return 'provider_input_too_large' as const;
+      if (prompt.codePointAt(offset)! > 0xffff) offset += 1;
+    }
+  }
+  return undefined;
+}
+
+/** Consume independent runtime-character and model-context facts when reported.
+ * UTF-8 bytes conservatively charge the token window; this is not a tokenizer
+ * or an output/history reservation. Unknown capacity keeps native admission authoritative. */
 export function planDiffSummaryAnalysis(params: Readonly<{ comparison: ScmComparison;
   metadata: z.infer<typeof ScmDiffSummaryMetadataSchema>; outputs: z.infer<typeof ScmDiffSummaryOutputKindSchema>[];
-  instructions?: string; outputLanguage?: string; evidenceContext?: string; taskInstructions?: string;
-  prompt: string; contextWindowTokens?: number }>) {
-  const capacity = params.contextWindowTokens;
-  if (!capacity || !Number.isSafeInteger(capacity) || capacity <= 0
-    || new TextEncoder().encode(params.prompt).byteLength <= capacity) return null;
+  instructions?: string; outputLanguage?: string; evidenceContext?: string; taskInstructions?: string; promptPrefix?: string;
+  prompt: string; contextWindowTokens?: number; maxInputUnicodeCharacters?: number }>) {
+  if (!inputCapacityReasonCode(params.prompt, params)) return null;
   const state: AnalysisState = { phase: 'evidence', current: allRefs(params.comparison), pending: [],
     parts: [], supplied: [], analysed: [], failures: [], failedRefs: [], instructions: params.instructions, outputLanguage: params.outputLanguage,
-    evidenceContext: params.evidenceContext, taskInstructions: params.taskInstructions,
-    admitted: 0, completed: 0 };
+    evidenceContext: params.evidenceContext, taskInstructions: params.taskInstructions, promptPrefix: params.promptPrefix,
+    completed: 0 };
   // Each split shrinks real evidence; no guessed minimum fragment or local cutoff.
   const planned: z.infer<typeof PartSchema>[] = [];
   for (;;) {
-    while (new TextEncoder().encode(evidencePrompt(params.comparison, params.metadata, params.outputs, state)).byteLength > capacity
+    while (inputCapacityReasonCode(evidencePrompt(params.comparison, params.metadata, params.outputs, state), params)
       && splitCurrent(params.comparison, state)) { /* keep splitting at captured boundaries */ }
+    const reasonCode = inputCapacityReasonCode(evidencePrompt(params.comparison, params.metadata, params.outputs, state), {
+      maxInputUnicodeCharacters: params.maxInputUnicodeCharacters,
+    });
+    if (reasonCode) throw Object.assign(new Error('The analysis instructions and indivisible evidence exceed the reported runtime input capacity'), { code: reasonCode });
     planned.push({ refs: state.current, diff: state.currentDiff, fragment: state.currentFragment });
     if (!state.pending.length) break;
     nextPart(state);
@@ -296,15 +303,13 @@ export function advanceDiffSummaryAnalysis(params: ExecutionRunProfileTurnComple
   let complete = false;
   let next: string | undefined;
   if (params.diagnostic) {
-    if (params.diagnostic.code === 'agent_context_window_exceeded' && state.phase === 'evidence') {
-      state.failedAdmissions = (state.failedAdmissions ?? 0) + 1;
-      state.admitted = Math.max(state.admitted ?? 0, (state.completed ?? state.parts.length) + state.failedAdmissions);
-    }
     if (params.diagnostic.code === 'agent_context_window_exceeded' && state.phase === 'evidence' && splitCurrent(comparison, state)) {
-      // The original host admission remains a real attempt; two finer parts are now required.
-      state.totalParts += 2;
+      // Replace the refused evidence part with two smaller parts.
+      state.totalParts += 1;
     } else {
       state.failures.push(params.diagnostic.message ?? params.diagnostic.code);
+      const reasonCode = ScmDiffSummaryFailureReasonCodeSchema.safeParse(params.diagnostic.code);
+      if (reasonCode.success) state.failureReasonCode = reasonCode.data;
       state.failedRefs.push(...state.current);
       if (params.diagnostic.code !== 'agent_context_window_exceeded' || state.phase === 'merge') state.phase = 'done';
       else nextPart(state);
@@ -316,7 +321,6 @@ export function advanceDiffSummaryAnalysis(params: ExecutionRunProfileTurnComple
     state.phase = 'done';
   } else {
     state.completed = (state.completed ?? state.parts.length) + 1;
-    state.admitted = Math.max(state.admitted ?? 0, state.completed + (state.failedAdmissions ?? 0));
     const part = currentComparison(comparison, state);
     const parsed = parseDiffSummaryModelOutput(params.rawText, { comparison: part, requestedOutputs: outputs, requireCompleteCoverage: true });
     // Native completion proves this text was delivered independently of whether
@@ -339,7 +343,7 @@ export function advanceDiffSummaryAnalysis(params: ExecutionRunProfileTurnComple
       next = evidencePrompt(comparison, metadata.data, outputs, state);
     } else if (state.parts.length) {
       state.phase = 'merge';
-      next = [buildDiffSummaryPrompt({ comparison, metadata: metadata.data, outputs, files: [],
+      next = (state.promptPrefix ?? '') + [buildDiffSummaryPrompt({ comparison, metadata: metadata.data, outputs, files: [],
         instructions: state.instructions, outputLanguage: state.outputLanguage,
         evidenceContext: state.evidenceContext,
         taskInstructions: [state.taskInstructions, 'Integrate the retained part outputs into one coherent requested result. No new evidence is supplied in this turn. Keep unanalysed changes explicitly reachable.'].filter(Boolean).join('\n') }),
@@ -349,6 +353,16 @@ export function advanceDiffSummaryAnalysis(params: ExecutionRunProfileTurnComple
       ].join('\n\n');
     } else state.phase = 'done';
   }
+  const capacityReasonCode = next ? inputCapacityReasonCode(next, {
+    contextWindowTokens: typeof input.scmContextWindowTokens === 'number' ? input.scmContextWindowTokens : undefined,
+    maxInputUnicodeCharacters: typeof input.scmMaxInputUnicodeCharacters === 'number' ? input.scmMaxInputUnicodeCharacters : undefined,
+  }) : undefined;
+  if (capacityReasonCode) {
+    state.failures.push('The next analysis input exceeds the reported runtime capacity');
+    state.failureReasonCode = capacityReasonCode;
+    state.phase = 'done';
+    next = undefined;
+  }
   const progress: ScmDiffSummaryOutputs = {};
   const reason = state.failures.join('\n') || (next ? 'Analysis is continuing in the same run' : 'Analysis did not produce this output');
   for (const kind of outputs) {
@@ -357,7 +371,8 @@ export function advanceDiffSummaryAnalysis(params: ExecutionRunProfileTurnComple
       ...(value.suggestedPrBody ? { suggestedPrBody: value.suggestedPrBody } : {}) } : undefined : value[kind];
     // Assign through schema to retain the output-kind/value correlation.
     Object.assign(progress, { [kind]: { state: next ? 'writing' : output ? complete ? 'complete' : 'partial' : 'failed',
-      ...(output ? { value: output } : {}), ...(!complete ? { reason } : {}) } });
+      ...(output ? { value: output } : {}), ...(!complete ? { reason,
+        ...(state.failureReasonCode ? { reasonCode: state.failureReasonCode } : {}) } : {}) } });
   }
   const modelId = readScmDiffSummaryProducerModelId(params.start);
   const result = ScmDiffSummaryGenerateOutputSchema.parse({ success: true, sourceKey: comparison.id,

@@ -324,6 +324,17 @@ describe('native Agent current-session interactions', () => {
         });
     });
 
+    it('settles a dismissed question without answers or a pending user action', async () => {
+        const fixture = createFixture();
+        const pending = fixture.public.askQuestions(questionsRequest);
+        const { id } = await fixture.publishedRequest();
+
+        await expect(fixture.respond({ id, approved: false, decision: 'denied' })).resolves.toBeUndefined();
+        await expect(pending).resolves.toMatchObject({ kind: 'questions', status: 'userCancelled' });
+        expect(fixture.session.__getAgentState().requests?.[id]).toBeUndefined();
+        expect(fixture.session.__getAgentState().completedRequests?.[id]).toMatchObject({ status: 'denied' });
+    });
+
     it('rejects missing required or unknown real question answers without consuming the request', async () => {
         for (const answers of [
             {}, { notes: ['note'], components: ['gamma'], unknown: ['ignored?'] },

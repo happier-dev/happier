@@ -31,6 +31,14 @@ vi.mock('@/scm/scmBackendCatalog', () => ({
 }));
 
 describe('ReviewProfile', () => {
+  it('does not demand native budget for findings-only review', async () => {
+    let budgetDemands = 0;
+    expect(await ReviewProfile.finalizeStartParams?.({ cwd: '/repo', request: {
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, intent: 'review', instructions: 'Review the changes',
+      permissionMode: 'read_only', runClass: 'long_lived', retentionPolicy: 'resumable', ioMode: 'streaming',
+    }, resolveMaxInputUnicodeCharacters: async () => { budgetDemands++; return 1; } })).toBeUndefined();
+    expect(budgetDemands).toBe(0);
+  });
   it('presents only occurrence aliases to the reviewer before continuing into narration', () => {
     const comparison = ScmComparisonSchema.parse({ id: 'review-comparison', source: { kind: 'workingTree' },
       repository: { rootPath: '/repo' }, endpoints: {}, inventory: { state: 'complete', reasons: [], files: [{
@@ -169,6 +177,31 @@ describe('ReviewProfile', () => {
         rawText: '', finishedAtMs: 3, diagnostic: { code: 'model_failed' } });
       expect(ScmDiffSummaryGenerateOutputSchema.parse(second?.toolResultOutput).outputs?.walkthrough?.state).toBe('failed');
       expect(first?.structuredMeta?.payload).toMatchObject({ summary: 'Retained findings' });
+    } finally { await rm(cwd, { recursive: true, force: true }); }
+  });
+  it('keeps findings and settles saved narration when its lazy runtime budget is exhausted', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'happier-review-budget-'));
+    const comparison = ScmComparisonSchema.parse({ id: 'review-budget-comparison', source: { kind: 'workingTree' },
+      repository: { rootPath: cwd }, endpoints: {}, inventory: { state: 'complete', files: [], reasons: [] } });
+    const start: ExecutionRunProfileStartParams = { sessionId: 'review-session', runId: `review-${cwd}`, callId: 'review-call',
+      sidechainId: 'review-call', intent: 'review', backendId: 'claude', backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      instructions: 'Review.', permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming', startedAtMs: 1,
+      intentInput: { cwd, comparison, metadata: { source: comparison.source, sourceKey: comparison.id }, outputs: ['walkthrough'] } };
+    try {
+      const finalized = await ReviewProfile.finalizeStartParams!({ cwd, request: start,
+        resolveMaxInputUnicodeCharacters: async () => 0 });
+      const prepared = { ...start, ...finalized };
+      const started = await ReviewProfile.onStarted!({ start: prepared, rawText: '', finishedAtMs: 1 });
+      const pending = ScmDiffSummaryGenerateOutputSchema.parse(started?.toolResultOutput);
+      const first = await ReviewProfile.onTurnComplete!({ start: { ...prepared,
+        intentInput: { ...prepared.intentInput as Record<string, unknown>, resultId: pending.resultId } },
+        turnId: 'findings-turn', rawText: JSON.stringify({ summary: 'Retained findings', findings: [], overviewMarkdown: 'Reviewed.' }), finishedAtMs: 2 });
+      expect(first?.structuredMeta).toMatchObject({ kind: 'review_findings.v2', payload: { summary: 'Retained findings' } });
+      expect(first?.nextInput).toBeUndefined();
+      expect(await scmDiffSummaryResultStore.read({ cwd, sessionId: start.sessionId!, resultId: pending.resultId! }))
+        .toMatchObject({ success: true, result: { output: { comparison, outputs: { walkthrough: {
+          state: 'failed', reason: expect.stringContaining('capacity'), reasonCode: 'provider_input_too_large',
+        } } } } });
     } finally { await rm(cwd, { recursive: true, force: true }); }
   });
   it('adds unsupported host-resolved SCM scope for non-repository review starts', async () => {

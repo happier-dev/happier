@@ -65,6 +65,10 @@ function createEngineResolution(
 }
 
 describe('buildRuntimePublicationFromEngineResolution', () => {
+  it('keeps an undeclared backend capability set unpublished', () => {
+    const publication = buildRuntimePublicationFromEngineResolution(createEngineResolution(undefined));
+    expect(publication.runtimeCapabilities).toEqual({ executionRun: { supported: true } });
+  });
   it('uses nested backend execution-run capability as canonical publication support', () => {
     const publication = buildRuntimePublicationFromEngineResolution(
       createEngineResolution(normalizePluginBackendCapabilitiesV1({
@@ -84,7 +88,6 @@ describe('buildRuntimePublicationFromEngineResolution', () => {
             transcriptInference: { supported: false },
           },
           media: {
-            acceptsImageInput: { supported: false },
             emitsSessionMedia: { supported: false },
             nativeImageGeneration: { supported: false },
           },
@@ -92,5 +95,12 @@ describe('buildRuntimePublicationFromEngineResolution', () => {
       },
     });
     expect(publication.runtimeDescriptor).toBeNull();
+  });
+
+  it('leaves image admission to the opened dispatcher even when the catalog declares support', () => {
+    const publication = buildRuntimePublicationFromEngineResolution(createEngineResolution(
+      normalizePluginBackendCapabilitiesV1({ session: { media: { acceptsImageInput: { supported: true } } } }),
+    ));
+    expect(publication.runtimeCapabilities).not.toHaveProperty('backend.session.media.acceptsImageInput');
   });
 });

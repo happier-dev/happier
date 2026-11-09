@@ -3,6 +3,16 @@ import { describe, expect, it, vi } from 'vitest';
 import { deliverExecutionRunSessionStateField } from './sessionStateDelivery';
 
 describe('execution-run Runtime Activity write boundary', () => {
+  it('rejects host-owned turn progress before enqueue', async () => {
+    const enqueueRegisteredSessionStateFieldMutation = vi.fn(async () => undefined);
+    await expect(deliverExecutionRunSessionStateField({
+      target: { sessionId: 'session-1', enqueueRegisteredSessionStateFieldMutation },
+      fieldId: 'runtime.turnProgress',
+      value: { turnId: 'parent-turn', phase: 'retrying', attempt: 1, reason: 'unknown' },
+    })).resolves.toEqual({ status: 'unsupported', fieldId: 'runtime.turnProgress', reason: 'scope_not_supported' });
+    expect(enqueueRegisteredSessionStateFieldMutation).not.toHaveBeenCalled();
+  });
+
   it('rejects the aggregate registered field before enqueue', async () => {
     const enqueueRegisteredSessionStateFieldMutation = vi.fn(async () => undefined);
     await expect(deliverExecutionRunSessionStateField({

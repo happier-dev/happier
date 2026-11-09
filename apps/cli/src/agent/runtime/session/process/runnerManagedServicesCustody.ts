@@ -31,6 +31,7 @@ import { isMachinePluginSourceCustody } from '@/plugins/runtime/sourceAuthority'
 import type {
     ManagedProviderEndpointAccessProjection,
 } from '@/plugins/runtime/invocation/services/managedServicesAdapter';
+import { createUnavailableManagedServices } from '@/plugins/runtime/invocation/services/managedServicesAdapter';
 import {
     normalizeManagedServiceSpec,
     type NormalizedManagedServiceSpec,
@@ -417,7 +418,7 @@ const MaterializationInjectionSchema = lazyZodSchema(() => z.discriminatedUnion(
     z.strictObject({
         kind: z.literal('environment'),
         targetEnvironmentKeysByMaterializedKey:
-            BoundedStringRecordSchema,
+            z.record(z.string().check(z.minLength(1)), z.string().check(z.minLength(1))),
     }),
     z.strictObject({
         kind: z.literal('httpHeaders'),
@@ -430,11 +431,11 @@ const MaterializationInjectionSchema = lazyZodSchema(() => z.discriminatedUnion(
     z.strictObject({
         kind: z.literal('files'),
         pathsByFileId: z.record(
-            z.string().check(z.minLength(1), z.maxLength(256)),
+            z.string().check(z.minLength(1)),
             z.strictObject({
-                environmentKey: z.string().check(z.minLength(1), z.maxLength(256)),
+                environmentKey: z.string().check(z.minLength(1)),
             }),
-        ).check(z.refine((value) => Object.keys(value).length <= 128)),
+        ),
     }),
 ]));
 const CredentialBindingSchema = lazyZodSchema(() => z.strictObject({
@@ -3017,6 +3018,7 @@ export function createRunnerManagedServicesClient(input: Readonly<{
                     route,
                     pathAndQuery: request.pathAndQuery,
                     headers: request.headers ?? {},
+                    ...(request.interactive === true ? { interactive: true } : {}),
                     ...(request.method !== undefined
                         ? { method: request.method }
                         : {}),
@@ -3420,6 +3422,7 @@ export function createRunnerManagedServicesClient(input: Readonly<{
     };
     return Object.freeze({
         services: Object.freeze({
+            observeWorkload: createUnavailableManagedServices().observeWorkload,
             dependencies: input.dependencies,
             supervise,
         }),

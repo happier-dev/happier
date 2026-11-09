@@ -119,12 +119,3 @@ describe('DefaultTransport handleStderr', () => {
     ).toBeNull();
   });
 });
-
-describe('DefaultTransport timeouts', () => {
-  it('does not invent a generic deadline for provider-owned tool work', () => {
-    const transport = new DefaultTransport('generic');
-
-    expect(transport.getToolCallTimeout('tool-1', 'read')).toBeNull();
-    expect(transport.getToolCallTimeout('tool-2', 'think')).toBeNull();
-  });
-});

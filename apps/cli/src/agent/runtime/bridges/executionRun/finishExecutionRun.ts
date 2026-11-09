@@ -19,13 +19,13 @@ import {
   type RetainedExecutionRunWorkerUpdate,
 } from '@/daemon/executionRunRegistry';
 import { composeExecutionRunWorkerUpdate } from './executionRunWorkerUpdate';
-import { AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1 } from '@happier-dev/protocol/runtime/agentSessionLimitsV1';
 import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { ExecutionRunResumeHandle } from '@happier-dev/protocol';
 import type { ExecutionRunTranscriptPublisher } from './executionRunTranscriptPublisher';
 import {
   createExecutionRunTranscriptCustodyError,
   isExecutionRunTranscriptCustodyError,
+  shouldPublishExecutionRunTranscriptMarker,
 } from './executionRunTranscriptPublisher';
 import { buildExecutionRunConnectedServicesCleanupReceipt } from './connectedServicesCleanupReceipt';
 import type { ReviewRunCommentService } from '@/agent/executionRuns/profiles/review/reviewComments';
@@ -53,10 +53,7 @@ function readExecutionRunMarkerResultSizeBytes(value: unknown): number | undefin
   }
   if (serialized === undefined) return undefined;
 
-  const sizeBytes = Buffer.byteLength(serialized, 'utf8');
-  return sizeBytes <= AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1.p0MeasuredCandidates.sendRequestMaxJsonBytes
-    ? sizeBytes
-    : undefined;
+  return Buffer.byteLength(serialized, 'utf8');
 }
 
 type FinishRunNext = Omit<
@@ -95,7 +92,7 @@ export async function finishExecutionRun(args: Readonly<{
   sendAcp: ExecutionRunTranscriptPublisher;
   enqueueMarkerWrite: EnqueueMarkerWrite;
   terminalMarkerWritePromises: Map<string, Promise<void>>;
-  onWorkerUpdateRetained?: (input: RetainedExecutionRunWorkerUpdate) => void;
+  onWorkerUpdateRetained?: (input: RetainedExecutionRunWorkerUpdate) => void | Promise<void>;
   profileCatalog?: ExecutionRunProfileContributionCatalog;
   reviewComments?: ReviewRunCommentService;
 }>): Promise<boolean> {
@@ -112,15 +109,18 @@ export async function finishExecutionRun(args: Readonly<{
   let toolResult = args.toolResult;
   let structuredMeta = args.structuredMeta;
   let terminalizationError: unknown = null;
-  let shouldMaterializeInTranscript = false;
+  let shouldPublishTranscriptMarker = false;
   try {
     const profile = args.profileCatalog
       ? resolveExecutionRunIntentProfileFromCatalog(args.profileCatalog, existing.intent, existing.profileId, existing.profileSourceCustody)
       : resolveExecutionRunIntentProfile(existing.intent);
-    shouldMaterializeInTranscript = existing.sessionId !== null && profile.transcriptMaterialization !== 'none';
+    shouldPublishTranscriptMarker = shouldPublishExecutionRunTranscriptMarker(profile, {
+      sessionId: existing.sessionId, launchOrigin: existing.launch?.launchOrigin,
+    });
     if (args.next.status === 'failed' || args.next.status === 'cancelled') {
       const settled = await profile.onTerminal?.({ start: existing, status: args.next.status, finishedAtMs: args.next.finishedAtMs,
-        structuredMeta: structuredMeta ?? existing.structuredMeta });
+        structuredMeta: structuredMeta ?? existing.structuredMeta,
+        ...(args.next.error ? { diagnostic: args.next.error } : {}) });
       if (settled) {
         structuredMeta = settled.structuredMeta;
         toolResult = { ...toolResult, output: settled.toolResultOutput,
@@ -192,7 +192,7 @@ export async function finishExecutionRun(args: Readonly<{
   })();
   // Retirement reuses a turn already published by the host. Republishing it
   // would hold durable settlement and native cleanup behind a retiring Home.
-  if (!terminalizationError && shouldMaterializeInTranscript && !reusesPublishedResult) {
+  if (!terminalizationError && shouldPublishTranscriptMarker && !reusesPublishedResult) {
     try {
       await args.sendAcp(
         args.parentProvider,
@@ -253,6 +253,7 @@ export async function finishExecutionRun(args: Readonly<{
     ...(requestedConfiguration ? { requestedConfiguration } : {}),
     ...(resolvedSelection ? { resolvedSelection } : {}),
     permissionMode: updated.permissionMode,
+    approvalProfileId: updated.approvalProfileId ?? null,
     retentionPolicy: updated.retentionPolicy,
     runClass: updated.runClass,
     ioMode: updated.ioMode,
@@ -274,21 +275,12 @@ export async function finishExecutionRun(args: Readonly<{
       await retainExecutionRunWorkerUpdate({ ...parentWorkerUpdate,
         ...(updated.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: updated.requesterWorkAttributionV1 } : {}),
       });
-      args.onWorkerUpdateRetained?.(parentWorkerUpdate);
+      await args.onWorkerUpdateRetained?.(parentWorkerUpdate);
     }
-    // Disk writes can fail transiently (e.g. rename contention on some platforms). Retry once.
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      try {
-        await writeExecutionRunMarker(markerPayload);
-        return;
-      } catch (error) {
-        if (attempt === 0) {
-          await new Promise<void>((resolve) => setTimeout(resolve, 25));
-          continue;
-        }
-        if (parentWorkerUpdate) throw error;
-        return;
-      }
+    try {
+      await writeExecutionRunMarker(markerPayload);
+    } catch (error) {
+      if (parentWorkerUpdate) throw error;
     }
   });
 

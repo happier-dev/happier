@@ -1,7 +1,6 @@
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createServer, request as httpRequest, type IncomingMessage, type RequestOptions } from 'node:http';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { describe, expect, it, vi } from 'vitest';
@@ -10,43 +9,9 @@ import { accountSettingsParse } from '@happier-dev/protocol/account/settings/acc
 import { CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { DaemonAgentInstallStartResponseSchema, DaemonAgentInstallReadResponseSchema } from '@happier-dev/protocol/daemon/agent-install-jobs';
 import { createAgentInstallJobOwner } from '@/capabilities/installJobs/agentInstallJobOwner';
-import { normalizePackageRunnerInvocation } from '@/packagedRuntime/packageRunner/normalizePackageRunnerInvocation';
 import { ensureAcpLaunchForSession, resolveAcpLaunch } from './resolveAcpLaunch';
 
-const uvNetwork = vi.hoisted(() => ({ origin: '' }));
-// The unavailable-download case exercises the actual downloader's HTTP failure,
-// rather than adding a runtime gate solely to suppress acquisition in tests.
-vi.mock('node:https', async importOriginal => ({
-  ...await importOriginal<typeof import('node:https')>(),
-  request(url: URL, options: RequestOptions, callback: (response: IncomingMessage) => void) {
-    if (url.hostname !== 'releases.astral.sh' || !uvNetwork.origin) throw new Error('Unexpected release download');
-    return httpRequest(new URL(url.pathname, uvNetwork.origin), options, callback);
-  },
-}));
-
 describe('managed uv through the canonical launch and install job owners', () => {
-  it.skipIf(process.platform === 'win32')('normalizes uvx and uv tool run without selecting system uv or a JavaScript runtime', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'happier-p9d-uv-runner-'));
-    const fixture = createServer((_request, response) => { response.writeHead(503).end(); });
-    await new Promise<void>(resolve => fixture.listen(0, '127.0.0.1', resolve));
-    const address = fixture.address(); if (!address || typeof address === 'string') throw new Error('Missing address');
-    uvNetwork.origin = `http://127.0.0.1:${address.port}`;
-    try {
-      const uv = join(root, 'tools', 'uv', 'current', 'bin', 'uv');
-      await mkdir(dirname(uv), { recursive: true }); await writeFile(uv, '#!/bin/sh\nexit 0\n'); await chmod(uv, 0o755);
-      const env = { HAPPIER_HOME_DIR: root, PATH: '' };
-      for (const input of [{ command: 'uvx', args: ['pkg==1.0'] }, { command: 'uv', args: ['tool', 'run', 'pkg==1.0'] }]) {
-        expect(await normalizePackageRunnerInvocation({ ...input, processEnv: env })).toMatchObject({
-          command: uv, args: ['tool', 'run', 'pkg==1.0'], cwdPolicy: 'neutral',
-          env: { UV_PYTHON_PREFERENCE: 'only-managed' },
-        });
-      }
-      expect(await normalizePackageRunnerInvocation({ command: 'uv', args: ['pip', 'install', 'pkg'], processEnv: env })).toBeNull();
-      await rm(join(root, 'tools', 'uv'), { recursive: true });
-      expect(await normalizePackageRunnerInvocation({ command: 'uvx', args: ['pkg'], processEnv: env })).toBeNull();
-    } finally { uvNetwork.origin = ''; fixture.closeAllConnections(); await new Promise<void>(resolve => fixture.close(() => resolve())); await rm(root, { recursive: true, force: true }); }
-  });
-
   it.skipIf(process.platform === 'win32')('installs through jobs, first-use keeps side-by-side pins and Accounts, and uninstall is guarded', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-p9d-uv-jobs-'));
     const log = join(root, 'calls.jsonl');

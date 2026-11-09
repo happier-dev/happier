@@ -44,6 +44,8 @@ export type RuntimeActiveTurnPermissionWitness = Readonly<{
 export type RuntimeTurnConfigUpdate = Readonly<{
   modeId?: string | null;
   modelId?: string | null;
+  /** Host projection of deliberate model intent; omission retains unqualified semantics. */
+  modelSelectionSource?: 'explicit' | 'inherited';
   /** Host-private exact Provider binding; public callers must use session.model.set. */
   providerBinding?: AgentSessionProviderBinding;
   /** Reprojection from the canonical MCP policy owner on the existing configuration path. */
@@ -158,9 +160,16 @@ export type RuntimeTurnDisposeReason = NonNullable<
   Parameters<AgentSessionRuntime['dispose']>[0]
 >;
 
+export type RuntimeRollbackBoundaryObservation = Readonly<{
+  event: Extract<AgentSessionRuntimeEvent, { kind: 'turn-rollback-boundary' }>;
+  startUserMessageSeq: number;
+}>;
+
 export type RuntimeTurnOperations = Readonly<{
   /** Present only when the opened runtime supplies a real pre-effect tool boundary. */
   setBeforeToolExecution?: (handler: ((toolName: string) => Promise<void>) | null) => void;
+  /** Host-joined checkpoint evidence; persistence belongs to the turn lifecycle. */
+  setOnRollbackBoundary?: (handler: ((input: RuntimeRollbackBoundaryObservation) => void) | null) => void;
   /** Full plan supplied by the host on this native open, not provider-input acceptance. */
   readSessionStartupInstructions?: () => AgentSessionStartupInstructionsV1 | null;
   /** Concrete open result; an explicit native refusal withdraws manifest support for this incarnation. */

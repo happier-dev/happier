@@ -7,7 +7,7 @@ import { accountSettingsParse, sealSavedSecretResourceStoredContentV1, formatSha
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SavedSecretResourceMaterialsResponseV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 
-import type { AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentSessionConfigurationSnapshot, AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { writeAcpTestAgentScript } from '@/agent/acp/testkit/subprocessHarness';
 import { createExecutionRunPermissionHandler } from '@/agent/executionRuns/policy/executionRunPermissionDecision';
@@ -94,7 +94,7 @@ function writeConfiguredAcpAgentScript(dir: string, fileName = 'configured-acp-a
       import { fileURLToPath } from 'node:url';
 
       const here = path.dirname(fileURLToPath(import.meta.url));
-      const observed = { pid: process.pid, scriptPath: fileURLToPath(import.meta.url), env: { ...process.env }, methods: [], loadedSessionIds: [] };
+      const observed = { pid: process.pid, scriptPath: fileURLToPath(import.meta.url), env: { ...process.env }, methods: [], loadedSessionIds: [], configurationChanges: [] };
       const persist = () => writeFileSync(
         path.join(here, 'observed.json'),
         JSON.stringify(observed),
@@ -125,7 +125,14 @@ function writeConfiguredAcpAgentScript(dir: string, fileName = 'configured-acp-a
               authMethods: [],
             });
           } else if (request.method === 'session/new') {
-            ok(request.id, { sessionId: '${PROVIDER_SESSION_ID}' });
+            ok(request.id, { sessionId: '${PROVIDER_SESSION_ID}',
+              modes: { currentModeId: 'default', availableModes: [{ id: 'default', name: 'Default' }, { id: 'review', name: 'Review' }, { id: 'explicit-mode', name: 'Explicit' }] },
+              models: { currentModelId: 'provider-default', availableModels: [{ modelId: 'provider-default', name: 'Default' }, { modelId: 'registry-model', name: 'Registry' }, { modelId: 'explicit-model', name: 'Explicit' }] },
+            });
+          } else if (request.method === 'session/set_mode' || request.method === 'session/set_model') {
+            observed.configurationChanges.push({ method: request.method, ...request.params });
+            persist();
+            ok(request.id, {});
           } else if (request.method === 'session/load') {
             observed.loadedSessionIds.push(request.params.sessionId);
             persist();
@@ -167,6 +174,7 @@ function readObserved(dir: string): Readonly<{
   env: Record<string, string>;
   methods: string[];
   loadedSessionIds: string[];
+  configurationChanges: readonly Readonly<{ method: string; sessionId: string; modeId?: string; modelId?: string }>[];
 }> {
   return JSON.parse(readFileSync(path.join(dir, 'observed.json'), 'utf8'));
 }
@@ -232,12 +240,22 @@ function setConfiguredAcpAccountSettings(scriptPath: string): void {
   });
 }
 
-function createComposedRuntime(resolution: EngineAdapterResolution | null, cwd: string) {
+function setConfiguredNativeDefaults() {
+  const active = getActiveAccountSettingsSnapshot()!;
+  if (active.acpCatalog?.status !== 'ready') throw new Error('Missing test catalog');
+  commitActiveAcpCatalog({ scopeKey: active.scopeKey!, lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken(),
+    catalog: { ...active.acpCatalog, revision: 5, record: { ...active.acpCatalog.record,
+      definitions: active.acpCatalog.record.definitions.map(definition => ({ ...definition, defaultMode: 'review', defaultModel: 'registry-model' })),
+    } } });
+}
+
+function createComposedRuntime(resolution: EngineAdapterResolution | null, cwd: string, configuration?: AgentSessionConfigurationSnapshot) {
   if (!resolution) throw new Error('Expected the configured engine adapter');
   const runtime = resolution.engineAdapter.runtimeCore.createExecutionRunBackend({
     cwd, backendId: resolution.backendId, runId: 'configured-host-run',
     controllerOccurrenceId: 'configured-controller', scope: 'session_owned', permissionMode: 'read_only',
     projectLaunchContext: launchFixture.projectLaunchContext,
+    ...(configuration ? { configuration } : {}),
     start: { runClass: 'long_lived', retentionPolicy: 'resumable', ioMode: 'streaming' },
     sessionInteractionHost: {
       machineId: 'machine',
@@ -293,6 +311,27 @@ describe('Account-configured ACP composed Session journey', () => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
+  });
+
+  it.each(['none', 'both', 'mode'] as const)('applies saved native defaults through the configured Agent Session composition (explicit override: %s)', async explicit => {
+    await withTempDir('happier-configured-acp-defaults-', async dir => {
+      setConfiguredAcpAccountSettings(writeConfiguredAcpAgentScript(dir));
+      setConfiguredNativeDefaults();
+      const resolution = await resolveContributedConfiguredRuntime();
+      const runtime = createComposedRuntime(resolution, dir, explicit !== 'none' ? {
+        mode: { value: 'explicit-mode', updatedAtMs: 10 },
+        model: { value: explicit === 'both' ? 'explicit-model' : null, updatedAtMs: 10 },
+        permissionIntent: { value: null, updatedAtMs: 0 }, options: {},
+      } : undefined);
+      try {
+        await runtime.provisionRuntime();
+        expect(readObserved(dir).configurationChanges).toEqual([
+          { method: 'session/set_mode', sessionId: PROVIDER_SESSION_ID, modeId: explicit !== 'none' ? 'explicit-mode' : 'review' },
+          { method: 'session/set_model', sessionId: PROVIDER_SESSION_ID, modelId: explicit === 'both' ? 'explicit-model' : 'registry-model' },
+        ]);
+      } finally { await runtime.dispose(); }
+      await expectAcpChildExited(readObserved(dir).pid);
+    });
   });
 
   it('refuses managed first-use without captured authenticated Machine admission', async () => {
@@ -683,6 +722,7 @@ describe('Account-configured ACP composed Session journey', () => {
   it('resumes a configured ACP Session natively through one provider load and no replay re-import', async () => {
     await withTempDir('happier-configured-acp-composed-resume-', async (dir) => {
       setConfiguredAcpAccountSettings(writeConfiguredAcpAgentScript(dir));
+      setConfiguredNativeDefaults();
 
       const runtime = createComposedRuntime(await resolveContributedConfiguredRuntime(BACKEND_ID), dir);
       const events: AgentSessionRuntimeEvent[] = [];
@@ -696,6 +736,7 @@ describe('Account-configured ACP composed Session journey', () => {
         const observed = readObserved(dir);
         expect(observed.loadedSessionIds).toEqual([PROVIDER_SESSION_ID]);
         expect(observed.methods).not.toContain('session/new');
+        expect(observed.configurationChanges).toEqual([]);
       } finally {
         await runtime.dispose();
         unsubscribe?.();

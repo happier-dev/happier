@@ -25,6 +25,7 @@ export type AcpLaunchParams = Readonly<{
   accountId?: string;
   definition: AcpLaunchDefinition; platform: string | null; arch: string | null; env: ProcessEnvInput;
   launchEnv?: Readonly<Record<string, string>>;
+  cwd?: string;
 }>;
 
 export function getAcpManagedInstallId(definition: Pick<AcpLaunchDefinition, 'id' | 'launch'>, accountId: string): string {
@@ -80,9 +81,9 @@ export async function resolveAcpLaunch(params: AcpLaunchParams): Promise<AcpLaun
   const launch = params.definition.launch;
   if (launch.kind === 'command') {
     if (isPackageRunnerCommand(launch.command)) {
-      const normalized = await normalizePackageRunnerInvocation({ command: launch.command, args: launch.args, processEnv: params.env, launchEnv: params.launchEnv });
-      if (!normalized) throw new Error('Managed runtime unavailable for configured ACP package-runner command');
-      return { kind: 'ready', command: normalized.command, args: normalized.args, env: {}, runtimeEnv: normalized.env };
+      const normalized = await normalizePackageRunnerInvocation({ command: launch.command, args: launch.args, processEnv: params.env, launchEnv: params.launchEnv, cwd: params.cwd });
+      if (!normalized) throw new Error(`Configured ACP command ${launch.command} was not found or is not executable. Install it on this machine or update the command and PATH.`);
+      return { kind: 'ready', command: normalized.command, args: normalized.args, env: {} };
     }
     return { kind: 'ready', command: launch.command, args: launch.args, env: {} };
   }

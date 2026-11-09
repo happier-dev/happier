@@ -123,7 +123,7 @@ describe('registerPermissionModeMessageQueueBinding', () => {
     const prepared = await prepareSessionInputForProviderDispatch({ prompt: batch!.message, transformedUserText: batch!.message.text,
       providerNativeCommand: false, signal: new AbortController().signal, localId: 'actual-input' });
     for (const action of ['discard', 'restore', 'undo'] as const) {
-      expect(prepared.renderPrompt().split(formatFileReviewNoteV1({ action, paths: ['src/app.ts'] }))).toHaveLength(2);
+      expect(prepared.renderPrompt().split(JSON.stringify({ text: formatFileReviewNoteV1({ action, paths: ['src/app.ts'] }, 'agent') }))).toHaveLength(2);
     }
     expect(prepared.renderPrompt()).not.toContain('File review discard');
   });

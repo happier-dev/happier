@@ -21,6 +21,7 @@ export const RUNNER_PLUGIN_MCP_OPERATIONS = [
     directory: z.string().check(z.minLength(1)),
     catalog: z.strictObject({ bindings: z.array(McpServerRuleV1Schema), pluginServers: z.optional(McpServerPluginSettingsMapV1Schema) }) }),
   z.strictObject({ kind: z.literal('mcp.plugin.materialize'), preparationId: PreparationId, servers: z.array(Server) }),
+  z.strictObject({ kind: z.literal('mcp.plugin.discover'), preparationId: PreparationId }),
   z.strictObject({ kind: z.literal('mcp.plugin.close'), preparationId: PreparationId }),
 ] as const;
 export const RunnerPluginMcpOperationSchema = z.discriminatedUnion('kind', RUNNER_PLUGIN_MCP_OPERATIONS);
@@ -30,7 +31,8 @@ export const RUNNER_PLUGIN_MCP_RESULTS = [
   z.strictObject({ kind: z.literal('mcp.plugin.prepared'), items: z.array(z.strictObject({
     itemId: McpPluginItemMetadataV1Schema.shape.id, name: z.string(), title: z.optional(z.string()),
     config: McpServerCatalogEntryV1Schema, rules: z.array(McpServerRuleV1Schema),
-  })), detectedServers: z.array(DetectedMcpServerV1Schema) }),
+  })) }),
+  z.strictObject({ kind: z.literal('mcp.plugin.discovered'), detectedServers: z.array(DetectedMcpServerV1Schema) }),
   z.strictObject({ kind: z.literal('mcp.plugin.materialized'), servers: z.array(Server) }),
   z.strictObject({ kind: z.literal('mcp.plugin.closed') }),
 ] as const;

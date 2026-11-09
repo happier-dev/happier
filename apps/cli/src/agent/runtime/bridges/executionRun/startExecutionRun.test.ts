@@ -163,6 +163,54 @@ function publishEmptyAccountRoleOverrides(): void {
 }
 
 describe('startExecutionRun', () => {
+  it.each([
+    ['parent_session_1', true, 1],
+    ['parent_session_1', false, 0],
+    [null, false, 0],
+    [null, true, 0],
+  ] as const)('publishes one accepted Work conversation marker and result (session=%s, Work=%s)', async (sessionId, workOrigin, expectedMarkers) => {
+    const runs = new Map<string, ExecutionRunState>();
+    const controllers = new Map<string, ExecutionRunController>();
+    const sent: ACPMessageData[] = [];
+    const runtime = createProvisioningRuntime();
+    let runtimeCreations = 0;
+    const voiceAgentManager = new VoiceAgentManager({ createRuntime: () => { throw new Error('Voice is unused'); } });
+    const sendAcp: StartExecutionRunArgs['sendAcp'] = async (_provider, body) => { sent.push(body); };
+    const enqueueMarkerWrite = async () => {};
+    try {
+      const args = {
+        params: {
+          sessionId, intent: 'agent' as const,
+          actionRequestId: 'work-conversation-start',
+          ...(workOrigin ? { launchOrigin: { kind: 'session' as const, sessionId: 'parent_session_1', draftCorrelationId: 'work-draft' } } : {}),
+          backendTarget: { kind: 'builtInAgent' as const, agentId: TEST_BACKEND_ID },
+          instructions: '', permissionMode: 'read_only', retentionPolicy: 'resumable' as const,
+          runClass: 'long_lived' as const, ioMode: 'streaming' as const,
+        },
+        parentProvider: TEST_BACKEND_ID, sendAcp, streamedTranscriptSession: null,
+        createRuntime: () => { runtimeCreations += 1; return runtime; }, getNowMs: () => 1_700_000_000_000,
+        budgetRegistry: null, runs, controllers, enqueueMarkerWrite,
+        writeActivityMarker: async () => {}, finishRun: async () => {}, executeBoundedRun: async () => {},
+        send: async () => ({ ok: true as const }), voiceAgentManager,
+      } satisfies StartExecutionRunArgs;
+      const accepted = await startExecutionRun(args);
+      expect(await startExecutionRun(args)).toEqual(accepted);
+      expect(runtimeCreations).toBe(1);
+      expect(sent.filter(body => body.type === 'tool-call')).toEqual(expectedMarkers ? [expect.objectContaining({
+        type: 'tool-call', name: 'SubAgentRun', callId: accepted.callId,
+        input: expect.objectContaining({ runId: accepted.runId, launchOrigin: args.params.launchOrigin }),
+      })] : []);
+      await finishExecutionRun({ runId: accepted.runId, next: { status: 'succeeded', summary: 'Done', finishedAtMs: 1_700_000_000_001 },
+        toolResult: { output: { runId: accepted.runId, summary: 'Done' } }, runs, controllers, budgetRegistry: null,
+        parentProvider: TEST_BACKEND_ID, sendAcp, enqueueMarkerWrite, terminalMarkerWritePromises: new Map() });
+      expect(sent.filter(body => body.type === 'tool-result')).toHaveLength(expectedMarkers);
+      expect(sent).toHaveLength(expectedMarkers * 2);
+    } finally {
+      await runtime.dispose();
+      await voiceAgentManager.dispose();
+    }
+  });
+
   beforeEach(() => {
     vi.stubEnv('HAPPIER_CLAUDE_PATH', process.execPath);
     vi.stubEnv('HAPPIER_CLAUDE_DYNAMIC_MODEL_PROBE_ENABLED', '0');
@@ -548,7 +596,7 @@ describe('startExecutionRun', () => {
   it.each([true, false])('joins parent startup only for an omitted Voice role (explicit commit: %s)', async explicitCommit => {
     const runs = new Map<string, ExecutionRunState>();
     const controllers = new Map<string, ExecutionRunController>();
-    const createRuntime = () => createProvisioningRuntime();
+    const createRuntime = vi.fn(() => createProvisioningRuntime());
     const voiceAgentManager = new VoiceAgentManager({ createRuntime });
     const backendTarget = { kind: 'builtInAgent', agentId: 'codex' } as const;
     const chatSelection = { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'voice-chat' };
@@ -558,7 +606,8 @@ describe('startExecutionRun', () => {
     const startupWaits: boolean[] = [];
     const starting = startExecutionRun({
       params: { sessionId: 'parent_session_1', intent: 'voice_agent', backendTarget,
-        modelSelection: chatSelection, ...(explicitCommit ? { intentInput: { commitModelSelection: commitSelection } } : {}),
+        modelSelection: chatSelection, connectedServices: null,
+        ...(explicitCommit ? { intentInput: { commitModelSelection: commitSelection } } : {}),
         permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming',
         bootstrapMode: 'none' },
       childSelectionContext: { lifecycle: 'attached', readAppliedParentSelection: async options => {
@@ -585,6 +634,9 @@ describe('startExecutionRun', () => {
       expect(runs.get(started.runId)?.voiceAgentConfig).toMatchObject({
         chatModelId: 'voice-chat', commitModelId: explicitCommit ? 'voice-commit' : 'parent-model',
       });
+      expect(createRuntime).toHaveBeenCalledWith(expect.objectContaining({
+        modelId: 'voice-chat', modelSelectionSource: 'explicit',
+      }));
     } finally {
       releaseInstallation();
       await starting.catch(() => undefined);
@@ -1467,138 +1519,15 @@ describe('startExecutionRun', () => {
       const prepared = runs.get(result.runId)!;
       expect(prepared.sessionId).toBeNull();
       const intentInput = prepared.intentInput as { resultId: string; comparison: { id: string } };
-      expect(await scmDiffSummaryResultStore.readStoredScope({ cwd: fixture.rootPath, resultId: intentInput.resultId }))
-        .toEqual({ cwd: fixture.rootPath });
-      expect(await scmDiffSummaryResultStore.read({ cwd: fixture.rootPath, resultId: intentInput.resultId }))
-        .toMatchObject({ success: true, result: { output: { comparison: { id: intentInput.comparison.id } } } });
+      const stored = await scmDiffSummaryResultStore.readStoredScope({ cwd: fixture.rootPath, resultId: intentInput.resultId });
+      if (!stored) throw new Error('Expected the detached saved comparison');
+      const { result: savedResult, ...scope } = stored;
+      expect(scope).toEqual({ cwd: fixture.rootPath });
+      expect(savedResult).toMatchObject({ output: { comparison: { id: intentInput.comparison.id } } });
     } finally {
       await runtime.dispose();
       await voiceAgentManager.dispose();
       await removeTempDir(fixture.rootPath);
-    }
-  });
-
-  it('finishes cached SCM diff-summary runs without creating a backend runtime', async () => {
-    const comparison = ScmComparisonSchema.parse({
-      id: 'turnCheckpoint:turn_1:checkpoint.diff_computed',
-      source: { kind: 'turnCheckpoint' },
-      repository: { rootPath: tmpdir() },
-      endpoints: {},
-      inventory: { state: 'complete', reasons: [], files: [] },
-    });
-    const metadata = {
-      source: comparison.source,
-      sourceKey: comparison.id,
-      checkpointReceiptId: 'checkpoint.diff_computed',
-    };
-    const runs = new Map<string, ExecutionRunState>();
-    const controllers = new Map<string, ExecutionRunController>();
-    let resolveFinishAdmission!: () => void;
-    const finishAdmission = new Promise<void>((resolve) => {
-      resolveFinishAdmission = resolve;
-    });
-    const finishRun = vi.fn(async (runId: string, next, toolResult, structuredMeta?: ExecutionRunStructuredMeta) => {
-      await finishAdmission;
-      const current = runs.get(runId);
-      if (!current) return;
-      runs.set(runId, {
-        ...current,
-        ...next,
-        latestToolResult: toolResult.output,
-        ...(structuredMeta ? { structuredMeta } : {}),
-      });
-    });
-    const voiceAgentManager = new VoiceAgentManager({
-      createRuntime: () => {
-        throw new Error('voice runtime should not be used by scm_diff_summary runs');
-      },
-    });
-
-    try {
-      const createRuntime = vi.fn(() => createProvisioningRuntime());
-      const startPromise = startExecutionRun({
-        params: {
-          sessionId: 'session_1',
-          intent: 'scm_diff_summary',
-          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
-          instructions: 'SCM diff summary cache hit; no generation required.',
-          modelId: readOfferedSummaryModelId(),
-          intentInput: {
-            comparison,
-            metadata,
-            outputs: ['summary'],
-            cachedOutput: {
-              success: true,
-              summaryMarkdown: '## Summary\n\nCached checkpoint.',
-              sourceKey: comparison.id,
-              checkpointReceiptId: 'checkpoint.diff_computed',
-              comparison,
-              metadata,
-              requestedOutputs: ['summary'],
-              outputs: { summary: { state: 'complete', value: { summaryMarkdown: '## Summary\n\nCached checkpoint.' } } },
-              analysis: { suppliedChangeRefs: [], analysedChangeRefs: [], remainingChangeRefs: [] },
-            },
-          },
-          permissionMode: 'read_only',
-          retentionPolicy: 'ephemeral',
-          runClass: 'bounded',
-          ioMode: 'streaming',
-        },
-        finalizeStartParamsForRuntime: async params => {
-          const patch = await ScmDiffSummaryProfile.finalizeStartParams?.({ sessionId: params.sessionId,
-            request: params as unknown as Parameters<NonNullable<typeof ScmDiffSummaryProfile.finalizeStartParams>>[0]['request'],
-            cwd: tmpdir() });
-          return { ...params, ...patch };
-        },
-        parentProvider: TEST_BACKEND_ID,
-        sendAcp: async () => {},
-        streamedTranscriptSession: null,
-        createRuntime,
-        getNowMs: () => 1_700_000_000_000,
-        budgetRegistry: null,
-        runs,
-        controllers,
-        enqueueMarkerWrite: async () => {},
-        writeActivityMarker: async () => {},
-        finishRun,
-        executeBoundedRun: async () => {
-          throw new Error('cached diff summary should not execute bounded generation');
-        },
-        send: async () => ({ ok: true }),
-        voiceAgentManager,
-      });
-
-      let startSettled = false;
-      void startPromise.then(() => {
-        startSettled = true;
-      });
-      await vi.waitFor(() => {
-        expect(createRuntime).not.toHaveBeenCalled();
-        expect(finishRun).toHaveBeenCalledOnce();
-      });
-      expect(startSettled).toBe(false);
-
-      resolveFinishAdmission();
-      const started = await startPromise;
-
-      expect(createRuntime).not.toHaveBeenCalled();
-      expect(finishRun).toHaveBeenCalledTimes(1);
-      expect(runs.get(started.runId)).toMatchObject({
-        status: 'succeeded',
-        latestToolResult: {
-          success: true,
-          summaryMarkdown: '## Summary\n\nCached checkpoint.',
-        },
-        structuredMeta: {
-          kind: 'scm_diff_summary.v1',
-          payload: {
-            success: true,
-            summaryMarkdown: '## Summary\n\nCached checkpoint.',
-          },
-        },
-      });
-    } finally {
-      await voiceAgentManager.dispose();
     }
   });
 
@@ -1623,17 +1552,6 @@ describe('startExecutionRun', () => {
           modelId: readOfferedSummaryModelId(),
           intentInput: {
             cachePolicy: { mode: 'bypass' },
-            cachedOutput: {
-              success: true,
-              summaryMarkdown: '## Summary\n\nStale cached checkpoint.',
-              sourceKey: 'turnCheckpoint:turn_1:checkpoint.diff_computed',
-              checkpointReceiptId: 'checkpoint.diff_computed',
-              metadata: {
-                source: { kind: 'turnCheckpoint' },
-                sourceKey: 'turnCheckpoint:turn_1:checkpoint.diff_computed',
-                checkpointReceiptId: 'checkpoint.diff_computed',
-              },
-            },
           },
           permissionMode: 'read_only',
           retentionPolicy: 'ephemeral',

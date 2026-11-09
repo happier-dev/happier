@@ -8,6 +8,8 @@ import type { AcpReplayHistorySessionClient } from '@/agent/acp/sessionClient';
 import { extractThinkingTextFromThinkToolInput, isThinkingToolName } from '@/agent/acp/bridge/thinkingToolCall';
 import { CHANGE_TITLE_INSTRUCTION } from '@/agent/runtime/changeTitleInstruction';
 import { enqueueAcpReplayAgentMessage } from './enqueueAcpReplayAgentMessage';
+import { publishImportedSessionMedia } from '@/session/media/imported';
+import { extractAcpMediaContentBlocks } from '@/agent/acp/media/extractAcpMediaContentBlocks';
 
 type TranscriptTextItem = { role: 'user' | 'agent'; text: string };
 
@@ -172,15 +174,21 @@ export async function importAcpReplayHistoryV1(params: {
     return;
   }
 
-  const { messages: replayMessages } = extractReplayTextItems(params.replay);
-  if (replayMessages.length === 0) return;
+  const { messages: replayMessages, hasToolEvents } = extractReplayTextItems(params.replay);
+  if (replayMessages.length === 0 && !hasToolEvents) return;
 
   const existing = await params.session.fetchRecentTranscriptTextItemsForAcpImport({ take: 150 });
-  const overlap = computeBestTailOverlap(existing, replayMessages);
+  if (replayMessages.length === 0 && existing.length === 0) {
+    await importFullReplay(params, params.replay);
+    return;
+  }
+  const overlap = replayMessages.length === 0
+    ? { ok: false as const, reason: 'no_overlap' as const }
+    : computeBestTailOverlap(existing, replayMessages);
 
   if (!overlap.ok) {
     // Divergence: prompt user, do nothing automatically.
-    const remoteHash = sha256(replayMessages.map(fingerprintItem).join('|')).slice(0, 12);
+    const remoteHash = sha256(replayMessages.length ? replayMessages.map(fingerprintItem).join('|') : safeStringifyForKey(params.replay)).slice(0, 12);
     const permissionId = `AcpHistoryImport:v1:${params.provider}:${params.remoteSessionId}:${remoteHash}`;
 
     const localTail = existing.slice(-3).map((m) => ({ role: m.role, text: normalizeTextForMatch(m.text).slice(0, 200) }));
@@ -222,21 +230,18 @@ export async function importAcpReplayHistoryV1(params: {
   }
 
   const startIndex = overlap.replayStartIndex;
-  if (startIndex >= replayMessages.length) {
-    return;
-  }
-
-  const newMessages = replayMessages.slice(startIndex);
-  if (newMessages.length === 0) return;
+  // The matched text can be followed immediately by new tool/media facts,
+  // even when no later text message exists.
+  if (startIndex >= replayMessages.length && !hasToolEvents) return;
 
   logger.debug('[ACP History] Importing new replay messages', {
     agentId: params.provider,
     remoteSessionId: params.remoteSessionId,
-    newCount: newMessages.length,
+    newCount: replayMessages.length - startIndex,
     matchedCount: overlap.matchedCount,
   });
 
-  await importMessageDeltas(params, replayMessages, startIndex);
+  await importMessageDeltas(params, replayMessages, startIndex, params.replay);
 }
 
 async function importMessageDeltas(
@@ -247,35 +252,9 @@ async function importMessageDeltas(
   },
   replayMessages: TranscriptTextItem[],
   startIndex: number,
+  replay: ReadonlyArray<unknown>,
 ): Promise<void> {
-  for (let i = startIndex; i < replayMessages.length; i++) {
-    const msg = replayMessages[i];
-    const localId = makeImportLocalId({
-      agentId: params.provider,
-      remoteSessionId: params.remoteSessionId,
-      index: i,
-      role: msg.role,
-      text: msg.text,
-    });
-
-    if (msg.role === 'user') {
-      await enqueueAcpReplayUserMessage({
-        session: params.session,
-        text: msg.text,
-        localId,
-        remoteSessionId: params.remoteSessionId,
-      });
-    } else {
-      await enqueueAcpReplayAgentMessage({
-        session: params.session,
-        provider: params.provider,
-        body: { type: 'message', message: msg.text },
-        localId,
-        meta: { importedFrom: 'acp-history', remoteSessionId: params.remoteSessionId },
-        provenanceSource: 'history',
-      });
-    }
-  }
+  await importFullReplay(params, replay, startIndex);
 
   // Best-effort metadata watermark; failure is non-fatal.
   updateMetadataBestEffort(
@@ -305,8 +284,10 @@ async function importFullReplay(
     remoteSessionId: string;
   },
   replay: ReadonlyArray<unknown>,
+  messageStartIndex?: number,
 ): Promise<void> {
   const suppressedThinkToolCallIds = new Set<string>();
+  let messageIndex = 0;
   for (let i = 0; i < replay.length; i++) {
     const record = asRecord(replay[i]);
     if (!record) continue;
@@ -314,13 +295,19 @@ async function importFullReplay(
     if (type === 'message') {
       const role = record.role;
       const text = record.text;
-      if (typeof role !== 'string' || typeof text !== 'string') continue;
-      const localId = makeImportEventLocalId({
+      if ((role !== 'user' && role !== 'agent') || typeof text !== 'string') continue;
+      const index = messageIndex++;
+      if (messageStartIndex !== undefined && index < messageStartIndex) continue;
+      const localId = messageStartIndex !== undefined ? makeImportLocalId({
+        agentId: params.provider, remoteSessionId: params.remoteSessionId, index, role, text,
+      }) : makeImportEventLocalId({
         agentId: params.provider,
         remoteSessionId: params.remoteSessionId,
         index: i,
         key: `${role}:${text}`,
       });
+      if (await publishImportedSessionMedia({ ...params, localId, role, text, content: record.content,
+        meta: { importedFrom: 'acp-history', remoteSessionId: params.remoteSessionId }, provenanceSource: 'history' })) continue;
       if (role === 'user') {
         await enqueueAcpReplayUserMessage({
           session: params.session,
@@ -340,6 +327,8 @@ async function importFullReplay(
       }
       continue;
     }
+
+    if (messageStartIndex !== undefined && messageIndex < messageStartIndex) continue;
 
     if (type === 'tool_call') {
       const toolCallId = record.toolCallId;
@@ -414,7 +403,7 @@ async function importFullReplay(
         body: {
           type: 'tool-result',
           callId: toolCallId,
-          output: rawOutput,
+          output: extractAcpMediaContentBlocks(rawOutput, { originSource: 'tool-output', toolCallId }).contentWithoutMedia,
           id: `import-${toolCallId}-result`,
           isError,
         },
@@ -422,6 +411,9 @@ async function importFullReplay(
         meta: { importedFrom: 'acp-history', remoteSessionId: params.remoteSessionId },
         provenanceSource: 'history',
       });
+      await publishImportedSessionMedia({ ...params, localId: `${localId}:media`, role: 'agent', text: '',
+        content: record.content ?? rawOutput, toolCallId,
+        meta: { importedFrom: 'acp-history', remoteSessionId: params.remoteSessionId }, provenanceSource: 'history' });
     }
   }
 }

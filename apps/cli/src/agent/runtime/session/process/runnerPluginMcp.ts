@@ -38,7 +38,14 @@ export function createRunnerPluginMcpPort(input: Readonly<{
         lifetime.throwIfAborted();
         return {
           items: projected.items,
-          detectedServers: projected.detectedServers,
+          async discoverNativeServers() {
+            lifetime.throwIfAborted();
+            if (!preparations.has(preparationId)) throw new Error('plugin_mcp_preparation_unavailable');
+            const result = await dispatch({ kind: 'mcp.plugin.discover', preparationId }, lifetime);
+            if (result.kind !== 'mcp.plugin.discovered') throw new Error('plugin_mcp_discovery_unavailable');
+            lifetime.throwIfAborted();
+            return result.detectedServers;
+          },
           async materialize(servers) {
             if (!preparations.has(preparationId)) throw new Error('plugin_mcp_preparation_unavailable');
             const result = await dispatch({ kind: 'mcp.plugin.materialize', preparationId,

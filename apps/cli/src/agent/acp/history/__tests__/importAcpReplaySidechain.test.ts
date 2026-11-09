@@ -28,6 +28,34 @@ function createFakeSession(params?: Readonly<{
 }
 
 describe('importAcpReplaySidechainV1', () => {
+  it('imports the complete sidechain including a terminal tool result beyond the former event cap', async () => {
+    const { session, committed } = createFakeSession();
+    const messages = Array.from({ length: 1_000 }, (_, index) => ({ type: 'message', role: 'agent', text: `row-${index}` }));
+    await importAcpReplaySidechainV1({
+      session, provider: 'opencode', remoteSessionId: 'native-long', sidechainId: 'task-long',
+      replay: [...messages,
+        { type: 'tool_call', toolCallId: 'tail', kind: 'execute', rawInput: { command: 'build' } },
+        { type: 'tool_result', toolCallId: 'tail', status: 'success', rawOutput: { stdout: 'built' } },
+      ],
+    });
+    expect(committed).toHaveLength(messages.length + 2);
+    expect(committed.at(-1)?.body).toMatchObject({ type: 'tool-result', callId: 'sc:task-long:tail', sidechainId: 'task-long' });
+    expect(new Set(committed.map(row => row.localId)).size).toBe(committed.length);
+  });
+
+  it('uses Session media custody for an image-only agent message while preserving the sidechain', async () => {
+    const { session, committed } = createFakeSession();
+    const sendAgentSessionMediaCommitted = vi.fn(async () => {});
+    await importAcpReplaySidechainV1({ session: { ...session, sendAgentSessionMediaCommitted }, provider: 'opencode',
+      remoteSessionId: 'native-1', sidechainId: 'task-1', replay: [{ type: 'message', role: 'agent', text: '', content: [
+        { type: 'image', mimeType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB' },
+      ] }] });
+    expect(committed).toEqual([]);
+    expect(sendAgentSessionMediaCommitted).toHaveBeenCalledWith('opencode', expect.objectContaining({
+      role: 'output', sidechainId: 'task-1', provenanceSource: 'sidechain', media: [expect.anything()],
+    }));
+  });
+
   it('imports agent messages and tool events with sidechainId, namespacing tool call ids to avoid collisions', async () => {
     const { session, committed } = createFakeSession();
     const opaqueToolCallId = ' \tcall/工具+=\n ';
@@ -261,28 +289,4 @@ describe('importAcpReplaySidechainV1', () => {
     expect(committed).toHaveLength(0);
   });
 
-  it('limits replay processing to a bounded number of events', async () => {
-    const { session, committed } = createFakeSession();
-    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
-    const replay = Array.from({ length: 1_500 }, (_, i) => ({
-      type: 'message',
-      role: 'agent',
-      text: `line-${i}`,
-    }));
-
-    await importAcpReplaySidechainV1({
-      session,
-      provider: 'opencode',
-      remoteSessionId: 'ses_123',
-      sidechainId: 'tool_task_1',
-      replay,
-    });
-
-    expect(committed.length).toBe(1_000);
-    expect(warnSpy).toHaveBeenCalledWith(
-      '[ACP Sidechain Import] Replay exceeded max event limit; truncating import',
-      expect.objectContaining({ maxEvents: 1_000, replayEvents: 1_500 }),
-    );
-    warnSpy.mockRestore();
-  });
 });

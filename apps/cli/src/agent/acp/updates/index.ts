@@ -1,6 +1,5 @@
 export {
   DEFAULT_IDLE_TIMEOUT_MS,
-  DEFAULT_TOOL_CALL_TIMEOUT_MS,
   type SessionUpdate,
   type HandlerContext,
   type HandlerResult,

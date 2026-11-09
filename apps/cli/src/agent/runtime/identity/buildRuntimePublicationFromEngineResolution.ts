@@ -17,12 +17,16 @@ function buildRuntimeCapabilities(
   includeExecutionRun: boolean,
 ): unknown {
   const backendCapabilities = resolution.backend?.capabilities;
+  if (!backendCapabilities) {
+    return includeExecutionRun ? { executionRun: { supported: true } } : {};
+  }
   const executionRunSupported = backendCapabilities?.executionRun?.supported !== false;
+  // Catalog normalization defaults this leaf to false; only the opened dispatcher
+  // knows whether this concrete transport accepts images.
+  const { acceptsImageInput: _catalogImageInput, ...media } = backendCapabilities.session.media;
   return {
     ...(includeExecutionRun ? { executionRun: { supported: executionRunSupported } } : {}),
-    ...(backendCapabilities && Object.keys(backendCapabilities).length > 0
-      ? { backend: backendCapabilities }
-      : {}),
+    backend: { ...backendCapabilities, session: { ...backendCapabilities.session, media } },
   };
 }
 

@@ -275,7 +275,8 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
     await expect(resumedRuntime.provisionRuntime({
       initialPrompt: 'delegate again',
       resumeRuntimeId: 'provider-session-1',
-    })).rejects.toMatchObject({ code: 'provider_binding_changed' });
+    })).rejects.toMatchObject({ code: 'provider_binding_changed',
+      details: { providerError: { code: 'provider_binding_changed', savedSecretReason: 'reference_stale' } } });
     expect(resolveAccountSettingsSnapshot).toHaveBeenCalledExactlyOnceWith({
       secretReferenceOverlay: overlay,
     });

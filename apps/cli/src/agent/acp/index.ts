@@ -19,7 +19,6 @@ export {
   type HandlerContext,
   type HandlerResult,
   DEFAULT_IDLE_TIMEOUT_MS,
-  DEFAULT_TOOL_CALL_TIMEOUT_MS,
   parseArgsFromContent,
   extractErrorDetail,
   handleAgentMessageChunk,

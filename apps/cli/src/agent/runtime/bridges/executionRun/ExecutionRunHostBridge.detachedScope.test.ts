@@ -137,7 +137,7 @@ describe('ExecutionRunHostBridge detached task scope', () => {
     const store = createInMemoryWorkflowCoordinatorStore();
     const coordinator = createWorkflowCoordinator({ store, executeStep: async () => { throw new Error('Unexpected Agent leaf'); },
       allocateInvocationRecordId: () => `invocation-${store.list().length}`,
-      resolveWorkspace: async () => ({ ok: true, workspace }), isAcceptedAuthorizationCurrent: async () => true,
+      resolveWorkspace: async () => ({ ok: true, workspace }),
       action: { executor, buildContext: async ({ runId, authorization }) => ({ surface: 'cli',
         authority: 'account_automation', actionCaller: { kind: 'workflowRun', runId, authorization },
         externalActionTarget: { kind: 'machine', machineId: workspace.machineId, project: workspace } }),

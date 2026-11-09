@@ -1,14 +1,15 @@
 import { createHash, randomUUID } from 'node:crypto';
 
-import { AgentSessionRuntimeEventSchema } from '@happier-dev/protocol/runtime/agentSessionV1';
+import type { SessionTurnProgressV1 } from '@happier-dev/protocol/sessions/state/valueSchemas/turnProgress';
+import { isForegroundTurnRuntimeTranscriptEvent } from '../events/runtimeTranscriptScope';
 import type { AgentSessionRuntimeEvent, SessionRuntimeIssueV1, SessionTurnFactsV1, SessionRuntimeTeamCredentialDenialDetailsV1 } from '@happier-dev/protocol';
 import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 import { logger } from '@/ui/logger';
 
 import type { RuntimeSessionTurnMutationV1 } from '@/api/session/client/transport/mutations/createRuntimeSessionClientDurableMutationOutbox';
+import type { RuntimeRollbackBoundaryObservation } from '@/agent/runtime/turns/runtimeTurnOperations';
 
 const DEFAULT_ACTIVE_TURN_TOUCH_INTERVAL_MS = 60_000;
-const ACCEPTED_BEGIN_PUBLISH_RETRY_DELAY_MS = 50;
 
 export type SessionTurnLifecycleMutationPort = Readonly<{
     sessionId: string;
@@ -26,6 +27,7 @@ type SessionTurnLifecycleParams = Readonly<{
     readStartingInput?: (turnId: string) => Readonly<{ inputId: string; turnId: string }> | null;
     readTeamCredentialDenial?: (turnId: string) => Promise<SessionRuntimeTeamCredentialDenialDetailsV1 | null>;
     onTurnFactsChanged?: (input: Readonly<{ turnId: string; facts: SessionTurnFactsV1 | null }>) => void;
+    onTurnProgressChanged?: (input: Readonly<{ progress: SessionTurnProgressV1 | null; observedAt: number }>) => void;
     onAcceptedTurnFailure?: (event: Extract<AgentSessionRuntimeEvent, { kind: 'turn-failed' }>, issue: SessionRuntimeIssueV1) => Promise<void>;
     onAcceptedTurnLifecycle?: (input: Readonly<{
         event: 'task_started' | 'assistant_message_end' | 'turn_cancelled';
@@ -37,19 +39,17 @@ type SessionTurnLifecycleParams = Readonly<{
 export type SessionTurnLifecycle = Readonly<{
     confirmSessionOpened(): Promise<void>;
     observeRuntimeEvent(event: AgentSessionRuntimeEvent): void;
+    observeRollbackBoundary(input: RuntimeRollbackBoundaryObservation): void;
     failTurn(input: Readonly<{
         issue: SessionRuntimeIssueV1;
         occurredAt?: number;
         allocateWhenIdle?: boolean;
     }>): Promise<boolean>;
     hasActiveTurn(): boolean;
+    dispose(): void;
     retireAcceptedLifecyclePublication(): void;
     drainAcceptedLifecycle(): Promise<void>;
 }>;
-
-function delay(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 function stableMutationId(params: Readonly<{
     sessionId: string;
@@ -92,9 +92,24 @@ function buildMutationBase(params: Readonly<{
 export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): SessionTurnLifecycle {
     let activeTurnId: string | null = null;
     let lastActiveTurnTouchAtMs: number | null = null;
+    // Unknown until first observation: remove any fact retained from a prior runner.
+    let turnProgress: SessionTurnProgressV1 | null | undefined;
     let acceptedLifecycleTail = Promise.resolve();
     let acceptedLifecyclePublicationRetired = false;
-    const turnsWithMarkerButNoAcceptedBegin = new Set<string>();
+    const turnsWithoutAcceptedBegin = new Set<string>();
+
+    function projectTurnProgress(progress: SessionTurnProgressV1 | null, observedAt: number): void {
+        if (turnProgress === progress || (turnProgress && progress
+            && turnProgress.turnId === progress.turnId && turnProgress.phase === progress.phase
+            && turnProgress.attempt === progress.attempt && turnProgress.reason === progress.reason)) return;
+        turnProgress = progress;
+        try {
+            params.onTurnProgressChanged?.({ progress, observedAt });
+        } catch {
+            // Presentation persistence cannot acquire or delay turn ownership.
+            logger.debug('[session-turn] Progress projection unavailable');
+        }
+    }
 
     function recordPublicationFailure(
         mutation: RuntimeSessionTurnMutationV1,
@@ -122,18 +137,7 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
             return true;
         } catch {
             recordPublicationFailure(mutation, 'marker_failed');
-        }
-        // Accepted begin identity is marker custody. Retain and retry the serialized
-        // obligation instead of allowing cleanup to race a runner exit with no exact id.
-        for (;;) {
-            await delay(ACCEPTED_BEGIN_PUBLISH_RETRY_DELAY_MS);
-            if (acceptedLifecyclePublicationRetired) return false;
-            try {
-                await params.onAcceptedTurnLifecycle?.(lifecycle);
-                return true;
-            } catch {
-                // The first failure already records this retained obligation.
-            }
+            return false;
         }
     }
 
@@ -194,12 +198,12 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
         acceptedLifecycleTail = acceptedLifecycleTail.then(async () => {
             const mutationTurnId = 'turnId' in mutation ? mutation.turnId : null;
             if (acceptedLifecycle?.event === 'task_started') {
+                turnsWithoutAcceptedBegin.add(acceptedLifecycle.turnId);
                 const markerPublished = await publishAcceptedBeginMarker(acceptedLifecycle, mutation);
                 if (!markerPublished) return;
-                turnsWithMarkerButNoAcceptedBegin.add(acceptedLifecycle.turnId);
                 try {
                     await enqueueResolvedMutation();
-                    turnsWithMarkerButNoAcceptedBegin.delete(acceptedLifecycle.turnId);
+                    turnsWithoutAcceptedBegin.delete(acceptedLifecycle.turnId);
                 } catch {
                     recordPublicationFailure(mutation, 'mutation_failed');
                     // The durable marker remains exact exit authority. Do not allow later rows or
@@ -208,7 +212,7 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
                 return;
             }
 
-            if (mutationTurnId && turnsWithMarkerButNoAcceptedBegin.has(mutationTurnId)) {
+            if (mutationTurnId && turnsWithoutAcceptedBegin.has(mutationTurnId)) {
                 return;
             }
             let admission: void | Readonly<{ terminalStatusOverride: 'failed' }>;
@@ -236,8 +240,25 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
     }
 
     const lifecycle: SessionTurnLifecycle = {
+        observeRollbackBoundary({ event, startUserMessageSeq }) {
+            publish({
+                ...buildMutationBase({ session: params.session, agentId: params.agentId, action: 'mark_rollback_eligible', event }),
+                action: 'mark_rollback_eligible',
+                turnId: event.turnId,
+                ...(event.agentTurnId ? { agentTurnId: event.agentTurnId } : {}),
+                ...(typeof event.agentRollbackOrdinal === 'number'
+                    ? { agentRollbackOrdinal: event.agentRollbackOrdinal } : {}),
+                transcriptAnchors: {
+                    startUserMessageSeq,
+                    ...(event.providerCheckpoint !== undefined
+                        ? { providerCheckpoint: event.providerCheckpoint } : {}),
+                },
+            });
+        },
         async confirmSessionOpened() {
             await acceptedLifecycleTail;
+            // A provider may already have started a turn while opening the Session.
+            if (activeTurnId === null) projectTurnProgress(null, Date.now());
             try {
                 await params.session.enqueueSessionTurnMutation?.({
                     v: 1,
@@ -252,6 +273,7 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
                 // down an opened runtime. Accepted mutations retain outbox retry.
             }
         },
+        dispose() {},
         retireAcceptedLifecyclePublication() {
             acceptedLifecyclePublicationRetired = true;
         },
@@ -309,6 +331,7 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
             if (event.sessionId !== params.session.sessionId) return;
 
             if (event.kind === 'turn-start') {
+                if (activeTurnId !== event.turnId) projectTurnProgress(null, event.emittedAtMs);
                 activeTurnId = event.turnId;
                 lastActiveTurnTouchAtMs = null;
                 const facts = params.readTurnFacts?.();
@@ -319,7 +342,7 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
                         ...buildMutationBase({ session: params.session, agentId: params.agentId, action: 'begin', event }),
                         action: 'begin',
                         turnId: event.turnId,
-                        ...(facts?.initiator === 'agent_session' && startingInput?.turnId === event.turnId
+                        ...(startingInput?.turnId === event.turnId
                             ? { startingInputId: startingInput.inputId } : {}),
                         ...facts,
                         ...(event.agentTurnId ? { agentTurnId: event.agentTurnId } : {}),
@@ -331,6 +354,9 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
 
             if (event.kind === 'turn-progress') {
                 if (activeTurnId !== event.turnId) return;
+                projectTurnProgress(event.retry
+                    ? { turnId: event.turnId, phase: 'retrying', ...event.retry }
+                    : null, event.emittedAtMs);
                 if (
                     lastActiveTurnTouchAtMs !== null
                     && event.emittedAtMs - lastActiveTurnTouchAtMs < DEFAULT_ACTIVE_TURN_TOUCH_INTERVAL_MS
@@ -345,6 +371,16 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
                         ...(event.agentTurnId ? { agentTurnId: event.agentTurnId } : {}),
                     } satisfies RuntimeSessionTurnMutationV1,
                 );
+                return;
+            }
+
+            if (isForegroundTurnRuntimeTranscriptEvent(event) && event.turnId === activeTurnId) {
+                const hasContent = event.kind === 'message-delta'
+                    ? event.text.length > 0
+                    : event.kind === 'transcript-message-committed'
+                        ? event.role !== 'user' && event.text.length > 0
+                        : true;
+                if (hasContent) projectTurnProgress(null, event.emittedAtMs);
                 return;
             }
 
@@ -371,6 +407,7 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
                 // End exact daemon marker custody without claiming work completion or Stop.
                 { event: 'assistant_message_end', turnId: event.turnId });
                 params.onTurnFactsChanged?.({ turnId: event.turnId, facts: null });
+                projectTurnProgress(null, event.emittedAtMs);
                 activeTurnId = null;
                 lastActiveTurnTouchAtMs = null;
                 return;
@@ -388,6 +425,7 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
                     { event: 'assistant_message_end', turnId: event.turnId, terminalStatus: 'completed' },
                 );
                 if (activeTurnId === event.turnId) {
+                    projectTurnProgress(null, event.emittedAtMs);
                     params.onTurnFactsChanged?.({ turnId: event.turnId, facts: null });
                     activeTurnId = null;
                     lastActiveTurnTouchAtMs = null;
@@ -415,6 +453,7 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
                     event,
                 );
                 if (activeTurnId === event.turnId) {
+                    projectTurnProgress(null, event.emittedAtMs);
                     params.onTurnFactsChanged?.({ turnId: event.turnId, facts: null });
                     activeTurnId = null;
                     lastActiveTurnTouchAtMs = null;
@@ -435,6 +474,7 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
                     { event: 'turn_cancelled', turnId: event.turnId },
                 );
                 if (activeTurnId === event.turnId) {
+                    projectTurnProgress(null, event.emittedAtMs);
                     params.onTurnFactsChanged?.({ turnId: event.turnId, facts: null });
                     activeTurnId = null;
                     lastActiveTurnTouchAtMs = null;
@@ -443,20 +483,18 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
             }
 
             if (event.kind === 'runtime-ended') {
+                projectTurnProgress(null, event.emittedAtMs);
                 if (!activeTurnId) return;
-                params.onTurnFactsChanged?.({ turnId: activeTurnId, facts: null });
-                activeTurnId = null;
+                lifecycle.observeRuntimeEvent({
+                    kind: 'turn-failed',
+                    sessionId: event.sessionId,
+                    sequence: event.sequence,
+                    emittedAtMs: event.emittedAtMs,
+                    turnId: activeTurnId,
+                    diagnostic: event.diagnostic ?? { code: 'provider_runtime_ended', severity: 'error' },
+                });
             }
         },
     };
     return lifecycle;
-}
-
-export function observeRuntimeMessageForSessionTurnLifecycle(params: Readonly<{
-    lifecycle: SessionTurnLifecycle;
-    message: unknown;
-}>): void {
-    const parsed = AgentSessionRuntimeEventSchema.safeParse(params.message);
-    if (!parsed.success) return;
-    params.lifecycle.observeRuntimeEvent(parsed.data);
 }

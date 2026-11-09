@@ -18,6 +18,57 @@ export type SharedRawAcpToolTransition = Readonly<{
 }>;
 
 export const SHARED_RAW_ACP_TOOL_TRANSITIONS: readonly SharedRawAcpToolTransition[] = Object.freeze([
+    ...[
+        { name: 'late standard name revises a retained terminal result', enrichment: { name: 'echo' }, toolName: 'echo' },
+        {
+            name: 'late normalized MCP identity revises a retained terminal result',
+            enrichment: { name: 'echo', toolMetadata: { mcp: { server: 'probe', tool: 'echo' } } },
+            toolName: 'mcp__probe__echo',
+        },
+    ].map(({ name, enrichment, toolName }) => Object.freeze({
+        name,
+        toolCallId: 'late-identity',
+        updates: Object.freeze([Object.freeze({
+            sessionUpdate: 'tool_call', toolCallId: 'late-identity', title: 'Work', kind: 'other',
+            status: 'completed', rawInput: Object.freeze({ query: 'x' }), rawOutput: Object.freeze({ ok: true }),
+        })]),
+        closeTurnBeforeLateUpdates: true,
+        lateUpdates: Object.freeze([Object.freeze({
+            sessionUpdate: 'tool_call_update', toolCallId: 'late-identity', ...enrichment,
+        })]),
+        expected: Object.freeze({
+            toolName, title: 'Work', kind: 'other', status: 'completed',
+            rawInput: Object.freeze({ query: 'x' }), rawOutput: Object.freeze({ ok: true }),
+            resultCount: 2, distinctCallLocalIds: 1,
+        }),
+    })),
+    Object.freeze({
+        // FX 0.0.14 capture, 2026-10-27: .project/tmp/vercel-meeting/E-fx-live-probe.md §3.
+        name: 'standard FX name survives sparse status and content updates',
+        toolCallId: '<T1>',
+        updates: Object.freeze([
+            Object.freeze({
+                sessionUpdate: 'tool_call', toolCallId: '<T1>', name: 'write_file',
+                title: 'file_mutation', kind: 'edit', status: 'pending',
+                rawInput: Object.freeze({ path: 'probe-ok.txt', content: 'ok' }),
+            }),
+            Object.freeze({ sessionUpdate: 'tool_call_update', toolCallId: '<T1>', status: 'in_progress' }),
+            Object.freeze({
+                sessionUpdate: 'tool_call_update', toolCallId: '<T1>', status: 'completed',
+                content: Object.freeze([
+                    Object.freeze({ type: 'content', content: Object.freeze({ type: 'text', text: 'wrote probe-ok.txt (2 bytes)' }) }),
+                ]),
+            }),
+        ]),
+        expected: Object.freeze({
+            toolName: 'write_file', title: 'file_mutation', kind: 'edit', status: 'completed',
+            rawInput: Object.freeze({ path: 'probe-ok.txt', content: 'ok' }),
+            rawOutput: Object.freeze([
+                Object.freeze({ type: 'content', content: Object.freeze({ type: 'text', text: 'wrote probe-ok.txt (2 bytes)' }) }),
+            ]),
+            resultCount: 1,
+        }),
+    }),
     Object.freeze({
         name: 'sparse create enriches before terminal output',
         toolCallId: 'shared-sparse',

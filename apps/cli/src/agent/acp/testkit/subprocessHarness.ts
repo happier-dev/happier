@@ -29,7 +29,6 @@ export type AcpTestTransportHandlerOptions = {
   filterStdoutLine?: TransportHandler['filterStdoutLine']
   handleStderr?: TransportHandler['handleStderr']
   isInvestigationTool?: TransportHandler['isInvestigationTool']
-  getToolCallTimeout?: TransportHandler['getToolCallTimeout']
   extractToolNameFromId?: TransportHandler['extractToolNameFromId']
   determineToolName?: TransportHandler['determineToolName']
   logTerminalToolUpdate?: TransportHandler['logTerminalToolUpdate']
@@ -84,9 +83,6 @@ export function createAcpTestTransportHandler(
   }
   if (options.isInvestigationTool) {
     transportHandler.isInvestigationTool = options.isInvestigationTool
-  }
-  if (options.getToolCallTimeout) {
-    transportHandler.getToolCallTimeout = options.getToolCallTimeout
   }
   if (options.extractToolNameFromId) {
     transportHandler.extractToolNameFromId = options.extractToolNameFromId

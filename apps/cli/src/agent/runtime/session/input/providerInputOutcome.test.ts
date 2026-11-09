@@ -383,47 +383,6 @@ describe('createSessionProviderInputOutcomeNormalizer', () => {
     });
   });
 
-  it('joins the dispatch-time structured model snapshot only to exact provider acceptance', () => {
-    const observeSettlement = vi.fn();
-    const takeAppliedModel = vi.fn(() => ({
-      provider: 'codex',
-      selection: {
-        agentTargetKey: 'agent:happier.agent.codex/codex',
-        providerConnectionId: null,
-        modelId: 'gpt-5.6-terra',
-      },
-    }));
-    const observe = createSessionProviderInputOutcomeNormalizer({
-      getTarget: () => ({
-        sessionId: 'session-1',
-        hasPendingProviderInput: () => true,
-        observeProviderInputSettlement: observeSettlement,
-      }),
-      takeAppliedModel,
-    });
-
-    observe({
-      type: 'input-accepted',
-      localInputId: 'accepted-local',
-      userMessageSeq: 41,
-      delivery: { kind: 'newTurn', turnId: 'turn-1' },
-    });
-
-    expect(takeAppliedModel).toHaveBeenCalledWith('accepted-local');
-    expect(observeSettlement).toHaveBeenCalledWith(expect.objectContaining({
-      kind: 'accepted',
-      localId: 'accepted-local',
-      appliedModel: {
-        provider: 'codex',
-        selection: {
-          agentTargetKey: 'agent:happier.agent.codex/codex',
-          providerConnectionId: null,
-          modelId: 'gpt-5.6-terra',
-        },
-      },
-    }));
-  });
-
   it('accepts the Plugin SDK exact outcome field without a host-side identity rename', () => {
     const observeSettlement = vi.fn();
     const observe = createSessionProviderInputOutcomeNormalizer({

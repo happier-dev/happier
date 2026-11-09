@@ -54,6 +54,10 @@ export async function resolveAccountConfiguredAcpLaunch(
   const configuredBackend = resolveConfiguredAcpBackendFromAccountSettings(accountSnapshot.settings, definitionId, catalog);
   if (!configuredBackend) throw new AcpCatalogUnavailableError('definition-not-found');
   const runtimeDefinition: AgentAcpRuntimeDefinition = Object.freeze(configuredAcpRuntimeConfiguration(configuredBackend));
+  const configurationDefaults = configuredBackend.defaultMode || configuredBackend.defaultModel ? Object.freeze({
+    ...(configuredBackend.defaultMode ? { mode: configuredBackend.defaultMode } : {}),
+    ...(configuredBackend.defaultModel ? { model: configuredBackend.defaultModel } : {}),
+  }) : undefined;
   const sessionCapabilities: AgentSessionCapabilities = {
     open: ['create', ...(configuredBackend.capabilities.supportsLoadSession ? ['resume' as const] : [])],
     delivery: ['newTurn', 'steer', 'followUp'], cancel: true, configuration: true,
@@ -136,7 +140,7 @@ export async function resolveAccountConfiguredAcpLaunch(
   };
   await assertAccountCurrent();
   if (readSnapshot()?.acpCatalog !== catalog) throw new AcpCatalogUnavailableError('catalog-stale');
-  return Object.freeze({ definitionId, configuredBackend, runtimeDefinition, sessionCapabilities, sessionProjection, resolveHostLaunch });
+  return Object.freeze({ definitionId, configuredBackend, runtimeDefinition, configurationDefaults, sessionCapabilities, sessionProjection, resolveHostLaunch });
 }
 
 /** The declared ACP contribution binds an instance, never a synthetic Agent. */

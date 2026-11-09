@@ -1,27 +1,21 @@
 import { ExecutionRunScmDiffSummaryInputV1Schema, EXECUTION_RUN_KIND_BY_INTENT } from '@happier-dev/protocol/execution/runs/startRequest';
-import { SCM_DIFF_SUMMARY_CACHE_SCHEMA_VERSION, ScmDiffSummaryGenerateOutputSchema, ScmDiffSummaryModelOutputSchema, ScmDiffSummaryOutputKindSchema, ScmDiffSummaryMetadataSchema } from '@happier-dev/protocol/scm/diffSummary';
+import { ScmDiffSummaryGenerateOutputSchema, ScmDiffSummaryModelOutputSchema, ScmDiffSummaryOutputKindSchema, ScmDiffSummaryMetadataSchema, ScmDiffSummaryFailureReasonCodeSchema, normalizeScmDiffSummaryModelOutput } from '@happier-dev/protocol/scm/diffSummary';
 import { ScmComparisonSchema } from '@happier-dev/protocol/scm/comparison';
-import { ScmDiffSummaryGeneratorSelectionSchema, ScmDiffSummaryPublicationReceiptSchema } from '@happier-dev/protocol/scm/diffSummaryResult';
-import type { ScmDiffSummaryGenerateOutput, ScmDiffSummaryOutputs } from '@happier-dev/protocol';
-import { ProviderBoundModelRefSchema, serializeModelVisibilityRefV1 } from '@happier-dev/protocol/providers/model-selection';
-import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { ScmDiffSummaryGeneratorSelectionSchema } from '@happier-dev/protocol/scm/diffSummaryResult';
+import type { ScmDiffSummaryOutputs } from '@happier-dev/protocol';
+import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/model-selection';
 import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { ExecutionRunIntentProfile, ExecutionRunProfileTurnCompleteParams, ExecutionRunProfileBoundedCompleteResult } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
 import { stripTrailingJsonObjectFromText } from '@/agent/executionRuns/profiles/shared/stripTrailingJsonObjectFromText';
 
 import { buildDiffSummaryPrompt, buildDiffSummaryRefinementTask, SCM_DIFF_SUMMARY_PR_DRAFT_TASK } from './buildDiffSummaryPrompt';
 import { loadScmDiffSummaryContext } from './loadScmDiffSummaryContext';
-import { parseDiffSummaryModelOutput } from './parseDiffSummaryModelOutput';
+import { parseDiffSummaryModelOutput, type DiffSummaryModelOutput } from './parseDiffSummaryModelOutput';
 import { presentScmDiffSummaryModelContext, scopeScmDiffSummaryComparison } from './presentScmDiffSummaryModelContext';
 import { advanceDiffSummaryAnalysis, hasActiveDiffSummaryAnalysis, planDiffSummaryAnalysis,
-  readDiffSummaryPartProgress, admitDiffSummaryPart } from './advanceDiffSummaryAnalysis';
-import {
-  scmDiffSummaryCacheStore,
-  type ScmDiffSummaryCachedValue,
-} from '@/agent/executionRuns/tasks/scmDiffSummary/cache/cacheStore';
-import type { ScmDiffSummaryCacheKeyInput } from '@/agent/executionRuns/tasks/scmDiffSummary/cache/cacheKey';
+  readDiffSummaryPartProgress } from './advanceDiffSummaryAnalysis';
 import { scmDiffSummaryResultStore } from '@/agent/executionRuns/tasks/scmDiffSummary/results/resultStore';
-import { buildPendingScmDiffSummaryOutput, publishSavedScmDiffSummaryTurn, readOrCreateSavedScmResult, readInitialScmDiffSummaryInputId, readScmDiffSummaryProducerModelId } from './publishSavedScmDiffSummaryTurn';
+import { buildPendingScmDiffSummaryOutput, buildScmDiffSummaryTurnProducer, publishSavedScmDiffSummaryTurn, readOrCreateSavedScmResult, readInitialScmDiffSummaryInputId, readScmDiffSummaryProducerModelId } from './publishSavedScmDiffSummaryTurn';
 import { buildReviewNarrationInputContext, readReviewNarration, readReviewFindingCitationContext } from '@/agent/executionRuns/profiles/review/reviewNarrationContext';
 import { findingCitationInstructions, publishReviewFindingCitations } from '@/agent/executionRuns/profiles/review/reviewFindingCitations';
 import { resolveScmDiffSummarySettings } from '@happier-dev/protocol/actions/settings/scmDiffSummarySettings';
@@ -37,68 +31,9 @@ function readNonEmptyString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
-function readPositiveVersion(value: unknown): number {
-  return typeof value === 'number' && Number.isInteger(value) && value > 0
-    ? value
-    : SCM_DIFF_SUMMARY_CACHE_SCHEMA_VERSION;
-}
-
-function desiredCacheSelection(request: Parameters<NonNullable<ExecutionRunIntentProfile['prepareStartParams']>>[0]['request']) {
-  const selection = ProviderBoundModelRefSchema.safeParse(request.modelSelection);
-  const modelId = selection.success ? selection.data.modelId : readNonEmptyString(request.modelId);
-  if (!modelId || (request.modelSelection !== undefined && !selection.success)) return null;
-  const backendTargetKey = buildBackendTargetKeyV2(readBackendTargetRefV2(request.backendTarget));
-  return { requestedModelId: modelId, resolvedSelector: { catalogId: JSON.stringify({ backendTargetKey,
-    ...(selection.success ? { selection: serializeModelVisibilityRefV1({ scope: 'agent', ...selection.data }) } : { modelId }),
-  }) } };
-}
-
-function buildCacheKeyInput(params: Readonly<{
-  intentInput: Readonly<Record<string, unknown>>;
-}>): ScmDiffSummaryCacheKeyInput | null {
-  const outputs = readRequestedOutputs(params.intentInput);
-  if (!outputs.length) return null;
-  const comparison = ScmComparisonSchema.safeParse(params.intentInput.comparison);
-  const selector = readNonEmptyString(readRecord(params.intentInput.resolvedSelector).catalogId);
-  const scopeKey = readNonEmptyString(params.intentInput.cacheScopeKey);
-  if (comparison.success && selector && scopeKey) return {
-    source: { kind: 'comparison', comparisonId: comparison.data.id },
-    summarySchemaVersion: readPositiveVersion(params.intentInput.summarySchemaVersion),
-    resolvedSelector: { catalogId: selector }, outputs, scopeKey,
-    ...(typeof params.intentInput.outputLanguage === 'string' ? { outputLanguage: params.intentInput.outputLanguage } : {}),
-    investigateSurroundingFiles: params.intentInput.investigateSurroundingFiles === true,
-  };
-  return null;
-}
-
-function isScmDiffSummaryGenerateOutput(value: ScmDiffSummaryCachedValue | null): value is ScmDiffSummaryGenerateOutput {
-  return ScmDiffSummaryGenerateOutputSchema.safeParse(value).success;
-}
-
-function shouldBypassCache(intentInput: Readonly<Record<string, unknown>>): boolean {
-  const cachePolicy = readRecord(intentInput.cachePolicy);
-  return cachePolicy.mode === 'bypass';
-}
-
 function readRequestedOutputs(input: Readonly<Record<string, unknown>>) {
   const values = Array.isArray(input.outputs) ? input.outputs : ['summary'];
   return values.map((value) => ScmDiffSummaryOutputKindSchema.parse(value));
-}
-
-function saveCompletedOutput(start: ExecutionRunProfileTurnCompleteParams['start'], completion: ExecutionRunProfileBoundedCompleteResult | null) {
-  if (!completion || completion.nextInput || (completion.toolResultMeta?.scmResultUpdate
-    && !ScmDiffSummaryPublicationReceiptSchema.safeParse(completion.toolResultMeta.scmResultUpdate).success)) return completion;
-  if (readRecord(start.intentInput).pullRequestDraft) return completion;
-  if (readRecord(readRecord(start.intentInput).reviewNarration).phase === 'writing') return completion;
-  const output = ScmDiffSummaryGenerateOutputSchema.safeParse(completion.toolResultOutput);
-  if (!output.success || !output.data.success || output.data.producer?.kind === 'review'
-    || output.data.requestedOutputs?.some((kind) => output.data.outputs?.[kind]?.state !== 'complete')) return completion;
-  const intentInput: Readonly<Record<string, unknown>> = { ...readRecord(start.intentInput),
-    ...(output.data.requestedOutputs ? { outputs: output.data.requestedOutputs } : {}), cacheScopeKey: start.sessionId };
-  if (!start.effectiveEngine?.modelId || start.effectiveEngine.modelId !== intentInput.requestedModelId) return completion;
-  const keyInput = buildCacheKeyInput({ intentInput });
-  if (keyInput) scmDiffSummaryCacheStore.set({ keyInput, value: output.data });
-  return completion;
 }
 
 function withReviewNarrationProvenance(params: ExecutionRunProfileTurnCompleteParams,
@@ -106,25 +41,24 @@ function withReviewNarrationProvenance(params: ExecutionRunProfileTurnCompletePa
   if (!completion) return completion;
   const narration = readReviewNarration(params.start.intentInput);
   if (!narration) return completion;
-  const output = ScmDiffSummaryGenerateOutputSchema.parse(completion.toolResultOutput);
-  const modelId = readScmDiffSummaryProducerModelId(params.start);
-  const annotated = ScmDiffSummaryGenerateOutputSchema.parse({ ...output, producer: {
-    kind: 'review', runId: params.start.runId,
-    ...(modelId ? { modelId } : {}),
-    ...narration.provenance, reviewedBy: [...new Set(narration.provenance.reviewedRuns.map(run => run.backendId))],
-    narratedAtMs: params.finishedAtMs,
-  } });
+  const annotated = ScmDiffSummaryGenerateOutputSchema.parse({ ...readRecord(completion.toolResultOutput),
+    producer: buildScmDiffSummaryTurnProducer(params) });
   return { ...completion, toolResultOutput: annotated,
     structuredMeta: { kind: EXECUTION_RUN_KIND_BY_INTENT.scm_diff_summary, payload: annotated } };
 }
 
-function completeScmDiffSummaryTurn({ start, rawText, previousStructuredMeta }: Pick<ExecutionRunProfileTurnCompleteParams, 'start' | 'rawText' | 'previousStructuredMeta'>): ExecutionRunProfileBoundedCompleteResult {
+function completeScmDiffSummaryTurn({ start, previousStructuredMeta }: Pick<ExecutionRunProfileTurnCompleteParams, 'start' | 'previousStructuredMeta'>,
+  model: DiffSummaryModelOutput | null): ExecutionRunProfileBoundedCompleteResult {
   const intentInput = readRecord(start.intentInput);
   const comparison = ScmComparisonSchema.safeParse(intentInput.comparison);
   const requestedOutputs = readRequestedOutputs(intentInput);
-  const rawModel = parseDiffSummaryModelOutput(rawText, comparison.success
-    ? { comparison: comparison.data, requestedOutputs, requireCompleteCoverage: true }
-    : undefined);
+  let rawModel = model;
+  if (rawModel && comparison.success) {
+    try {
+      rawModel = normalizeScmDiffSummaryModelOutput(rawModel,
+        { comparison: comparison.data, requestedOutputs, requireCompleteCoverage: true });
+    } catch { rawModel = null; }
+  }
   const parsed = rawModel ? publishReviewFindingCitations(rawModel, readReviewFindingCitationContext(start.intentInput)) : null;
   const previous = previousStructuredMeta?.kind === EXECUTION_RUN_KIND_BY_INTENT.scm_diff_summary
     ? ScmDiffSummaryGenerateOutputSchema.safeParse(previousStructuredMeta.payload)
@@ -199,8 +133,9 @@ export const ScmDiffSummaryProfile: ExecutionRunIntentProfile = {
   computeSidechainStreamText: ({ fullText }) => stripTrailingJsonObjectFromText(fullText,
     Object.keys(ScmDiffSummaryModelOutputSchema.shape)),
   prepareStartParams: async ({ request, cwd, sessionId, contextWindowTokens, captureScmCommitTarget }) => {
-    const { cachedOutput: _callerCachedOutput, scmAnalysis: _callerAnalysis, scmContextWindowTokens: _callerCapacity, cacheScopeKey: _callerCacheScope,
-      resolvedSelector: _callerSelector, requestedModelId: _callerModel,
+    const { scmAnalysis: _callerAnalysis, scmContextWindowTokens: _callerCapacity,
+      scmMaxInputUnicodeCharacters: _callerInputCapacity,
+      scmAnalysisPrompt: _callerAnalysisPrompt,
       resultGenerator: _callerGenerator, resultBaseRevision: _callerRevision, resultInitialInputId: _callerInitialInputId,
       reviewNarration: _callerReviewNarration,
       reviewExplanation: _callerReviewExplanation,
@@ -215,7 +150,6 @@ export const ScmDiffSummaryProfile: ExecutionRunIntentProfile = {
       workingDirectory: cwd,
       ...(sessionId ? { sessionId } : {}),
     });
-    const desiredSelection = desiredCacheSelection(request);
     const trustedInput = { ...input, comparison: context.comparison, metadata: context.metadata };
     const modelSelection = ProviderBoundModelRefSchema.safeParse(request.modelSelection);
     const generator = ScmDiffSummaryGeneratorSelectionSchema.parse({
@@ -229,19 +163,19 @@ export const ScmDiffSummaryProfile: ExecutionRunIntentProfile = {
     });
     const savedId = typeof input.resultId === 'string' ? input.resultId : undefined;
     const scope = { cwd: input.cwd || cwd, ...(sessionId ? { sessionId } : {}) };
+    const retainedScope = savedId
+      ? await scmDiffSummaryResultStore.readStoredScope({ ...scope, resultId: savedId }).catch(() => null) : null;
     if (savedId) {
-      const retained = await scmDiffSummaryResultStore.readStoredScope({ ...scope, resultId: savedId }).catch(() => null);
-      if (!retained || (retained.sessionId && retained.sessionId !== sessionId)
-        || (retained.sourceSessionId && retained.sourceSessionId !== sessionId)) {
+      if (!retainedScope || (retainedScope.sessionId && retainedScope.sessionId !== sessionId)
+        || (retainedScope.sourceSessionId && retainedScope.sourceSessionId !== sessionId)) {
         throw Object.assign(new Error('Saved comparison evidence is unavailable for this Run scope'), { code: 'DIFF_UNAVAILABLE' });
       }
     }
-    const existing = savedId ? await scmDiffSummaryResultStore.read({ ...scope, resultId: savedId }) : undefined;
-    if (savedId && (!existing?.success || existing.result.output.comparison?.id !== context.comparison.id
-      || existing.result.revision !== input.expectedRevision)) throw new Error('Saved result revision or comparison is unavailable for this new generator');
-    const saved = existing?.success ? existing.result : await scmDiffSummaryResultStore.create({ ...scope,
+    const existing = retainedScope?.result;
+    if (savedId && (!existing || existing.output.comparison?.id !== context.comparison.id
+      || existing.revision !== input.expectedRevision)) throw new Error('Saved result revision or comparison is unavailable for this new generator');
+    const saved = existing ?? await scmDiffSummaryResultStore.create({ ...scope,
       output: buildPendingScmDiffSummaryOutput(trustedInput), generator });
-    const retainedScope = savedId ? await scmDiffSummaryResultStore.readStoredScope({ ...scope, resultId: saved.resultId }) : null;
     if (input.pullRequestDraft && !retainedScope?.pullRequestDraftEvidence) {
       throw Object.assign(new Error('Host-captured pull request draft evidence is unavailable'), { code: 'DIFF_UNAVAILABLE' });
     }
@@ -253,11 +187,6 @@ export const ScmDiffSummaryProfile: ExecutionRunIntentProfile = {
     if (draftEvidence) savedInput.pullRequestDraft ??= {};
     const isSeededResult = Boolean(savedId && (saved.output.runId || typeof input.instructions === 'string'
       || Object.values(saved.output.outputs ?? {}).some((output) => output?.value !== undefined)));
-    const inputRecord = { ...savedInput, comparison: context.comparison, cacheScopeKey: sessionId, ...(desiredSelection ?? {}) };
-    const cacheKeyInput = buildCacheKeyInput({ intentInput: inputRecord });
-    const cachedOutput = !isSeededResult && cacheKeyInput && !shouldBypassCache(inputRecord)
-      ? scmDiffSummaryCacheStore.get(cacheKeyInput)
-      : null;
     const investigation = input.investigateSurroundingFiles === true
       ? await scmDiffSummaryResultStore.prepareInvestigation({ ...scope, resultId: saved.resultId }) : null;
     const executionPolicy = { permissionMode: investigation ? 'read_only' : 'no_tools', workspaceWrites: 'deny' as const,
@@ -270,27 +199,6 @@ export const ScmDiffSummaryProfile: ExecutionRunIntentProfile = {
       'Submodule working files are not available; captured Gitlink identities remain comparison evidence.',
       'Surrounding-file reads do not add change references or establish analysis coverage. Captured references and host coverage remain authoritative.',
     ].join('\n') : '';
-    if (cacheKeyInput && isScmDiffSummaryGenerateOutput(cachedOutput)) {
-      return {
-        ...executionPolicy,
-        instructions: investigationInstructions,
-        intentInput: {
-          ...savedInput,
-          sourceKey: context.metadata.sourceKey,
-          metadata: context.metadata,
-          comparison: context.comparison,
-          comparisonId: context.comparison.id,
-          summarySchemaVersion: cacheKeyInput.summarySchemaVersion,
-          resolvedSelector: cacheKeyInput.resolvedSelector,
-          cachedOutput,
-          cacheScopeKey: inputRecord.cacheScopeKey,
-          ...(desiredSelection ?? {}),
-        },
-      };
-    }
-
-    const summarySchemaVersion = cacheKeyInput?.summarySchemaVersion ?? SCM_DIFF_SUMMARY_CACHE_SCHEMA_VERSION;
-
     const userInstructions = typeof input.instructions === 'string' ? input.instructions : request.instructions;
     const selectedStops = input.stopIds ? saved.output.outputs?.walkthrough?.value?.stops.filter(stop => input.stopIds!.includes(stop.id)) : undefined;
     if (input.stopIds && selectedStops?.length !== input.stopIds.length) throw new Error('Selected stops are unavailable in the saved revision');
@@ -328,16 +236,16 @@ export const ScmDiffSummaryProfile: ExecutionRunIntentProfile = {
         ...(taskInstructions ? { taskInstructions } : {}),
       });
     const analysisInstructions = userInstructions;
-    // Saved-result starts can be discussions or scoped refinements. Do not turn
-    // them into whole-result generation or bypass their admitted output scope.
-    const planned = request.runClass === 'long_lived' && !isSeededResult ? planDiffSummaryAnalysis({ comparison: context.comparison,
-      metadata: context.metadata, outputs: input.outputs ?? ['summary'], prompt: instructions, contextWindowTokens,
+    // Capture and launch policy are prepared once. Partition only after the
+    // runtime has supplied its effective budget for the actual prepared context.
+    const analysisPrompt = request.runClass === 'long_lived' && !isSeededResult ? {
+      taskPromptCodeUnits: instructions.length,
       instructions: analysisInstructions, outputLanguage: input.outputLanguage,
-      ...(evidenceContext ? { evidenceContext } : {}),
-      ...(taskInstructions ? { taskInstructions } : {}) }) : null;
+      ...(evidenceContext ? { evidenceContext } : {}), ...(taskInstructions ? { taskInstructions } : {}),
+    } : undefined;
     return {
       ...executionPolicy,
-      instructions: planned?.instructions ?? instructions,
+      instructions,
       intentInput: {
         ...savedInput,
         ...(analysisInstructions ? { instructions: analysisInstructions } : {}),
@@ -345,20 +253,45 @@ export const ScmDiffSummaryProfile: ExecutionRunIntentProfile = {
         metadata: context.metadata,
         comparison: context.comparison,
         comparisonId: context.comparison.id,
-        summarySchemaVersion,
-        cacheScopeKey: inputRecord.cacheScopeKey,
-        ...(desiredSelection ?? {}),
-        ...(planned ? { scmAnalysis: planned.state } : {}),
+        ...(analysisPrompt ? { scmAnalysisPrompt: analysisPrompt } : {}),
         ...(contextWindowTokens ? { scmContextWindowTokens: contextWindowTokens } : {}),
       },
     };
   },
+  finalizeStartParams: async ({ request, maxInputUnicodeCharacters, resolveMaxInputUnicodeCharacters }) => {
+    const input = readRecord(request.intentInput);
+    if (!Object.hasOwn(input, 'scmAnalysisPrompt')) return undefined;
+    const prompt = readRecord(input.scmAnalysisPrompt);
+    const composedPrompt = request.instructions ?? '';
+    const taskPromptCodeUnits = prompt.taskPromptCodeUnits;
+    if (typeof taskPromptCodeUnits !== 'number' || !Number.isSafeInteger(taskPromptCodeUnits)
+      || taskPromptCodeUnits < 0 || taskPromptCodeUnits > composedPrompt.length) {
+      throw new Error('The prepared analysis prompt is unavailable');
+    }
+    maxInputUnicodeCharacters ??= await resolveMaxInputUnicodeCharacters?.();
+    // Start composition prepends admitted role/profile guidance to this task.
+    // Keep that exact prefix on every part while replacing only its evidence.
+    const promptPrefix = composedPrompt.slice(0, composedPrompt.length - taskPromptCodeUnits);
+    const { scmAnalysisPrompt: _preparedPrompt, scmAnalysis: _oldAnalysis,
+      scmMaxInputUnicodeCharacters: _oldCapacity, ...retainedInput } = input;
+    const planned = planDiffSummaryAnalysis({ comparison: ScmComparisonSchema.parse(input.comparison),
+      metadata: ScmDiffSummaryMetadataSchema.parse(input.metadata), outputs: readRequestedOutputs(input),
+      prompt: composedPrompt, promptPrefix, maxInputUnicodeCharacters,
+      contextWindowTokens: typeof input.scmContextWindowTokens === 'number' ? input.scmContextWindowTokens : undefined,
+      ...(typeof prompt.instructions === 'string' ? { instructions: prompt.instructions } : {}),
+      ...(typeof prompt.outputLanguage === 'string' ? { outputLanguage: prompt.outputLanguage } : {}),
+      ...(typeof prompt.evidenceContext === 'string' ? { evidenceContext: prompt.evidenceContext } : {}),
+      ...(typeof prompt.taskInstructions === 'string' ? { taskInstructions: prompt.taskInstructions } : {}),
+    });
+    return { instructions: planned?.instructions ?? request.instructions,
+      intentInput: { ...retainedInput, ...(planned ? { scmAnalysis: planned.state } : {}),
+        ...(maxInputUnicodeCharacters !== undefined ? { scmMaxInputUnicodeCharacters: maxInputUnicodeCharacters } : {}) } };
+  },
   buildPrompt: (params) => params.instructions,
-  onBoundedComplete: (params) => saveCompletedOutput(params.start, completeScmDiffSummaryTurn(params))!,
+  onBoundedComplete: params => completeScmDiffSummaryTurn(params, parseDiffSummaryModelOutput(params.rawText)),
   onStarted: async ({ start }) => {
     const input = readRecord(start.intentInput);
-    const cached = ScmDiffSummaryGenerateOutputSchema.safeParse(input.cachedOutput);
-    if (start.runClass === 'bounded' && (!cached.success || shouldBypassCache(input))) return null;
+    if (start.runClass === 'bounded') return null;
     const saved = await readOrCreateSavedScmResult(start);
     const initialInputId = readInitialScmDiffSummaryInputId(start);
     const explanationInputId = readNonEmptyString(input.reviewExplanationInputId);
@@ -408,30 +341,15 @@ export const ScmDiffSummaryProfile: ExecutionRunIntentProfile = {
     if (explanationInputId && explanationInputId !== initialInputId) {
       await scmDiffSummaryResultStore.abandonInput({ ...saved.scope, inputId: explanationInputId });
     }
-    if (!cached.success || shouldBypassCache(input)) return { status: 'succeeded', summary: '', transcriptMaterialization: 'none',
+    return { status: 'succeeded', summary: '', transcriptMaterialization: 'none',
       toolResultOutput: currentResult.output, structuredMeta: { kind: EXECUTION_RUN_KIND_BY_INTENT.scm_diff_summary, payload: currentResult.output } };
-    const comparison = ScmComparisonSchema.safeParse(input.comparison);
-    const metadata = ScmDiffSummaryMetadataSchema.safeParse(input.metadata);
-    if (comparison.success && cached.data.comparison?.id !== comparison.data.id) return null;
-    const originalRunId = cached.data.producer?.runId ?? cached.data.runId;
-    const result = ScmDiffSummaryGenerateOutputSchema.parse({ ...cached.data, runId: start.runId,
-      ...(comparison.success && metadata.success ? { comparison: comparison.data, metadata: metadata.data, sourceKey: comparison.data.id } : {}),
-      ...(originalRunId ? { producer: { ...cached.data.producer, kind: cached.data.producer?.kind ?? 'generation', seededFromRunId: originalRunId } } : {}),
-    });
-    const published = await scmDiffSummaryResultStore.publishProgress({ ...saved.scope, expectedRevision: bound.result.revision,
-      inputId: initialInputId, output: result });
-    if (!published.success) throw new Error(published.error);
-    await scmDiffSummaryResultStore.abandonInput({ ...saved.scope, inputId: initialInputId });
-    return { status: result.success ? 'succeeded' : 'failed',
-      summary: '', transcriptMaterialization: 'none', toolResultOutput: published.result.output,
-      toolResultMeta: { cache: 'hit' }, structuredMeta: { kind: EXECUTION_RUN_KIND_BY_INTENT.scm_diff_summary, payload: published.result.output } };
   },
   buildInitialInputContext: ({ start, structuredMeta }) => {
     const input = readRecord(start.intentInput);
     // The admitted multipart prompt already carries its exact bounded evidence.
     if (hasActiveDiffSummaryAnalysis(input)) return '';
     const narration = buildReviewNarrationInputContext(input);
-    if (!input.cachedOutput && !input.resultId) return '';
+    if (!input.resultId) return '';
     // The Action creates the saved record before Run admission. Its pending
     // envelope is not an existing reading to discuss: the initial prompt must
     // retain its generation request.
@@ -459,30 +377,18 @@ export const ScmDiffSummaryProfile: ExecutionRunIntentProfile = {
         ? readRequestedOutputs(readRecord(start.intentInput)) : [] });
     if (!prepared.success) throw new Error(prepared.error);
   },
-  onRetainedInputAdmitted: async ({ start, localId }) => {
-    const admittedInput = admitDiffSummaryPart(start.intentInput, localId);
-    if (!admittedInput) return null;
-    const saved = await readOrCreateSavedScmResult(start);
-    if (saved.result.output.runId !== start.runId || !saved.result.output.analysis) return null;
-    const published = await scmDiffSummaryResultStore.publishProgress({ ...saved.scope, expectedRevision: saved.result.revision,
-      preserveUndo: true, inputId: localId, output: ScmDiffSummaryGenerateOutputSchema.parse({ ...saved.result.output,
-        analysis: { ...saved.result.output.analysis, parts: readDiffSummaryPartProgress(admittedInput) } }) });
-    if (!published.success) return null;
-    return { status: 'succeeded', summary: '', transcriptMaterialization: 'none', toolResultOutput: published.result.output,
-      structuredMeta: { kind: EXECUTION_RUN_KIND_BY_INTENT.scm_diff_summary, payload: published.result.output }, updatedIntentInput: admittedInput };
-  },
   onTurnComplete: async (params) => {
     const progressive = hasActiveDiffSummaryAnalysis(params.start.intentInput);
     const published = await publishSavedScmDiffSummaryTurn(params, progressive
       ? (turn) => withReviewNarrationProvenance(turn, advanceDiffSummaryAnalysis(turn))
-      : (turn) => withReviewNarrationProvenance(turn, completeScmDiffSummaryTurn(turn)), progressive);
-    return saveCompletedOutput(params.start, published);
+      : (turn, model) => withReviewNarrationProvenance(turn, completeScmDiffSummaryTurn(turn, model)), progressive);
+    return published;
   },
   onTurnFailed: (params) => ScmComparisonSchema.safeParse(readRecord(params.start.intentInput).comparison).success
     ? publishSavedScmDiffSummaryTurn(params, (turn) => withReviewNarrationProvenance(turn,
       advanceDiffSummaryAnalysis({ ...turn, diagnostic: params.diagnostic })), true)
     : null,
-  onTerminal: async ({ start, status, finishedAtMs, structuredMeta }) => {
+  onTerminal: async ({ start, status, finishedAtMs, structuredMeta, diagnostic }) => {
     const input = readRecord(start.intentInput);
     if (readRequestedOutputs(input).length === 0) return null;
     const previous = structuredMeta?.kind === EXECUTION_RUN_KIND_BY_INTENT.scm_diff_summary
@@ -496,9 +402,10 @@ export const ScmDiffSummaryProfile: ExecutionRunIntentProfile = {
     for (const kind of output.requestedOutputs ?? []) {
       const current = outputs[kind];
       if (!current || current.state === 'pending' || current.state === 'writing' || current.state === 'partial') {
-        Object.assign(outputs, { [kind]: { ...current, state: status,
-          reason: status === 'cancelled' ? undefined : `Generation ${status} at ${finishedAtMs}.`,
-          reasonCode: status === 'cancelled' ? 'generation_cancelled' : undefined,
+        const reasonCode = ScmDiffSummaryFailureReasonCodeSchema.safeParse(diagnostic?.code);
+        Object.assign(outputs, { [kind]: { ...current, state: status === 'failed' && current?.value !== undefined ? 'partial' : status,
+          reason: status === 'cancelled' ? undefined : diagnostic?.message ?? diagnostic?.code ?? `Generation ${status} at ${finishedAtMs}.`,
+          reasonCode: status === 'cancelled' ? 'generation_cancelled' : reasonCode.success ? reasonCode.data : undefined,
         } });
         changed = true;
       }
@@ -509,16 +416,5 @@ export const ScmDiffSummaryProfile: ExecutionRunIntentProfile = {
       output: result, preserveUndo: true });
     if (!published.success) return { toolResultOutput: output, structuredMeta: { kind: EXECUTION_RUN_KIND_BY_INTENT.scm_diff_summary, payload: output } };
     return { toolResultOutput: published.result.output, structuredMeta: { kind: EXECUTION_RUN_KIND_BY_INTENT.scm_diff_summary, payload: published.result.output } };
-  },
-  buildInvalidOutputRepairPrompt: ({ start }) => {
-    const input = readRecord(start.intentInput);
-    const comparison = ScmComparisonSchema.safeParse(input.comparison);
-    const metadata = ScmDiffSummaryMetadataSchema.parse(input.metadata);
-    return buildDiffSummaryPrompt({ metadata, ...(comparison.success ? { comparison: comparison.data } : {}),
-      outputs: readRequestedOutputs(input), files: [],
-      outputLanguage: typeof input.outputLanguage === 'string' ? input.outputLanguage : undefined,
-      instructions: typeof input.instructions === 'string' ? input.instructions : undefined,
-      taskInstructions: 'The previous result was invalid. Repair only the requested structured output using the retained evidence. Do not run tools.',
-    });
   },
 };

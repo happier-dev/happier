@@ -6,7 +6,6 @@ import { CURSOR_CAPTURED_REPLAY_V1 } from '../testing/cursorCapturedReplayFixtur
 import { SHARED_RAW_ACP_TOOL_TRANSITIONS } from '../testing/rawTransitionFixture';
 
 function createFixture(
-    timeoutMs: number | null = null,
     onPublishedTerminalResult = vi.fn(),
     determineToolName = (_base: string, _id: string, input: Record<string, unknown>): string => input.command ? 'execute' : 'other',
 ) {
@@ -19,9 +18,10 @@ function createFixture(
         emit: (message) => messages.push(message),
         transport: {
             agentName: 'test',
+            getInitTimeout: () => 1_000,
+            getToolPatterns: () => [],
             determineToolName,
-            getToolCallTimeout: () => timeoutMs,
-        } as any,
+        },
         onBecameActive: vi.fn(),
         onBecameIdle: vi.fn(),
         onPublishedTerminalResult,
@@ -30,6 +30,50 @@ function createFixture(
 }
 
 describe('LegacyAcpToolRuntime', () => {
+    it('keeps a long-running tool Running until its real result arrives', () => {
+        vi.useFakeTimers();
+        const { runtime, messages } = createFixture();
+        try {
+            runtime.handleRawUpdate({
+                sessionUpdate: 'tool_call', toolCallId: 'long-build', kind: 'execute', title: 'Build',
+                status: 'in_progress', rawInput: { command: 'build' },
+            });
+            vi.advanceTimersByTime(180_000);
+            expect(runtime.readCall('long-build')?.status).toBe('running');
+            expect(messages.filter(message => message.type === 'tool-result')).toEqual([]);
+            expect(vi.getTimerCount()).toBe(0);
+
+            runtime.handleRawUpdate({
+                sessionUpdate: 'tool_call_update', toolCallId: 'long-build',
+                status: 'completed', rawOutput: { exitCode: 0, stdout: 'built' },
+            });
+            expect(runtime.readCall('long-build')?.status).toBe('completed');
+            expect(messages.filter(message => message.type === 'tool-result')).toEqual([
+                expect.objectContaining({ callId: 'long-build', result: expect.objectContaining({ exitCode: 0, stdout: 'built' }) }),
+            ]);
+            expect(runtime.activeCalls()).toEqual([]);
+        } finally {
+            runtime.dispose();
+            vi.useRealTimers();
+        }
+    });
+
+    it('publishes normalized MCP identity and provenance alongside the original standard name', () => {
+        const { runtime, messages } = createFixture();
+        runtime.handleRawUpdate({
+            sessionUpdate: 'tool_call', toolCallId: 'opaque-mcp-call', name: 'echo', title: 'Echo', kind: 'other',
+            toolMetadata: { mcp: { server: 'probe', tool: 'echo' }, internal: true },
+        });
+        runtime.handleRawUpdate({ sessionUpdate: 'tool_call_update', toolCallId: 'opaque-mcp-call', status: 'completed' });
+        expect(messages.filter((message) => message.type === 'tool-call').at(-1)).toMatchObject({
+            toolName: 'mcp__probe__echo',
+            args: { _acp: { name: 'echo', mcp: { server: 'probe', tool: 'echo' }, internal: true } },
+        });
+        expect(messages.filter((message) => message.type === 'tool-result').at(-1)).toMatchObject({
+            toolName: 'mcp__probe__echo',
+        });
+    });
+
     it('notifies the terminal-result observer only when the accumulator owns result publication', () => {
         const { runtime, onPublishedTerminalResult } = createFixture();
         const completed = {
@@ -130,6 +174,8 @@ describe('LegacyAcpToolRuntime', () => {
                     output: undefined,
                     _acp: { kind: expected.kind },
                 });
+            } else if (Array.isArray(expected.rawOutput)) {
+                expect(results.at(-1)?.result).toMatchObject({ output: expected.rawOutput });
             } else {
                 expect(results.at(-1)?.result).toMatchObject(expected.rawOutput as object);
             }
@@ -192,7 +238,6 @@ describe('LegacyAcpToolRuntime', () => {
         ['read', 'read'],
     ])('keeps only semantic cached name %j ahead of a later explicit kind', (initialKind, expectedToolName) => {
         const { runtime, messages } = createFixture(
-            null,
             vi.fn(),
             (baseName) => baseName,
         );
@@ -223,10 +268,10 @@ describe('LegacyAcpToolRuntime', () => {
         ]);
     });
 
-    it('seeds permission state, arms only after approval, and terminalizes before reset', () => {
+    it('preserves pending permission and settles only from provider evidence or turn cancellation before reset', () => {
         vi.useFakeTimers();
         try {
-            const { runtime, messages } = createFixture(10);
+            const { runtime, messages } = createFixture();
             runtime.observePermission({
                 toolCallId: 'permission-first',
                 toolName: 'execute',
@@ -237,39 +282,29 @@ describe('LegacyAcpToolRuntime', () => {
                 status: 'pending',
                 rawInput: { command: 'sleep 1' },
             });
-            vi.advanceTimersByTime(20);
+            vi.advanceTimersByTime(180_000);
             expect(messages.filter((message) => message.type === 'tool-result')).toHaveLength(0);
 
             runtime.markRunningAfterPermission('permission-first');
-            vi.advanceTimersByTime(20);
-            const timeoutResults = messages.filter((message) => message.type === 'tool-result');
-            expect(timeoutResults).toHaveLength(1);
-            expect(timeoutResults[0]).toMatchObject({
-                callId: 'permission-first',
-                result: {
-                    error: {
-                        status: 'timeout',
-                        timeoutMs: 10,
-                    },
-                },
-            });
-            expect(runtime.activeCalls()).toEqual([]);
+            vi.advanceTimersByTime(180_000);
+            expect(messages.filter((message) => message.type === 'tool-result')).toHaveLength(0);
+            expect(runtime.readCall('permission-first')).toMatchObject({ status: 'running' });
             expect(runtime.diagnostics().permissionWaiters).toBe(0);
-            expect(runtime.readCall('permission-first')).toMatchObject({ status: 'failed' });
 
             runtime.handleRawUpdate({
                 sessionUpdate: 'tool_call_update',
                 toolCallId: 'permission-first',
                 status: 'failed',
-                rawOutput: { error: 'provider timeout detail' },
+                rawOutput: { error: 'provider failure detail' },
             });
-            const enrichedResults = messages.filter((message) => message.type === 'tool-result');
-            expect(enrichedResults).toHaveLength(2);
-            expect(enrichedResults[1]).toMatchObject({
-                localId: timeoutResults[0]?.localId,
+            const results = messages.filter((message) => message.type === 'tool-result');
+            expect(results).toHaveLength(1);
+            expect(results[0]).toMatchObject({
                 callId: 'permission-first',
-                result: { error: 'provider timeout detail' },
+                result: { error: 'provider failure detail' },
             });
+            expect(runtime.readCall('permission-first')).toMatchObject({ status: 'failed' });
+            expect(runtime.activeCalls()).toEqual([]);
 
             runtime.handleRawUpdate({
                 sessionUpdate: 'tool_call',
@@ -287,7 +322,6 @@ describe('LegacyAcpToolRuntime', () => {
                 active: 0,
                 tombstones: 0,
                 closedTurns: 0,
-                timers: 0,
                 permissionWaiters: 0,
                 mediaFingerprints: 0,
             });

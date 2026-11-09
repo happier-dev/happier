@@ -35,6 +35,7 @@ export type DeferredApiSessionTarget = Readonly<{
   subscribeExecutionRunActivitySnapshots?: (
     listener: (activeCount: number) => void,
   ) => () => void;
+  subscribeToSessionConnectionState?: ApiSessionClient['subscribeToSessionConnectionState'];
   enqueueRegisteredSessionStateFieldMutation?: (
     mutation: RegisteredSessionStateFieldMutationV1,
   ) => void | Promise<void>;
@@ -43,6 +44,7 @@ export type DeferredApiSessionTarget = Readonly<{
   updateAgentStateRequestSettlement: (updater: (state: AgentState) => AgentState) => Promise<void>;
   keepAlive: (thinking: boolean, mode: 'local' | 'remote') => void;
   getMetadataSnapshot: () => Metadata | null;
+  getPendingMessageEditHoldIds?: () => readonly string[] | null;
   getAgentStateSnapshot: () => AgentState | null;
   fetchLatestUserPermissionIntentFromTranscript?: (
     opts?: { take?: number },
@@ -92,6 +94,7 @@ export class DeferredApiSessionClient {
   private readonly boundMetadataUpdatedHandlers = new Set<() => void>();
   private readonly executionRunActivitySubscriptions =
     new Set<DeferredExecutionRunActivitySubscription>();
+  private readonly connectionStateSubscriptions = new Map<Parameters<ApiSessionClient['subscribeToSessionConnectionState']>[0], (() => void) | null>();
   private target: DeferredApiSessionTarget | null = null;
   private attachPromise: Promise<void> | null = null;
   private flushInFlight: Promise<void> | null = null;
@@ -317,6 +320,14 @@ export class DeferredApiSessionClient {
     };
   }
 
+  subscribeToSessionConnectionState(listener: Parameters<ApiSessionClient['subscribeToSessionConnectionState']>[0]): () => void {
+    this.connectionStateSubscriptions.set(listener, this.target?.subscribeToSessionConnectionState?.(listener) ?? null);
+    return () => {
+      this.connectionStateSubscriptions.get(listener)?.();
+      this.connectionStateSubscriptions.delete(listener);
+    };
+  }
+
   async enqueueRegisteredSessionStateFieldMutation(
     mutation: RegisteredSessionStateFieldMutationV1,
   ): Promise<void> {
@@ -461,6 +472,10 @@ export class DeferredApiSessionClient {
     const target = this.target;
     if (!target) return null;
     return target.getMetadataSnapshot();
+  }
+
+  getPendingMessageEditHoldIds(): readonly string[] | null {
+    return this.target?.getPendingMessageEditHoldIds?.() ?? null;
   }
 
   getAgentStateSnapshot(): AgentState | null {
@@ -731,6 +746,7 @@ export class DeferredApiSessionClient {
     if (target) {
       this.detachRetainedTargetObservers(target);
     }
+    this.connectionStateSubscriptions.clear();
 
     const entries = this.buffer;
     this.buffer = [];
@@ -789,6 +805,9 @@ export class DeferredApiSessionClient {
     }
     for (const subscription of this.executionRunActivitySubscriptions) {
       this.bindExecutionRunActivitySubscription(target, subscription);
+    }
+    for (const [listener, unsubscribe] of this.connectionStateSubscriptions) {
+      if (!unsubscribe) this.connectionStateSubscriptions.set(listener, target.subscribeToSessionConnectionState?.(listener) ?? null);
     }
   }
 
@@ -864,6 +883,11 @@ export class DeferredApiSessionClient {
   }
 
   private detachRetainedTargetObservers(target: DeferredApiSessionTarget): void {
+    for (const [listener, unsubscribe] of this.connectionStateSubscriptions) {
+      unsubscribe?.();
+      // Attachment can be retried; only retire the target binding here.
+      this.connectionStateSubscriptions.set(listener, null);
+    }
     for (const listener of this.boundMetadataUpdatedHandlers) {
       target.off?.('metadata-updated', listener);
     }

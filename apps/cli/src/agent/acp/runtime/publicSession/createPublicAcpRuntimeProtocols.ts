@@ -18,12 +18,9 @@ import {
   createPublicAcpSystemTools,
 } from '@/agent/acp/runtime/launch/acpTransportLaunch';
 
-import {
-  createPublicAcpExecutionRun,
-  createPublicAcpExecutionRunConversation,
-  createPublicAcpSession,
-  type PublicAcpComposerDependencies,
-  type PublicAcpHostLaunchResolver,
+import type {
+  PublicAcpComposerDependencies,
+  PublicAcpHostLaunchResolver,
 } from './createPublicAcpSession';
 
 function createPublicInteractionsAdapter(
@@ -75,6 +72,8 @@ export function createPublicAcpRuntimeProtocols(params: Readonly<{
   media?: SessionMediaService;
   models?: AgentSessionHostServices['models'];
   modes?: AgentSessionHostServices['modes'];
+  transcripts?: PublicAcpComposerDependencies['transcripts'];
+  titleSession?: PublicAcpComposerDependencies['titleSession'];
   resumeHistorySession?: AcpReplayHistorySessionClient;
   sidechainSession?: AcpReplaySidechainSessionClient;
   transformAgentChildLaunchEnvironment?: (
@@ -88,6 +87,8 @@ export function createPublicAcpRuntimeProtocols(params: Readonly<{
   resolveHostLaunch?: PublicAcpHostLaunchResolver;
   /** Definition-local behavior admitted by the canonical Account catalog. */
   runtimeDefinition?: AgentAcpRuntimeDefinition;
+  /** Saved native selections apply only when creating a Session without an override. */
+  configurationDefaults?: Readonly<{ mode?: string; model?: string }>;
 }>): AgentRuntimeContext['protocols'] {
   const createDependencies = (scope: 'session' | 'execution_run'): PublicAcpComposerDependencies => ({
     pluginId: params.pluginId,
@@ -104,6 +105,8 @@ export function createPublicAcpRuntimeProtocols(params: Readonly<{
       : createUnavailableMedia(),
     models: scope === 'session' ? params.models ?? UNBOUND_MODELS : UNBOUND_MODELS,
     modes: scope === 'session' ? params.modes ?? UNBOUND_MODES : UNBOUND_MODES,
+    ...(scope === 'session' && params.transcripts ? { transcripts: params.transcripts } : {}),
+    ...(scope === 'session' && params.titleSession ? { titleSession: params.titleSession } : {}),
     ...(scope === 'session' && params.sidechainSession ? { sidechainSession: params.sidechainSession } : {}),
     ...(scope === 'session' && params.resumeHistorySession
       ? { resumeHistorySession: params.resumeHistorySession }
@@ -117,7 +120,23 @@ export function createPublicAcpRuntimeProtocols(params: Readonly<{
   return Object.freeze({
     acp: Object.freeze({
       async open(request: AgentSessionOpenRequest, options: AgentAcpRuntimeOptions) {
-        return await createPublicAcpSession(request,
+        const defaults = params.configurationDefaults;
+        const configuration = request.configuration;
+        const openRequest = request.kind === 'create' && defaults
+          ? { ...request, configuration: {
+            ...configuration,
+            mode: configuration?.mode?.value == null && defaults.mode
+              ? { value: defaults.mode, updatedAtMs: 0 }
+              : configuration?.mode ?? { value: null, updatedAtMs: 0 },
+            model: configuration?.model?.value == null && defaults.model
+              ? { value: defaults.model, updatedAtMs: 0 }
+              : configuration?.model ?? { value: null, updatedAtMs: 0 },
+            permissionIntent: configuration?.permissionIntent ?? { value: null, updatedAtMs: 0 },
+            options: configuration?.options ?? {},
+          } }
+          : request;
+        const { createPublicAcpSession } = await import('./createPublicAcpSession');
+        return await createPublicAcpSession(openRequest,
           params.runtimeDefinition ? { ...options, definition: params.runtimeDefinition } : options,
           createDependencies('session'));
       },
@@ -125,6 +144,7 @@ export function createPublicAcpRuntimeProtocols(params: Readonly<{
         request: AgentExecutionRunOpenRequest,
         options: AgentAcpRuntimeOptions,
       ): Promise<AgentExecutionRunRuntime> {
+        const { createPublicAcpExecutionRun } = await import('./createPublicAcpSession');
         return await createPublicAcpExecutionRun(request,
           params.runtimeDefinition ? { ...options, definition: params.runtimeDefinition } : options,
           createDependencies('execution_run'));
@@ -133,6 +153,7 @@ export function createPublicAcpRuntimeProtocols(params: Readonly<{
         request: AgentExecutionRunOpenRequest,
         options: AgentAcpRuntimeOptions,
       ): Promise<AgentExecutionRunConversationRuntimeV1> {
+        const { createPublicAcpExecutionRunConversation } = await import('./createPublicAcpSession');
         return await createPublicAcpExecutionRunConversation(request,
           params.runtimeDefinition ? { ...options, definition: params.runtimeDefinition } : options,
           createDependencies('execution_run'));

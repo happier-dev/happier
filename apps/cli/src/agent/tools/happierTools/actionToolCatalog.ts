@@ -62,7 +62,7 @@ const BUILT_IN_ACTION_TOOL_ENTRIES = Object.freeze(
       surfaces: spec.surfaces,
       title: spec.title,
       description: spec.description ?? spec.title,
-      inputSchema: spec.inputSchema,
+      inputSchema: spec.surfaceBindings?.mcp?.inputSchema ?? spec.inputSchema,
       ...(spec.examples ? { examples: spec.examples } : {}),
       ...(spec.contextualDefaults ? { contextualDefaults: spec.contextualDefaults } : {}),
       provenance: 'first_party' as const,

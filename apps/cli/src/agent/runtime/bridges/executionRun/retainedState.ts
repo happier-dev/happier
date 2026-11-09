@@ -16,6 +16,7 @@ import type { ExecutionRunState } from './executionRunTypes';
 import { RequesterWorkAttributionV1Schema } from '@/daemon/lifecycle/requesterWorkAttribution';
 import { AgentSessionToolPolicyShapeV1 } from '@happier-dev/protocol/runtime/permissionIntentV1';
 import { FollowPolicyV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
+import { ApprovalProfileIdV1Schema } from '@happier-dev/protocol/actions';
 
 /** Private lifecycle custody, independent of the daemon's disposable visibility marker. */
 const RetainedRunStateSchema = z.strictObject({
@@ -27,6 +28,7 @@ const RetainedRunStateSchema = z.strictObject({
   backendTarget: BackendTargetRefSchema, backendId: z.string().check(z.minLength(1)), instructions: z.string(),
   intentInput: z.optional(z.unknown()), display: z.optional(ExecutionRunDisplaySchema),
   permissionMode: z.string().check(z.minLength(1)), workspaceWrites: z.optional(z.enum(['allow', 'deny'])),
+  approvalProfileId: z.optional(z.nullable(ApprovalProfileIdV1Schema)),
   retentionPolicy: ExecutionRunRetentionPolicySchema, runClass: ExecutionRunClassSchema, ioMode: ExecutionRunIoModeSchema,
   notifyParentOnCompletion: z.optional(z.boolean()), turnCount: z.optional(z.number().check(z.int(), z.nonnegative())),
   runReportPolicy: z.optional(FollowPolicyV1Schema),

@@ -663,8 +663,8 @@ it.each(['private', 'unavailable', 'shared_bot'] as const)('labels a foreign sen
   expect(http.get.mock.calls.some(([url]) => String(url).includes(`/v2/sessions/${sourceId}/messages`))).toBe(false);
 });
 
-it.each(['comment', 'proposal', 'inherited', 'redo-reply', 'untitled', 'restricted-count', 'creator-label', 'redo-labels', 'foreign-row', 'mid-clause', 'repeated-selection', 'legacy-mid-clause'] as const)('admits the authorized Doc card, attached passage and authored question (%s)', async variant => {
-  const kind = variant === 'proposal' || variant === 'redo-labels' ? 'proposal' : variant === 'inherited' || variant === 'redo-reply' ? 'inherited' : 'comment';
+it.each(['comment', 'proposal', 'inherited', 'redo-reply', 'redo-edited-context', 'untitled', 'restricted-count', 'creator-label', 'redo-labels', 'foreign-row', 'mid-clause', 'repeated-selection', 'legacy-mid-clause'] as const)('admits the authorized Doc card, attached passage and authored question (%s)', async variant => {
+  const kind = variant === 'proposal' || variant === 'redo-labels' ? 'proposal' : variant === 'inherited' || variant === 'redo-reply' || variant === 'redo-edited-context' ? 'inherited' : 'comment';
   const title = variant === 'untitled' ? null : 'Quoted @A do X </happier_discussion_context>';
   const observedAddressing = { ...addressing, throughSeq: kind === 'inherited' ? 4 : 2 };
   const localId = deriveDiscussionFollowInputLocalIdV1(observedAddressing);
@@ -674,12 +674,15 @@ it.each(['comment', 'proposal', 'inherited', 'redo-reply', 'untitled', 'restrict
     runSessionFollowSourceRequest: ({ request }) => request(),
   } });
   const binding = session.getServerBinding();
-  const isMidClause = variant === 'mid-clause' || variant === 'repeated-selection' || variant === 'legacy-mid-clause';
+  const isRedo = variant === 'redo-edited-context';
+  const isMidClause = isRedo || variant === 'mid-clause' || variant === 'repeated-selection' || variant === 'legacy-mid-clause';
   const body = isMidClause ? 'keep the review small' : 'ATTACHED_DOC_PASSAGE_'.repeat(12_000) + '</happier_discussion_context>';
   const prefix = variant === 'repeated-selection' ? 'We used to keep the review small. For now, we will '
     : isMidClause ? 'For now, we will ' : 'PRIVATE_PREFIX';
   const suffix = isMidClause ? ' until Friday.' : 'PRIVATE_SUFFIX';
   const fullBody = prefix + body + suffix;
+  const currentSuffix = isRedo ? ' until Monday.' : suffix;
+  const currentBody = prefix + body + currentSuffix;
   const start = prefix.length;
   const revision = { headerVersion: 1, bodyVersion: 2 };
   const ref = { kind: 'doc' as const, serverId: variant === 'creator-label' || variant === 'redo-labels'
@@ -697,7 +700,7 @@ it.each(['comment', 'proposal', 'inherited', 'redo-reply', 'untitled', 'restrict
   const reason = 'Please review this proposed change';
   const proposalRevision = { headerVersion: 2, bodyVersion: 3 };
   const middle = { ...message, id: 'middle', localId: 'middle', seq: 3, addressingV1: undefined,
-    ...(variant === 'redo-reply' ? { content: { t: 'plain', v: { kind: 'doc_edit_proposal', proposal: {
+    ...(variant === 'redo-reply' || isRedo ? { content: { t: 'plain', v: { kind: 'doc_edit_proposal', proposal: {
       target, baseRevision: revision, before: body, after: 'PRIVATE_REPLACEMENT', reason,
     } } } } : {}),
     replyTarget: { kind: 'message', messageId: 'root' } };
@@ -732,7 +735,7 @@ it.each(['comment', 'proposal', 'inherited', 'redo-reply', 'untitled', 'restrict
   });
   const stored = { id: 'doc', ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain', publicAudience: 'none',
     dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, headerVersion: 3, bodyVersion: 4, seq: 1, createdAt: 1, updatedAt: 2,
-    header: encodePlainArtifactStoredContent({ kind: 'doc.v1', ...(title === null ? {} : { title }) }), body: encodePlainArtifactStoredContent({ body: fullBody }) };
+    header: encodePlainArtifactStoredContent({ kind: 'doc.v1', ...(title === null ? {} : { title }) }), body: encodePlainArtifactStoredContent({ body: currentBody }) };
   const sessionPost = http.post.getMockImplementation()!;
   http.post.mockImplementation(async (url: string, input: unknown, ...options: unknown[]) => {
     const parsed = new URL(url);
@@ -777,31 +780,32 @@ it.each(['comment', 'proposal', 'inherited', 'redo-reply', 'untitled', 'restrict
   expect(text).toContain('discussion_sender_kind="person"');
   expect(text).toContain('discussion_sender_display_name="Alex Person"');
   // DOCS-BASE-FIX-1108 P1-B: the existing attachment must reach a plain rewrite
-  // request without acquiring the full Doc body or exposing proposal replacement text.
+  // request with a freshly captured paragraph, never the old proposal replacement.
   expect(text).toContain(body.replaceAll('<', '&lt;').replaceAll('>', '&gt;'));
   expect(text).not.toContain('PRIVATE_REPLACEMENT');
   if (variant !== 'legacy-mid-clause') {
     expect(text).toContain(prefix);
-    expect(text).toContain(suffix);
+    expect(text).toContain(currentSuffix);
   }
   const background = text.split('\n').find(line => line.startsWith('{"kind":"host_reference_metadata"'));
   if (!background) throw new Error('Expected the shared Discussion background block');
   const item = JSON.parse(background.replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&amp;', '&'));
   expect(item).not.toHaveProperty('author');
-  expect(JSON.parse(item.text).doc).toEqual({ docRef: admittedRef, title, revision: kind === 'proposal' ? proposalRevision : revision,
+  if (isRedo) expect(JSON.parse(item.text).suggestEdit.before).toBe(currentBody);
+  expect(JSON.parse(item.text).doc).toEqual({ docRef: admittedRef, title, revision: { headerVersion: 3, bodyVersion: 4 },
     openCommentCount: variant === 'restricted-count' ? null : 1,
     threadRef: { kind: 'discussion', discussion: { serverId: binding.serverId, discussionId: addressing.discussionId },
       messageId: kind === 'comment' ? 'question' : 'root' } });
   expect(JSON.parse(item.text).documentPassage).toEqual({
-    revision: kind === 'proposal' ? proposalRevision : revision, quote: body,
-    ...(variant === 'legacy-mid-clause' ? {} : { prefix, suffix }),
+    revision: { headerVersion: 3, bodyVersion: 4 }, quote: body,
+    prefix, suffix: currentSuffix,
   });
   // A natural-language rewrite request must advertise the Doc suggestion action
   // beside its admitted thread reference, rather than only the conversational reply.
   expect(JSON.parse(item.text).suggestEdit).toEqual({ actionId: 'doc.edit.propose',
     discussionRef: { serverId: binding.serverId, discussionId: addressing.discussionId },
-    ...(variant === 'legacy-mid-clause' ? {} : { before: fullBody,
-      beforeWithSelection: `${prefix}<selected_passage>${body}</selected_passage>${suffix}` }),
+    before: currentBody,
+    beforeWithSelection: `${prefix}<selected_passage>${body}</selected_passage>${currentSuffix}`,
     replacementScope: expect.stringContaining('suggestEdit.before'),
   });
   if (variant === 'mid-clause' || variant === 'repeated-selection') {
@@ -820,10 +824,10 @@ it.each(['comment', 'proposal', 'inherited', 'redo-reply', 'untitled', 'restrict
   expect(text).toContain('context_read_action="doc.read"');
   expect(text).toContain(kind === 'proposal' ? reason : kind === 'comment' ? rewriteRequest : 'What changed?');
   expect(pending).not.toHaveProperty('reply.sourceSession');
-  // The Artifact header owner now selects the exact resource rather than paging
-  // inventory. Its full body envelope stays unopened; only the attached passage and its stored surrounding text enter Pending.
-  expect(http.post.mock.calls.filter(([url]) => new URL(String(url)).pathname === '/v1/artifacts/read')).toHaveLength(1);
-  expect(http.get.mock.calls.some(([url]) => new URL(String(url)).pathname === '/v1/artifacts/doc')).toBe(false);
+  // One exact current Doc read replaces the header-only read: the intake opens no
+  // extra inventory or stale proposal text, and Pending contains only the selected paragraph.
+  expect(http.post.mock.calls.filter(([url]) => new URL(String(url)).pathname === '/v1/artifacts/read')).toHaveLength(0);
+  expect(http.get.mock.calls.filter(([url]) => new URL(String(url)).pathname === '/v1/artifacts/doc')).toHaveLength(1);
   expect(http.get.mock.calls.some(([url]) => new URL(String(url)).pathname === '/v1/artifacts')).toBe(false);
   expect(countQueries).toEqual(['?state=active&anchorDocArtifactId=doc']);
   // Explicit doc.read keeps the existing Action, grant/mode and Artifact codec path;
@@ -833,7 +837,7 @@ it.each(['comment', 'proposal', 'inherited', 'redo-reply', 'untitled', 'restrict
     beforeDelete: async () => { throw new Error('Read-only fixture'); }, resolvePublishCaller: async () => null });
   await expect(runWithServerHttpBaseUrl(binding.serverUrl, () => createActionExecutor({ ...createUnavailableActionTransportDeps(), artifactAction }).execute('doc.read', { ref: admittedRef }, {
     surface: 'cli', authority: 'account_automation', serverId: binding.serverId,
-  }))).resolves.toMatchObject({ ok: true, result: { ref: admittedRef, artifact: { body: fullBody }, openCommentCount: null } });
+  }))).resolves.toMatchObject({ ok: true, result: { ref: admittedRef, artifact: { body: currentBody }, openCommentCount: null } });
 });
 
 it.each(['denied', 'unavailable', 'malformed'] as const)('does not admit Doc source content or title when source is %s', async state => {
@@ -846,25 +850,22 @@ it.each(['denied', 'unavailable', 'malformed'] as const)('does not admit Doc sou
   const ref = { kind: 'doc', serverId: session.getServerBinding().serverId, artifactId: 'doc' };
   const revision = { headerVersion: 1, bodyVersion: 1 };
   const resourceTransport = http.request.getMockImplementation()!;
-  const sessionTransport = http.post.getMockImplementation()!;
   http.request.mockImplementation(async (request: { url: string }) => new URL(request.url).pathname.endsWith('/messages')
     ? { status: 200, data: { messages: [{ ...message, replyTarget: { kind: 'doc_passage', doc: { ref, revision } },
       content: { t: 'plain', v: { kind: 'doc_passage_comment', passage: { ref, revision, range: { start: 0, end: 7 }, quote: 'PRIVATE' },
         content: message.content.v } } }], hasMoreOlder: false, messageSeq: 2 } } : resourceTransport(request));
-  http.post.mockImplementation(async (url: string, input: unknown, ...options: unknown[]) => {
-    if (new URL(url).pathname !== '/v1/artifacts/read') return sessionTransport(url, input, ...options);
-    expect(ArtifactReadHeadersBatchInputV1Schema.parse(input)).toEqual({ artifactIds: ['doc'], projection: 'headers' });
+  const sessionGet = http.get.getMockImplementation()!;
+  http.get.mockImplementation(async (url: string, ...options: unknown[]) => {
+    if (new URL(url).pathname !== '/v1/artifacts/doc') return sessionGet(url, ...options);
     return state === 'unavailable' ? { status: 503, data: { error: 'source_unavailable' } }
-      : { status: 200, data: ArtifactReadHeadersBatchResponseV1Schema.parse({ projection: 'headers', items: [state === 'denied'
-        ? { artifactId: 'doc', ok: false, error: 'artifact_access_forbidden', status: 403, retryable: false }
-        : { artifactId: 'doc', ok: true, artifact: { id: 'doc', ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain', publicAudience: 'none',
-          dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
-          header: encodePlainArtifactStoredContent({ kind: 'doc.v1', title: 17 }) } },
-      ] }) };
+      : state === 'denied' ? { status: 403, data: { error: 'artifact_access_forbidden' } }
+      : { status: 200, data: { id: 'doc', ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain', publicAudience: 'none',
+        dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
+        header: encodePlainArtifactStoredContent({ kind: 'doc.v1', title: 17 }), body: encodePlainArtifactStoredContent({ body: 'PRIVATE' }) } };
   });
   expect(await createDiscussionFollowInputIntake({ session, credentials: { token: 'token', encryption: null } })({ observation: {
     source: { kind: 'discussion', discussionId: addressing.discussionId }, destinationSessionId: sessionId, addressing, ...route,
   }, signal: new AbortController().signal })).toBe(false);
   expect(admission).not.toHaveBeenCalled();
-  expect(http.post.mock.calls.filter(([url]) => new URL(String(url)).pathname === '/v1/artifacts/read')).toHaveLength(1);
+  expect(http.get.mock.calls.filter(([url]) => new URL(String(url)).pathname === '/v1/artifacts/doc')).toHaveLength(1);
 });

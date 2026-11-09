@@ -5,19 +5,7 @@ import {
   applySessionFollowContextBudgetV1,
   measureSessionFollowUtf8Bytes,
   resolveSessionFollowContextUtf8AllowanceV1,
-  SESSION_FOLLOW_CONTEXT_V1_MEASURED_FALLBACK_UTF8_BYTES,
 } from './sessionFollowContextBudget';
-
-// Recorded 2026-09-08 from fully framed samples using the official
-// @anthropic-ai/tokenizer and js-tiktoken o200k_base packages. The temporary
-// measurement install was removed and is deliberately not a runtime dependency.
-const PROVIDER_CONTEXT_MEASUREMENT_V1 = [
-  { corpus: 'ascii', bytes: 4_096, anthropicTokens: 720, openAiTokens: 718 },
-  { corpus: 'cjk', bytes: 4_094, anthropicTokens: 1_074, openAiTokens: 975 },
-  { corpus: 'emoji_zwj', bytes: 4_096, anthropicTokens: 2_453, openAiTokens: 1_962 },
-  { corpus: 'combining_marks', bytes: 3_860, anthropicTokens: 1_287, openAiTokens: 2_559 },
-  { corpus: 'xml_escaped', bytes: 3_605, anthropicTokens: 3_072, openAiTokens: 2_048 },
-] as const;
 
 function candidate(input: Readonly<{
   sourceSessionId: string;
@@ -40,23 +28,20 @@ function candidate(input: Readonly<{
 }
 
 describe('Session Follow UTF-8 budget', () => {
-  it('records the conservative provider-context measurement behind the V1 fallback', () => {
-    expect(SESSION_FOLLOW_CONTEXT_V1_MEASURED_FALLBACK_UTF8_BYTES).toBe(4_096);
-    for (const sample of PROVIDER_CONTEXT_MEASUREMENT_V1) {
-      expect(sample.anthropicTokens, sample.corpus).toBeLessThanOrEqual(sample.bytes);
-      expect(sample.openAiTokens, sample.corpus).toBeLessThanOrEqual(sample.bytes);
-    }
-  });
-
-  it('uses the recorded provider-tokenizer fallback when current usage evidence is unavailable', () => {
-    expect(resolveSessionFollowContextUtf8AllowanceV1({
+  it('keeps complete Follow originals when current usage evidence is unavailable', () => {
+    const allowance = resolveSessionFollowContextUtf8AllowanceV1({
       requiredPrompt: 'the admitted user input always wins',
       activeModelId: 'claude-sonnet-4-6',
       contextUsage: null,
-    })).toEqual({
-      maxUtf8Bytes: SESSION_FOLLOW_CONTEXT_V1_MEASURED_FALLBACK_UTF8_BYTES,
-      basis: 'measured_fallback',
     });
+    const decision = applySessionFollowContextBudgetV1({
+      candidates: [candidate({ sourceSessionId: 'source', sourceRecencyMs: 1,
+        recentMessages: [{ seq: 1, text: 'Full original'.repeat(1_000) }] })],
+      maxUtf8Bytes: allowance.maxUtf8Bytes,
+    });
+    expect(decision.keptBySource.get('source')).toEqual([1]);
+    expect(decision.truncatedBySource.size).toBe(0);
+    expect(decision.omittedSources).toEqual([]);
   });
 
   it('derives conservative remaining capacity only from matching authoritative provider usage', () => {
@@ -93,8 +78,8 @@ describe('Session Follow UTF-8 budget', () => {
         source: 'provider_live',
       },
     })).toEqual({
-      maxUtf8Bytes: SESSION_FOLLOW_CONTEXT_V1_MEASURED_FALLBACK_UTF8_BYTES,
-      basis: 'measured_fallback',
+      maxUtf8Bytes: Number.POSITIVE_INFINITY,
+      basis: 'unknown_window',
     });
   });
 

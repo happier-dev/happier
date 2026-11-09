@@ -5,6 +5,6 @@ import {
 
 import type { AgentMessage } from '@/agent/core/AgentMessage';
 
-export function createPublicAcpPreAcknowledgementBuffer(): AgentSessionPreAdmissionBuffer<AgentMessage> {
-  return createAgentSessionPreAdmissionBuffer<AgentMessage>();
+export function createPublicAcpPreAcknowledgementBuffer<Message = AgentMessage>(): AgentSessionPreAdmissionBuffer<Message> {
+  return createAgentSessionPreAdmissionBuffer<Message>();
 }

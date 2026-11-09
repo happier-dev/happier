@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import type { ExecutionRunBackendController } from '@/agent/executionRuns/controllers/types';
 import type { FinishExecutionRun } from '../executionRunFinishRun';
@@ -9,11 +12,15 @@ import { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudge
 import { executeBoundedBackendRun } from './loop';
 import type { AgentRuntime, AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
 import { createNativeAgentSessionExecutionRunHostRuntime, createNativeAgentSessionInteractionHostRuntime } from '../nativeAgentExecutionRun';
-import { createVoiceSessionContextLease } from '../testkit/nativeSessionContext';
+import { createNativeSessionBoundary, createVoiceSessionContextLease } from '../testkit/nativeSessionContext';
 import { projectRetainedExecutionRunState, RetainedExecutionRunRecordSchema } from '../retainedState';
 import { ExecutionRunErrorSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { projectExecutionRunPublicState } from '../publicState';
 import { createExecutionRunDiagnosticError, projectExecutionRunError } from '../errors';
+import { reloadConfiguration } from '@/configuration';
+import { readRetainedExecutionRunRecord } from '@/daemon/executionRunRegistry';
+import { createExecutionRunControllerMessageHandler } from '../messages/sessionStateEmission';
+import { enqueueExecutionRunMarkerWrite, writeExecutionRunActivityMarker } from '../activityMarkers';
 
 function createController(backend: ExecutionRunHostRuntime, runtimeId: string): ExecutionRunBackendController {
   let resolveTerminal!: () => void;
@@ -64,6 +71,80 @@ function createRuntime(params: Partial<ExecutionRunHostRuntime>): ExecutionRunHo
 }
 
 describe('executeBoundedBackendRun', () => {
+    it.each([
+      { completionDelayMs: 99, status: 'succeeded' },
+      { completionDelayMs: 102, status: 'timeout' },
+    ] as const)('retains native work at its authored boundary: $status', async ({ completionDelayMs, status }) => {
+      const directory = await mkdtemp(join(tmpdir(), 'happier-run-boundary-'));
+      vi.stubEnv('HAPPIER_HOME_DIR', directory);
+      reloadConfiguration();
+      vi.useFakeTimers({ now: 0 });
+      // The canonical fixture controls only the external Agent SDK. Native
+      // adaptation, message handling, terminalization and filesystem custody stay real.
+      const boundary = createNativeSessionBoundary();
+      const host = createNativeAgentSessionExecutionRunHostRuntime({
+        runtime: { sessions: { open: boundary.open } },
+        lease: { pluginId: 'acme.boundary', pluginVersion: '1.0.0', agentId: 'acme.boundary/default',
+          localAgentId: 'default', occurrenceId: 'boundary-fixture', isCurrent: () => true },
+        options: { cwd: directory, runId: 'boundary-run', scope: 'session_owned', backendId: 'acme.boundary/default',
+          permissionMode: 'read_only', start: { intent: 'agent', runClass: 'bounded', retentionPolicy: 'ephemeral' } },
+        supportsResume: false,
+        createSessionContext: ({ services, signal }) => createVoiceSessionContextLease({ services, signal, async dispose() {} }),
+      });
+      const { runtimeId } = await host.provisionRuntime();
+      const ctrl = createController(host, runtimeId);
+      const state: ExecutionRunState = {
+        runId: 'boundary-run', callId: 'boundary-call', sidechainId: 'boundary-side', sessionId: null, depth: 0,
+        intent: 'agent', backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, backendId: 'codex',
+        instructions: 'work', permissionMode: 'read_only', retentionPolicy: 'ephemeral',
+        runClass: 'bounded', ioMode: 'request_response', status: 'running', startedAtMs: 0,
+      };
+      const runs = new Map([[state.runId, state]]);
+      const controllers = new Map([[state.runId, ctrl]]);
+      const markerWriteChains = new Map<string, Promise<void>>();
+      const enqueueMarkerWrite = (runId: string, write: () => Promise<void>) =>
+        enqueueExecutionRunMarkerWrite({ markerWriteChains, runId, write });
+      const unsubscribe = host.subscribeMessages(createExecutionRunControllerMessageHandler({
+        ctrl, runId: state.runId, sidechainId: state.sidechainId, ioMode: state.ioMode,
+        computeSidechainStreamText: text => text, sendAcp: async () => {}, parentProvider: 'codex', runs,
+        backendSupportsResume: false, getNowMs: Date.now,
+        writeActivityMarker: (runId, nowMs, opts) => writeExecutionRunActivityMarker({
+          runId, nowMs, opts, runs, controllers, enqueueMarkerWrite,
+        }),
+      }));
+      const run = executeBoundedBackendRun({
+        ...state, params: state, runs, controllers, sendAcp: async () => {},
+        parentProvider: 'codex', getNowMs: Date.now, boundedTimeoutMs: 100,
+        finishRun: async (runId, next, toolResult, structuredMeta) => {
+          await finishExecutionRun({ runId, next, toolResult, structuredMeta, runs, controllers,
+            budgetRegistry: null, parentProvider: 'codex', sendAcp: async () => {}, enqueueMarkerWrite,
+            terminalMarkerWritePromises: new Map() });
+        },
+      });
+      let completionTimer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await boundary.waitForInputs(1);
+        completionTimer = setTimeout(() => boundary.complete('Completed work'), completionDelayMs);
+        await vi.advanceTimersByTimeAsync(101);
+        expect(runs.get(state.runId)?.status).toBe(status);
+        await run;
+        const retained = await readRetainedExecutionRunRecord(state.runId);
+        expect(retained?.state.status).toBe(status);
+        if (status === 'succeeded') expect(retained?.state.latestToolResult).toBe('Completed work');
+        else expect(retained?.state.error?.code).toBe('provider_inactivity_timeout');
+      } finally {
+        clearTimeout(completionTimer);
+        await vi.runAllTimersAsync();
+        await run;
+        unsubscribe();
+        await host.dispose();
+        vi.useRealTimers();
+        vi.unstubAllEnvs();
+        reloadConfiguration();
+        await rm(directory, { recursive: true, force: true });
+      }
+    });
+
     it.each(['succeeded', 'cancelled'] as const)('clears an inherited typed failure when terminal commit is %s', async status => {
       const state: ExecutionRunState = { runId: 'run-stale-issue', callId: 'call', sidechainId: 'side', sessionId: null,
         depth: 0, intent: 'agent', backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, backendId: 'codex',

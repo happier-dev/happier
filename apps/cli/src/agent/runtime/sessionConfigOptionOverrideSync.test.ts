@@ -1,12 +1,202 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { RuntimeConfigUpdateOutcomeV1 } from '@happier-dev/agents';
+import type { AgentRuntimeFactory, AgentSessionConfigurationSnapshot, AgentSessionModelsSource, AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
+import { PluginAgentContributionV2Schema, ProviderConnectionIdSchema } from '@happier-dev/protocol';
 
 import type { Metadata } from '@/api/types';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
-import { createSessionConfigOptionOverrideSynchronizer } from './sessionConfigOptionOverrideSync';
+import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
+import { createSessionConfigOptionOverrideSynchronizer, resolveApplicableSessionConfigOptionOverridesFromMetadataSnapshot, resolveSessionConfigOptionOverridesFromMetadataSnapshot } from './sessionConfigOptionOverrideSync';
+import { createNativeAgentSessionInteractionOperations } from './registry/engineRegistry/nativeAgentSession';
+import { readAgentSessionCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
+import { createRuntimeOverrideTarget } from './createRuntimeOverrideSynchronizers';
+import { createSessionRuntimeModelsPublisher } from './controls/sessionRuntimeModelsPublisher';
+import { createSessionOwnerMetadataV1, SessionOwnerMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { mergeSessionMetadataForStartup } from './mergeSessionMetadataForStartup';
 
 describe('createSessionConfigOptionOverrideSynchronizer', () => {
+  it('omits another model’s controls while preserving session controls and unsupported values on a supported model', async () => {
+    const catalogPath = '../../../../../packages/plugins/claude/src/agent/models.ts';
+    const { CLAUDE_STATIC_MODELS } = await import(catalogPath);
+    const metadata = createTestMetadata({
+      flavor: 'claude',
+      modelOverrideV1: { v: 1, modelId: 'claude-haiku-4-5', updatedAt: 1 },
+      sessionModelsV1: { v: 1, agentId: 'claude', updatedAt: 2,
+        currentModelId: 'claude-haiku-4-5-20251001', availableModels: CLAUDE_STATIC_MODELS },
+      sessionConfigOptionOverridesV1: { v: 1, updatedAt: 3, overrides: {
+        reasoning_effort: { updatedAt: 3, value: 'low' }, telemetry: { updatedAt: 3, value: true },
+      } },
+    });
+    expect(resolveApplicableSessionConfigOptionOverridesFromMetadataSnapshot({ metadata }))
+      .toEqual([{ configId: 'telemetry', valueId: true, updatedAt: 3 }]);
+    expect(resolveSessionConfigOptionOverridesFromMetadataSnapshot({ metadata })).toHaveLength(2);
+    expect(metadata.sessionConfigOptionOverridesV1?.overrides.reasoning_effort?.value).toBe('low');
+    expect(mergeSessionMetadataForStartup({ current: metadata, next: createTestMetadata({ flavor: 'claude' }),
+      mode: 'attach', nowMs: 4,
+    }).sessionConfigOptionOverridesV1?.overrides.reasoning_effort?.value).toBe('low');
+
+    const supported = { ...metadata, modelOverrideV1: { v: 1 as const, modelId: 'claude-sonnet-4-6', updatedAt: 4 },
+      sessionConfigOptionOverridesV1: { v: 1 as const, updatedAt: 4, overrides: { reasoning_effort: { updatedAt: 4, value: 'invalid' } } } };
+    expect(resolveApplicableSessionConfigOptionOverridesFromMetadataSnapshot({ metadata: supported }))
+      .toEqual([{ configId: 'reasoning_effort', valueId: 'invalid', updatedAt: 4 }]);
+    expect(resolveApplicableSessionConfigOptionOverridesFromMetadataSnapshot({ metadata: supported,
+      modelSelection: { modelId: 'claude-haiku-4-5', providerConnectionId: null },
+    }))
+      .toEqual([]);
+    expect(resolveApplicableSessionConfigOptionOverridesFromMetadataSnapshot({ metadata,
+      modelSelection: { modelId: 'claude-haiku-4-5', providerConnectionId: ProviderConnectionIdSchema.parse('pc_exact') },
+    })).toHaveLength(2);
+    // A session-wide declaration owns its option independently of model scope.
+    expect(resolveApplicableSessionConfigOptionOverridesFromMetadataSnapshot({ metadata: { ...metadata,
+      sessionConfigOptionsV1: { v: 1, agentId: 'claude', updatedAt: 4,
+        configOptions: [{ id: 'reasoning_effort', name: 'Session effort', type: 'select', currentValue: 'low' }] },
+    } })).toHaveLength(2);
+    // An unknown model (or a selected-only catalog with no controls) supplies no negative fact.
+    for (const availableModels of [[], [{ id: 'claude-haiku-4-5', name: 'Haiku' }]]) {
+      expect(resolveApplicableSessionConfigOptionOverridesFromMetadataSnapshot({ metadata: { ...metadata,
+        sessionModelsV1: { ...metadata.sessionModelsV1!, availableModels },
+      } })).toHaveLength(2);
+    }
+    expect(resolveApplicableSessionConfigOptionOverridesFromMetadataSnapshot({ metadata: { ...metadata,
+      sessionModelsV1: { ...metadata.sessionModelsV1!, agentId: 'codex' },
+    } })).toHaveLength(2);
+    const { sessionModelsV1: catalog, ...withoutCanonicalCatalog } = metadata;
+    expect(resolveApplicableSessionConfigOptionOverridesFromMetadataSnapshot({ metadata: {
+      ...withoutCanonicalCatalog, acpSessionModelsV1: catalog,
+    } })).toEqual([{ configId: 'telemetry', valueId: true, updatedAt: 3 }]);
+    expect(resolveApplicableSessionConfigOptionOverridesFromMetadataSnapshot({ metadata: { ...metadata,
+      modelOverrideV1: undefined, modelSelectionIntentV2: { v: 2, updatedAt: 4,
+        ref: { source: 'native', agentTargetKey: 'backend:claude', modelId: 'claude-haiku-4-5' } },
+    } })).toEqual([{ configId: 'telemetry', valueId: true, updatedAt: 3 }]);
+  });
+
+  it('withdraws an inapplicable queued model control when the startup catalog arrives, then applies it on a supported model', async () => {
+    const catalogPath = '../../../../../packages/plugins/claude/src/agent/models.ts';
+    const { CLAUDE_STATIC_MODELS } = await import(catalogPath);
+    let started = false;
+    let metadata = createTestMetadata({ flavor: 'claude',
+      modelOverrideV1: { v: 1, modelId: 'claude-haiku-4-5', updatedAt: 1 },
+      sessionConfigOptionOverridesV1: { v: 1, updatedAt: 2, overrides: { reasoning_effort: { updatedAt: 2, value: 'low' } } },
+    });
+    const applied: unknown[] = [];
+    const sync = createSessionConfigOptionOverrideSynchronizer({
+      session: { getMetadataSnapshot: () => metadata }, isStarted: () => started,
+      runtime: { setSessionConfigOption: async (id, value) => { applied.push([id, value]); return { status: 'applied' }; } },
+    });
+    sync.syncFromMetadata();
+    metadata = { ...metadata, sessionModelsV1: { v: 1, agentId: 'claude', updatedAt: 3,
+      currentModelId: 'claude-haiku-4-5-20251001', availableModels: CLAUDE_STATIC_MODELS } };
+    sync.syncFromMetadata();
+    started = true;
+    await sync.flushPendingAfterStart();
+    expect(applied).toEqual([]);
+    metadata = { ...metadata, modelOverrideV1: { v: 1, modelId: 'claude-sonnet-4-6', updatedAt: 4 } };
+    sync.syncFromMetadata();
+    await sync.flushPendingAfterStart();
+    expect(applied).toEqual([['reasoning_effort', 'low']]);
+  });
+
+  it.each([true, false])('reconciles Haiku metadata through the real native Claude configuration consumer without an unsupported diagnostic (persisted catalog: %s)', async (hasPersistedCatalog) => {
+    const runtimePath = '../../../../../packages/plugins/claude/src/agent/runtime/nativeRuntime.ts';
+    const testkitPath = '../../../../../packages/plugins/claude/src/agent/runtime/engine.testkit.ts';
+    const manifestPath = '../../../../../packages/plugins/claude/src/manifest.ts';
+    const { PLUGIN_MANIFEST } = await import(manifestPath);
+    const capabilities = readAgentSessionCapabilities(PluginAgentContributionV2Schema.parse(PLUGIN_MANIFEST.contributes.agents?.[0]));
+    if (!capabilities) throw new Error('Claude Session capability declaration is unavailable');
+    const { createClaudeAgentRuntime }: { createClaudeAgentRuntime: AgentRuntimeFactory } = await import(runtimePath);
+    const { createPluginContextFixture, createTerminalHostFixture, createEventsFixture } = await import(testkitPath);
+    const fixture = createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service);
+    let modelSource: AgentSessionModelsSource | undefined;
+    const signal = new AbortController().signal;
+    // Canonical plugin host-port fixtures substitute OS/native services only.
+    const context = {
+      signal, agent: { id: 'claude' }, services: { logger: fixture.logger, settings: fixture.settings, storage: fixture.storage,
+        exec: { systemTools: { resolve: async () => ({ executable: { kind: 'systemTool', id: 'claude-cli' }, executablePath: '/managed/claude' }) },
+          run: async () => ({ termination: { observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'none' } },
+            stdout: new TextEncoder().encode('--effort <level>'), stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false }) } },
+      session: { services: { features: fixture.features, terminalHost: fixture.agentRuntime.terminalHost,
+        sessionHooks: fixture.agentRuntime.sessionHooks, transcripts: fixture.agentRuntime.transcripts,
+        accountUsage: fixture.agentRuntime.accountUsage, workflowActivity: fixture.session.workflowActivity,
+        activeInput: { bind: () => ({ dispose() {} }) },
+        models: { bind: (source: AgentSessionModelsSource) => { modelSource = source; return { dispose() {} }; } } } },
+      workState: { publisher: () => ({ publish: async () => undefined }) },
+    } as unknown as AgentSessionRuntimeContext;
+    const factory = await createClaudeAgentRuntime({ plugin: { id: 'happier.agent.claude', version: '0.0.0' }, agent: { id: 'claude' }, signal });
+    if (!factory.sessions) throw new Error('Claude Session factory is unavailable');
+    const configuration: AgentSessionConfigurationSnapshot = {
+      mode: { value: null, updatedAtMs: 0 }, model: { value: 'claude-haiku-4-5', updatedAtMs: 0 },
+      permissionIntent: { value: 'default', updatedAtMs: 0 }, options: { reasoning_effort: { value: 'low', updatedAtMs: 0 } },
+    };
+    const native = await factory.sessions.open({ kind: 'resume', sessionId: 'haiku-effort-replay', cwd: '/tmp/project',
+      providerSessionId: 'native-haiku', configuration }, context);
+    const readModelSource = () => modelSource;
+    let metadataSession: ReturnType<typeof createMutableApiSessionClientFixture> | undefined;
+    let publisher: ReturnType<typeof createSessionRuntimeModelsPublisher> | undefined;
+    try {
+      const operations = createNativeAgentSessionInteractionOperations({ session: native, sessionId: 'haiku-effort-replay',
+        cwd: '/tmp/project', context, capabilities, initialConfiguration: configuration });
+      const source = readModelSource();
+      const availableModels = source?.read().models;
+      if (!availableModels || !source) throw new Error('The native model owner did not publish its catalog');
+      const metadata = createTestMetadata({ flavor: 'claude',
+        modelOverrideV1: { v: 1, modelId: 'claude-haiku-4-5', updatedAt: 1 },
+        ...(hasPersistedCatalog ? { sessionModelsV1: { v: 1 as const, agentId: 'claude', updatedAt: 1, currentModelId: 'claude-haiku-4-5-20251001', availableModels: [...availableModels] } } : {}),
+        sessionConfigOptionOverridesV1: { v: 1, updatedAt: 1, overrides: { reasoning_effort: { updatedAt: 1, value: 'low' } } },
+      });
+      metadataSession = createMutableApiSessionClientFixture({ sessionId: 'haiku-effort-replay', metadata });
+      publisher = createSessionRuntimeModelsPublisher({ agentId: 'claude', session: metadataSession, source });
+      await publisher.flush();
+      // Exercise the current-only runtime merge over an existing catalog, then
+      // read the exact persisted consumer schema rather than the binding input.
+      const owner = createSessionOwnerMetadataV1({ metadata: metadataSession.getMetadataSnapshot() });
+      if (!owner.ok) throw new Error(`The persisted model projection is invalid: ${owner.unsupportedFields.join(',')}`);
+      const published = SessionOwnerMetadataV1Schema.parse(owner.ownerMetadata).runtime?.sessionModelsV1;
+      if (hasPersistedCatalog) {
+        expect(published?.availableModels.some(model => model.modelOptions?.some(option => option.id === 'reasoning_effort'))).toBe(true);
+      } else {
+        // A fresh runtime has catalog declarations before it observes a current
+        // native model. Publishing a configured model as current would fabricate evidence.
+        expect(published).toBeUndefined();
+      }
+      const rejected: RuntimeConfigUpdateOutcomeV1[] = [];
+      const sync = createSessionConfigOptionOverrideSynchronizer({ session: metadataSession, models: source,
+        runtime: createRuntimeOverrideTarget({ runtime: operations, transitionModelSelection: async () => { throw new Error('This replay does not transition models'); } }),
+        isStarted: () => true, onConfigOptionRejected: ({ outcome }) => { rejected.push(outcome); },
+      });
+      for (let refresh = 0; refresh < 3; refresh += 1) { sync.syncFromMetadata(); await sync.flushPendingAfterStart(); }
+      expect(rejected).toEqual([]);
+      // Direct invalid requests keep their native typed refusal; omission belongs to metadata production.
+      await expect(native.updateConfiguration({ ...configuration,
+        options: { reasoning_effort: { value: 'low', updatedAtMs: 2 } },
+      })).resolves.toMatchObject({ status: 'unsupported', diagnostic: { code: 'claude_model_option_unsupported' } });
+      await metadataSession.updateMetadataAsCurrentPublisher(current => ({ ...current,
+        sessionConfigOptionOverridesV1: { v: 1, updatedAt: 3, overrides: {
+          reasoning_effort: { value: null, updatedAt: 3 },
+        } },
+      }));
+      sync.syncFromMetadata();
+      await sync.flushPendingAfterStart();
+      expect(metadataSession.getMetadataSnapshot()?.sessionConfigOptionOverridesV1?.overrides.reasoning_effort?.value).toBeNull();
+      expect(rejected).toEqual([]);
+      // A real metadata change still reaches the native refusal boundary; the
+      // quiet replay cannot pass because the override adapter is disconnected.
+      await metadataSession.updateMetadataAsCurrentPublisher(current => ({ ...current,
+        sessionConfigOptionOverridesV1: { v: 1, updatedAt: 4, overrides: {
+          ...current.sessionConfigOptionOverridesV1?.overrides, unsupported_control: { value: true, updatedAt: 4 },
+        } },
+      }));
+      sync.syncFromMetadata();
+      await sync.flushPendingAfterStart();
+      expect(rejected).toEqual([expect.objectContaining({ status: 'unsupported' })]);
+    } finally {
+      publisher?.dispose();
+      await metadataSession?.close();
+      await native.dispose();
+      await factory.dispose?.();
+    }
+  });
+
   it('settles a definitive rejection once, clears its intent and keeps newer edits runnable', async () => {
     // fx 0.0.14 wire capture: E-fx-live-probe.md §3, 2026-10-27, provider=gateway / -32600.
     const reason = 'fx needs access to Vercel AI Gateway. Run fx login to sign in, fx setup to use an API key, or set AI_GATEWAY_API_KEY.';

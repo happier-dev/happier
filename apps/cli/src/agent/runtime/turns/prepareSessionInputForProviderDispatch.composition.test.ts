@@ -63,7 +63,7 @@ describe('host dispatch composition evidence', () => {
       composition };
     const ctx = { encryptionKey: new Uint8Array(32).fill(9), encryptionVariant: 'dataKey' as const };
     const crypto = mode === 'plain' ? { mode, ctx: null } : { mode, ctx };
-    const retained = prepareSessionEventMessageViaPort({ buildOutboundSessionMessagePayload: payload => {
+    const retained = prepareSessionEventMessageViaPort({ sessionId: 'session-1', buildOutboundSessionMessagePayload: payload => {
       const sealed = sealSessionStoredContent({ ...crypto, payload: normalizeStrictJsonValue(payload) });
       return sealed.t === 'encrypted' ? sealed.c : sealed;
     } }, event);

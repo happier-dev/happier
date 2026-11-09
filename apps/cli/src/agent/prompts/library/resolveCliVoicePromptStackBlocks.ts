@@ -99,7 +99,7 @@ async function prepareTarget(input?: CliVoicePromptStackInput) {
     assertAccountCurrent();
     let step: PromptPreparationStep = 'target.currentness';
     try {
-      const currentness = await fetchAccountEncryptionCurrentness({ token: args.credentials.token,
+      const currentness = await fetchAccountEncryptionCurrentness({ credentials: args.credentials, token: args.credentials.token,
         serverBaseUrl: args.serverUrl, signal: args.signal });
       step = 'target.session';
       const rawSession = await fetchSessionById({ reason: 'session-content', token: args.credentials.token, sessionId,
@@ -204,17 +204,16 @@ async function resolveBlocks(input?: CliVoicePromptStackInput) {
     const metadata = input.sessionMetadata;
     if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) throw unavailable('target.metadata');
     const work = migrateRetainedSessionWorkContextV1(Reflect.get(metadata, 'work'));
-    const projectEntries = input.projectEntries ?? (Reflect.get(metadata, 'workspaceId') === undefined
-      && Reflect.get(metadata, 'projectId') === undefined ? [] : input.credentials && input.machineId
-        ? await resolveSessionProjectPromptStack({ credentials: input.credentials, metadata,
-            signal: input.signal, machineId: input.machineId, directory: input.directory,
-            serverId: input.serverId ?? undefined }).then(project => project.entries)
-        : (() => { throw new PromptStackPreparationError('unavailable'); })());
+    const project = input.projectEntries !== undefined ? { entries: input.projectEntries, projectKey: null }
+      : input.credentials && input.machineId
+        ? await observePreparation('project', () => resolveSessionProjectPromptStack({ credentials: input.credentials!, metadata,
+            signal: input.signal, machineId: input.machineId!, directory: input.directory,
+            serverId: input.serverId ?? undefined }))
+        : (() => { throw unavailable('project'); })();
     const profileId: unknown = Reflect.get(metadata, 'profileId');
-    const projectKey: unknown = Reflect.get(metadata, 'projectId');
-    preparedInput = { ...input, profileId: typeof profileId === 'string' ? profileId : null, projectEntries,
-      scope: input.scope && input.projectEntries === undefined && typeof projectKey === 'string'
-        ? { ...input.scope, projectKey } : input.scope,
+    preparedInput = { ...input, profileId: typeof profileId === 'string' ? profileId : null, projectEntries: project.entries,
+      scope: input.scope && input.projectEntries === undefined && project.projectKey
+        ? { ...input.scope, projectKey: project.projectKey } : input.scope,
       sessionEntries: createStoredReadSchema(SessionPromptStackV1Schema).parse(work.promptStack ?? []),
       disabledInheritedEntryIds: createStoredReadSchema(SessionDisabledInheritedEntryIdsV1Schema).parse(work.disabledInheritedEntryIds ?? []),
       memoryEnabled: readSessionMemoryEnabledV1(metadata) };

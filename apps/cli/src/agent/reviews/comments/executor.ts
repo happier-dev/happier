@@ -1,6 +1,7 @@
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { createHash, randomBytes as nodeRandomBytes, randomUUID } from 'node:crypto';
-import axios, { type AxiosRequestConfig, type AxiosResponse } from 'axios';
+import axios from '@/api/client/credentialAxios';
+import { type AxiosRequestConfig, type AxiosResponse } from 'axios';
 import tweetnacl from 'tweetnacl';
 
 import { createReviewCommentPrincipalSigningInputV1, REVIEW_COMMENT_PRINCIPAL_HEADER_V1, ReviewCommentActionIdV1Schema, ReviewCommentActionInputSchemasV1, ReviewCommentActionOutputSchemasV1, ReviewCommentPrincipalHeaderV1Schema, stringifyReviewCommentPrincipalCanonicalJsonV1 } from '@happier-dev/protocol/reviews/comments/actions';

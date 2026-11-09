@@ -204,27 +204,6 @@ function isInferredInvestigationTool(
   return false;
 }
 
-function resolveToolKindTimeoutMs(
-  definition: AcpTransportBehaviorDefinition,
-  toolKind?: string,
-): number | null | undefined {
-  if (typeof toolKind !== 'string' || toolKind.trim().length === 0) {
-    return undefined;
-  }
-  const timeouts = definition.timeouts?.toolKindTimeouts;
-  if (!timeouts) {
-    return undefined;
-  }
-  const normalizedToolKind = toolKind.trim().toLowerCase();
-  for (const [kind, timeout] of Object.entries(timeouts)) {
-    if (kind.trim().toLowerCase() !== normalizedToolKind) {
-      continue;
-    }
-    return readPositiveMsOrNull(timeout);
-  }
-  return undefined;
-}
-
 export function createAcpTransportHandlerFromDefinition(
   definition: AcpTransportBehaviorDefinition,
 ): TransportHandler {
@@ -238,7 +217,6 @@ export function createAcpTransportHandlerFromDefinition(
   const initMs = readPositiveMs(timeouts?.initMs);
   const initDelayMs = readPositiveMs(definition.transportLifecycle?.initDelayMs) ?? readPositiveMs(timeouts?.initDelayMs);
   const idleMs = readPositiveMs(timeouts?.idleMs);
-  const toolCallMs = readPositiveMsOrNull(timeouts?.toolCallMs);
   const promptLivenessMs = readPositiveMsOrNull(timeouts?.promptLivenessMs);
   const postPromptNoUpdatesMs = readPositiveMsOrNull(timeouts?.postPromptNoUpdatesMs);
   const postToolCallIdleMs = readPositiveMs(timeouts?.postToolCallIdleMs);
@@ -268,20 +246,6 @@ export function createAcpTransportHandlerFromDefinition(
       || base.isInvestigationTool?.(toolCallId, toolKind)
       || false
     ),
-    getToolCallTimeout: (toolCallId: string, toolKind?: string) => {
-      if (isInferredInvestigationTool(definition, toolCallId, toolKind)) {
-        return readPositiveMsOrNull(timeouts?.investigationToolCallMs)
-          ?? base.getToolCallTimeout(toolCallId, toolKind);
-      }
-      const kindTimeout = resolveToolKindTimeoutMs(definition, toolKind);
-      if (kindTimeout !== undefined) {
-        return kindTimeout;
-      }
-      if (toolCallMs !== undefined) {
-        return toolCallMs;
-      }
-      return base.getToolCallTimeout(toolCallId, toolKind);
-    },
     extractToolNameFromId: (toolCallId) => {
       const patterns = normalizeToolPatterns(definition);
       if (patterns.length > 0) {

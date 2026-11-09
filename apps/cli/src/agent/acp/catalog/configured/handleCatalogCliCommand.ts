@@ -14,6 +14,7 @@ export async function handleConfiguredAcpCatalogCliCommand(context: CommandConte
 
   await runBackendSessionCliCommand({
     context,
+    resolveSessionRuntimePreferences: null,
     backendIdForSessionRuntime: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1.localId,
     runtimeAuthorityAgentId: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1.localId,
     loadAccountSettings: true,

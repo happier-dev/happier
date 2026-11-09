@@ -23,6 +23,70 @@ function canonicalRuntimeEvent(input: Readonly<Record<string, unknown>>): AgentS
 }
 
 describe('createSessionTurnLifecycle', () => {
+    it('leaves a quiet native turn active without scheduling silence diagnostics', async () => {
+        vi.useFakeTimers();
+        const mutations: SessionTurnMutationV1[] = [];
+        const lifecycle = createSessionTurnLifecycle({
+            session: { sessionId: 'quiet-session', enqueueSessionTurnMutation: mutation => { mutations.push(mutation); } },
+        });
+        try {
+            lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({
+                kind: 'turn-start', sessionId: 'quiet-session', turnId: 'quiet-turn', emittedAtMs: 1,
+            }));
+            expect(vi.getTimerCount()).toBe(0);
+            await vi.advanceTimersByTimeAsync(15 * 60_000);
+            expect(lifecycle.hasActiveTurn()).toBe(true);
+            lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({
+                kind: 'turn-complete', sessionId: 'quiet-session', turnId: 'quiet-turn', emittedAtMs: 15 * 60_000,
+            }));
+            await lifecycle.drainAcceptedLifecycle();
+            expect(lifecycle.hasActiveTurn()).toBe(false);
+            expect(mutations.map(mutation => mutation.action)).toEqual(['begin', 'complete']);
+        } finally { lifecycle.dispose(); vi.useRealTimers(); }
+    });
+
+    it('projects exact-turn retries before touch throttling, clears on real progress and Stop, and suppresses unchanged facts', async () => {
+        const progress: unknown[] = [];
+        const mutations: SessionTurnMutationV1[] = [];
+        const options = {
+            session: { sessionId: 'retry-session', enqueueSessionTurnMutation: (mutation: SessionTurnMutationV1) => { mutations.push(mutation); } },
+            onTurnProgressChanged: (input: unknown) => { progress.push(input); },
+        };
+        const lifecycle = createSessionTurnLifecycle(options);
+        const send = (input: Readonly<Record<string, unknown>>) => lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({
+            sessionId: 'retry-session', turnId: 'retry-turn', emittedAtMs: 100, ...input,
+        }));
+        send({ kind: 'turn-start' });
+        const retry = { attempt: 1, reason: 'connection_failed' };
+        send({ kind: 'turn-progress', retry });
+        send({ kind: 'turn-progress', retry });
+        send({ kind: 'turn-progress', retry: { ...retry, attempt: 2 }, emittedAtMs: 101 });
+        send({ kind: 'turn-progress', turnId: 'foreign-turn' });
+        send({ kind: 'turn-progress', sessionId: 'foreign-session' });
+        send({ kind: 'turn-agent-id-observed', agentTurnId: 'next-native-attempt' });
+        expect(progress).toEqual([
+            { progress: null, observedAt: 100 },
+            { progress: { turnId: 'retry-turn', phase: 'retrying', ...retry }, observedAt: 100 },
+            { progress: { turnId: 'retry-turn', phase: 'retrying', ...retry, attempt: 2 }, observedAt: 101 },
+        ]);
+        send({ kind: 'turn-progress', emittedAtMs: 102 });
+        for (let i = 0; i < 100; i++) send({ kind: 'turn-progress', emittedAtMs: 103 + i });
+        expect(progress).toHaveLength(4);
+        expect(progress[3]).toEqual({ progress: null, observedAt: 102 });
+        send({ kind: 'turn-progress', retry, emittedAtMs: 203 });
+        send({ kind: 'turn-cancelled', cause: 'user', emittedAtMs: 204 });
+        send({ kind: 'turn-cancelled', cause: 'user', emittedAtMs: 205 });
+        send({ kind: 'turn-progress', retry, emittedAtMs: 206 });
+        expect(lifecycle.hasActiveTurn()).toBe(false);
+        expect(progress.slice(-2)).toEqual([
+            { progress: { turnId: 'retry-turn', phase: 'retrying', ...retry }, observedAt: 203 },
+            { progress: null, observedAt: 204 },
+        ]);
+        await lifecycle.drainAcceptedLifecycle();
+        expect(mutations.filter(mutation => mutation.action === 'cancel')).toHaveLength(1);
+        expect(mutations.filter(mutation => mutation.action === 'touch_active')).toHaveLength(1);
+    });
+
     it.each([false, true])('records payload-free enrichment outcomes without extra evidence reads or mutation writes (logging failed=%s)', async loggingFailed => {
         const log = vi.spyOn(logger, 'infoFile').mockImplementation(() => { if (loggingFailed) throw new Error('File logging unavailable'); });
         let reads = 0;
@@ -106,36 +170,38 @@ describe('createSessionTurnLifecycle', () => {
         } finally { log.mockRestore(); }
     });
 
-    it.each(['recovered', 'retired'] as const)('records one marker failure across retries until %s', async outcome => {
+    it('retains refused begin identity without a retry timer or a terminal marker clear', async () => {
         vi.useFakeTimers();
         const log = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
         const mutations: SessionTurnMutationV1[] = [];
         let attempts = 0;
-        let markerAvailable = false;
         const lifecycle = createSessionTurnLifecycle({ session: { sessionId: 'retry-session',
             enqueueSessionTurnMutation: async mutation => { mutations.push(mutation); } },
             onAcceptedTurnLifecycle: async () => {
                 attempts++;
-                if (!markerAvailable) throw new Error('private marker failure');
+                throw new Error('private marker failure');
             },
         });
         try {
             lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({ kind: 'turn-start', sessionId: 'retry-session', turnId: 'retry-turn', emittedAtMs: 1 }));
+            lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({ kind: 'turn-complete', sessionId: 'retry-session', turnId: 'retry-turn', emittedAtMs: 2 }));
             await vi.advanceTimersByTimeAsync(500);
-            expect(attempts).toBeGreaterThan(5);
+            expect(attempts).toBe(1);
+            expect(vi.getTimerCount()).toBe(0);
+            expect(mutations).toEqual([]);
+            await lifecycle.drainAcceptedLifecycle();
             expect(log.mock.calls.filter(([label]) => label === '[provider-broker-application]')).toEqual([
                 ['[provider-broker-application]', { stage: 'turn_publication', sessionId: 'retry-session', turnId: 'retry-turn',
                     pid: process.pid, action: 'begin', outcome: 'failed', reason: 'marker_failed' }],
             ]);
         } finally {
-            if (outcome === 'retired') lifecycle.retireAcceptedLifecyclePublication();
-            else markerAvailable = true;
+            lifecycle.retireAcceptedLifecyclePublication();
             await vi.advanceTimersByTimeAsync(50);
             await lifecycle.drainAcceptedLifecycle();
             log.mockRestore();
             vi.useRealTimers();
         }
-        expect(mutations.map(mutation => mutation.action)).toEqual(outcome === 'recovered' ? ['begin'] : []);
+        expect(mutations).toEqual([]);
     });
 
     it.each(['accepted', 'unavailable'] as const)('keeps confirmed open usable when local mutation custody is %s', async custody => {
@@ -274,6 +340,21 @@ describe('createSessionTurnLifecycle', () => {
         } } });
     });
 
+    it('retains the startup auth cause through host failure publication', async () => {
+        const mutations: SessionTurnMutationV1[] = [];
+        const lifecycle = createSessionTurnLifecycle({
+            agentId: 'codex',
+            session: { sessionId: 'startup-session', enqueueSessionTurnMutation: async mutation => { mutations.push(mutation); } },
+        });
+        const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', provider: 'codex', occurredAt: 100,
+            error: { code: 'codex_refresh_free_auth_unsupported', details: { reason: 'workspace_incompatible',
+                failureCause: { phase: 'authentication', failureReason: 'unknown', reason: 'workspace_incompatible' } } },
+        });
+        expect(issue.failureCause).toMatchObject({ reason: 'workspace_incompatible' });
+        await lifecycle.failTurn({ allocateWhenIdle: true, issue, occurredAt: 100 });
+        expect(mutations.find(mutation => mutation.action === 'fail')).toMatchObject({ issue });
+    });
+
     it('orders startup begin before failure persistence without daemon marker callbacks', async () => {
         let releaseBegin!: () => void;
         const begin = new Promise<void>(resolve => { releaseBegin = resolve; });
@@ -346,7 +427,7 @@ describe('createSessionTurnLifecycle', () => {
         expect(mutations[0]).toMatchObject({ action: 'begin', initiator: 'agent_session', workDepth: 5 });
     });
 
-    it('binds only the exact native input that caused a canonical turn start', async () => {
+    it.each(['agent_session', 'user', 'host'] as const)('binds only the exact native input that caused a canonical turn start (%s)', async initiator => {
         const mutations: SessionTurnMutationV1[] = [];
         let activeInput: { inputId: string; turnId: string } | null = {
             inputId: 'accepted-follow-up', turnId: 'turn-2',
@@ -354,7 +435,7 @@ describe('createSessionTurnLifecycle', () => {
         const lifecycle = createSessionTurnLifecycle({
             session: { sessionId: 'session-1', enqueueSessionTurnMutation: async mutation => { mutations.push(mutation); } },
             readStartingInput: () => activeInput,
-            readTurnFacts: () => ({ initiator: 'agent_session', workDepth: 1 }),
+            readTurnFacts: () => ({ initiator, workDepth: 1 }),
         });
         lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({ kind: 'turn-start', sessionId: 'session-1',
             emittedAtMs: 100, turnId: 'human-turn' }));
@@ -366,7 +447,7 @@ describe('createSessionTurnLifecycle', () => {
         await lifecycle.drainAcceptedLifecycle();
         expect(mutations.filter(mutation => mutation.action === 'begin')).toEqual([
             expect.not.objectContaining({ startingInputId: 'accepted-follow-up' }),
-            expect.objectContaining({ action: 'begin', turnId: 'turn-2', startingInputId: 'accepted-follow-up' }),
+            expect.objectContaining({ action: 'begin', turnId: 'turn-2', startingInputId: 'accepted-follow-up', initiator }),
         ]);
     });
 
@@ -533,15 +614,12 @@ describe('createSessionTurnLifecycle', () => {
         expect(mutations.map((mutation) => mutation.action)).toEqual(['begin', 'complete']);
     });
 
-    it('retries rejected exact begin publication and drains the retained obligation before cleanup', async () => {
+    it('drains writer-owned exact begin publication before cleanup', async () => {
         let releasePublishedBegin!: () => void;
         const publishedBegin = new Promise<void>((resolve) => {
             releasePublishedBegin = resolve;
         });
         const onAcceptedTurnLifecycle = vi.fn(async () => {
-            if (onAcceptedTurnLifecycle.mock.calls.length === 1) {
-                throw new Error('marker was not updated');
-            }
             await publishedBegin;
         });
         const lifecycle = createSessionTurnLifecycle({
@@ -559,7 +637,7 @@ describe('createSessionTurnLifecycle', () => {
             turnId: 'turn-1',
         }));
 
-        await vi.waitFor(() => expect(onAcceptedTurnLifecycle).toHaveBeenCalledTimes(2));
+        await vi.waitFor(() => expect(onAcceptedTurnLifecycle).toHaveBeenCalledTimes(1));
         let drained = false;
         const drain = lifecycle.drainAcceptedLifecycle().then(() => {
             drained = true;
@@ -621,7 +699,7 @@ describe('createSessionTurnLifecycle', () => {
         expect(mutations).toEqual([]);
     });
 
-    it('authors no broad terminal when runtime-ended clears an active runtime turn', async () => {
+    it('fails the exact active turn when the runtime ends without a turn terminal', async () => {
         const mutations: SessionTurnMutationV1[] = [];
         const lifecycle = createSessionTurnLifecycle({
             session: {
@@ -647,7 +725,11 @@ describe('createSessionTurnLifecycle', () => {
         }));
 
         await lifecycle.drainAcceptedLifecycle();
-        expect(mutations.map((mutation) => mutation.action)).toEqual(['begin']);
+        expect(mutations.map((mutation) => mutation.action)).toEqual(['begin', 'fail']);
+        expect(mutations[1]).toMatchObject({
+            action: 'fail', turnId: 'turn-1', observedAt: 200,
+            issue: { code: 'provider_runtime_ended' },
+        });
         expect(lifecycle.hasActiveTurn()).toBe(false);
     });
 

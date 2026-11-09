@@ -7,14 +7,20 @@ import type { ExecutionRunState } from './executionRunTypes';
 
 export type ResolvedExecutionRunLifecycle = Readonly<{
   projection: ExecutionRunLifecycleV1;
-  unavailableReason?: 'not_resumable' | 'unsupported' | 'missing_resume_handle' | 'provider_state_missing';
+  unavailableReason?: 'not_resumable' | 'unsupported' | 'missing_resume_handle' | 'provider_state_missing' | 'explicit_resume_required';
 }>;
 
 /** One host owner for current-controller and exact resume-handle lifecycle truth. */
 export function resolveExecutionRunLifecycle(
   run: ExecutionRunState,
   controller: ExecutionRunController | null,
+  operation: 'observe' | 'input' = 'observe',
 ): ResolvedExecutionRunLifecycle {
+  // A retained checkpoint permits explicit recovery, not ordinary input admission.
+  // Keep that distinction here, including the terminal-publication/retirement gap.
+  if (operation === 'input' && run.status !== 'running') {
+    return { projection: { v: 1, state: 'unavailable' }, unavailableReason: 'explicit_resume_required' };
+  }
   if (controller && run.status === 'running' && !controller.cancelled) {
     return { projection: { v: 1, state: 'current' } };
   }

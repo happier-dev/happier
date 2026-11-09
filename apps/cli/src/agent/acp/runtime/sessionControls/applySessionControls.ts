@@ -1,5 +1,5 @@
-import { logger } from '@/ui/logger';
-import { getAgentModelConfig, type AgentId } from '@happier-dev/agents';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
+import { normalizeSessionConfigOptionValue } from '../../sessionSettings/sessionSettingsState';
 
 type AcpRuntimeSessionControlBackend = Readonly<{
   setSessionMode?: (sessionId: string, modeId: string) => Promise<void>;
@@ -21,26 +21,11 @@ type AcpRuntimeSessionControlContext = Readonly<{
   ensureBackend: () => Promise<AcpRuntimeSessionControlBackend>;
 }>;
 
-function resolveModelConfigOptionId(provider: string): string {
-  // An Agent that contributes no bundled model facts uses the ACP default.
-  return getAgentModelConfig(provider as AgentId)?.acpModelConfigOptionId ?? 'model';
-}
-
-function normalizeSessionConfigOptionValue(value: string | number | boolean | null): string | null {
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    return trimmed.length > 0 ? trimmed : null;
-  }
-  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
-  if (typeof value === 'boolean') return value ? 'true' : 'false';
-  return null;
-}
-
 export async function applyAcpRuntimeSessionMode(
   context: AcpRuntimeSessionControlContext,
   modeId: string,
 ): Promise<void> {
-  const normalizedModeId = typeof modeId === 'string' ? modeId.trim() : '';
+  const normalizedModeId = readNonBlankOpaqueIdentifier(modeId);
   if (!normalizedModeId) return;
 
   const sessionId = context.getSessionId();
@@ -58,7 +43,7 @@ export async function applyAcpRuntimeSessionModel(
   modelId: string,
   requestMeta?: Readonly<Record<string, unknown>>,
 ): Promise<void> {
-  const normalizedModelId = typeof modelId === 'string' ? modelId.trim() : '';
+  const normalizedModelId = readNonBlankOpaqueIdentifier(modelId);
   if (!normalizedModelId) return;
 
   const sessionId = context.getSessionId();
@@ -66,29 +51,8 @@ export async function applyAcpRuntimeSessionModel(
     throw new Error(`${context.provider} ACP session was not started`);
   }
 
-  const modelConfigOptionId = resolveModelConfigOptionId(context.provider);
   const backend = await context.ensureBackend();
-
-  if (backend.setSessionModel) {
-    try {
-      await backend.setSessionModel(sessionId, normalizedModelId, requestMeta);
-      return;
-    } catch (error) {
-      // Only a settled provider rejection may activate the compatibility path. A local timeout
-      // cannot establish whether the first effect occurred and must never launch a second write.
-      if (requestMeta || !backend.setSessionConfigOption) throw error;
-      try {
-        await backend.setSessionConfigOption(sessionId, modelConfigOptionId, normalizedModelId);
-        return;
-      } catch {
-        throw error;
-      }
-    }
-  }
-
-  if (backend.setSessionConfigOption) {
-    await backend.setSessionConfigOption(sessionId, modelConfigOptionId, normalizedModelId);
-  }
+  await backend.setSessionModel?.(sessionId, normalizedModelId, requestMeta);
 }
 
 export async function applyAcpRuntimeSessionConfigOption(
@@ -96,11 +60,11 @@ export async function applyAcpRuntimeSessionConfigOption(
   configId: string,
   value: string | number | boolean | null,
 ): Promise<void> {
-  const normalizedConfigId = typeof configId === 'string' ? configId.trim() : '';
+  const normalizedConfigId = readNonBlankOpaqueIdentifier(configId);
   if (!normalizedConfigId) return;
 
   const normalizedValue = normalizeSessionConfigOptionValue(value);
-  if (!normalizedValue) return;
+  if (normalizedValue === null) return;
 
   const sessionId = context.getSessionId();
   if (!sessionId) return;

@@ -732,10 +732,14 @@ export function resolveBackendExecutionSurfacesFromNativeAgentRuntime(params: Re
             if (!host?.process.resolveAgentCliExecutable) {
                 throw new Error(`Native Agent terminal launch for '${params.agentId}' requires host Agent CLI executable resolution`);
             }
+            const launchEnvironmentValues = { ...(request.env ?? {}), ...(request.isolation?.env ?? {}) };
+            const launchEnvironmentUnset = [...new Set(request.isolation?.unsetEnvKeys ?? [])];
+            for (const key of launchEnvironmentUnset) delete launchEnvironmentValues[key];
             const plan = request.preparedLaunchPlan ?? await terminal.resolveLaunch({
                 sessionId: request.sessionId,
                 cwd: request.directory,
                 metadata: projectTerminalAgentLaunchMetadata(request.metadata),
+                launchEnvironment: { values: launchEnvironmentValues, unset: launchEnvironmentUnset },
                 ...(request.configuration ? { configuration: request.configuration } : {}),
                 modelSelection: request.modelSelection,
             });
@@ -745,8 +749,7 @@ export function resolveBackendExecutionSurfacesFromNativeAgentRuntime(params: Re
 
             const planValues = plan.environment?.values ?? {};
             const environment = {
-                ...(request.env ?? {}),
-                ...(request.isolation?.env ?? {}),
+                ...launchEnvironmentValues,
                 ...planValues,
             };
             const unsetEnvKeys = [...new Set([

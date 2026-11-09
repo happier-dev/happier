@@ -7,8 +7,9 @@ import type {
   ExecutionRunProfileStartParams, ExecutionRunProfileTurnCompleteParams, ExecutionRunProfileBoundedCompleteResult,
 } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
 import { scmDiffSummaryResultStore, type ScmDiffSummaryResultScope } from '@/agent/executionRuns/tasks/scmDiffSummary/results/resultStore';
-import { parseDiffSummaryModelOutput } from './parseDiffSummaryModelOutput';
+import { parseDiffSummaryModelOutput, type DiffSummaryModelOutput } from './parseDiffSummaryModelOutput';
 import { resolveExecutionRunInitialInputLocalId } from '../../initialInput';
+import { readReviewNarration } from '@/agent/executionRuns/profiles/review/reviewNarrationContext';
 
 export function readScmDiffSummaryIntent(input: unknown): Readonly<Record<string, unknown>> {
   return input && typeof input === 'object' && !Array.isArray(input) ? input as Readonly<Record<string, unknown>> : {};
@@ -17,6 +18,16 @@ export function readScmDiffSummaryIntent(input: unknown): Readonly<Record<string
 export function readScmDiffSummaryProducerModelId(start: ExecutionRunProfileStartParams): string | undefined {
   // Native usage wins; without it, retain the Run's admitted model selection.
   return start.effectiveEngine?.modelId ?? start.modelId;
+}
+
+export function buildScmDiffSummaryTurnProducer(params: ExecutionRunProfileTurnCompleteParams): NonNullable<ScmDiffSummaryGenerateOutput['producer']> {
+  const modelId = readScmDiffSummaryProducerModelId(params.start);
+  const narration = readReviewNarration(params.start.intentInput);
+  return { kind: narration ? 'review' : 'generation', runId: params.start.runId,
+    ...(modelId ? { modelId } : {}),
+    ...(narration ? { ...narration.provenance,
+      reviewedBy: [...new Set(narration.provenance.reviewedRuns.map(run => run.backendId))],
+      narratedAtMs: params.finishedAtMs } : {}) };
 }
 
 export function readInitialScmDiffSummaryInputId(start: ExecutionRunProfileStartParams): string {
@@ -96,7 +107,7 @@ async function publicationNotice(scope: ScmDiffSummaryResultScope, response: Scm
 
 /** All structured retained turns use the same saved owner; transcript prose is not a write. */
 export async function publishSavedScmDiffSummaryTurn(params: ExecutionRunProfileTurnCompleteParams,
-  complete: (params: ExecutionRunProfileTurnCompleteParams) => ExecutionRunProfileBoundedCompleteResult | null,
+  complete: (params: ExecutionRunProfileTurnCompleteParams, model: DiffSummaryModelOutput | null) => ExecutionRunProfileBoundedCompleteResult | null,
   progressive = false): Promise<ExecutionRunProfileBoundedCompleteResult | null> {
   const saved = await readOrCreateSavedScmResult(params.start, params.previousStructuredMeta?.payload);
   if (saved.result.output.runId && saved.result.output.runId !== params.start.runId) return null;
@@ -113,7 +124,7 @@ export async function publishSavedScmDiffSummaryTurn(params: ExecutionRunProfile
     outputs: [...new Set([...(saved.result.output.requestedOutputs ?? []), ...pending.outputs])] } },
     previousStructuredMeta: { kind: EXECUTION_RUN_KIND_BY_INTENT.scm_diff_summary, payload: saved.result.output } };
   if (progressive) {
-    const completion = complete(currentParams);
+    const completion = complete(currentParams, null);
     if (!completion) return null;
     const output = ScmDiffSummaryGenerateOutputSchema.parse(completion.toolResultOutput);
     const response = await scmDiffSummaryResultStore.publishProgress({ ...saved.scope, expectedRevision: pending.baseRevision, inputId: pending.inputId, output });
@@ -121,12 +132,18 @@ export async function publishSavedScmDiffSummaryTurn(params: ExecutionRunProfile
     return publicationNotice(saved.scope, response, saved.result.output, pending.outputs, completion);
   }
   const parsed = parseDiffSummaryModelOutput(params.rawText, pending.reviewExplanation
-    ? { comparison: saved.result.output.comparison!, requestedOutputs: pending.outputs, allowReviewExplanation: true } : undefined);
+    ? { comparison: saved.result.output.comparison!, requestedOutputs: pending.outputs, allowReviewExplanation: true } : undefined,
+    pending.stopIds ? saved.result.output.outputs?.walkthrough?.value : undefined);
   if (!parsed) {
+    if (pending.stopIds) {
+      await scmDiffSummaryResultStore.abandonInput({ ...saved.scope, inputId: pending.inputId });
+      return publicationNotice(saved.scope, { success: false, errorCode: 'invalid_output',
+        error: 'The selected-stop refinement did not return valid walkthrough output.' }, saved.result.output, pending.outputs);
+    }
     const hasPriorPublication = params.previousStructuredMeta !== undefined
       && Object.values(saved.result.output.outputs ?? {}).some((output) => output?.state !== 'pending');
     if (!hasPriorPublication) {
-      const completion = complete(currentParams);
+      const completion = complete(currentParams, parsed);
       if (completion) {
         const response = await scmDiffSummaryResultStore.publishProgress({ ...saved.scope, expectedRevision: pending.baseRevision,
           inputId: pending.inputId, output: ScmDiffSummaryGenerateOutputSchema.parse(completion.toolResultOutput) });
@@ -137,12 +154,19 @@ export async function publishSavedScmDiffSummaryTurn(params: ExecutionRunProfile
     await scmDiffSummaryResultStore.abandonInput({ ...saved.scope, inputId: pending.inputId });
     return null;
   }
-  const completion = pending.stopIds || pending.reviewExplanation ? undefined : complete(currentParams) ?? undefined;
   const modelId = readScmDiffSummaryProducerModelId(params.start);
+  const comparison = saved.result.output.comparison!;
+  const supplied = comparison.inventory.files.flatMap(file => file.occurrences.filter(change =>
+    change.evidence?.state === 'available' || (!change.evidence && file.evidence.state === 'available')).map(change => change.id));
   const response = await scmDiffSummaryResultStore.publish({ ...saved.scope, inputId: pending.inputId, modelOutput: parsed,
     runId: params.start.runId, generatedAtMs: params.finishedAtMs,
     ...(modelId ? { modelId } : {}),
-    ...(completion ? { outputEnvelope: ScmDiffSummaryGenerateOutputSchema.parse(completion.toolResultOutput) } : {}) });
+    ...(!pending.stopIds && !pending.reviewExplanation ? { outputEnvelope: {
+      analysis: { suppliedChangeRefs: supplied, analysedChangeRefs: supplied,
+        remainingChangeRefs: comparison.inventory.files.flatMap(file => file.occurrences.map(change => change.id))
+          .filter(ref => !supplied.includes(ref)) },
+      producer: buildScmDiffSummaryTurnProducer(params),
+    } } : {}) });
   if (!response.success) await scmDiffSummaryResultStore.abandonInput({ ...saved.scope, inputId: pending.inputId });
-  return publicationNotice(saved.scope, response, saved.result.output, pending.outputs, completion);
+  return publicationNotice(saved.scope, response, saved.result.output, pending.outputs);
 }

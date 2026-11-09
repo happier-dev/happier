@@ -1,4 +1,15 @@
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
+import type { ExecutionRunIntentProfile } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
+import type { ExecutionRunLaunchOrigin } from '@happier-dev/protocol';
+
+/** Explicit Session starts retain one way back to their Run even when its profile keeps the sidechain private. */
+export function shouldPublishExecutionRunTranscriptMarker(
+  profile: Pick<ExecutionRunIntentProfile, 'transcriptMaterialization'>,
+  input: Readonly<{ sessionId: string | null; launchOrigin?: ExecutionRunLaunchOrigin }>,
+): boolean {
+  return input.sessionId !== null
+    && (profile.transcriptMaterialization === 'full' || input.launchOrigin?.kind === 'session');
+}
 
 export type ExecutionRunTranscriptPublisher = (
   provider: ACPProvider,

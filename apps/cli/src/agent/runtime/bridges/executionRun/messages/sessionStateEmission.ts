@@ -21,6 +21,7 @@ import type { ExecutionRunPermissionCapability } from '../executionRunHostRuntim
 import { createExecutionRunCodedError } from '../errors';
 import { EXECUTION_RUN_TASK_RESULT_MAX_CODE_UNITS } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
 import { createExecutionRunTranscriptCustodyError } from '../executionRunTranscriptPublisher';
+import { projectExecutionRunInputTurn } from '../runOccurrenceWitness';
 
 /**
  * One writer signature, parameterized over its owner's option/result contract.
@@ -502,7 +503,13 @@ export function createExecutionRunControllerMessageHandler(args: Readonly<{
 
         if (nextStreamText.startsWith(prevStreamText)) {
           const delta = nextStreamText.slice(prevStreamText.length);
-          if (delta.length > 0) streamWriter.appendAssistantDelta(delta, { sidechainId: args.sidechainId });
+          if (delta.length > 0) {
+            const inputTurn = args.ctrl.currentInputTurn;
+            streamWriter.appendAssistantDelta(delta, { sidechainId: args.sidechainId,
+              ...(inputTurn ? { meta: { runtimeTurnId: inputTurn.turnId,
+                happierExecutionRunInputTurnV1: projectExecutionRunInputTurn(inputTurn) } } : {}),
+            });
+          }
         } else {
           streamWriter.overrideAssistantText(nextStreamText.slice(completedStreamPrefix.length), { sidechainId: args.sidechainId });
         }

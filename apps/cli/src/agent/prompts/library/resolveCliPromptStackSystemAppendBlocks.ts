@@ -25,7 +25,7 @@ import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { HomeTargetResolutionError } from '@happier-dev/cli-common/homeTarget';
 import { logger } from '@/ui/logger';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
-import { classifyHomeReadPreparationError } from './homeReadPreparationError';
+import { recordPromptPreparationFailure, classifyHomeReadPreparationError } from './homeReadPreparationError';
 
 const promptReadErrorCodes = new Set([
   'artifact_read_unavailable', 'artifact_read_invalid', 'artifact_encryption_material_unavailable',
@@ -149,6 +149,7 @@ export async function withCliPromptLibraryArtifactReader<T>(
       return result;
     }
     catch (error) {
+      recordPromptPreparationFailure(operation === 'scope' ? 'artifact.scope' : operation === 'header' ? 'artifact.header' : 'artifact', error);
       options?.signal?.throwIfAborted();
       const code: unknown = error && typeof error === 'object'
         ? Object.getOwnPropertyDescriptor(error, 'code')?.value : undefined;

@@ -1,3 +1,10 @@
+import type { McpToolIdentityV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
+
+export type AcpToolMetadata = Readonly<{
+    mcp?: McpToolIdentityV1;
+    internal?: boolean;
+}>;
+
 export type AcpToolObservationSource =
     | 'tool_call'
     | 'tool_call_update'
@@ -7,6 +14,8 @@ export type AcpToolObservationSource =
 export type AcpToolLifecycleStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
 
 export type AcpToolObservationPatch = Readonly<{
+    name?: string | null;
+    toolMetadata?: AcpToolMetadata;
     title?: string | null;
     kind?: string | null;
     status?: string | null;
@@ -44,6 +53,8 @@ export type MergedAcpToolCall = Readonly<{
     localId: string;
     resultLocalId: string;
     toolName: string;
+    name?: string;
+    toolMetadata?: AcpToolMetadata;
     title?: string;
     kind?: string;
     status: AcpToolLifecycleStatus;

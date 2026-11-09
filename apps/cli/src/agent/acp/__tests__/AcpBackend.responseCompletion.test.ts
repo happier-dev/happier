@@ -1992,6 +1992,34 @@ describe('AcpBackend.waitForResponseComplete', () => {
     });
   }, 20_000);
 
+  it.each(['future_stop', ''] as const)(
+    'ends without classifying an unknown prompt stopReason:%s as success or failure', async (stopReason) => {
+    await withTempDir('happier-acp-unsupported-stop-reason-', async (dir) => {
+      const scriptPath = writeFakeAcpThoughtThenPromptStopAgentScript({
+        dir,
+        stopReason,
+        promptResponseDelayMs: 25,
+      });
+      const backend = new AcpBackend({
+        agentName: 'test',
+        cwd: dir,
+        command: process.execPath,
+        args: [scriptPath],
+        transportHandler: createAcpTestTransportHandler({ idleTimeoutMs: 10_000 }),
+      });
+      try {
+        const started = await backend.startSession();
+        await backend.sendPrompt(started.sessionId, 'hi');
+        await expect(backend.waitForResponseComplete(250)).resolves.toMatchObject({
+          kind: 'unknown',
+          stopReason,
+        });
+      } finally {
+        await backend.dispose();
+      }
+    });
+  }, 20_000);
+
   it.each(['output', 'metadata', 'silent'] as const)('settles submission custody at the hard cap (%s)', async (traffic) => {
     await withEnvVar('HAPPIER_ACP_TURN_HARD_CAP_TIMEOUT_MS', '150', async () => {
       await withTempDir('happier-acp-hard-cap-', async (dir) => {

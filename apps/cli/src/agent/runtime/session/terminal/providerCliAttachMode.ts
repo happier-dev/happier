@@ -6,6 +6,7 @@ import type { RuntimeTurnOperations, RuntimeTurnDisposeReason, RuntimeTurnSessio
 import { createAgentRuntimeSwitchState } from '@/agent/runtime/mode/switching/createSwitchState';
 import type { HostProviderCliAttachSurface, HostProviderCliAttachRequest } from '@/session/attach/providerCliAttach';
 import { logger } from '@/ui/logger';
+import { requireAgentNativeLaunchAuthorityForHost, type HostAgentNativeLaunchAuthority } from '@/plugins/runtime/invocation/services/exec';
 import { SessionProviderCliAttachPrepareRequestV1Schema } from '@happier-dev/protocol/sessions/control/sessionProviderCliAttachPrepareV1';
 import { SessionTerminalMetadataSchema } from '@happier-dev/protocol/sessions/metadata/terminalMetadata';
 import type { SessionProviderCliAttachPrepareRequestV1, SessionProviderCliAttachPrepareResultV1 } from '@happier-dev/protocol';
@@ -72,6 +73,8 @@ export function waitForNativeAgentTerminalRemoteDisposition(params: Readonly<{
 export function createNativeAgentProviderAttachModeBinding<TRuntime extends RuntimeTurnOperations>(params: Readonly<{
     runtime: TRuntime;
     attach: HostProviderCliAttachSurface;
+    readNativeAttachLaunchAuthority?(): HostAgentNativeLaunchAuthority | null;
+    workingDirectory?: string;
     session: ApiSessionClient;
     topology: 'exclusive' | 'shared';
     remoteWritable: boolean;
@@ -180,7 +183,8 @@ export function createNativeAgentProviderAttachModeBinding<TRuntime extends Runt
         && left.launcher.pid === right.launcher.pid
         && left.launcher.processInstanceFingerprint === right.launcher.processInstanceFingerprint;
     const admitTerminalClient = async (request: SessionProviderCliAttachPrepareRequestV1,
-        presentation: Extract<Awaited<ReturnType<typeof prepareTerminalPresentation>>, { kind: 'provider_attach' }>): Promise<SessionProviderCliAttachPrepareResultV1> => {
+        presentation: Extract<Awaited<ReturnType<typeof prepareTerminalPresentation>>, { kind: 'provider_attach' }>,
+        authority: HostAgentNativeLaunchAuthority): Promise<SessionProviderCliAttachPrepareResultV1> => {
         const observation = request.terminalClient!;
         const reject = (phase: string): SessionProviderCliAttachPrepareResultV1 => {
             logger.infoFile('[native-agent] Restored native client admission refused', {
@@ -222,6 +226,8 @@ export function createNativeAgentProviderAttachModeBinding<TRuntime extends Runt
         if (oldInfo?.version === 3 && oldInfo.nativeClientProcess) return reject('previous_native_client_custody');
         const prepared = await params.attach.prepareInvocation({ sessionId: params.session.sessionId,
             metadata: presentation.metadata, signal: lifecycleSignal,
+            nativeLaunchAuthority: authority,
+            ...(params.workingDirectory ? { workingDirectory: params.workingDirectory } : {}),
             ...(params.resolveManagedServiceAccess ? { resolveManagedServiceAccess: params.resolveManagedServiceAccess } : {}),
         });
         if (!prepared.ok) return reject('native_invocation_unavailable');
@@ -239,12 +245,14 @@ export function createNativeAgentProviderAttachModeBinding<TRuntime extends Runt
                 || terminal.controlServiceabilityV1?.retired !== true) return reject('retired_placement_changed');
         }
         if (!isCurrent() || prepared.value.managedServiceAccess?.isCurrent?.() === false) return reject('native_identity_changed');
+        await authority.admit(lifecycleSignal);
         if (oldInfo) {
             const result = await executeTerminalHostDisposition({ ...target, expectedAttachmentId: oldInfo.attachmentId,
                 intent: oldInfo.version === 3 ? { kind: 'release_borrowed_host', reason: 'wrapper_exit' }
                     : { kind: 'retire_confirmed_dead_attachment', reason: 'positive_dead_recovery' } });
             if (result.status !== 'retired') return reject('previous_descriptor_retirement_incomplete');
         }
+        await authority.admit(lifecycleSignal);
         const attachmentInfo = await writeTerminalHostAttachmentInfo({ ...target, lifecycle: 'borrowed',
             nativeClientProcess: observation.launcher, handle: { kind: 'herdr', ...geometry, attachmentId: createTerminalAttachmentId(),
                 attachMetadata: { attachStrategy: 'terminal_host', topology: 'shared', locality: 'same_machine', liveProbe: 'required' } } });
@@ -254,15 +262,28 @@ export function createNativeAgentProviderAttachModeBinding<TRuntime extends Runt
             retired: new Promise<void>(resolve => { completeRetirement = resolve; }),
             completeRetirement: () => completeRetirement(), retirement: { requested: false, completion: null } };
         externalClient = resource;
-        if (!isCurrent()) { await retireExternalClient(); return reject('native_identity_changed'); }
-        await publishNativeAgentTerminalHostBinding({ session: params.session, handle: attachmentInfo.handle,
-            agentId: params.agentId, reportSessionMetadataToDaemon: reportMetadata,
-            herdrClient: client });
-        if (!isCurrent()) {
-            await retireExternalClient();
-            return reject('native_identity_changed');
+        try {
+            if (!isCurrent()) { await retireExternalClient(); return reject('native_identity_changed'); }
+            await authority.admit(lifecycleSignal);
+            await publishNativeAgentTerminalHostBinding({ session: params.session, handle: attachmentInfo.handle,
+                agentId: params.agentId, reportSessionMetadataToDaemon: reportMetadata,
+                herdrClient: client });
+            if (!isCurrent()) {
+                await retireExternalClient();
+                return reject('native_identity_changed');
+            }
+            return { ok: true, providerSessionId: request.providerSessionId };
+        } catch (error) {
+            try { await retireExternalClient(); }
+            catch {
+                // The exact incumbent retains custody for retry if physical or
+                // descriptor retirement is uncertain. Preserve admission's cause.
+                try { logger.infoFile('[native-agent] Native client admission rollback incomplete', {
+                    error: 'terminal_native_client_retirement_incomplete', phase: 'native_admission_rollback', sessionId: params.session.sessionId,
+                }); } catch { /* Diagnostics cannot mask the original refusal. */ }
+            }
+            throw error;
         }
-        return { ok: true, providerSessionId: request.providerSessionId };
     };
     params.session.rpcHandlerManager.registerHandler(SESSION_RPC_METHODS.SESSION_PROVIDER_CLI_ATTACH_PREPARE,
         async (input: unknown): Promise<SessionProviderCliAttachPrepareResultV1> => {
@@ -272,14 +293,17 @@ export function createNativeAgentProviderAttachModeBinding<TRuntime extends Runt
             if (lifecycleSignal.aborted || params.runtime.readSessionIdentity().sessionId !== request.providerSessionId) {
                 return { ok: false, errorCode: 'native_session_changed' };
             }
+            const authority = requireAgentNativeLaunchAuthorityForHost(params.readNativeAttachLaunchAuthority?.());
+            await authority.admit(lifecycleSignal);
             const presentation = await prepareTerminalPresentation();
             if (lifecycleSignal.aborted || presentation.kind !== 'provider_attach'
                 || params.runtime.readSessionIdentity().sessionId !== request.providerSessionId) {
                 return { ok: false, errorCode: 'native_session_changed' };
             }
+            await authority.admit(lifecycleSignal);
             if (request.terminalClient) {
                 if (clientAdmission) return { ok: false, errorCode: 'terminal_client_admission_in_progress' };
-                const admission = admitTerminalClient(request, presentation);
+                const admission = admitTerminalClient(request, presentation, authority);
                 clientAdmission = admission;
                 let result: SessionProviderCliAttachPrepareResultV1;
                 try { result = await admission; }
@@ -310,7 +334,7 @@ export function createNativeAgentProviderAttachModeBinding<TRuntime extends Runt
             activeAttach = receipt.promise;
             let attached = false;
             const localAbortController = new AbortController();
-            const signal = AbortSignal.any([
+            let signal = AbortSignal.any([
                 lifecycleSignal,
                 localAbortController.signal,
             ]);
@@ -326,6 +350,9 @@ export function createNativeAgentProviderAttachModeBinding<TRuntime extends Runt
                 return true;
             });
             try {
+                const authority = requireAgentNativeLaunchAuthorityForHost(params.readNativeAttachLaunchAuthority?.());
+                signal = AbortSignal.any([signal, authority.signal]);
+                await authority.admit(signal);
                 if (clientAdmission && !(await clientAdmission).ok) {
                     throw new Error('Restored native client admission did not complete');
                 }
@@ -341,9 +368,16 @@ export function createNativeAgentProviderAttachModeBinding<TRuntime extends Runt
                             completeLocalRestore(true);
                         }
                     }
-                    if (signal.aborted && externalClient === resource) await retireExternalClient();
-                    activeAttach = resource.retired;
-                    await resource.retired;
+                    let removeAbort = () => {};
+                    const retirement = Promise.race([resource.retired, new Promise<void>((resolve, reject) => {
+                        const abort = () => { void retireExternalClient().then(resolve, reject); };
+                        signal.addEventListener('abort', abort, { once: true });
+                        removeAbort = () => signal.removeEventListener('abort', abort);
+                        if (signal.aborted) abort();
+                    })]);
+                    activeAttach = retirement;
+                    try { await retirement; }
+                    finally { removeAbort(); }
                     return lifecycleSignal.aborted ? { type: 'exit' as const, code: 0 } : { type: 'switch' as const };
                 }
                 const presentation = await prepareTerminalPresentation();
@@ -356,6 +390,8 @@ export function createNativeAgentProviderAttachModeBinding<TRuntime extends Runt
                         : { type: 'switch' as const };
                 }
                 const attaching = params.attach.attachManaged({
+                    nativeLaunchAuthority: authority,
+                    ...(params.workingDirectory ? { workingDirectory: params.workingDirectory } : {}),
                     sessionId: params.session.sessionId,
                     metadata: presentation.metadata,
                     signal,

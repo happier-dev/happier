@@ -43,13 +43,18 @@ export function createAcpRequestFailureLogRecord(params: Readonly<{
   operation: AcpRequestOperation;
   failureKind: AcpRequestFailureKind;
   requestErrorCode?: number;
+  requestErrorMessage: string;
   authenticationSetupFailure?: true;
 }> {
-  // JSON-RPC numeric codes are diagnostic metadata; provider messages/data may contain credentials.
+  // Never serialize arbitrary provider data. The shared UI formatter owns redaction and its preview budget.
   const code = readAcpRequestErrorCode(params.error);
+  const message = params.error && typeof params.error === 'object' && 'message' in params.error
+    && typeof params.error.message === 'string' ? params.error.message
+    : typeof params.error === 'string' ? params.error : 'ACP request failed';
   return Object.freeze({
     operation: params.operation,
     failureKind: classifyAcpRequestFailureForLog(params.error),
+    requestErrorMessage: formatErrorForUi(message),
     ...(params.error && typeof params.error === 'object'
       && 'authenticationSetupFailure' in params.error
       && params.error.authenticationSetupFailure === true ? { authenticationSetupFailure: true as const } : {}),

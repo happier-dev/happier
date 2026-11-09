@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { AcpBackend } from '../AcpBackend';
 import {
@@ -11,6 +11,7 @@ import {
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { SpawnFailureError } from '@/processes/spawnFailure/classifySpawnFailure';
 import { createDaemonShutdownController, type DaemonShutdownRequest } from '@/daemon/lifecycle/shutdown';
+import { logger } from '@/ui/logger';
 
 type StartupMethod = 'initialize' | 'authenticate' | 'session/load';
 
@@ -90,12 +91,18 @@ function countRequests(requestLogPath: string, method: StartupMethod): number {
 describe('AcpBackend startup timeout retry safety', () => {
   it('retains a typed startup transport failure when the configured executable exits without speaking ACP', async () => {
     await withTempDir('happier-acp-closed-startup-', async dir => {
+      const debug = vi.spyOn(logger, 'debug');
       const backend = new AcpBackend({ agentName: 'non-acp-command', cwd: dir,
         command: process.execPath, args: ['-e', 'process.exit(0)'], transportHandler: createAcpTestTransportHandler() });
       try {
         await expect(backend.startSession()).rejects.toMatchObject({ code: 'agent_startup_transport_failed' });
+        // A closed transport cannot admit another Initialize on this connection.
+        // Exercise the real subprocess/SDK path, rather than a synthetic retry error.
+        expect(debug.mock.calls.filter(([message]) => message === '[AcpBackend] Retrying ACP request after failure'))
+          .toHaveLength(0);
       } finally {
         await backend.dispose();
+        debug.mockRestore();
       }
     });
   });

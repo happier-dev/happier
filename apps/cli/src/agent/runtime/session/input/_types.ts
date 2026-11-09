@@ -31,6 +31,7 @@ export type PendingMaterializationReconcileWhenEmpty = 'force' | 'throttled' | '
 export type SessionProviderInputConsumerSession = Readonly<{
   waitForMetadataUpdate: (abortSignal?: AbortSignal) => Promise<boolean>;
   getMetadataSnapshot?: () => unknown;
+  getPendingMessageEditHoldIds?: () => readonly string[] | null;
   getAgentStateSnapshot?: () => AgentState | null;
   readSubagentLiveWork?: () => Readonly<{ state: 'active' | 'settled' | 'unknown'; activeCount: number }>;
   subscribeSubagentLiveWork?: (listener: () => void) => () => void;
@@ -61,11 +62,10 @@ export type DrainPendingStoppedReason =
   | 'drain_disallowed'
   | 'error'
   | 'materialization_blocked'
-  | 'max_pop_per_wake'
+  | 'materialized'
   | 'no_pending';
 
 export type DrainPendingOptions = Readonly<{
-  maxPopPerWake?: number;
   reason?: string;
   abortSignal?: AbortSignal;
   shouldContinue?: () => boolean | Promise<boolean>;

@@ -1,16 +1,15 @@
-import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunchError';
 import { join } from 'node:path';
 
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { projectAgentSessionProviderBindingV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
-import type { BackendTargetRefV2Input, ConnectedServiceBindingsV2, ProviderBoundModelRef, TeamCredentialProviderModelSelectionV1, ProviderErrorV1 } from '@happier-dev/protocol';
+import type { AcpConfigOptionOverridesV1, BackendTargetRefV2Input, ConnectedServiceBindingsV2, ProviderBoundModelRef, TeamCredentialProviderModelSelectionV1, ProviderErrorV1 } from '@happier-dev/protocol';
 import type { AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import { readLeasedAgentProviderRequirements } from '@/plugins/runtime/providerBindings/adapter';
 import { prepareDirectProviderLaunch, type DirectManagedProviderEndpointPreparer } from '@/providers/lifecycle/prepareDirectLaunch';
-import { prepareProviderLaunch } from '@/providers/lifecycle/prepareLaunch';
+import { prepareProviderLaunch, type PrepareProviderLaunchInput } from '@/providers/lifecycle/prepareLaunch';
 import type { ProviderLaunchCleanup } from '@/providers/lifecycle/resourceScope';
 import { createProviderRuntimeStateStore } from '@/providers/runtimeState';
 import { createRuntimeProviderSpawnAuthorizationAttempt } from '@/providers/spawn/authorize';
@@ -20,12 +19,14 @@ import type { ResolveManagedProviderPurposeBindingIntent } from '@/providers/man
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { createExecutionRunCodedError } from '../errors';
+import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunchError';
 
 type Cleanup = (() => void | Promise<void>) | null;
 
 export type ExecutionRunProviderSelectionInput = Readonly<{
     signal?: AbortSignal;
     selection: ProviderBoundModelRef;
+    sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
     backendTarget: BackendTargetRefV2Input;
     machineId?: string;
     agentId: string;
@@ -46,6 +47,7 @@ export type ExecutionRunProviderSelectionInput = Readonly<{
 export type ExecutionRunProviderLaunchRequest = Readonly<{
     selection: ProviderBoundModelRef;
     teamCredentialModel?: TeamCredentialProviderModelSelectionV1;
+    sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
     backendTarget: BackendTargetRefV2Input;
     agentId: string;
     runId: string;
@@ -59,7 +61,7 @@ export type ExecutionRunProviderLaunchServices = Readonly<{
     prepareLaunch(input: ExecutionRunProviderLaunchRequest, signal?: AbortSignal): Promise<PreparedExecutionRunProviderLaunch>;
 }>;
 
-/** Authorizes a rematched child choice without materializing credentials or launching a runtime. */
+/** Admits a child choice and explicit config without materializing credentials or launching a runtime. */
 export async function admitExecutionRunInheritedProviderSelection(input: ExecutionRunProviderSelectionInput): Promise<void> {
     if (input.selection.providerConnectionId === null) return;
     validateExecutionRunProviderSelectionInput(input);
@@ -140,7 +142,7 @@ function validateExecutionRunProviderSelectionInput(input: ExecutionRunProviderS
 function createExecutionRunProviderPreparation(
     input: ExecutionRunProviderSelectionInput,
     lease: Awaited<ReturnType<typeof acquireAuthoritativePluginRuntimeRegistryLease>>,
-): Parameters<typeof prepareProviderLaunch>[0] {
+): PrepareProviderLaunchInput {
     const operationContext = input.savedSecretOperationContext;
     return {
         selection: { v: 1, ref: input.selection, updatedAt: Date.now() },
@@ -164,6 +166,7 @@ function createExecutionRunProviderPreparation(
             createRuntimeProviderSpawnAuthorizationAttempt({
                 signal: input.signal,
                 selection, machineId, agentTargetKey, agentId, lease,
+                sessionConfigOptionOverrides: input.sessionConfigOptionOverrides,
                 // Each child is authorized against its owning Account, never
                 // the process-global Account of another active Session.
                 getAccountSettingsSnapshot: input.readAccountSettingsSnapshot
@@ -196,6 +199,7 @@ const nativeLaunch = Object.freeze({
 export async function prepareExecutionRunProviderLaunch(input: Readonly<{
     signal?: AbortSignal;
     selection?: ProviderBoundModelRef;
+    sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
     teamCredentialModel?: TeamCredentialProviderModelSelectionV1;
     backendTarget: BackendTargetRefV2Input;
     machineId?: string;
@@ -214,7 +218,7 @@ export async function prepareExecutionRunProviderLaunch(input: Readonly<{
     retainCleanup?: (cleanup: ProviderLaunchCleanup) => void;
     runtimeRegistryLease?: PluginRuntimeRegistryLease;
 }>): Promise<PreparedExecutionRunProviderLaunch> {
-    if (!input.selection && input.prepareTeamCredentialProviderBinding) {
+    if ((!input.selection || input.teamCredentialModel) && input.prepareTeamCredentialProviderBinding) {
         const teamBinding = await input.prepareTeamCredentialProviderBinding({
             runId: input.runId,
             agentId: input.agentId,

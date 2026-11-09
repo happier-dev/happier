@@ -135,7 +135,7 @@ export async function deliverExecutionRunSessionStateField(
       reason: 'no_session_target',
     };
   }
-  if (fieldId === 'runtime.activity' || fieldId === 'runtime.externalAgent') {
+  if (fieldId === 'runtime.activity' || fieldId === 'runtime.turnProgress' || fieldId === 'runtime.externalAgent') {
     return {
       status: 'unsupported',
       fieldId,

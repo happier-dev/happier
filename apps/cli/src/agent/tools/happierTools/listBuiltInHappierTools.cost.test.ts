@@ -47,7 +47,8 @@ describe('native tool inventory cost', () => {
 
   it('projects catalog replacement without retaining a previous inventory index', () => {
     const declaration: ProjectedPluginToolCatalogEntry = {
-      toolId: 'acme.inventory/read-tool', actionId: 'acme.inventory/actions/read', name: 'acme_read',
+      toolId: 'acme.inventory/read', actionId: 'acme.inventory/actions/read', name: 'acme_read',
+      toolExposure: { mcp: 'direct' },
       title: 'Read', description: 'Read', surfaces: ['mcp'], inputSchema: { type: 'object', properties: {} },
     };
     const pluginToolCatalog = [declaration];
@@ -82,7 +83,8 @@ describe('native tool inventory cost', () => {
   it.each(['agent', 'mcp', 'cli'] as const)('keeps each plugin tool binding on its own %s surface', surface => {
     const pluginToolCatalog: ProjectedPluginToolCatalogEntry[] = (['agent', 'mcp', 'cli'] as const).map(bindingSurface => ({
       toolId: `acme.inventory/${bindingSurface}`,
-      actionId: 'acme.inventory/actions/read',
+      actionId: `acme.inventory/actions/${bindingSurface}`,
+      toolExposure: { agent: 'direct', mcp: 'direct', cli: 'direct' },
       name: `acme_read_${bindingSurface}`,
       title: 'Read inventory', description: 'Read through a surface-specific tool binding',
       inputSchema: { type: 'object', properties: {} },
@@ -92,7 +94,7 @@ describe('native tool inventory cost', () => {
     expect(inventory.tools.filter(tool => tool.toolId?.startsWith('acme.inventory/')).map(tool => tool.name))
       .toEqual([`acme_read_${surface}`]);
     expect([...inventory.actionToolNameToId].filter(([name]) => name.startsWith('acme_read_')))
-      .toEqual([[`acme_read_${surface}`, 'acme.inventory/actions/read']]);
+      .toEqual([[`acme_read_${surface}`, `acme.inventory/actions/${surface}`]]);
   });
 
   it.each([64, 512])('projects %i admitted plugin declarations without whole-catalog reprojection per tool', (size) => {
@@ -101,7 +103,8 @@ describe('native tool inventory cost', () => {
     const inputSchema: ProjectedPluginToolCatalogEntry['inputSchema'] = { type: 'object', properties: { sessionId: { type: 'string' } },
       required: ['sessionId'], additionalProperties: false };
     const pluginToolCatalog: ProjectedPluginToolCatalogEntry[] = Array.from({ length: size }, (_, index) => ({
-      toolId: `acme.inventory/tool-${index}`,
+      toolId: `acme.inventory/action-${index}`,
+      toolExposure: { agent: 'direct' },
       get actionId() { identityReads += 1; return `acme.inventory/actions/action-${index}`; },
       name: `acme_inventory_${index}`,
       title: `Inventory ${index}`,
@@ -120,6 +123,7 @@ describe('native tool inventory cost', () => {
       expect(tool.inputSchema).toBe(inputSchema);
       expect(inventory.actionToolNameToId.get(tool.name)).toBe(tool.actionId);
     }
+    console.info(JSON.stringify({ contract: 'native-tool-inventory', size, schemaReads, identityReads, elapsedMs }));
     // Admit each declaration once. Per-tool lookup and dispatch-map derivation
     // must not scan or re-project the source inventory.
     expect(schemaReads).toBe(size);

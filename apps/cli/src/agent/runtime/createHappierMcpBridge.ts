@@ -1,10 +1,13 @@
-import { SESSION_MCP_CONTEXT_FILE_ENV, supportsSessionMcpLocalTransport, type SessionMcpLocalContext, type SessionMcpLocalTransportOptions } from '@/mcp/runtime/sessionMcpLocalTransport'
+import { isSessionHappierToolsEnabled } from '@happier-dev/protocol/reach/sessionCapabilityMetadataV1'
 import type { HappyMcpSessionClient } from '@/mcp/startHappyServer'
 import { resolveNodeBackedMcpServerCommand } from '@/mcp/runtime/resolveNodeBackedMcpServerCommand'
 import type { McpServerConfig } from '@/agent'
 import type { StoredCredentials } from '@/persistence'
 import type { RuntimeActionSettingsProvider } from '@/settings/actionsSettingsProvider'
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller'
+import { SESSION_MCP_CONTEXT_FILE_ENV, supportsSessionMcpLocalTransport, type SessionMcpLocalContext, type SessionMcpLocalTransportOptions } from '@/mcp/runtime/sessionMcpLocalTransport'
+import type { SessionMcpCustomToolsBridge } from '@/mcp/runtime/sessionMcpToolsBridge'
+import { selectToolIdleTimeoutEnvironment } from '@/processes/toolIdleTimeouts'
 import type {
   AccountSettings,
   ActionId,
@@ -12,11 +15,6 @@ import type {
   ActionsSettingsV1,
   SessionRunPromptReadActionIdV1,
 } from '@happier-dev/protocol'
-
-function isTruthyEnvFlag(raw: string | undefined): boolean {
-  const normalized = (raw ?? '').trim().toLowerCase()
-  return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'y'
-}
 
 function serializeActionSettingsForEnv(
   accountSettings: AccountSettings | null | undefined,
@@ -66,17 +64,24 @@ async function resolveHappierMcpServerConfig(
     distEntrypointSegments: ['mcp', 'bridges', 'happierMcpStdioBridge.mjs'],
     sourceEntrypointSegments: ['mcp', 'bridges', 'happierMcpStdioBridge.ts'],
     args: sessionLocal ? ['--session-local'] : ['--url', url],
-    preferSourceEntrypoint: isTruthyEnvFlag(process.env.HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT),
   })
+  // Native MCP clients filter ambient variables; carry the Session's captured
+  // documented tool values explicitly without re-reading Machine policy.
+  const toolEnvironment = selectToolIdleTimeoutEnvironment(process.env)
+  const bridgeConfig = Object.keys(toolEnvironment).length > 0
+    ? { ...config, env: { ...toolEnvironment, ...config.env } }
+    : config
   return withActionSettingsEnv(sessionLocal?.contextFilePath ? {
-    ...config, env: { ...config.env, [SESSION_MCP_CONTEXT_FILE_ENV]: sessionLocal.contextFilePath },
-  } : config, accountSettings, scopedActionSettings)
+    ...bridgeConfig, env: { ...bridgeConfig.env, [SESSION_MCP_CONTEXT_FILE_ENV]: sessionLocal.contextFilePath },
+  } : bridgeConfig, accountSettings, scopedActionSettings)
 }
 
 export async function createHappierMcpBridge(
   session: HappyMcpSessionClient,
   opts: {
     localTransport?: SessionMcpLocalTransportOptions
+    sessionMetadata?: unknown
+    sessionToolsBridge?: SessionMcpCustomToolsBridge
     commandMode?: 'direct-script' | 'current-process'
     mcpToolCallIdMetaKey?: string
     sessionCredentials?: StoredCredentials | null
@@ -108,6 +113,8 @@ export async function createHappierMcpBridgeWithOptions(
   session: HappyMcpSessionClient,
   opts: {
     localTransport?: SessionMcpLocalTransportOptions
+    sessionMetadata?: unknown
+    sessionToolsBridge?: SessionMcpCustomToolsBridge
     commandMode?: 'direct-script' | 'current-process'
     mcpToolCallIdMetaKey?: string
     sessionCredentials?: StoredCredentials | null
@@ -132,8 +139,15 @@ export async function createHappierMcpBridgeWithOptions(
   }
   mcpServers: Record<string, McpServerConfig>
 }> {
+  const happierToolsEnabled = isSessionHappierToolsEnabled(opts.sessionMetadata ?? session.getMetadataSnapshot?.())
+  if (!happierToolsEnabled && !opts.localTransport) {
+    return { happierMcpServer: { url: '', supportedSessionReadActions: [],
+      readToolNames: async () => [], stop: async () => {} }, mcpServers: {} }
+  }
   const { startHappyServer } = await import('@/mcp/startHappyServer')
   const happierMcpServer = await startHappyServer(session, {
+    happierToolsEnabled,
+    ...(opts.sessionToolsBridge ? { sessionToolsBridge: opts.sessionToolsBridge } : {}),
     ...(opts.localTransport ? { localTransport: opts.localTransport }
       : supportsSessionMcpLocalTransport() && process.getuid ? { localTransport: { agentUid: process.getuid() } } : {}),
     mcpToolCallIdMetaKey: opts.mcpToolCallIdMetaKey,
@@ -158,15 +172,13 @@ export async function createHappierMcpBridgeWithOptions(
   const scopedActionSettings = opts.actionsSettingsProvider?.getActionsSettings()
   let mcpServers: Record<string, McpServerConfig>
   try {
-    mcpServers = {
-    happier: await resolveHappierMcpServerConfig(
+    mcpServers = happierToolsEnabled ? { happier: await resolveHappierMcpServerConfig(
       happierMcpServer.url,
       commandMode,
       opts.accountSettings ?? null,
       scopedActionSettings,
       happierMcpServer.localContext ? { contextFilePath: happierMcpServer.contextFilePath } : undefined,
-    ),
-  }
+    ) } : {}
   } catch (error) {
     await happierMcpServer.stop()
     throw error

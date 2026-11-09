@@ -25,6 +25,35 @@ const stringValueParams = {
 };
 
 describe('createAcpClientConnection', () => {
+  it('preserves the standard tool name through SDK notification decoding', async () => {
+    // fx 0.0.14 raw frame, 2026-10-27: E-fx-live-probe.md §3.
+    const update = { sessionUpdate: 'tool_call', toolCallId: '<T1>', name: 'write_file',
+      title: 'file_mutation', kind: 'edit', status: 'pending',
+      rawInput: { path: 'probe-ok.txt', content: 'ok' } };
+    const received: unknown[] = [];
+    const testAgent = agent({ name: 'standard-tool-name-agent' })
+      .onRequest(methods.agent.session.new, async context => {
+        await context.client.notify('session/update', {
+          sessionId: 'session-1', update: { ...update, toolCallId: undefined },
+        });
+        await context.client.notify('session/update', { sessionId: 'session-1', update });
+        return { sessionId: 'session-1' };
+      });
+    const connection = createAcpClientConnection({
+      name: 'standard-tool-name-client', transport: testAgent,
+      handlers: {
+        requestPermission: () => ({ outcome: { outcome: 'cancelled' } }),
+        sessionUpdate: notification => { received.push(notification.update); },
+      },
+    });
+    try {
+      await connection.peer.newSession({ cwd: '/workspace', mcpServers: [] });
+      expect(received).toMatchObject([update]);
+    } finally {
+      connection.close();
+      await connection.closed;
+    }
+  });
   it('withdraws cancellation and returns explicit decline without cancelling the active turn', async () => {
     let resolvePresented!: () => void;
     const presented = new Promise<void>((resolve) => { resolvePresented = resolve; });

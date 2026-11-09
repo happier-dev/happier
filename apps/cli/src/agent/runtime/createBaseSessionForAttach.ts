@@ -5,6 +5,7 @@ import { projectCurrentAgentSessionView, resolveAgentExecutionTargetFromSessionM
 import { SessionCreationCorrespondenceV1ReadSchema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import { readAcpConfiguredBackendV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/acpConfiguredBackendV1';
 import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
+import type { SessionTeamCredentialBindingIntentV1 } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 
 export async function createBaseSessionForAttach(opts: Readonly<{
   existingSessionId: string;
@@ -13,7 +14,7 @@ export async function createBaseSessionForAttach(opts: Readonly<{
   sessionAttachFilePath?: string;
   /** Already-authenticated process-local custody; never persisted or read from Account state. */
   sessionAttachSecret?: SessionAttachSecret;
-}>): Promise<ApiSession> {
+}>): Promise<ApiSession & Readonly<{ acceptedTeamCredentialBinding?: SessionTeamCredentialBindingIntentV1 | null }>> {
   const existingSessionId = opts.existingSessionId.trim();
   if (!existingSessionId) {
     throw new Error('Missing existingSessionId');
@@ -69,7 +70,7 @@ export async function createBaseSessionForAttach(opts: Readonly<{
   // client needs its admitted Agent before the ordinary startup merge runs.
   // Seed only this initial in-process view, after matching the runner to the
   // immutable birth target; never replace a published identity or resume key.
-  const metadata = identity.basis === 'none' && !identity.ambiguousVendorResumeKeys
+  const metadata = (identity.basis === 'none' || identity.basis === 'birth') && !identity.ambiguousVendorResumeKeys
     && !readAcpConfiguredBackendV1FromMetadata(persistedMetadata)
     && runnerAgentId && birthTarget
     && (!birthTarget.definitionId || runtimeDescriptor?.agent.definitionId === birthTarget.definitionId)
@@ -83,6 +84,8 @@ export async function createBaseSessionForAttach(opts: Readonly<{
   const agentState = attach.snapshot?.agentState ?? opts.state;
   const agentStateVersion = attach.snapshot?.agentStateVersion ?? -1;
   const organization = {
+    ...(attach.snapshot?.acceptedTeamCredentialBinding !== undefined
+      ? { acceptedTeamCredentialBinding: attach.snapshot.acceptedTeamCredentialBinding } : {}),
     ...(attach.snapshot?.manager ? { manager: attach.snapshot.manager } : {}),
     ...(attach.snapshot?.origin ? { origin: attach.snapshot.origin } : {}),
   };

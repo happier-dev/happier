@@ -211,11 +211,9 @@ export function subscribeSessionRuntimePublicationToMetadata(params: Readonly<{
     observeRuntimeEvent,
     async waitForProviderSessionIdPublication(providerSessionId: string, signal: AbortSignal): Promise<void> {
       signal.throwIfAborted();
-      const publication = nativeIdentityPublication;
       const unavailable = () => Object.assign(new Error('Native Session identity publication is unavailable'), {
         code: 'native_agent_identity_publication_unavailable',
       });
-      if (disposed || publication?.providerSessionId !== providerSessionId) throw unavailable();
       let onAbort: (() => void) | undefined;
       const aborted = new Promise<never>((_resolve, reject) => {
         onAbort = () => reject(signal.reason);
@@ -223,10 +221,18 @@ export function subscribeSessionRuntimePublicationToMetadata(params: Readonly<{
         if (signal.aborted) onAbort();
       });
       try {
-        const result = await Promise.race([publication.result, aborted]);
-        signal.throwIfAborted();
-        if (disposed || nativeIdentityPublication !== publication) throw unavailable();
-        if (!result.ok) throw Object.assign(unavailable(), { cause: result });
+        while (true) {
+          const publication = nativeIdentityPublication;
+          if (disposed || publication?.providerSessionId !== providerSessionId) throw unavailable();
+          const result = await Promise.race([publication.result, aborted]);
+          signal.throwIfAborted();
+          if (disposed || nativeIdentityPublication?.providerSessionId !== providerSessionId) throw unavailable();
+          // Learning the transcript path upgrades this same native identity.
+          // Its current write, rather than the earlier path-less write, owns admission.
+          if (nativeIdentityPublication !== publication) continue;
+          if (!result.ok) throw Object.assign(unavailable(), { cause: result });
+          return;
+        }
       } finally {
         if (onAbort) signal.removeEventListener('abort', onAbort);
       }

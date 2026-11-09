@@ -1,22 +1,36 @@
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, onTestFailed, vi } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import { randomUUID } from 'node:crypto';
+import nacl from 'tweetnacl';
+import { z } from 'zod/mini';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import { signExternalActionApprovalInputV1, verifyScmRefineSavedSessionV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { admitRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { SessionInputAdmissionReceiptV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { SESSION_PENDING_ADMISSION_SETTLEMENT_EVENT_V1, SessionPendingAdmissionSettlementRequestV1Schema,
+  SessionPendingAdmissionSettlementResponseV1Schema } from '@happier-dev/protocol/sessions/messages/sessionPendingAdmissionSettlementV1';
 import fastify from 'fastify';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { reloadConfiguration } from '@/configuration';
+import { configuration, reloadConfiguration } from '@/configuration';
+import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
+import { updateSettings, type StoredCredentials } from '@/persistence';
+import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 
 import type { ExecutionRunState } from './executionRunTypes';
 import { ExecutionRunHostBridge } from './ExecutionRunHostBridge';
+import { projectExecutionRunSessionUpdateState } from './publicState';
 import type { AgentSessionOpenRequest, AgentSessionRuntime, AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
 import { createEmptyBackendExecutionSurfaces, type EngineAdapterResolution } from '@/agent/runtime/registry/engineRegistryTypes';
 import { resolveCliEngineRegistry } from '@/agent/runtime/registry/engineRegistry';
 import { projectEngineRuntimeContributionFromAgent } from '@/agent/runtime/registry/engineRegistry/contributions';
 import { createNativeAgentSessionInteractionHostRuntime } from './nativeAgentExecutionRun';
 import { createLazyExecutionRunHostRuntime } from './hostRuntime/lazy';
-import { createVoiceSessionContextLease } from './testkit/nativeSessionContext';
+import { createNativeSessionBoundary, createVoiceSessionContextLease, createVoiceSessionRuntimeThroughNativeFactory } from './testkit/nativeSessionContext';
 import { captureScmComparison } from '@/scm/comparisons/captureScmComparison';
 import { scmDiffSummaryResultStore } from '@/agent/executionRuns/tasks/scmDiffSummary/results/resultStore';
 import { buildReviewEngineInventoryItems } from '@/session/actions/inventory/buildReviewEngineInventoryItems';
@@ -26,6 +40,9 @@ import type { SessionProviderInputOutcome } from '@/agent/runtime/session/input/
 import { ScmComparisonSchema, SessionInputAdmissionResultV1Schema, ScmDiffSummaryRefineInputSchema, ExecutionRunGetResponseSchema,
   type SessionInputAdmissionResultV1, type ScmActionExecute } from '@happier-dev/protocol';
 import { getAgentStaticModels } from '@happier-dev/agents';
+import { readMessageDisplayText } from '@happier-dev/session-core/messages';
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { EphemeralUpdateSchema } from '@happier-dev/protocol/updates';
 import { executeScmActionOperation } from '@/scm/actions/executeScmActionOperation';
 import { ReviewProfile } from '@/agent/executionRuns/profiles/review/ReviewProfile';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
@@ -43,7 +60,11 @@ import { decodeBase64, decrypt, encodeBase64, encryptLegacy } from '@/api/encryp
 import { UserMessageSchema } from '@/api/types';
 import { createActionExecutor, ExternalActionRequestEnvelopeV2Schema, openExternalActionRequestV2, prepareExternalActionResponseV2,
   type ActionExecutorContext } from '@happier-dev/protocol';
-import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { deriveAccountMachineKeyFromRecoverySecret, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { computeExternalActionRequestEnvelopeDigestV1, decodeExternalActionResolvedTargetV1, verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
+  EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, EXTERNAL_ACTION_RESOLVED_TARGET_HEADER } from '@happier-dev/protocol/actions';
+import { encryptSessionPayload, decryptSessionPayload } from '@/session/transport/encryption/sessionEncryptionContext';
 import { ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
 import { ReviewWalkthroughResponseSchema } from '@happier-dev/protocol/reviews/reviewNarration';
 import { readRetainedExecutionRunRecords, reconcileRetainedExecutionRunRecords } from '@/daemon/executionRunRegistry';
@@ -55,10 +76,36 @@ import { runSessionLoopLifecycle } from '@/agent/runtime/session/loop/lifecycle'
 import { createLifecycleParams } from '@/agent/runtime/session/loop/lifecycle.testkit';
 import { registerRunnerTerminationHandlers } from '@/agent/runtime/lifecycle/runnerTerminationHandlers';
 import { cleanupBackendRunResources } from '@/agent/runtime/cleanupBackendRunResources';
+import { commitRuntimeSessionEvent } from '@/agent/runtime/session/transcripts/publishRuntimeSessionEvent';
+import { createHostWorkerUpdatePublication } from '@/agent/runtime/session/contextOnly/hostWorkerUpdatePublication';
+import { ApiSessionClient } from '@/api/session/sessionClient';
+import { ApiMachineClient } from '@/api/apiMachine';
+import * as installationIdentity from '@/daemon/identity/store';
+import { createPlainSessionFixture, createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
+import { createApiSessionSocketStub, resolveApiSessionSocketDefaultAck } from '@/testkit/backends/apiSessionSocketHarness';
+import { createSocketTransportAdapter, socketRpcCodec, type SocketRpcContent } from '@happier-dev/sync-client';
+import * as sessionSockets from '@/api/session/sockets';
+import { sendSessionMessage } from '@/session/services/sendSessionMessage';
+import { buildAcpAgentMessageEnvelope } from '@/api/session/acpMessageEnvelope';
+import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
+import type { SessionMessageContent } from '@/api/types';
+import { SESSION_PENDING_EXECUTION_RUN_MATERIALIZE_NEXT_EVENT_V2, SESSION_PENDING_EXECUTION_RUN_ACCEPTED_EVENT_V2,
+  SessionPendingExecutionRunMaterializeNextRequestV2Schema, SessionPendingExecutionRunAcceptedRequestV2Schema,
+  SessionPendingExecutionRunMaterializeNextResponseV2Schema, SessionExecutionRunPendingEnqueueRequestV1Schema,
+  SessionPendingExecutionRunEnqueueByMachineRequestV2Schema, SESSION_PENDING_EXECUTION_RUN_ENQUEUE_BY_MACHINE_EVENT_V2,
+} from '@happier-dev/protocol/sessions/messages/sessionPendingExecutionRunMachineAdmissionV2';
 
 const nativeOpen = vi.hoisted(() => vi.fn<(request: AgentSessionOpenRequest) => Promise<AgentSessionRuntime>>());
 const nativeModule = vi.hoisted(() => ({ ready: undefined as Promise<void> | undefined }));
 const retainedReadFailure = vi.hoisted(() => ({ armed: false, failed: false }));
+const requestRunMaterialization = vi.hoisted(() => vi.fn<typeof import('@/daemon/controlClient')['requestExecutionRunConnectedServicesMaterialization']>());
+let nativeComposedSession: ApiSessionClient | undefined;
+
+// The runner-to-daemon transport is the boundary; selection and resume stay real.
+vi.mock('@/daemon/controlClient', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/daemon/controlClient')>(),
+  requestExecutionRunConnectedServicesMaterialization: requestRunMaterialization,
+}));
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
@@ -100,7 +147,14 @@ vi.mock('./createExecutionRunBridgeRuntime', async (importOriginal) => {
           agent,
           engineAdapter: { runtimeCore: {
             createSessionRuntime: () => { throw new Error('Unexpected parent Session runtime in native child-Run fixture'); },
-            createExecutionRunBackend: nativeOptions => createNativeAgentSessionInteractionHostRuntime({
+            createExecutionRunBackend: nativeOptions => nativeComposedSession
+              ? createVoiceSessionRuntimeThroughNativeFactory({
+                runtime: { sessions: { open: nativeOpen } },
+                capabilities: { open: ['create', 'resume'], delivery: ['newTurn'], cancel: false },
+                modelId: nativeOptions.modelId ?? 'native-default',
+                session: nativeComposedSession, runtimeOptions: nativeOptions,
+              })
+              : createNativeAgentSessionInteractionHostRuntime({
             runtime: { sessions: { open: nativeOpen } }, options: nativeOptions,
             lease: { pluginId: 'test.agent', pluginVersion: '1.0.0', agentId: 'test.agent', localAgentId: 'agent',
               occurrenceId: 'native-test-occurrence', isCurrent: () => true },
@@ -128,7 +182,10 @@ beforeAll(async () => {
 afterAll(async () => { await runtimeFixture?.dispose(); });
 beforeEach(() => {
   nativeOpen.mockReset();
+  requestRunMaterialization.mockReset();
+  requestRunMaterialization.mockResolvedValue({ ok: false, error: 'No daemon materialization in this fixture' });
   nativeModule.ready = undefined;
+  nativeComposedSession = undefined;
   retainedReadFailure.armed = false;
   retainedReadFailure.failed = false;
   directory = mkdtempSync(join(tmpdir(), 'happier-pending-target-'));
@@ -172,7 +229,10 @@ function runState(overrides: Partial<ExecutionRunState> = {}): ExecutionRunState
   };
 }
 
-function createHarness(detached = false, reviewerRole = false, sendAcp: ExecutionRunTranscriptPublisher = async () => {}, sessionId = 'session-1') {
+function createHarness(detached = false, reviewerRole = false, sendAcp: ExecutionRunTranscriptPublisher = async () => {}, sessionId = 'session-1',
+  parentSession?: ApiSessionClient,
+  onPublicStateUpdated?: ConstructorParameters<typeof ExecutionRunHostBridge>[0]['onPublicStateUpdated'],
+  parentPermissionHandler?: ProviderEnforcedPermissionHandler) {
   const reviewer = reviewerRole ? resolveExecutionRunRoleV1({ roleId: 'reviewer',
     accountRoleOverrides: { status: 'ready', overrides: {} } }) : undefined;
   if (reviewerRole && !reviewer) throw new Error('Expected the reviewer role');
@@ -182,6 +242,7 @@ function createHarness(detached = false, reviewerRole = false, sendAcp: Executio
     overrides: {}, notes: '', sessionRoles: { reviewer },
   } } } : {});
   let consume: ExecutionRunPendingInputBinding['consume'] | undefined;
+  let wakePendingInput: (() => void) | undefined;
   const acceptedInputs = new Set<string>();
   const inputOutcomes: SessionProviderInputOutcome[] = [];
   const pendingInputs: ExecutionRunAdmittedPendingInputV1[] = [];
@@ -201,6 +262,7 @@ function createHarness(detached = false, reviewerRole = false, sendAcp: Executio
     return { persisted: true, delivered: true };
   });
   const manager = new ExecutionRunHostBridge({
+    ...(onPublicStateUpdated ? { onPublicStateUpdated } : {}),
     // External Account preference input for this recovery fixture.
     resolveRunReportPolicy: async () => ({ preset: 'important' }),
     parentProvider: TEST_BACKEND_ID,
@@ -211,7 +273,7 @@ function createHarness(detached = false, reviewerRole = false, sendAcp: Executio
       // Parent Agent configuration is an external runtime observation; child selection stays real.
       readAppliedChildSelection: async () => ({ status: 'applied' as const, backendTarget: { kind: 'builtInAgent' as const, agentId: 'claude' },
         modelId: getAgentStaticModels('claude', { catalogOnly: true })[0]!.id, connectedServices: null }),
-      session: {
+      session: parentSession ?? {
         sessionId,
         getMetadataSnapshot: () => metadata,
         updateMetadata: vi.fn(),
@@ -223,6 +285,7 @@ function createHarness(detached = false, reviewerRole = false, sendAcp: Executio
           return disposition;
         },
         bindExecutionRunPendingInput: (binding: ExecutionRunPendingInputBinding) => {
+          wakePendingInput = () => { if (binding.isCurrent()) binding.wake?.(); };
           consume = input => {
             const admitted = binding.consume(input);
             binding.wake?.();
@@ -248,7 +311,9 @@ function createHarness(detached = false, reviewerRole = false, sendAcp: Executio
         blockExecutionRunPendingDelivery,
       },
       machineId: 'machine-1',
-      permissionHandler: { handleToolCall: vi.fn() },
+      permissionHandler: parentSession
+        ? parentPermissionHandler ?? new ProviderEnforcedPermissionHandler(parentSession, { logPrefix: '[Waiter fixture]' })
+        : { handleToolCall: vi.fn() },
     } } : {}),
   });
   bridges.push(manager);
@@ -265,11 +330,703 @@ function createHarness(detached = false, reviewerRole = false, sendAcp: Executio
     firstEnqueuedInput,
     inputOutcomes,
     pendingInputs,
+    notifyPendingTarget: async (runId: string) => {
+      // SessionClient.notifyExecutionRunPendingTarget wakes a live binding before
+      // notifying the bridge's target-reconciliation listener.
+      wakePendingInput?.();
+      await manager.reconcilePendingExecutionRunTarget(runId);
+    },
     consume: (input: ExecutionRunAdmittedPendingInputV1) => consume?.(input),
   };
 }
 
 describe('ExecutionRunHostBridge pending target recovery', () => {
+  it('retains a typed pre-effect refusal for explicit recovery of an unavailable bounded Run', async () => {
+    const harness = createHarness();
+    harness.runs.set('run-1', runState({ runClass: 'bounded', status: 'failed', resumeHandle: null,
+      error: { code: 'agent_isolation_unavailable', message: 'Agent placement unavailable' } }));
+    const recoveryStatus = {
+      localId: 'recovery-input', status: 'queued' as const, deliveryStatus: { status: 'queued' as const },
+      requestedAction: { v: 2 as const, kind: 'recover_execution_run' as const },
+    };
+    harness.listExecutionRunPendingDeliveryStatuses.mockResolvedValue([recoveryStatus]);
+    expect(harness.manager.getPublic('run-1')).toMatchObject({ lifecycle: { state: 'unavailable' } });
+    await harness.notifyPendingTarget('run-1');
+    expect(harness.blockExecutionRunPendingDelivery).toHaveBeenCalledExactlyOnceWith('run-1', 'recovery-input');
+    expect(nativeOpen).not.toHaveBeenCalled();
+    expect(harness.manager.getPublic('run-1')).toMatchObject({ status: 'failed', error: { code: 'agent_isolation_unavailable' } });
+  });
+
+  it.each(['service', 'bound_action', 'external_cli', 'external_cli_revoked', 'cli_entry', 'attached_bounded_recovery', 'attached_bounded_launch_failure', 'attached_bounded_turn_failure'] as const)('settles a fresh input after Ensure through real materialization via %s', async entryPoint => {
+    const launchFailure = entryPoint === 'attached_bounded_launch_failure';
+    const turnFailure = entryPoint === 'attached_bounded_turn_failure';
+    const boundedRecovery = entryPoint === 'attached_bounded_recovery' || launchFailure || turnFailure;
+    const completionIds: string[] = [];
+    let replayInitialFailure: (() => void) | undefined;
+    const parentNotificationAbort = new AbortController();
+    let secondCompletionWake: Promise<boolean> | undefined;
+    const cliEntry = entryPoint === 'cli_entry';
+    const external = entryPoint === 'external_cli' || entryPoint === 'external_cli_revoked' || cliEntry;
+    let requesterCurrent = true;
+    const sessionId = 'c123456789012345678901234';
+    const origin = 'http://waiter-home.test';
+    const serverIdentityId = cliEntry ? 'srv_waiter' : 'waiter-home';
+    if (cliEntry) {
+      vi.stubEnv('HAPPIER_SERVER_URL', origin);
+      reloadConfiguration();
+    }
+    const legacySecret = new Uint8Array(32).fill(27);
+    const ctx = { encryptionKey: legacySecret, encryptionVariant: 'legacy' as const };
+    const mode = cliEntry ? 'e2ee' : 'plain';
+    const recipient = { kind: 'execution_run' as const, runId: 'run-1' };
+    let sidechainId = 'sidechain-1';
+    let initialOccurrence = 'pre-ensure';
+    const localId = 'fresh-after-ensure';
+    // Home's network response follows buildSessionInputAdmissionReceipt:
+    // Machine-authored protected attribution retains its Machine issuer.
+    const inputAdmissionReceipt = SessionInputAdmissionReceiptV1Schema.parse({ v: 1,
+      ...(external ? { issuer: 'authenticatedMachine' }
+        : { issuer: 'authenticatedAccount', actorAccountId: 'account-1', sessionRelationship: 'owner' }),
+      admittedTarget: { homeId: serverIdentityId, accountId: 'account-1', sessionId,
+        machineId: 'machine-1', installationId: 'waiter-installation' } });
+    const credentials = { token: 'fixture', encryption: null };
+    const jwt = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
+    const runtimeCredentials: StoredCredentials = cliEntry ? {
+      token: `${jwt({ alg: 'none' })}.${jwt({ sub: 'account-1', tokenEpoch: 0, provenance: { v: 1, kind: 'account', authority: 'present_user' } })}.signature`,
+      encryption: { type: 'legacy', secret: legacySecret }, credentialProvenance: 'stored_session',
+    } : credentials;
+    type Row = { id: string; seq: number; localId: string | null; sidechainId?: string;
+      content: SessionMessageContent; createdAt: number; updatedAt: number };
+    const rows: Row[] = [];
+    let pending: { localId: string; content: SessionMessageContent; requestedAction?: unknown } | undefined;
+    let claimed: typeof pending;
+    let claimCount = 0;
+    let nativeSequence = 0;
+    const nativeInputs: string[][] = [];
+    let emit: ((event: AgentSessionRuntimeEvent) => void) | undefined;
+    const observedPaths: string[] = [];
+    const observedRuns: string[] = [];
+    let finishNativeTurn: (() => void) | undefined;
+    let failNativeTurn: (() => void) | undefined;
+    const boundaryFailures: unknown[] = [];
+    const installation = nacl.sign.keyPair();
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: randomUUID(), binding: {
+      serverIdentityId, accountId: 'account-1', custodianAccountId: 'account-1',
+      authentication: { kind: 'terminal', tokenEpoch: 1 }, machineId: 'machine-1',
+      accountEncryptionMode: 'plain',
+      installationId: 'waiter-installation', actionId: 'session.message.send',
+      requestId: 'waiter-request', requestEnvelopeDigest: 'A'.repeat(43), target: { kind: 'session', sessionId },
+    } });
+    const observers: ReturnType<typeof createApiSessionSocketStub>[] = [];
+    // Socket.IO is the boundary; the canonical stub implements the surface used here.
+    const asSessionSocket = (stub: ReturnType<typeof createApiSessionSocketStub>) =>
+      stub as unknown as ReturnType<typeof sessionSockets.createSessionScopedSocketConnection>['socket'];
+    const notify = () => observers.forEach(socket => socket.trigger('ephemeral', {
+      type: 'activity', id: sessionId, active: true, activeAt: Date.now(), thinking: false,
+    }));
+    const socket = createApiSessionSocketStub({ emit: (event, args) => {
+      if (!boundedRecovery || event !== 'execution-run-updated') return;
+      const packet = z.object({ sid: z.string(), run: z.unknown() }).parse(args[0]);
+      const update = EphemeralUpdateSchema.parse({ type: 'execution-run-updated', sessionId: packet.sid, run: packet.run });
+      observers.forEach(observer => observer.trigger('ephemeral', update));
+    }, emitWithAck: (event, raw) => {
+      if (event === SESSION_PENDING_EXECUTION_RUN_MATERIALIZE_NEXT_EVENT_V2) {
+        const request = SessionPendingExecutionRunMaterializeNextRequestV2Schema.parse(raw);
+        expect(request).toMatchObject({ recipient, sidechainId });
+        const input = pending;
+        const base = { v: 2, ok: true, recipient, sidechainId,
+          authorAccountId: external ? null : 'account-1',
+          pendingCount: 0, pendingBlockedCount: 0, pendingVersion: 1,
+          deliveryState: { mode: 'provider', unresolved: Boolean(input) } };
+        if (!input) return { ...base, didMaterialize: false };
+        if (!claimed) claimCount += 1;
+        claimed = input;
+        const response = { ...base, didMaterialize: true, didWrite: false, message: {
+          id: null, seq: null, ...input, inputAdmissionReceipt, messageRole: 'user', providerAction: 'send',
+          requestedAction: input.requestedAction ?? { v: 1, kind: 'enqueue' }, createdAt: 1, updatedAt: 1,
+        } };
+        const parsed = SessionPendingExecutionRunMaterializeNextResponseV2Schema.safeParse(response);
+        if (!parsed.success) boundaryFailures.push(parsed.error.issues.map(issue => ({ code: issue.code, path: issue.path })));
+        return response;
+      }
+      if (event === SESSION_PENDING_ADMISSION_SETTLEMENT_EVENT_V1) {
+        const request = SessionPendingAdmissionSettlementRequestV1Schema.parse(raw);
+        if (request.decision.kind === 'reject') {
+          boundaryFailures.push({ decision: request.decision.kind, code: request.decision.code });
+          return SessionPendingAdmissionSettlementResponseV1Schema.parse({ v: 1,
+            result: { status: 'rejected', code: request.decision.code } });
+        }
+        if (request.decision.kind === 'admit' && pending) {
+          pending.content = request.decision.finalContent;
+          if (claimed) claimed.content = request.decision.finalContent;
+        }
+        return SessionPendingAdmissionSettlementResponseV1Schema.parse({ v: 1,
+          result: { status: 'accepted', localId: request.localId } });
+      }
+      if (event === SESSION_PENDING_EXECUTION_RUN_ACCEPTED_EVENT_V2) {
+        const request = SessionPendingExecutionRunAcceptedRequestV2Schema.parse(raw);
+        const content = claimed?.content;
+        if (!content) throw new Error('Expected accepted delivery content');
+        pending = undefined;
+        const message = { id: 'committed-fresh-input', seq: rows.length + 1, localId: request.localId,
+          content, createdAt: 1, updatedAt: 1 };
+        rows.push({ ...message, sidechainId });
+        notify();
+        return { v: 2, recipient, sidechainId, result: { ok: true, didResolve: true,
+          pendingCount: 0, pendingBlockedCount: 0, pendingVersion: 2,
+          message: { ...message, providerAction: 'send', requestedAction: claimed?.requestedAction ?? { v: 1, kind: 'enqueue' } } } };
+      }
+      return resolveApiSessionSocketDefaultAck(event, raw);
+    } });
+    const connection = () => {
+      const observer = createApiSessionSocketStub();
+      observers.push(observer);
+      return { socket: asSessionSocket(observer), transport: createSocketTransportAdapter(observer) };
+    };
+    const observe = vi.spyOn(sessionSockets, 'createSessionScopedSocketConnection').mockImplementation(connection);
+    let observeRun: ((request: Readonly<{ sessionId: string; runId: string; signal?: AbortSignal }>) => Promise<unknown>) | undefined;
+    const rpcObservation = vi.spyOn(sessionSockets, 'createUserScopedSocketConnection').mockImplementation(options => {
+      expect(options.token).toBe(runtimeCredentials.token);
+      const boundary = createApiSessionSocketStub({ emitWithAck: async (event, raw) => {
+        if (event !== 'rpc-call') return resolveApiSessionSocketDefaultAck(event, raw);
+        const packet = z.object({ method: z.string(), requestId: z.string(), params: z.unknown() }).parse(raw);
+        expect(packet.method).toBe(`${sessionId}:${SESSION_RPC_METHODS.EXECUTION_RUN_GET}`);
+        const content: SocketRpcContent = cliEntry ? { mode: 'e2ee', cipher: {
+          decryptRaw: async data => decryptSessionPayload({ ciphertextBase64: data, ctx }),
+          encryptRaw: async data => encryptSessionPayload({ payload: data, ctx }),
+        } } : { mode: 'plain' };
+        const decoded = await socketRpcCodec.decodeRequestParams(content, packet.params, packet.method);
+        const input = z.object({ runId: z.string() }).parse(decoded.params);
+        if (!observeRun) throw new Error('Run observer is not ready');
+        const result = await observeRun({ sessionId, runId: input.runId });
+        if (entryPoint === 'external_cli_revoked') requesterCurrent = false;
+        return { ok: true, result: await socketRpcCodec.encodeResponse(content, result, decoded.callId) };
+      } });
+      return { socket: asSessionSocket(boundary), transport: createSocketTransportAdapter(boundary) };
+    });
+    const app = fastify();
+    app.setErrorHandler((error, _request, reply) => {
+      const failure = error instanceof Error ? error : new Error('Fixture boundary failure');
+      boundaryFailures.push({ name: failure.name,
+        refusal: /^CLI ingress refused: ([a-z_]+)$/.exec(failure.message)?.[1],
+        at: failure.stack?.split('\n').slice(1, 4).filter(line => !/token|secret|key|bearer|password|credential/i.test(line)),
+      });
+      return reply.code(500).send({ error: 'fixture_boundary_failure' });
+    });
+    const homePaths: string[] = [];
+    const homeStatuses: { path: string; status: number }[] = [];
+    app.addHook('onRequest', async request => { homePaths.push(new URL(request.url, origin).pathname); });
+    app.addHook('onResponse', async (request, reply) => { homeStatuses.push({ path: new URL(request.url, origin).pathname, status: reply.statusCode }); });
+    const metadata = createTestMetadata({ machineId: 'machine-1', path: directory });
+    app.get('/v1/account/encryption/currentness', async () => createAccountEncryptionCurrentnessFixture({ mode }));
+    app.get('/v1/account/encryption', async () => ({ mode, updatedAt: 0 }));
+    app.get('/v1/account/profile', async () => ({ id: 'account-1' }));
+    app.get('/v2/account/settings', async () => ({ content: cliEntry ? { t: 'encrypted', c: sealAccountScopedBlobCiphertext({
+      kind: 'account_settings', material: { type: 'legacy', secret: legacySecret }, payload: {}, randomBytes: size => new Uint8Array(size).fill(7),
+    }) } : { t: 'plain', v: {} }, version: 1 }));
+    app.get(`/v2/sessions/${sessionId}`, async () => ({ session: createSessionRecordFixture({ id: sessionId,
+      active: true, encryptionMode: mode, metadata: cliEntry ? encryptSessionPayload({ payload: metadata, ctx }) : JSON.stringify(metadata) }) }));
+    let runCliIngress: ((body: unknown) => Promise<unknown>) | undefined;
+    app.post('/v1/actions/session.message.send', async request => {
+      if (!runCliIngress) throw new Error('CLI ingress is not ready');
+      homePaths.push('fixture_ingress_handler');
+      return await runCliIngress(request.body);
+    });
+    app.post('/v1/actions/session.message.send/execution-authorization/verify', async (request, reply) => {
+      expect(request.body).toEqual({ v: 1 });
+      return requesterCurrent ? { ok: true } : reply.code(403).send({ error: 'not_authenticated' });
+    });
+    app.get(`/v2/sessions/${sessionId}/messages/by-local-id/:localId`, async (request, reply) => {
+      const id = (request.params as { localId: string }).localId;
+      const message = rows.find(row => row.localId === id);
+      return message ? { message } : reply.code(404).send({ error: 'Message not found' });
+    });
+    app.get(`/v2/sessions/${sessionId}/execution-runs/:runId/pending`, async () => ({ recipient,
+      pending: boundedRecovery && pending ? [{ ...pending, status: 'queued', deliveryStatus: { status: 'queued' } }] : [] }));
+    app.get(`/v1/sessions/${sessionId}/messages`, async request => {
+      observedPaths.push(request.url);
+      const query = new URL(request.url, origin).searchParams;
+      return { messages: rows.filter(row => row.seq > Number(query.get('afterSeq') ?? 0)
+        && (query.get('scope') === 'sidechain'
+          ? row.sidechainId === query.get('sidechainId') : row.sidechainId === undefined)) };
+    });
+    let session: ApiSessionClient | undefined;
+    let manager: ExecutionRunHostBridge | undefined;
+    let recoveryPhase = 'session_setup';
+    onTestFailed(() => {
+      if (boundedRecovery) console.info(JSON.stringify({ recoveryPhase, nativeOpens: nativeOpen.mock.calls.length,
+        nativeInputCount: nativeInputs.length, claimCount, pending: Boolean(pending),
+        pendingEnvelopeValid: pending?.content.t === 'plain' && UserMessageSchema.safeParse(pending.content.v).success,
+        runStatus: manager?.getPublic(recipient.runId)?.status }));
+    });
+    let requester: Awaited<ReturnType<typeof admitRequesterAccountActionContext>> = null;
+    let restoreIdentity: (() => void) | undefined;
+    let retirePendingTarget: (() => void) | undefined;
+    let retireWorkerPublication: (() => void) | undefined;
+    const admitPending = (input: Readonly<{ localId: string; content: SessionMessageContent; requestedAction?: unknown }>) => {
+      pending = { localId: input.localId, content: input.content, requestedAction: input.requestedAction };
+      socket.trigger('update', { id: 'fresh-pending', seq: 1, createdAt: 1,
+        body: { t: 'pending-changed', sid: sessionId, recipient,
+          pendingCount: 1, pendingBlockedCount: 0, pendingVersion: 1 } });
+    };
+    app.post(`/v2/sessions/${sessionId}/execution-runs/:runId/pending`, async request => {
+      admitPending(SessionExecutionRunPendingEnqueueRequestV1Schema.parse(request.body));
+      return { didWrite: true, terminal: false };
+    });
+    await app.ready();
+    const restore = installAxiosFastifyAdapter({ app, origin });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ features: {}, capabilities: { serverIdentity: { serverIdentityId }, session: {
+      pendingInput: { protocolVersion: 3 }, runtimeActivity: { protocolVersion: 2 }, publisherAuthority: { protocolVersion: 1 },
+    } } }), { status: 200 })));
+    nativeOpen.mockImplementation(async request => {
+      if (launchFailure && request.kind === 'resume') {
+        throw Object.assign(new Error('Provider connection is unavailable'), { code: 'provider_connection_not_found' });
+      }
+      return {
+      watch(next) { emit = next; next({ kind: 'provider-session-id', providerSessionId: 'provider-session-1',
+        sessionId: request.sessionId, sequence: ++nativeSequence, emittedAtMs: nativeSequence }); return { dispose() { emit = undefined; } }; },
+      async send(input) {
+        nativeInputs.push([...input.inputIds]);
+        const base = () => ({ sessionId: request.sessionId, sequence: ++nativeSequence, emittedAtMs: nativeSequence });
+        emit?.({ ...base(), kind: 'input-accepted', inputIds: input.inputIds, delivery: input.delivery });
+        emit?.({ ...base(), kind: 'turn-start', turnId: input.delivery.turnId, startedBy: 'host' });
+        emit?.({ ...base(), kind: 'message-delta', turnId: input.delivery.turnId, channel: 'assistant',
+          text: boundedRecovery ? JSON.stringify({ summary: 'Recovered reply', deliverables: [] }) : 'Recovered reply' });
+        finishNativeTurn = () => emit?.({ ...base(), kind: 'turn-complete', turnId: input.delivery.turnId });
+        failNativeTurn = () => emit?.({ ...base(), kind: 'turn-failed', turnId: input.delivery.turnId,
+          diagnostic: { code: 'native_process_exited', severity: 'error' } });
+        if (turnFailure && input.inputIds.includes(localId)) {
+          replayInitialFailure!();
+          expect(manager?.getPublic(recipient.runId)).toMatchObject({ status: 'running' });
+          queueMicrotask(() => {
+            failNativeTurn?.();
+            failNativeTurn?.();
+          });
+        }
+        if (external || boundedRecovery && !turnFailure && input.inputIds.includes(localId)) queueMicrotask(() => finishNativeTurn?.());
+        return { status: 'admitted' };
+      },
+      async dispose() {},
+      };
+    });
+    try {
+      const targetSubscriptions = boundedRecovery ? vi.spyOn(ApiSessionClient.prototype, 'subscribeExecutionRunPendingTarget') : null;
+      const nativeSession = createPlainSessionFixture({ id: sessionId, metadata });
+      session = new ApiSessionClient(runtimeCredentials.token, cliEntry ? { ...nativeSession,
+        encryptionMode: 'e2ee', encryptionKey: legacySecret, encryptionVariant: 'legacy',
+      } : nativeSession, {
+        ...(boundedRecovery ? { localMachineId: 'machine-1' } : {}),
+        metadataAuthority: { kind: 'owner', credentials: runtimeCredentials }, localMachineId: 'machine-1',
+        durableMutationDeliveryInitiallyActive: false,
+        transport: { serverId: 'waiter-home', serverUrl: origin,
+          createSessionSocketTransport: () => ({ socket: asSessionSocket(socket), transport: createSocketTransportAdapter(socket) }),
+          createAccountUpdatesSocket: () => asSessionSocket(createApiSessionSocketStub()),
+        },
+      });
+      const sessionContractReady = new Promise<void>(resolve => session!.once('session-sync-server-contract', resolve));
+      nativeComposedSession = session;
+      // Home publication is a network boundary. Keep the host transcript producer,
+      // envelopes, exact-turn metadata and real Pending materializer beneath it.
+      vi.spyOn(session, 'enqueueAgentMessageCommitted').mockImplementation(async (provider, body, options) => {
+        rows.push({ id: `reply-${rows.length}`, seq: rows.length + 1, localId: options?.localId ?? null,
+          sidechainId: body.sidechainId, createdAt: 2, updatedAt: 2,
+          content: cliEntry ? { t: 'encrypted', c: encryptSessionPayload({ payload: buildAcpAgentMessageEnvelope({ provider, body, meta: options?.meta }), ctx }) }
+            : { t: 'plain', v: buildAcpAgentMessageEnvelope({ provider, body, meta: options?.meta }) } });
+        notify();
+        return { persisted: true, delivered: true };
+      });
+      const parentPermissionHandler = boundedRecovery
+        ? new ProviderEnforcedPermissionHandler(session, { logPrefix: '[Recovery fixture]' }) : undefined;
+      const recoveryBindings = boundedRecovery ? vi.spyOn(session, 'bindExecutionRunPendingInput') : null;
+      if (parentPermissionHandler) {
+        // This in-process host has no daemon snapshot IPC. Retire the Session's
+        // dormant default owner before constructing the fixture's single host.
+        await session.disposeExecutionRuns();
+        for (const result of targetSubscriptions?.mock.results ?? []) {
+          if (result.type === 'return' && typeof result.value === 'function') result.value();
+        }
+        parentPermissionHandler.setPermissionMode('read-only');
+        session.setSessionRuntimeControls({ readPermissionHandler: () => parentPermissionHandler,
+          readAppliedChildSelection: async () => ({ status: 'applied',
+            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            modelId: getAgentStaticModels('claude', { catalogOnly: true })[0]!.id, connectedServices: null }),
+        });
+      }
+      const harness = createHarness(false, false, async () => {}, sessionId, session, run => {
+        // Home is the network boundary: mirror the existing Session runtime
+        // publisher and sessionUpdateHandler's schema-validated Run hint.
+        const update = EphemeralUpdateSchema.parse({ type: 'execution-run-updated', sessionId, run: projectExecutionRunSessionUpdateState(run) });
+        observers.forEach(observer => observer.trigger('ephemeral', update));
+      }, parentPermissionHandler);
+      manager = harness.manager;
+      if (boundedRecovery) {
+        // Same public composition as registerSessionClientRuntimeHandlers:
+        // mount the sole host owner and retain its subscription's cleanup.
+        session.setExecutionRunWorkerUpdateSource(manager);
+        if (turnFailure) {
+          const publication = createHostWorkerUpdatePublication({ getSession: () => session!, agentId: TEST_BACKEND_ID });
+          publication.bind(session);
+          retireWorkerPublication = publication.dispose;
+        }
+        retirePendingTarget = session.subscribeExecutionRunPendingTarget(runId => harness.manager.reconcilePendingExecutionRunTarget(runId));
+      }
+      await sessionContractReady;
+      if (boundedRecovery) {
+        recoveryPhase = 'initial_start';
+        const started = await manager.start({ sessionId, cwd: directory, intent: 'delegate',
+          backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, instructions: 'Initial input',
+          permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'request_response', localInputId: 'initial-input' });
+        recipient.runId = started.runId;
+        sidechainId = started.sidechainId;
+        recoveryPhase = 'initial_input';
+        await vi.waitFor(() => expect(nativeInputs).toEqual([['initial-input']]));
+        expect(nativeOpen).toHaveBeenCalledOnce();
+        initialOccurrence = manager.getPublic(recipient.runId)!.inputTurns!.occurrenceId;
+        // The sole external provider exits. Host failure/custody and retained
+        // checkpoint classification are production logic, not seeded state.
+        // Native process adapters fail the active turn before ending the runtime
+        // (Codex appServer/runtime.ts attachClientHandlers is one producer).
+        replayInitialFailure = failNativeTurn;
+        failNativeTurn!();
+        if (!turnFailure) {
+          emit!({ kind: 'runtime-ended', sessionId, sequence: ++nativeSequence, emittedAtMs: nativeSequence,
+            cause: 'processExited', retryable: true, diagnostic: { code: 'native_process_exited', severity: 'error' } });
+        }
+        recoveryPhase = 'native_exit_settlement';
+        await manager.waitForTerminal(recipient.runId);
+        await vi.waitFor(() => expect(harness.controllers.has(recipient.runId)).toBe(false));
+        if (launchFailure || turnFailure) {
+          const reports = await manager.prepareWorkerUpdates(sessionId, { signal: new AbortController().signal });
+          expect(reports).toHaveLength(1);
+          expect(reports[0]!.update).toMatchObject({ ownerState: 'failed', workerId: recipient.runId });
+          completionIds.push(reports[0]!.localId);
+          if (turnFailure) {
+            await vi.waitFor(() => expect(rows.filter(row => completionIds.includes(row.localId ?? ''))).toHaveLength(1));
+          }
+          await reports[0]!.acknowledgeAccepted();
+          expect(await manager.prepareWorkerUpdates(sessionId, { signal: new AbortController().signal })).toEqual([]);
+          if (turnFailure) secondCompletionWake = manager.waitForWorkerUpdateChange(sessionId, parentNotificationAbort.signal);
+        }
+        expect(await manager.send(recipient.runId, { message: 'Ordinary input', localInputId: 'ordinary-input' }))
+          .toMatchObject({ ok: false, errorCode: 'execution_run_not_allowed' });
+        expect(await manager.send(recipient.runId, { message: 'Duplicate recovery', localInputId: 'initial-input', resume: true }))
+          .toMatchObject({ ok: false, errorCode: 'execution_run_invalid_action_input' });
+        const failed = harness.runs.get(recipient.runId)!;
+        harness.runs.set('unrecoverable', { ...failed, runId: 'unrecoverable', retentionPolicy: 'ephemeral' });
+        expect(await manager.send('unrecoverable', { message: 'Cannot recover', localInputId: 'fresh-unrecoverable', resume: true }))
+          .toMatchObject({ ok: false, errorCode: 'execution_run_not_allowed' });
+        expect(nativeOpen).toHaveBeenCalledOnce();
+        expect(requestRunMaterialization).not.toHaveBeenCalled();
+        recoveryPhase = 'refusal_controls_complete';
+      } else {
+        harness.runs.set('run-1', runState({ sessionId, status: 'failed', finishedAtMs: 2,
+          inputTurns: { occurrenceId: 'pre-ensure', last: { turnId: 'initial-turn', inputIds: ['initial-input'], state: 'completed' } },
+          launch: { cwd: directory }, error: { code: 'codex_runtime_ended', message: 'Native process ended' } }));
+      }
+      expect(manager.getPublic(recipient.runId)).toMatchObject({ lifecycle: { state: boundedRecovery ? 'recoverable_with_input' : 'recoverable' } });
+      if (!boundedRecovery) expect(await manager.ensure(recipient.runId, { resume: true })).toEqual({ ok: true });
+      const rpc = createExecutionRunRpcActionDeps({ manager, context: { sessionId, cwd: directory },
+        isExecutionRunsEnabled: () => true, policy: { maxConcurrentRuns: null, boundedTimeoutMs: null,
+          reviewBoundedTimeoutMs: null, maxTurns: null, allowIoModes: new Set(['streaming', 'request_response']) } });
+      const readExecutionRun = async (request: Readonly<{ sessionId: string; runId: string; signal?: AbortSignal }>) => {
+        observedRuns.push(request.runId);
+        const result = await rpc.executionRunGet!(request.sessionId, { runId: request.runId }, { signal: request.signal });
+        if (observedRuns.length === 1 && !external && !boundedRecovery) {
+          expect(manager?.getPublic(request.runId)?.inputTurns?.current?.state).toBe('active');
+          finishNativeTurn?.();
+        }
+        return result;
+      };
+      observeRun = readExecutionRun;
+      requester = external && !cliEntry ? await runWithServerHttpBaseUrl(origin, () => admitRequesterAccountActionContext({
+        authorization, credentials, serverId: 'waiter-home', serverIdentityId: 'waiter-home', serverHttpBaseUrl: origin,
+        isCurrent: async () => requesterCurrent,
+      })).catch(() => { throw new Error(`Requester admission failed at Home paths: ${JSON.stringify(homePaths)}`); }) : null;
+      if (external && !cliEntry) expect(requester).not.toBeNull();
+      const identity = vi.spyOn(installationIdentity, 'readInstallationIdentityIfExistsSync').mockReturnValue({
+        version: 1, installationId: 'waiter-installation', createdAt: 1,
+        publicKey: encodeBase64(installation.publicKey, 'base64url'), privateKey: encodeBase64(installation.secretKey, 'base64url'),
+      });
+      const machine = new ApiMachineClient(runtimeCredentials.token, { id: 'machine-1', encryptionMode: 'plain',
+        metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 });
+      Reflect.set(machine, 'socket', createApiSessionSocketStub({ connected: true, emitWithAck: (event, raw) => {
+        expect(event).toBe(SESSION_PENDING_EXECUTION_RUN_ENQUEUE_BY_MACHINE_EVENT_V2);
+        const input = SessionPendingExecutionRunEnqueueByMachineRequestV2Schema.parse(raw);
+        expect(input).toMatchObject({ sessionId, recipient, targetMachineId: 'machine-1' });
+        expect(input.externalAction?.authorization.binding).toMatchObject(cliEntry
+          ? { actionId: 'session.message.send', accountId: 'account-1', target: { kind: 'session', sessionId } }
+          : authorization.binding);
+        admitPending(input);
+        return { v: 2, result: { status: 'accepted', localId: input.localId } };
+      } }));
+      restoreIdentity = () => identity.mockRestore();
+      if (cliEntry) {
+        const { createCliActionExecutorFromCredentials } = await import('@/session/actions/createCliActionExecutorFromCredentials');
+        const { createActionSettingsProvider } = await import('@/settings/actionsSettingsProvider');
+        const { executeExternalAction } = await import('@/daemon/externalActions/executeExternalAction');
+        const { prepareInstalledRequesterAccountActionContext } = await import('@/daemon/sessionEncryption/requesterAccountActionProjection');
+        const createReceiver = (receiverCredentials: StoredCredentials) => createCliActionExecutorFromCredentials({
+          credentials: receiverCredentials, readCredentials: async () => receiverCredentials,
+          serverId: configuration.activeServerId, serverApiUrl: origin, serverIdentityId,
+          pluginActionExecutionOwner: 'current_process', actionsSettingsProvider: createActionSettingsProvider(),
+          machineAdmissionTransport: (request, options) => machine.enqueueSessionPendingByMachine(request, options),
+          externalActionMachineInstallationId: 'waiter-installation', externalActionMachineRequestPrivateKey: installation.secretKey,
+        });
+        // Home minting/verification and installed Session placement are boundaries;
+        // ingress, credentialed executors and original-requester admission stay real.
+        runCliIngress = async body => {
+          const envelope = ExternalActionRequestEnvelopeV2Schema.parse(body);
+          const opened = openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope, binding: { serverIdentityId, accountId: 'account-1',
+            authentication: { kind: 'account', tokenEpoch: 0 }, actionId: 'session.message.send', requestId: envelope.requestId,
+            target: { kind: 'session', sessionId } }, material: {
+              type: 'dataKey', machineKey: deriveAccountMachineKeyFromRecoverySecret(legacySecret),
+            } });
+          expect(opened?.input).toMatchObject({ sessionId, recipient, localId, wait: true, timeoutSeconds: 1 });
+          const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: randomUUID(), binding: {
+            ...authorization.binding, authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'e2ee',
+            requestId: envelope.requestId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+          } });
+          const response = await executeExternalAction({ actionId: 'session.message.send', envelope, executionAuthorization: root,
+            principal: { accountId: 'account-1', authority: 'present_user', authentication: { kind: 'account', tokenEpoch: 0 } },
+            currentMachineId: 'machine-1', currentServerId: configuration.activeServerId, currentAccountId: 'account-1',
+            currentServerHttpBaseUrl: origin, currentInstallationId: 'waiter-installation',
+            externalActionMachineRequestPrivateKey: installation.secretKey, isInstallationCurrent: () => true,
+            surface: 'cli', executor: createReceiver(runtimeCredentials),
+            resolveEncryption: async () => ({ serverIdentityId, material: {
+              type: 'dataKey', machineKey: deriveAccountMachineKeyFromRecoverySecret(legacySecret),
+            } }),
+            resolveTarget: async request => request.target?.kind === 'session' && request.target.sessionId === sessionId ? request.target : null,
+            verifyExecutionAuthorization: async request => request.authorization.token === root.token && requesterCurrent,
+            prepareRequesterAccountContext: async request => {
+              homePaths.push('fixture_requester_prepare');
+              try {
+                const prepared = await prepareInstalledRequesterAccountActionContext({ ...request, purpose: { kind: 'external_action' },
+                  machineId: 'machine-1', serverId: configuration.activeServerId, serverHttpBaseUrl: origin, ownCredentials: runtimeCredentials,
+                  resolveCurrentMachineExecutionOriginContext: async () => ({ machineId: 'machine-1', serverIdentityId }),
+                  resolveRequesterSessionBootstrap: async (id, attribution) => id === sessionId ? {
+                    credentials: runtimeCredentials, attribution, serverHttpBaseUrl: origin, getBoundSessionId: () => sessionId,
+                    isCurrent: async () => requesterCurrent, release: async () => {},
+                  } : null,
+                  createExecutor: context => createReceiver(context.credentials),
+                });
+                homePaths.push(prepared ? 'fixture_requester_ready' : 'fixture_requester_refused');
+                return prepared;
+              } catch (error) {
+                const failure = error instanceof Error ? error : new Error('Requester boundary failure');
+                boundaryFailures.push({ stage: 'requester_prepare', name: failure.name,
+                  at: failure.stack?.split('\n').slice(1, 5).filter(line => !/token|secret|key|bearer|password|credential/i.test(line)) });
+                throw error;
+              }
+            },
+          });
+          if (response.kind !== 'response') throw new Error(`CLI ingress refused: ${response.errorCode}`);
+          return response.prepared.response;
+        };
+      }
+      const sendingCredentials = external ? { ...credentials, token: randomUUID() } : credentials;
+      const result = await runWithServerHttpBaseUrl<unknown>(origin, async () => {
+        if (boundedRecovery) {
+          recoveryPhase = 'recovery_action';
+          const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId, mode: 'plain', ctx: null,
+            serverId: 'waiter-home', serverIdentityId: 'waiter-home', serverHttpBaseUrl: origin,
+            resolveServerFeaturesSnapshot: () => undefined,
+            invokeBoundSessionRpc: async (method, input, signal) => {
+              expect(method).toBe(SESSION_RPC_METHODS.EXECUTION_RUN_GET);
+              expect(input).toEqual({ runId: recipient.runId });
+              return readExecutionRun({ sessionId, runId: recipient.runId, signal });
+            },
+          });
+          const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), sessionSendMessage: deps.sessionSendMessage });
+          return executor.execute('session.message.send', { sessionId, recipient, localId, message: 'Fresh input',
+            wait: true, timeoutSeconds: 1, requestedAction: { v: 2, kind: 'recover_execution_run' } },
+          { surface: 'cli', authority: 'present_user' });
+        }
+        if (cliEntry) {
+          const { handleSessionCommand } = await import('@/cli/commands/session');
+          const output = captureConsoleJsonOutput();
+          const previousExitCode = process.exitCode;
+          try {
+            await handleSessionCommand(['send', sessionId, 'Fresh input', '--run', recipient.runId,
+              '--local-id', localId, '--wait', '--timeout', '1', '--json'], { readCredentialsFn: async () => runtimeCredentials });
+            return output.json<unknown>();
+          } finally {
+            output.restore();
+            process.exitCode = previousExitCode;
+          }
+        }
+        return entryPoint === 'service' ? sendSessionMessage({ credentials,
+        idOrPrefix: sessionId, recipient, localId, message: 'Fresh input', wait: true, timeoutMs: 1_000,
+        resolveAuthorizationHeaders: () => ({ 'x-fixture-authority': 'original-requester' }),
+        readExecutionRun,
+      }) : createCliActionDeps({ token: sendingCredentials.token, credentials: sendingCredentials,
+        sessionId: external ? 'cli-global' : sessionId, mode: 'plain', ctx: null,
+        serverId: 'waiter-home', serverIdentityId: 'waiter-home', serverHttpBaseUrl: origin,
+        externalActionMachineInstallationId: 'waiter-installation',
+        externalActionMachineRequestPrivateKey: installation.secretKey,
+        machineAdmissionTransport: (request, options) => machine.enqueueSessionPendingByMachine(request, options),
+        resolveServerFeaturesSnapshot: () => undefined,
+        invokeBoundSessionRpc: async (method, input, signal) => {
+          expect(external).toBe(false);
+          expect(method).toBe(SESSION_RPC_METHODS.EXECUTION_RUN_GET);
+          expect(input).toEqual({ runId: recipient.runId });
+          return readExecutionRun({ sessionId, runId: recipient.runId, signal });
+        },
+      }).sessionSendMessage!({ sessionId, recipient, localId, message: 'Fresh input', wait: true, timeoutSeconds: 1,
+        callerSurface: 'cli', actionCaller: { kind: 'host' },
+        requestedAction: { v: 1, kind: 'enqueue' },
+        context: { surface: 'cli', authority: 'present_user', ...(external
+          ? { externalActionExecutionAuthorization: requester!.authorization, externalActionTarget: { kind: 'session' as const, sessionId } } : {}) },
+        });
+      });
+      const diagnostic = JSON.stringify({ result,
+        claimCount, pending: Boolean(pending), claimed: Boolean(claimed), boundaryFailures, observedRuns, observedPaths, homePaths, homeStatuses,
+        socketEvents: socket.emitWithAck.mock.calls.map(([event]) => event), rows: rows.map(row => ({ seq: row.seq, localId: row.localId })) });
+      if (turnFailure) {
+        expect(nativeInputs).toEqual([['initial-input'], [localId]]);
+        expect(rows.filter(row => row.localId === localId)).toHaveLength(1);
+        const replayRecoveredFailure = failNativeTurn!;
+        await manager.waitForTerminal(recipient.runId);
+        await vi.waitFor(() => expect(harness.controllers.has(recipient.runId)).toBe(false));
+        expect(await secondCompletionWake).toBe(true);
+        expect(manager.getPublic(recipient.runId)).toMatchObject({ status: 'failed',
+          error: { code: 'native_process_exited' }, inputTurns: { last: { state: 'failed', inputIds: [localId] } } });
+        const reports = await manager.prepareWorkerUpdates(sessionId, { signal: new AbortController().signal });
+        expect(reports).toHaveLength(1);
+        expect((await session.takeExecutionRunWorkerUpdate(parentNotificationAbort.signal))?.localId).toBe(reports[0]!.localId);
+        expect(reports[0]!.update).toMatchObject({ ownerState: 'failed', workerId: recipient.runId,
+          runtimeIssueV1: { code: 'native_process_exited' } });
+        completionIds.push(reports[0]!.localId);
+        expect(new Set(completionIds).size).toBe(2);
+        await vi.waitFor(() => expect(rows.filter(row => completionIds.includes(row.localId ?? ''))).toHaveLength(2));
+        const completionRows = rows.filter(row => completionIds.includes(row.localId ?? ''));
+        expect(completionRows).toHaveLength(2);
+        expect(completionRows[1]!.seq).toBeGreaterThan(completionRows[0]!.seq);
+        replayRecoveredFailure();
+        replayInitialFailure!();
+        expect((await manager.prepareWorkerUpdates(sessionId, { signal: new AbortController().signal }))
+          .map(item => item.localId)).toEqual([completionIds[1]]);
+        // A replaced host recovers the sealed attempt identity; reconnecting
+        // the parent source cannot publish another row or consume its wake.
+        const replayed = new ExecutionRunHostBridge({ parentProvider: TEST_BACKEND_ID,
+          cwd: directory, happyHomeDir: directory, sendAcp: async () => {} });
+        session.setExecutionRunWorkerUpdateSource(replayed);
+        expect((await replayed.prepareWorkerUpdates(sessionId, { signal: parentNotificationAbort.signal }))
+          .map(item => item.localId)).toEqual([completionIds[1]]);
+        expect(rows.filter(row => completionIds.includes(row.localId ?? ''))).toHaveLength(2);
+        session.setExecutionRunWorkerUpdateSource(manager);
+        await reports[0]!.acknowledgeAccepted();
+        expect(await manager.prepareWorkerUpdates(sessionId, { signal: new AbortController().signal })).toEqual([]);
+        return;
+      }
+      if (launchFailure) {
+        expect(nativeOpen.mock.calls.map(([request]) => request.kind)).toEqual(['create', 'resume']);
+        expect(manager.getPublic(recipient.runId), diagnostic).toMatchObject({ status: 'failed',
+          error: { code: 'provider_connection_not_found' } });
+        await vi.waitFor(() => expect(harness.controllers.has(recipient.runId)).toBe(false));
+        const reports = await manager.prepareWorkerUpdates(sessionId, { signal: new AbortController().signal });
+        expect(reports).toHaveLength(1);
+        expect(reports[0]!.update).toMatchObject({ ownerState: 'failed', workerId: recipient.runId,
+          result: expect.stringContaining('Provider connection is unavailable') });
+        expect(nativeInputs).toEqual([['initial-input']]);
+        return;
+      }
+      expect(boundaryFailures, diagnostic).toEqual([]);
+      if (boundedRecovery) expect(recoveryBindings).toHaveBeenCalledOnce();
+      expect(manager.getPublic(recipient.runId), diagnostic).toMatchObject({ inputTurns: { last: { state: 'completed', inputIds: [localId] } } });
+      expect(manager.getPublic(recipient.runId)?.inputTurns?.occurrenceId).not.toBe(initialOccurrence);
+      expect(result, diagnostic).toMatchObject(boundedRecovery ? { ok: true, result: { status: 'accepted', localId } } : cliEntry ? { ok: true, data: { localId } } : entryPoint === 'external_cli_revoked'
+        ? { status: 'outcomeUnknown', localId, code: 'session_input_turn_outcome_unknown' }
+        : entryPoint === 'service'
+        ? { ok: true, waited: true, localId }
+        : { status: 'accepted', localId });
+      expect(nativeInputs).toEqual(boundedRecovery ? [['initial-input'], [localId]] : [[localId]]);
+      if (boundedRecovery) {
+        expect(manager.getPublic(recipient.runId)).toMatchObject({ status: 'succeeded' });
+      }
+      expect(claimCount).toBe(1);
+      expect(rows.filter(row => row.localId === localId)).toHaveLength(1);
+      expect(observedRuns.length).toBeGreaterThan(external || boundedRecovery ? 0 : 1);
+      expect(observedRuns.every(runId => runId === recipient.runId)).toBe(true);
+      expect(observedPaths).toEqual([]);
+      const settledReads = observedRuns.length;
+      for (let index = 0; index < 100; index += 1) notify();
+      await Promise.resolve();
+      expect(observedRuns).toHaveLength(settledReads);
+      expect(nativeOpen.mock.calls.map(([request]) => request)).toMatchObject(boundedRecovery
+        ? [{ kind: 'create' }, { kind: 'resume', providerSessionId: 'provider-session-1' }]
+        : [{ kind: 'resume', providerSessionId: 'provider-session-1' }]);
+    } finally {
+      parentNotificationAbort.abort();
+      retireWorkerPublication?.();
+      retirePendingTarget?.();
+      await requester?.dispose();
+      restoreIdentity?.();
+      await manager?.dispose();
+      await session?.close();
+      nativeComposedSession = undefined;
+      restore();
+      observe.mockRestore();
+      rpcObservation.mockRestore();
+      vi.unstubAllGlobals();
+      await app.close();
+    }
+  });
+
+  it.each([
+    { ioMode: 'request_response', continuation: 'pending' },
+    { ioMode: 'streaming', continuation: 'direct' },
+    { ioMode: 'request_response', continuation: 'direct_unkeyed' },
+  ] as const)('publishes initial and continued retained Agent answers once ($ioMode, $continuation)', async ({ ioMode, continuation }) => {
+    const native = createNativeSessionBoundary();
+    nativeOpen.mockImplementation(native.open);
+    const publications: Parameters<ExecutionRunTranscriptPublisher>[1][] = [];
+    const harness = createHarness(false, false, async (_provider, body) => { publications.push(body); });
+    const started = await harness.manager.start({ sessionId: 'session-1', intent: 'agent',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, modelSelection: null,
+      instructions: 'Answer the first question.', permissionMode: 'read_only',
+      retentionPolicy: 'resumable', runClass: 'long_lived', ioMode, localInputId: 'agent-initial' });
+    await vi.waitFor(() => expect(harness.enqueueSessionUserMessageWithDisposition).toHaveBeenCalled());
+    const controller = harness.controllers.get(started.runId) as ExecutionRunBackendController;
+    await controller.provisioningPromise;
+    try {
+      for (const [index, localId, prompt, answer] of [
+        [0, 'agent-initial', 'Answer the first question.', 'First answer.'],
+        [1, 'agent-continuation', 'Answer the follow-up.', 'Continued answer.'],
+      ] as const) {
+        if (index > 0 && continuation !== 'pending') {
+          expect(await harness.manager.send(started.runId, { message: prompt,
+            ...(continuation === 'direct' ? { localInputId: localId } : {}),
+          })).toMatchObject({ ok: true });
+        } else {
+          if (index > 0) expect(await harness.enqueueSessionUserMessageWithDisposition({ text: prompt, localId }))
+            .toMatchObject({ status: 'accepted' });
+          await vi.waitFor(() => expect(harness.consume({ role: 'user', content: { type: 'text', text: prompt },
+            localId, authorAccountId: 'account-1', inputAdmissionReceipt: null, pendingProviderAction: 'send' })).toBe(true));
+        }
+        await vi.waitFor(() => expect(native.inputs).toHaveLength(index + 1));
+        native.complete(answer);
+        await vi.waitFor(() => expect(harness.manager.getPublic(started.runId)).toMatchObject({
+          status: 'running', turnInFlight: false,
+          inputTurns: { last: { inputIds: native.inputs[index]!.inputIds, state: 'completed' } },
+        }));
+        await controller.pendingHostBarrier;
+        expect.soft(publications.filter(body => body.type === 'message')).toEqual(
+          ['First answer.', ...(index > 0 ? ['Continued answer.'] : [])].map(message => ({
+            type: 'message', message, sidechainId: started.sidechainId,
+          })),
+        );
+        expect.soft(harness.enqueueAgentMessageCommitted.mock.calls).toContainEqual([
+          expect.any(String), { type: 'message', message: answer, sidechainId: started.sidechainId },
+          expect.objectContaining({ localId: expect.any(String), admission: expect.objectContaining({ requireDelivery: true }),
+            meta: expect.objectContaining({ runtimeTurnId: native.inputs[index]!.delivery.turnId }) }),
+        ]);
+      }
+      expect(native.opens).toHaveLength(1);
+      expect(native.inputs).toHaveLength(2);
+      expect(harness.manager.get(started.runId)?.summary).toBe('Continued answer.');
+    } finally { await harness.manager.dispose(); }
+  });
+
   it.each([
     { outcome: 'complete', operation: 'retire', holdPublication: false, narration: false },
     { outcome: 'complete', operation: 'retire', holdPublication: true, narration: false },
@@ -604,7 +1361,22 @@ describe('ExecutionRunHostBridge pending target recovery', () => {
       }
     }
   });
-  it.each(['present_user', 'account_automation'] as const)('admits automatic refinement through CLI credentials before the original native recipient finishes recovery (%s)', async authority => {
+  it.each([
+    ...([
+      { surface: 'cli', authority: 'present_user', ioMode: 'streaming', completed: false, restricted: false },
+      { surface: 'cli', authority: 'account_automation', ioMode: 'streaming', completed: false, restricted: false },
+      { surface: 'cli', authority: 'present_user', ioMode: 'request_response', completed: false, restricted: false },
+      { surface: 'cli', authority: 'present_user', ioMode: 'streaming', completed: true, restricted: false },
+      { surface: 'cli', authority: 'account_automation', ioMode: 'streaming', completed: true, restricted: true },
+      { surface: 'ui', authority: 'present_user', ioMode: 'streaming', completed: true, restricted: false },
+    ] as const).map(row => ({ ...row, actionId: 'scm.diffSummary.refine' as const })),
+    ...(['scm.diffSummary.addOutputs', 'scm.diffSummary.discuss'] as const).flatMap(actionId =>
+      (['cli', 'ui'] as const).map(surface => ({ actionId, surface, authority: 'present_user' as const,
+        ioMode: 'streaming' as const, completed: true, restricted: false }))),
+  ])('admits $actionId through $surface credentials ($authority, $ioMode, completed=$completed, restricted=$restricted)', async ({ surface, authority, ioMode, completed, restricted, actionId }) => {
+    const instructions = actionId === 'scm.diffSummary.addOutputs'
+      ? 'Add the requested outputs: summary. Use the saved comparison and existing outputs. Publish the requested structured outputs.'
+      : 'Shorten it.';
     const sessionId = 'c123456789012345678901234';
     const origin = 'http://refinement-home.test';
     const secret = new Uint8Array(32).fill(21);
@@ -631,16 +1403,29 @@ describe('ExecutionRunHostBridge pending target recovery', () => {
       analysis: { suppliedChangeRefs: [], analysedChangeRefs: [], remainingChangeRefs: [] },
       outputs: { walkthrough: { state: 'complete', value: { title: 'Saved', intro: '', stops: [], otherChangeRefs: [] } } },
     } });
-    harness.runs.set('run-1', runState({ sessionId, status: 'failed', finishedAtMs: 2, intent: 'scm_diff_summary',
+    harness.runs.set('run-1', runState({ sessionId, status: 'failed', finishedAtMs: 2, intent: 'scm_diff_summary', ioMode,
+      error: { code: 'execution_run_host_lost', message: 'Host lost' },
       launch: { cwd: directory }, intentInput: { cwd: directory, comparisonId: comparison.id, resultId: saved.resultId,
         comparison, metadata: saved.output.metadata, sourceKey: comparison.id, outputs: ['walkthrough'] },
       structuredMeta: { kind: 'scm_diff_summary.v1', payload: saved.output },
-      error: { code: 'execution_run_host_lost', message: 'Host lost' },
     }));
+    const installation = nacl.sign.keyPair();
+    const grant = { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: [
+      actionId, 'execution.run.get', 'execution.run.ensure',
+    ] }, targets: { sessions: [sessionId], machines: ['machine-1'] } };
+    const externalActionCredential = { accountId: 'account-1', principalId: 'refine-principal', credentialId: 'refine-pat', grant };
+    const authorization = completed ? ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: randomUUID(), binding: {
+      serverIdentityId: 'srv_refinement', accountId: 'account-1', custodianAccountId: 'account-1',
+      ...(restricted ? externalActionCredential : { authentication: { kind: surface === 'ui' ? 'account' : 'terminal', tokenEpoch: 1 } }),
+      machineId: 'machine-1', accountEncryptionMode: 'e2ee',
+      installationId: 'refine-installation', actionId, requestId: 'refine-request',
+      requestEnvelopeDigest: 'A'.repeat(43), target: { kind: 'machine', machineId: 'machine-1' },
+    } }) : undefined;
     const app = fastify();
     const admitted: string[] = [];
     const boundaryFailures: unknown[] = [];
     const receivedAuthorities: ActionExecutorContext['authority'][] = [];
+    let standaloneSessionDispatches = 0;
     let recovery: Promise<void> | undefined;
     harness.listExecutionRunPendingDeliveryStatuses.mockImplementation(async () => harness.pendingInputs.map(input => ({
       localId: input.localId!, status: 'queued' as const, deliveryStatus: { status: 'queued' as const },
@@ -648,21 +1433,57 @@ describe('ExecutionRunHostBridge pending target recovery', () => {
     const deps = (machineAdmissionTransport?: Parameters<typeof createCliActionDeps>[0]['machineAdmissionTransport']) => createCliActionDeps({
       token, credentials, sessionId, mode: 'e2ee', ctx: { encryptionKey: secret, encryptionVariant: 'legacy' }, rawSession,
       serverId: 'cloud', serverHttpBaseUrl: origin, serverIdentityId: 'srv_refinement',
+      ...(authorization ? { externalActionMachineInstallationId: 'refine-installation',
+        externalActionMachineRequestPrivateKey: installation.secretKey,
+        invokeBoundSessionRpc: async (method, input) => method === SESSION_RPC_METHODS.EXECUTION_RUN_GET
+          ? { run: harness.manager.getPublic((input as { runId: string }).runId) }
+          : { ok: false, errorCode: 'unsupported_method' } } : {}),
       resolveServerFeaturesSnapshot: () => undefined,
       ...(machineAdmissionTransport ? { machineAdmissionTransport } : {}),
     });
-    const daemonDeps = deps(async request => {
+    // HTTP is the boundary. Home's signed-root contract rejects a substituted
+    // child effect; verify actual producer signatures, not a canned header.
+    app.addHook('preHandler', async (request, reply) => {
+      if (!authorization) return;
+      const effect = request.headers[EXTERNAL_ACTION_EFFECT_ACTION_HEADER];
+      const encodedTarget = request.headers[EXTERNAL_ACTION_RESOLVED_TARGET_HEADER];
+      const signature = request.headers[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER];
+      const target = typeof encodedTarget === 'string' ? decodeExternalActionResolvedTargetV1(encodedTarget) : null;
+      if (effect !== authorization.binding.actionId || target?.kind !== 'machine' || target.machineId !== 'machine-1' || typeof signature !== 'string'
+        || request.headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER] !== authorization.token
+        || !verifyExternalActionMachineRequestV1({ authorizationToken: authorization.token, effectActionId: effect,
+          target, installationId: 'refine-installation', requestId: authorization.binding.requestId,
+          method: request.method, path: request.url, signature, publicKey: installation.publicKey })) {
+        return reply.code(401).send({ error: 'invalid_token' });
+      }
+    });
+    const daemonDeps = deps(async (request, options) => {
       try {
-        expect(request).toMatchObject({ v: 2, sessionId, targetMachineId: 'machine-1', recipient: { kind: 'execution_run', runId: 'run-1' } });
+        if (authorization) {
+          expect(options?.callerInputAuthorization?.token).toBe(authorization.token);
+          expect(options?.callerInputAuthorization?.binding).toBe(authorization.binding);
+          expect(options?.callerInputAuthorization?.scmRefineSession?.sessionId).toBe(sessionId);
+          expect(verifyScmRefineSavedSessionV1(options!.callerInputAuthorization!, installation.publicKey)).toBe(true);
+        }
+        expect(request).toMatchObject({ v: 2, sessionId, targetMachineId: 'machine-1', recipient: { kind: 'execution_run', runId: 'run-1' },
+          requestedAction: { v: 1, kind: actionId === 'scm.diffSummary.refine' ? 'send_now' : 'steer_if_active' } });
         if (request.content.t !== 'encrypted') throw new Error('Expected encrypted Pending input');
         const message = UserMessageSchema.parse(decrypt(secret, 'legacy', decodeBase64(request.content.c)));
-        expect(message.meta).toMatchObject({ happierProvenanceV1: { kind: 'cli' },
-          happierInputRequestV1: { producer: 'cli', caller: { kind: 'host' } } });
+        expect(message.meta).toMatchObject(surface === 'ui'
+          ? { happierProvenanceV1: { kind: 'host', producer: 'happierApp' },
+            happierInputRequestV1: { producer: 'happierApp', caller: { kind: 'host' } } }
+          : { happierProvenanceV1: { kind: 'cli' },
+            happierInputRequestV1: { producer: 'cli', caller: { kind: 'host' } } });
+        // The admitted receiver carries the host-only presentation fact in the
+        // encrypted Pending record, never as a public Session-send input field.
+        expect(readMessageDisplayText({ text: message.content.text, displayText: message.meta?.displayText }) === instructions).toBe(true);
+        expect(message.content.text.includes(saved.resultId)).toBe(true);
+        expect(message.content.text.includes(instructions)).toBe(true);
         harness.pendingInputs.push({ ...message, localId: request.localId, authorAccountId: 'account-1', inputAdmissionReceipt: null,
           pendingProviderAction: 'send' });
         admitted.push(request.localId);
         // The Session pending-change boundary schedules reconciliation after durable admission.
-        recovery = harness.manager.reconcilePendingExecutionRunTarget('run-1');
+        recovery = harness.notifyPendingTarget('run-1');
         return { status: 'accepted', localId: request.localId };
       } catch (error) { boundaryFailures.push(error); throw error; }
     });
@@ -670,23 +1491,9 @@ describe('ExecutionRunHostBridge pending target recovery', () => {
       signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }));
     app.get('/v1/account/encryption', async () => ({ mode: 'e2ee', updatedAt: 1 }));
     app.get(`/v2/sessions/${sessionId}`, async () => ({ session: rawSession }));
-    app.post('/v1/actions/session.message.send', async request => {
-      expect(request.headers.authorization).toBe(`Bearer ${token}`);
-      const receivedAuthority = request.headers['x-happier-authority-ceiling'] === 'account_automation' ? 'account_automation' : 'present_user';
-      const envelope = ExternalActionRequestEnvelopeV2Schema.parse(request.body);
-      const binding = { serverIdentityId: 'srv_refinement', accountId: 'account-1',
-        authentication: { kind: 'account' as const, tokenEpoch: 1 }, actionId: 'session.message.send',
-        requestId: envelope.requestId, target: { kind: 'session' as const, sessionId } };
-      const material = { type: 'dataKey' as const, machineKey: deriveAccountMachineKeyFromRecoverySecret(secret) };
-      const opened = openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope, binding, material });
-      if (!opened) throw new Error('Expected current original Account request');
-      const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), sessionSendMessage: async input => {
-        receivedAuthorities.push(input.context?.authority);
-        return await daemonDeps.sessionSendMessage(input);
-      } });
-      const execution = await executor.execute('session.message.send', opened.input, { surface: 'cli', authority: receivedAuthority });
-      return prepareExternalActionResponseV2({ request: envelope, binding, material, executedMachineId: 'machine-1', execution,
-        randomBytes: length => new Uint8Array(length).fill(5) }).response;
+    app.post('/v1/actions/session.message.send', async () => {
+      standaloneSessionDispatches++;
+      throw new Error('An admitted SCM receiver must use its Machine input transport');
     });
     await app.ready();
     const restore = installAxiosFastifyAdapter({ app, origin });
@@ -694,37 +1501,84 @@ describe('ExecutionRunHostBridge pending target recovery', () => {
     let settled = false;
     let action: Promise<void> | undefined;
     try {
-      const caller = deps(); // Exact standalone CLI composition: no Machine socket transport.
-      const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), sessionSendMessage: caller.sessionSendMessage,
+      const caller = deps(); // Standalone caller retained for the wrong-target refusal below.
+      if (completed) {
+        // Install the real retained controller, rather than labelling an orphaned
+        // Run "running" with no interaction capabilities.
+        releaseNative();
+        expect(await harness.manager.ensure('run-1', { resume: true })).toMatchObject({ ok: true });
+        const controller = harness.controllers.get('run-1') as ExecutionRunBackendController | undefined;
+        if (controller?.kind !== 'backend') throw new Error('Expected the retained backend controller');
+        // A live controller, not the persisted Run snapshot, owns its last turn.
+        controller.lastInputTurn = { turnId: 'original-turn', inputIds: ['original-input'], state: 'completed' };
+        expect(harness.manager.getPublic('run-1')).toMatchObject({ status: 'running', turnInFlight: false,
+          inputTurns: { last: { state: 'completed', inputIds: ['original-input'] } },
+          interaction: { kind: 'retained_agent_session.v1' } });
+      }
+      // createCliActionExecutorFromCredentials routes the original Refine Action
+      // to its Machine before this owner runs. That admitted receiver has the
+      // installed Machine transport; running this host expansion on a standalone
+      // caller invented a second public Session-send hop with private fields.
+      const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), sessionSendMessage: async input => {
+        receivedAuthorities.push(input.context?.authority);
+        return daemonDeps.sessionSendMessage(input);
+      },
         executionRunGet: async () => ({ run: harness.manager.getPublic('run-1') }),
         executionRunEnsure: async () => await harness.manager.ensure('run-1', { resume: true }),
-        scmActionExecute: async ({ actionId, input, executeCanonicalAction }) => executeScmActionOperation({ actionId, input,
-          workingDirectory: directory, sessionId, authorizeSession: async id => id === sessionId, executeCanonicalAction }),
+        scmActionExecute: async ({ actionId, input, context, executeCanonicalAction }) => executeScmActionOperation({ actionId, input,
+          workingDirectory: directory, sessionId, authorizeSession: async id => id === sessionId, actionContext: context, executeCanonicalAction }),
       });
-      action = runWithServerHttpBaseUrl(origin, () => executor.execute('scm.diffSummary.refine', {
-        cwd: directory, resultId: saved.resultId, expectedRevision: saved.revision, output: 'walkthrough', instructions: 'Shorten it.',
-      }, { surface: 'cli', authority, serverIdentityId: 'srv_refinement' })).then(result => {
+      action = runWithServerHttpBaseUrl(origin, () => executor.execute(actionId, {
+        cwd: directory, resultId: saved.resultId, expectedRevision: saved.revision,
+        ...(actionId === 'scm.diffSummary.refine' ? { output: 'walkthrough', instructions }
+          : actionId === 'scm.diffSummary.addOutputs' ? { outputs: ['summary'] } : { message: instructions }),
+      }, { surface, authority, serverIdentityId: 'srv_refinement',
+        ...(restricted ? { externalActionCredential } : {}),
+        ...(authorization ? { externalActionExecutionAuthorization: authorization, externalActionTarget: authorization.binding.target,
+          signExternalActionApprovalInput: (args: Parameters<NonNullable<ActionExecutorContext['signExternalActionApprovalInput']>>[0]) => signExternalActionApprovalInputV1({ authorizationToken: args.authorization.token,
+            actionId: args.actionId, target: args.target, input: args.input, privateKey: installation.secretKey }) } : {}) })).then(result => {
         response = result;
         settled = true;
       });
-      await vi.waitFor(() => expect(settled).toBe(true));
+      if (completed) {
+        await action;
+        expect(response, JSON.stringify(response)).toMatchObject({ ok: true, result: { success: true, runId: 'run-1', inputId: expect.any(String) } });
+      } else {
+        await vi.waitFor(() => expect(harness.controllers.has('run-1')).toBe(true));
+        expect(settled).toBe(false);
+        expect(admitted).toHaveLength(0);
+        expect(nativeOpen).not.toHaveBeenCalled();
+        expect(nativeSend).not.toHaveBeenCalled();
+      }
+      releaseNative();
+      await action;
       expect(boundaryFailures).toEqual([]);
       expect(response, JSON.stringify(response)).toMatchObject({ ok: true, result: { success: true, runId: 'run-1' } });
       expect(admitted).toHaveLength(1);
+      expect(response).toMatchObject({ result: { inputId: admitted[0] } });
       expect(receivedAuthorities).toEqual([authority]);
-      expect(nativeOpen).not.toHaveBeenCalled();
-      expect(nativeSend).not.toHaveBeenCalled();
-      const refused = await runWithServerHttpBaseUrl(origin, () => caller.sessionSendMessage({
-        sessionId, message: 'Wrong target', recipient: { kind: 'execution_run', runId: 'run-1' }, localId: 'wrong-target',
-        requestedAction: { v: 1, kind: 'send_now' },
-        callerSurface: 'cli', actionCaller: { kind: 'host' }, context: { surface: 'cli', authority,
-          externalActionTarget: { kind: 'machine', machineId: 'other-machine' } },
-      }));
-      expect(refused).toEqual({ status: 'rejected', code: 'session_input_target_unavailable' });
+      expect(standaloneSessionDispatches).toBe(0);
+      if (restricted) {
+        expect(await executor.execute('session.message.send', { sessionId, message: 'Direct send is not Refine',
+          localId: 'direct', recipient: { kind: 'execution_run', runId: 'run-1' }, requestedAction: { v: 1, kind: 'send_now' } },
+        { surface: 'api', authority, externalActionCredential,
+          externalActionExecutionAuthorization: authorization, externalActionTarget: authorization!.binding.target }))
+          .toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+      }
+      // The original credential rows also exercise standalone wrong-target
+      // refusal; the signed-root Home fixture deliberately rejects bearer reads.
+      if (!completed) {
+        const refused = await runWithServerHttpBaseUrl(origin, () => caller.sessionSendMessage({
+          sessionId, message: 'Wrong target', recipient: { kind: 'execution_run', runId: 'run-1' }, localId: 'wrong-target',
+          requestedAction: { v: 1, kind: 'send_now' },
+          callerSurface: 'cli', actionCaller: { kind: 'host' }, context: { surface: 'cli', authority,
+            externalActionTarget: { kind: 'machine', machineId: 'other-machine' } },
+        }));
+        expect(refused).toEqual({ status: 'rejected', code: 'session_input_target_unavailable' });
+      }
       expect(admitted).toHaveLength(1);
-      releaseNative();
-      await action;
       await recovery;
+      expect(harness.blockExecutionRunPendingDelivery).not.toHaveBeenCalled();
       await vi.waitFor(() => expect(nativeSend, JSON.stringify({ run: harness.manager.getPublic('run-1'),
         outcomes: harness.inputOutcomes })).toHaveBeenCalledOnce());
       expect(nativeSend.mock.calls[0]![0].inputIds).toEqual(admitted);
@@ -844,12 +1698,17 @@ describe('ExecutionRunHostBridge pending target recovery', () => {
         result: { output: { runId: started.runId, producer: { kind: 'review' }, outputs: { walkthrough: { value: { title: 'Condition update' } } } } } }));
       const saved = await scmDiffSummaryResultStore.read({ cwd: directory, resultId: input.resultId });
       if (!saved.success) throw new Error('Detached review result was not saved');
+      // Detached turn completion publishes outside pendingHostBarrier. The
+      // saved artifact can become readable before that completion loop projects
+      // the Run, so wait at the public observation boundary itself.
       const rpc = createExecutionRunRpcActionDeps({ manager: harness.manager, context: { sessionId: null, cwd: directory },
         isExecutionRunsEnabled: () => true, policy: { maxConcurrentRuns: null, boundedTimeoutMs: null,
           reviewBoundedTimeoutMs: null, maxTurns: null, allowIoModes: new Set(['streaming', 'request_response']) } });
-      const observed = ExecutionRunGetResponseSchema.parse(await rpc.executionRunGet!(null, { runId: started.runId, includeStructured: true }));
-      expect(observed).toMatchObject({ structuredMeta: { kind: 'scm_diff_summary.v1' },
-        reviewFindings: { runRef: { runId: started.runId }, findings: [{ id: 'f1' }] } });
+      await vi.waitFor(async () => {
+        const observed = ExecutionRunGetResponseSchema.parse(await rpc.executionRunGet!(null, { runId: started.runId, includeStructured: true }));
+        expect(observed).toMatchObject({ structuredMeta: { kind: 'scm_diff_summary.v1' },
+          reviewFindings: { runRef: { runId: started.runId }, findings: [{ id: 'f1' }] } });
+      });
       const explanation = await harness.manager.applyAction(started.runId, { actionId: 'review.explain_findings', input: {
         reviewRunIds: [started.runId], cwd: directory, resultId: input.resultId, expectedRevision: saved.result.revision,
         findingIds: [{ runId: started.runId, findingId: 'f1' }],
@@ -1020,10 +1879,45 @@ describe('ExecutionRunHostBridge pending target recovery', () => {
       if (detached) return { ok: true, result: { ok: true } };
       return { ok: true, result: { status: 'accepted', localId: sent.localId } };
     };
-    expect(await executeScmActionOperation({ actionId: 'scm.diffSummary.refine', input: refinement, workingDirectory: directory,
-      ...sessionScope, authorizeSession: async id => !detached && id === 'session-1', executeCanonicalAction, actionContext: { surface: 'rpc', authority: 'present_user',
-        ...(detached ? { externalActionTarget: { kind: 'machine', machineId: 'machine-1', project: { machineId: 'machine-1', directory } } } : {}) } }))
-      .toMatchObject({ success: true, runId: 'run-1' });
+    await updateSettings(settings => ({ ...settings, machineIdByServerId: {
+      ...settings.machineIdByServerId, [configuration.activeServerId]: 'machine-1',
+    } }));
+    // review.explain_findings returns a request, not authority. Its host child
+    // retains the person/agent caller (protocol actionExecutor.ts). The real SCM
+    // receiver consumes signed requester custody or the admitted Machine stamp
+    // projected by registerActionSpecRpcHandlers.ts. Exercise that owner rather
+    // than an authorizeSession callback that always denies detached provenance.
+    const scm = createCliActionDeps({ token: 'finding-explanation-requester',
+      credentials: { token: 'finding-explanation-requester', encryption: null },
+      sessionId: '', mode: 'plain', ctx: null,
+      scmFilesystemAccessPolicy: { kind: 'restrictedRoots', roots: [directory] },
+    }).scmActionExecute;
+    if (!scm) throw new Error('Canonical SCM Action owner unavailable');
+    const context: RpcActionExecutorContext = { surface: 'rpc', authority: 'present_user',
+      serverId: configuration.activeServerId,
+      externalActionTarget: { kind: 'machine', machineId: 'machine-1', project: { machineId: 'machine-1', directory } },
+      ...(detached ? {
+        machineAdmission: { actorAccountId: 'account-1', custodianAccountId: 'account-1', machineId: 'machine-1',
+          installationId: 'installation-1', role: 'manage', encryptionMode: 'plain' },
+        // Home currentness is the transport boundary, not a replacement domain decision.
+        verifyMachineAdmissionCurrent: async () => true,
+      } : { defaultSessionId: 'session-1', rpcSessionAuthorization: { kind: 'session.write', sessionId: 'session-1' } }),
+    };
+    const refine = (caller: RpcActionExecutorContext) => scm({
+      actionId: 'scm.diffSummary.refine', input: refinement, context: caller, executeCanonicalAction,
+    });
+    if (detached) {
+      for (const denied of [
+        { ...context, machineAdmission: undefined },
+        { ...context, verifyMachineAdmissionCurrent: async () => false },
+        { ...context, machineAdmission: { ...context.machineAdmission!, actorAccountId: 'shared-member', role: 'use' as const } },
+        { ...context, rpcSessionAuthorization: { kind: 'session.write' as const, sessionId: 'unrelated-session' } },
+      ]) {
+        expect(await refine(denied)).toMatchObject({ success: false, errorCode: 'result_unavailable' });
+      }
+      expect(sent).toBeUndefined();
+    }
+    expect(await refine(context)).toMatchObject({ success: true, runId: 'run-1' });
     expect(sent?.message).toContain('"id":"F1"');
     expect(sent?.message).not.toContain('"id":"f1"');
     expect(await scmDiffSummaryResultStore.publish({ cwd: directory, ...sessionScope, resultId: saved.resultId, inputId: sent!.localId,
@@ -1207,22 +2101,83 @@ describe('ExecutionRunHostBridge pending target recovery', () => {
     expect(nativeOpen).toHaveBeenCalledOnce();
     expect(harness.runs.size).toBe(2);
   });
-  it('reopens a terminal recoverable exact target through real ensure and its native provider session', async () => {
+  it.each(['failed', 'succeeded', 'cancelled', 'timeout'] as const)('requires explicit recovery before ordinary input to a %s exact target', async status => {
     nativeOpen.mockReset();
+    let emit: ((event: AgentSessionRuntimeEvent) => void) | undefined;
+    const deliveredInputs: string[] = [];
     nativeOpen.mockImplementation(async () => {
       let listener: ((event: AgentSessionRuntimeEvent) => void) | undefined;
-      return { watch(next) { listener = next; listener({ kind: 'provider-session-id', providerSessionId: 'provider-session-1',
+      let sequence = 1;
+      return { watch(next) { emit = listener = next; listener({ kind: 'provider-session-id', providerSessionId: 'provider-session-1',
         sequence: 1, sessionId: 'session-parent', emittedAtMs: 1 }); return { dispose() { listener = undefined; } }; },
-        async send() { return { status: 'admitted' as const }; }, async dispose() {} };
+        async send(input) {
+          deliveredInputs.push(...input.inputIds);
+          listener!({ kind: 'input-accepted', sessionId: 'session-parent', sequence: ++sequence, emittedAtMs: 2,
+            inputIds: input.inputIds, delivery: input.delivery });
+          listener!({ kind: 'turn-start', sessionId: 'session-parent', sequence: ++sequence, emittedAtMs: 2,
+            turnId: input.delivery.turnId, startedBy: 'host' });
+          listener!({ kind: 'turn-complete', sessionId: 'session-parent', sequence: ++sequence, emittedAtMs: 3,
+            turnId: input.delivery.turnId });
+          return { status: 'admitted' as const };
+        }, async dispose() {} };
     });
     const harness = createHarness();
-    harness.runs.set('run-1', runState({ status: 'succeeded', finishedAtMs: 2 }));
+    harness.runs.set('run-1', runState({ status: status === 'failed' ? 'running' : status, finishedAtMs: 2 }));
     try {
+      if (status === 'failed') {
+        expect(await harness.manager.ensure('run-1', { resume: true })).toMatchObject({ ok: true });
+        emit!({ kind: 'runtime-ended', sessionId: 'session-parent', sequence: 2, emittedAtMs: 2,
+          cause: 'processExited', retryable: true, diagnostic: { code: 'native_process_exited', severity: 'error' } });
+        await harness.manager.waitForTerminal('run-1');
+        await vi.waitFor(() => expect(harness.controllers.has('run-1')).toBe(false));
+        nativeOpen.mockClear();
+      }
       await harness.manager.reconcilePendingExecutionRunTarget('run-1');
+      expect(nativeOpen).not.toHaveBeenCalled();
+      expect(harness.blockExecutionRunPendingDelivery).toHaveBeenCalledWith('run-1', 'queued-1');
+      expect(await harness.manager.send('run-1', { message: 'Ordinary input', localInputId: 'before-recovery' }))
+        .toMatchObject({ ok: false, errorCode: 'execution_run_not_allowed' });
+      expect(harness.manager.getPublic('run-1')).toMatchObject({ status, lifecycle: { state: 'recoverable' } });
+      expect(await harness.manager.ensure('run-1', { resume: 'if_running' }))
+        .toMatchObject({ ok: false, errorCode: 'execution_run_not_allowed', resumeFailureKind: 'permanent' });
+      harness.blockExecutionRunPendingDelivery.mockClear();
+      expect(await harness.manager.ensure('run-1', { resume: true })).toMatchObject({ ok: true });
       expect(nativeOpen.mock.calls.map(([request]) => request)).toMatchObject([{ kind: 'resume', providerSessionId: 'provider-session-1' }]);
       expect(harness.manager.getPublic('run-1')).toMatchObject({ status: 'running', lifecycle: { state: 'current' } });
+      await harness.manager.reconcilePendingExecutionRunTarget('run-1');
       expect(harness.blockExecutionRunPendingDelivery).not.toHaveBeenCalled();
+      expect(harness.consume({ role: 'user', content: { type: 'text', text: 'Fresh input' }, localId: 'after-recovery',
+        authorAccountId: 'account-1', inputAdmissionReceipt: null, pendingProviderAction: 'send' })).toBe(true);
+      await vi.waitFor(() => expect(deliveredInputs).toContain('after-recovery'));
+      await vi.waitFor(() => expect(harness.manager.getPublic('run-1')).toMatchObject({
+        inputTurns: { last: { state: 'completed', inputIds: ['after-recovery'] } },
+      }));
     } finally { await harness.manager.dispose(); }
+  });
+
+  it.each(['failed', 'cancelled'] as const)('refuses %s Run ordinary input before any connected-service materialization request', async status => {
+    const harness = createHarness();
+    harness.runs.set('run-1', runState({ status, finishedAtMs: 2, backendId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      resumeHandle: { kind: 'provider_session.v1', backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+        providerSessionId: 'provider-session-1' },
+      launch: { connectedServicesSelection: { v: 2, bindingsByServiceId: {
+        'happier.agent.claude/claude-subscription': { source: 'connected', selection: 'profile', profileId: 'profile-1' },
+      } } },
+      inputTurns: { occurrenceId: 'original-occurrence', last: { turnId: 'completed-turn', inputIds: ['completed-input'],
+        state: 'completed', result: { kind: 'text', value: 'Saved result' } } },
+    }));
+    await harness.manager.reconcilePendingExecutionRunTarget('run-1');
+    expect(requestRunMaterialization).not.toHaveBeenCalled();
+    expect(nativeOpen).not.toHaveBeenCalled();
+    expect(harness.blockExecutionRunPendingDelivery).toHaveBeenCalledWith('run-1', 'queued-1');
+    expect(harness.controllers.has('run-1')).toBe(false);
+    expect(harness.manager.getPublic('run-1')).toMatchObject({ status, lifecycle: { state: 'recoverable' },
+      inputTurns: { occurrenceId: 'original-occurrence', last: { state: 'completed', inputIds: ['completed-input'] } } });
+    // Prove the same real selection reaches the transport when recovery is explicit.
+    expect(await harness.manager.ensure('run-1', { resume: true })).toMatchObject({ ok: false, errorCode: 'connected_service_run_materialization_failed' });
+    expect(requestRunMaterialization).toHaveBeenCalledOnce();
+    expect(requestRunMaterialization.mock.calls[0]![0]).toMatchObject({ runId: 'run-1', controllerOccurrenceId: expect.any(String) });
   });
   it('leaves an unknown target queued without ensure or block', async () => {
     const harness = createHarness();
@@ -1234,7 +2189,11 @@ describe('ExecutionRunHostBridge pending target recovery', () => {
     expect(harness.blockExecutionRunPendingDelivery).not.toHaveBeenCalled();
   });
 
-  it('keeps the accepted target queued while its native module is still loading', async () => {
+  it.each([
+    { ioMode: 'streaming', retentionPolicy: 'resumable' },
+    { ioMode: 'request_response', retentionPolicy: 'resumable' },
+    { ioMode: 'request_response', retentionPolicy: 'ephemeral' },
+  ] as const)('keeps the accepted target queued while its native module is still loading ($ioMode, $retentionPolicy)', async ({ ioMode, retentionPolicy }) => {
     let releaseModule!: () => void;
     nativeModule.ready = new Promise<void>(resolve => { releaseModule = resolve; });
     nativeOpen.mockImplementation(async () => ({
@@ -1246,7 +2205,8 @@ describe('ExecutionRunHostBridge pending target recovery', () => {
     try {
       const started = await harness.manager.start({ sessionId: 'session-1', cwd: directory, intent: 'delegate',
         backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, permissionMode: 'read_only',
-        retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming', instructions: '' });
+        retentionPolicy, runClass: 'long_lived', ioMode, instructions: '',
+        initialInput: { kind: 'deferred_session_pending' } });
       expect(nativeOpen).not.toHaveBeenCalled();
       await harness.manager.reconcilePendingExecutionRunTarget(started.runId);
       expect(harness.blockExecutionRunPendingDelivery).not.toHaveBeenCalled();
@@ -1267,7 +2227,7 @@ describe('ExecutionRunHostBridge pending target recovery', () => {
     if (failureKind === 'permanent') Object.assign(error, { code: 'AGENT_RESUME_PROVIDER_STATE_MISSING' });
     nativeOpen.mockRejectedValue(error);
     const harness = createHarness();
-    harness.runs.set('run-1', runState({ status: 'succeeded', finishedAtMs: 2 }));
+    harness.runs.set('run-1', runState());
 
     await harness.manager.reconcilePendingExecutionRunTarget('run-1');
 
@@ -1278,8 +2238,10 @@ describe('ExecutionRunHostBridge pending target recovery', () => {
       expect(harness.blockExecutionRunPendingDelivery).toHaveBeenCalledOnce();
       expect(harness.blockExecutionRunPendingDelivery).toHaveBeenCalledWith('run-1', 'queued-1');
     } else {
-      expect(harness.manager.getPublic('run-1')).toMatchObject({ lifecycle: { state: 'recoverable' } });
-      expect(harness.blockExecutionRunPendingDelivery).not.toHaveBeenCalled();
+      expect(harness.manager.getPublic('run-1')).toMatchObject({ status: 'failed',
+        lifecycle: { state: 'recoverable' }, error: { code: 'execution_run_failed' } });
+      expect(harness.blockExecutionRunPendingDelivery).toHaveBeenCalledOnce();
+      expect(harness.blockExecutionRunPendingDelivery).toHaveBeenCalledWith('run-1', 'queued-1');
     }
   });
 
@@ -1342,6 +2304,11 @@ describe('ExecutionRunHostBridge pending target recovery', () => {
   ])('blocks only the queued exact row for a proven %s target', async (_label, overrides) => {
     const harness = createHarness();
     harness.runs.set('run-1', runState(overrides));
+    if (_label === 'noninteractive') {
+      // Bounded execution owns a separate queue and never binds target Pending.
+      harness.controllers.set('run-1', { kind: 'backend', cancelled: false,
+        runtimeId: 'bounded-runtime', backend: { interaction: {} } });
+    }
     const ensure = vi.spyOn(harness.manager, 'ensure');
 
     await harness.manager.reconcilePendingExecutionRunTarget('run-1');
@@ -1350,6 +2317,7 @@ describe('ExecutionRunHostBridge pending target recovery', () => {
     expect(harness.enqueueAgentMessageCommitted).not.toHaveBeenCalled();
     expect(harness.blockExecutionRunPendingDelivery).toHaveBeenCalledTimes(1);
     expect(harness.blockExecutionRunPendingDelivery).toHaveBeenCalledWith('run-1', 'queued-1');
+    harness.controllers.clear();
     harness.runs.clear();
   });
 });

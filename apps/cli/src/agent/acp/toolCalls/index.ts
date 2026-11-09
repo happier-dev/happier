@@ -12,6 +12,7 @@ export type {
     AcpToolAccumulatorEmission,
     AcpToolIdentity,
     AcpToolLifecycleStatus,
+    AcpToolMetadata,
     AcpToolObservation,
     AcpToolObservationPatch,
     MergedAcpToolCall,

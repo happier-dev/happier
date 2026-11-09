@@ -66,6 +66,52 @@ function createHarness(options?: Readonly<{ providerSessionId?: string | null }>
 }
 
 describe('subscribeSessionRuntimePublicationToMetadata', () => {
+  it('waits for the current matched native identity when its transcript path is promoted during publication', async () => {
+    const harness = createHarness();
+    const writes: Array<{ finish: () => void; completed: Promise<void> }> = [];
+    let metadata = createTestMetadata({ flavor: 'claude' });
+    const state = createCliRuntimeSessionStateBridge({
+      session: harness.session, credentials: { token: 'guest-home', encryption: null },
+      // Metadata persistence is the boundary: identity binding, state updates,
+      // and the publication wait use their production implementations.
+      metadataPort: { update: async (_sessionId, updater) => {
+        let finish!: () => void;
+        const completed = new Promise<void>(resolve => { finish = resolve; });
+        writes.push({ finish, completed });
+        await completed;
+        metadata = createTestMetadata(updater(metadata));
+        return { ok: true, version: writes.length };
+      } },
+    });
+    const publication = subscribeSessionRuntimePublicationToMetadata({
+      session: harness.session, sessionState: state.engine, runtime: harness.runtime,
+      providerSessionMetadataKey: 'claudeSessionId',
+    });
+    const controller = new AbortController();
+    const outcomes: string[] = [];
+    try {
+      publication.observeRuntimeEvent({ kind: 'provider-session-id', sequence: 1,
+        sessionId: 'session-1', emittedAtMs: 1, providerSessionId: 'native-session' });
+      const waiting = publication.waitForProviderSessionIdPublication('native-session', controller.signal);
+      void waiting.then(() => outcomes.push('published'), () => outcomes.push('refused'));
+      publication.observeRuntimeEvent({ kind: 'provider-session-id', sequence: 2,
+        sessionId: 'session-1', emittedAtMs: 2, providerSessionId: 'native-session',
+        nativeSessionLogPath: '/native/session.jsonl' });
+      expect(writes).toHaveLength(2);
+      writes[0]!.finish();
+      await setImmediate();
+      expect(outcomes).toEqual([]);
+      writes[1]!.finish();
+      await waiting;
+      expect(outcomes).toEqual(['published']);
+      expect(metadata).toMatchObject({ claudeSessionId: 'native-session', claudeTranscriptPath: '/native/session.jsonl' });
+    } finally {
+      controller.abort();
+      for (const write of writes) write.finish();
+      publication();
+    }
+  });
+
   it('fences lifecycle events after metadata observation is disposed', () => {
     const harness = createHarness({ providerSessionId: 'initial-native-session' });
     const publication = subscribeSessionRuntimePublicationToMetadata({

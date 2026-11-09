@@ -58,7 +58,9 @@ export class AcpAgentPeer {
   ) {}
 
   private assertActive(): void {
-    if (this.connectionSignal.aborted) throw new Error('ACP connection is closed');
+    if (this.connectionSignal.aborted) {
+      throw Object.assign(new Error('ACP connection is closed'), { retryable: false });
+    }
   }
 
   private async requestWithDiagnostics<Response>(request: () => Promise<Response>): Promise<Response> {
@@ -125,6 +127,9 @@ export class AcpAgentPeer {
           value: true,
         });
       }
+      // This peer cannot reconnect. Retrying on its closed transport only delays
+      // the existing startup failure; provider refusals on a live peer may retry.
+      if (this.connectionSignal.aborted) Object.assign(safeError, { retryable: false });
       throw safeError;
     }
   }

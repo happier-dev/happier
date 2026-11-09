@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
+import { Session } from 'node:inspector';
 import { installEmptyProjectAccountRowsHttpBoundary } from '@/testkit/http/projectAccountRows';
 import { ArtifactReadHeadersBatchInputV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { artifactReadResponse, artifactListResponse } from '@/testkit/http/artifactHome';
@@ -63,6 +64,28 @@ function installPromptDocumentHeaderHttpBoundary(readDocument: (artifactId: stri
 function createProjectedIdentityTestMetadata(params: Parameters<typeof projectSessionOwnerCompatibilityViewV1>[0]) {
   const { work, bot, createdAsBot } = projectSessionOwnerCompatibilityViewV1(params);
   return createTestMetadata({ work, bot, createdAsBot });
+}
+
+/** Real call count of one function, including module-private ones, through V8 precise coverage. */
+async function countFunctionCalls(functionName: string, run: () => void): Promise<number> {
+  const inspector = new Session();
+  const post = <T,>(method: string, params?: Record<string, unknown>) => new Promise<T>((resolve, reject) => {
+    inspector.post(method, params ?? {}, (error, result) => error ? reject(error) : resolve(result as T));
+  });
+  inspector.connect();
+  try {
+    await post('Profiler.enable');
+    await post('Profiler.startPreciseCoverage', { callCount: true, detailed: false });
+    await post('Profiler.takePreciseCoverage');
+    run();
+    const coverage = await post<{ result: Array<{ functions: Array<{ functionName: string; ranges: Array<{ count: number }> }> }> }>('Profiler.takePreciseCoverage');
+    return coverage.result.flatMap(script => script.functions)
+      .filter(fn => fn.functionName === functionName)
+      .reduce((total, fn) => total + (fn.ranges[0]?.count ?? 0), 0);
+  } finally {
+    await post('Profiler.stopPreciseCoverage').catch(() => undefined);
+    inspector.disconnect();
+  }
 }
 
 describe('session prompt-plan producer', () => {
@@ -157,6 +180,38 @@ describe('session prompt-plan producer', () => {
     expect(await resolve()).toContain('In long sessions,');
     expect(resolve.assertPreparedPlanCurrent).not.toThrow();
     setActiveAccountSettingsSnapshot({ ...snapshot, settingsVersion: 2, settings: accountSettingsParse({
+      ...settings, actionsSettingsV1: { v: 1, actions: { 'session.compact': { enabled: false } } },
+    }) });
+    expect(resolve.assertPreparedPlanCurrent).toThrow(expect.objectContaining({ reason: 'active-account-settings-changed' }));
+  });
+
+  it('re-evaluates no tool availability while the prepared plan inputs are unchanged, and still withdraws when they change', async () => {
+    const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'plan-basis-cost-account' })).toString('base64url')}.signature`, encryption: null };
+    const scopeKey = resolveAccountSettingsScopeKey(credentials);
+    const settings = accountSettingsParse({ codingPromptBehaviorV1: { sessionCompactionNudge: true } });
+    const snapshot = { source: 'network' as const, settings, rawSettings: {}, scopeKey,
+      settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [],
+      promptLibraryCatalog: { status: 'ready' as const, rows: [], tombstones: [], diagnostics: [] } };
+    setActiveAccountSettingsSnapshot(snapshot);
+    const resolve = createSessionPromptPlanResolver({
+      opts: { credentials, accountSettingsContext: { ...snapshot, whenRefreshed: null } },
+      session: Object.assign(createApiSessionClientFixture(), { sessionId: 'plan-basis-cost-session', getMetadataSnapshot: () => createTestMetadata({
+        agentRuntimeCapabilitiesV1: { sessionCapabilities: { sessionListing: 'unsupported',
+          sessionFork: { conversation: 'unsupported', fromMessage: 'unsupported' },
+          sessionRollback: { conversation: 'unsupported' }, compaction: { events: true, manual: true } } },
+      }) }),
+      agentId: 'codex', machineId: 'test-machine', directory: '/tmp/project', memoryRecallGuidanceEnabled: false,
+      readNativeSessionId: () => 'native', daemonBridge,
+    });
+    await resolve();
+    const toolEvaluations = await countFunctionCalls('isDirectManualToolAvailable', () => {
+      for (let turn = 0; turn < 3; turn += 1) resolve.assertPreparedPlanCurrent?.();
+      // A fresh snapshot object with equal Settings is the same input.
+      setActiveAccountSettingsSnapshot({ ...snapshot, settingsVersion: 2, settings: accountSettingsParse(settings) });
+      resolve.assertPreparedPlanCurrent?.();
+    });
+    expect(toolEvaluations).toBe(0);
+    setActiveAccountSettingsSnapshot({ ...snapshot, settingsVersion: 3, settings: accountSettingsParse({
       ...settings, actionsSettingsV1: { v: 1, actions: { 'session.compact': { enabled: false } } },
     }) });
     expect(resolve.assertPreparedPlanCurrent).toThrow(expect.objectContaining({ reason: 'active-account-settings-changed' }));

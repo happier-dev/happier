@@ -39,6 +39,26 @@ describe('configured ACP typed launch resolution', () => {
       expect(await resolveAcpLaunch(params)).toMatchObject({ kind: 'needs_install' });
     } finally { await rm(root, { recursive: true, force: true }); }
   });
+  it.each(['npx', 'node', 'uvx'])('preserves a configured %s command instead of selecting managed tooling', async (name) => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-acp-configured-command-'));
+    try {
+      const command = join(root, name);
+      const pnpm = join(root, 'pnpm');
+      const uv = join(root, 'tools', 'uv', 'current', 'bin', process.platform === 'win32' ? 'uv.exe' : 'uv');
+      await mkdir(dirname(uv), { recursive: true });
+      for (const path of [command, pnpm, uv]) {
+        await writeFile(path, '#!/bin/sh\nexit 0\n');
+        await chmod(path, 0o755);
+      }
+      const args = ['--package', 'fixture', '--', '--yes'];
+      const definition: AcpLaunchDefinition = { id: 'configured', title: 'Configured', launch: { kind: 'command', command: name, args } };
+      await expect(resolveAcpLaunch({ definition, platform: process.platform, arch: process.arch,
+        env: { HAPPIER_HOME_DIR: root, PATH: '', HAPPIER_PNPM_BIN: pnpm, HAPPIER_JS_RUNTIME_PATH: process.execPath },
+        launchEnv: { PATH: root },
+      })).resolves.toEqual({ kind: 'ready', command, args, env: {} });
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
   it('fails closed for unsupported or unknown archive targets', async () => {
     const definition: AcpLaunchDefinition = { id: 'archive-agent', title: 'Archive agent', launch: {
       kind: 'archive', version: '1', args: [], assetsByPlatform: {

@@ -1,4 +1,5 @@
 import type { Metadata, PermissionMode } from '@/api/types';
+import { SessionIdentityAdditionsV1Schema } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
 import { computeMonotonicUpdatedAt } from '@happier-dev/agents/session/timestamps/monotonic';
 import {
     readAcpSessionModeIntentFromMetadata,
@@ -28,7 +29,6 @@ import type { ProviderBoundModelRef, SessionModelSelectionIntentV1, SessionAttac
 import { resolveSessionConfigOptionOverridesFromMetadataSnapshot } from './sessionConfigOptionOverrideSync';
 import { resolveBackendTargetFromSessionMetadata } from '@/session/backendTargets/resolveBackendTargetFromSessionMetadata';
 import { hasSameSessionCheckout } from '@/session/metadata/sessionCheckoutIdentity';
-
 import type { SessionTeamCredentialBindingIntentV1 } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 import { SessionModelSelectionV2Schema, type SessionModelSelectionV2 } from '@happier-dev/protocol/providers/selection/v2';
 
@@ -346,6 +346,12 @@ function resolveModelOverrideForStartup(opts: {
             throw new SessionModelSelectionResolutionError('model_selection_agent_target_mismatch');
         }
         const baselineAt = updatedAt ?? 0;
+        // Startup replays captured intent; it must not promote that capture over
+        // a choice already accepted while the process was starting.
+        if (updatedAt !== null && override.updatedAt <= updatedAt
+            && JSON.stringify(selection) === JSON.stringify(override.selection)) {
+            return { v: 1, selection, updatedAt };
+        }
         const nextAt = computeMonotonicUpdatedAt({
             previousUpdatedAt: baselineAt,
             desiredUpdatedAt: override.updatedAt,
@@ -483,12 +489,11 @@ export function mergeSessionMetadataForStartup(opts: {
         // when the process is replacing the physical workspace identity.
         if (opts.current.work !== undefined) merged.work = opts.current.work;
         else delete merged.work;
-        const { bot: _bot, createdAsBot: _createdAsBot, ...retainedMetadata } = merged;
-        merged = {
-            ...retainedMetadata,
-            ...(opts.current.bot !== undefined ? { bot: opts.current.bot } : {}),
-            ...(opts.current.createdAsBot !== undefined ? { createdAsBot: opts.current.createdAsBot } : {}),
-        };
+        for (const key of Object.keys(SessionIdentityAdditionsV1Schema.shape)) {
+            const value = Reflect.get(opts.current, key);
+            if (value === undefined) Reflect.deleteProperty(merged, key);
+            else Reflect.set(merged, key, value);
+        }
     }
 
     const perm = resolvePermissionModeForStartup({

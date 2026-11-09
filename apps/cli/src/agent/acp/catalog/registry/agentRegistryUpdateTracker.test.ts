@@ -6,7 +6,7 @@ import { AcpCatalogRecordV1Schema, AcpCatalogRowMutationV1Schema, openAcpCatalog
 import { REGISTRY_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/registries';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
-import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot, subscribeActiveAccountSettingsKeys } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createCliRegistryUpdateCheck } from '@/registries/updates/createCliRegistryUpdateCheck';
 
 afterEach(() => { resetActiveAccountSettingsSnapshotForTests(); vi.unstubAllGlobals(); });
@@ -19,8 +19,10 @@ describe('Agent tracker registered in the one production update checker', () => 
         sourceUrl: 'https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json', itemId: 'agent',
         ref: { kind: 'version', version: '1.0' }, importedAt: 1 } }, createdAt: 1, updatedAt: 1 },
       { id: 'command', name: 'command', title: 'Command', launch: { kind: 'command', command: 'echo' }, createdAt: 1, updatedAt: 1 }] });
+    catalog = AcpCatalogRecordV1Schema.parse({ ...catalog, definitions: [...catalog.definitions,
+      { ...catalog.definitions[0], id: 'registry-peer', name: 'registry-peer' }] });
     const original = catalog;
-    let revision = 1; let writes = 0; let race: (() => void) | undefined;
+    let revision = 1; let writes = 0; let reads = 0; let publications = 0; let race: (() => void) | undefined;
     const errors: unknown[] = [];
     // Substitute only the Home HTTP/database boundary; production mode
     // admission, catalog store, strict producer/consumer and CAS stay real.
@@ -30,6 +32,7 @@ describe('Agent tracker registered in the one production update checker', () => 
         if (request.url === '/v1/account/encryption/currentness') response.end(JSON.stringify({ mode: 'plain', version: 1,
           settingsVersion: 7, updatedAt: 1, signingKeyFingerprint: null, contentKeyFingerprint: null }));
         else if (request.url === '/v1/account/entity-rows/acp' && request.method === 'GET') {
+          reads++;
           response.end(JSON.stringify({ status: 'present', revision, content: { t: 'plain', v: catalog } }));
         } else if (request.url === '/v1/account/entity-rows/acp' && request.method === 'POST') {
           const chunks: Buffer[] = []; for await (const chunk of request) chunks.push(Buffer.from(chunk));
@@ -56,6 +59,7 @@ describe('Agent tracker registered in the one production update checker', () => 
     const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'tracker-account' })).toString('base64url')}.sig`, encryption: null };
     setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({}), rawSettings: {},
       settingsVersion: 7, settingsSecretsReadKeys: [], loadedAtMs: 1, scopeKey: resolveAccountSettingsScopeKey(credentials) });
+    const release = subscribeActiveAccountSettingsKeys({ facets: ['acpCatalog'] }, () => { publications++; });
     vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => Response.json({ version: '1.0.0', agents: [{ id: 'agent', name: 'Agent',
       description: 'Agent', version: '2.0', distribution: { uvx: { package: 'agent==2.0.0', args: [] } } }] })));
     try {
@@ -64,13 +68,20 @@ describe('Agent tracker registered in the one production update checker', () => 
         const result = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.updates.check'].parse(await checker.checkNow({ kind: 'agent' }));
         expect(result.results).toMatchObject([{ kind: 'agent', key: 'registry-agent', upstream: {
           state: 'update_available', latest: { kind: 'version', version: '2.0' },
+        } }, { kind: 'agent', key: 'registry-peer', upstream: {
+          state: 'update_available', latest: { kind: 'version', version: '2.0' },
         } }]);
         expect(catalog.definitions[0]).toEqual({ ...original.definitions[0], origin: {
           ...original.definitions[0]!.origin, upstream: result.results[0]!.upstream,
         } });
         expect(catalog.definitions[1]).toEqual(original.definitions[1]);
+        expect(catalog.definitions[2]!.origin!.upstream).toEqual(result.results[0]!.upstream);
+        expect(writes).toBe(1);
+        expect(reads).toBe(2); // list plus the existing store's one CAS admission
+        expect(publications).toBe(1);
         await checker.checkNow({ kind: 'agent' });
         expect(writes).toBe(1);
+        expect(publications).toBe(1);
         vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => new Response('', { status: 429 })));
         const failed = await checker.checkNow({ kind: 'agent' });
         expect(failed.results[0]?.upstream.state).toBe('unchecked');
@@ -92,6 +103,6 @@ describe('Agent tracker registered in the one production update checker', () => 
         expect(catalog.definitions[0]!.origin!.upstream).toBeUndefined();
       });
       expect(errors).toEqual([]);
-    } finally { http.closeAllConnections(); await new Promise<void>(resolve => http.close(() => resolve())); }
+    } finally { release(); http.closeAllConnections(); await new Promise<void>(resolve => http.close(() => resolve())); }
   });
 });

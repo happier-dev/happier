@@ -4,6 +4,7 @@ import { buildBackendTargetKeyV2 } from '@happier-dev/protocol';
 
 import {
   areExecutionRunBackendTargetsEqual,
+  resolveExecutionRunPublicBackendId,
   resolveExecutionRunRuntimeBackendTarget,
 } from './backendTargets';
 
@@ -58,5 +59,16 @@ describe('resolveExecutionRunRuntimeBackendTarget', () => {
       kind: 'builtInAgent',
       agentId: 'acme.review-plugin/review-agent',
     });
+  });
+});
+
+describe('resolveExecutionRunPublicBackendId', () => {
+  it('names an admitted external Agent by its qualified routing id, matching the runtime lowering', () => {
+    const external = { kind: 'agent', identity: { pluginId: 'acme.review-plugin', localId: 'review-agent' } } as const;
+    expect(resolveExecutionRunPublicBackendId(external)).toBe('acme.review-plugin/review-agent');
+    expect(resolveExecutionRunPublicBackendId({ kind: 'agent', identity: { pluginId: 'happier.agent.opencode', localId: 'opencode' } }))
+      .toBe('opencode');
+    expect(resolveExecutionRunPublicBackendId({ kind: 'backend', backendId: 'definition-a',
+      configuredBackendId: 'definition-a', sourceKind: 'configured' })).toBe('definition-a');
   });
 });

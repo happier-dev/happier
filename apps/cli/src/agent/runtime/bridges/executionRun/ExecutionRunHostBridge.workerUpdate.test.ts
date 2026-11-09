@@ -1,17 +1,19 @@
 import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ExecutionRunState } from './executionRunTypes';
 import { configuration, reloadConfiguration } from '@/configuration';
 import { readOrCreateDeviceLocalSecretStorage } from '@/daemon/deviceLocalSecretStorage';
+import { readRetainedExecutionRunRecord } from '@/daemon/executionRunRegistry';
 import { ExecutionRunHostBridge } from './ExecutionRunHostBridge';
 import { finishExecutionRun } from './finishExecutionRun';
 import type { FollowPolicyV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
 
 const filesystemBoundary = vi.hoisted(() => ({
   onOpen: null as null | ((path: unknown, handle: import('node:fs/promises').FileHandle) => void),
+  onWriteFile: null as null | ((path: unknown) => void),
 }));
 
 // Preserve real file handles and all registry logic while controlling one competing OS read.
@@ -19,6 +21,10 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
   return {
     ...actual,
+    writeFile: async (...args: Parameters<typeof actual.writeFile>) => {
+      filesystemBoundary.onWriteFile?.(args[0]);
+      return actual.writeFile(...args);
+    },
     open: async (...args: Parameters<typeof actual.open>) => {
       const handle = await actual.open(...args);
       filesystemBoundary.onOpen?.(args[0], handle);
@@ -35,11 +41,13 @@ beforeEach(() => {
   vi.stubEnv('HAPPIER_RELEASE_RING', undefined);
   vi.stubEnv('HAPPIER_RELEASE_CHANNEL', undefined);
   filesystemBoundary.onOpen = null;
+  filesystemBoundary.onWriteFile = null;
   reloadConfiguration();
 });
 afterEach(() => {
   vi.unstubAllEnvs();
   filesystemBoundary.onOpen = null;
+  filesystemBoundary.onWriteFile = null;
   reloadConfiguration();
   rmSync(directory, { recursive: true, force: true });
 });
@@ -83,6 +91,89 @@ async function retainTerminalRun(finalText: unknown = 'The requested change is i
 }
 
 describe('execution-run retained WorkerUpdate inbox custody', () => {
+  it('retains the complete large result and its public byte-size metadata', async () => {
+    const result = 'é'.repeat(1_250_001);
+    await retainTerminalRun(result);
+    expect((await readRetainedExecutionRunRecord('retained-run'))?.state.latestToolResult).toBe(result);
+    const markerDirectory = join(directory, 'tmp', 'daemon-execution-runs');
+    const markerName = readdirSync(markerDirectory).find(name => name.startsWith('run-') && name.endsWith('.json'));
+    if (!markerName) throw new Error('Expected terminal run marker');
+    const marker: unknown = JSON.parse(readFileSync(join(markerDirectory, markerName), 'utf8'));
+    expect(marker).toMatchObject({ resultSizeBytes: Buffer.byteLength(result, 'utf8') });
+  });
+
+  it('surfaces a visibility-marker failure while retaining the completed parent input', async () => {
+    const diskFull = Object.assign(new Error('Fixture marker storage is full'), { code: 'ENOSPC' });
+    let failed = false;
+    filesystemBoundary.onWriteFile = path => {
+      if (!failed && typeof path === 'string' && /^run-.*\.json\.tmp-/u.test(basename(path))) {
+        failed = true;
+        throw diskFull;
+      }
+    };
+    await expect(retainTerminalRun('Result retained before marker failure')).rejects.toBe(diskFull);
+    expect((await readRetainedExecutionRunRecord('retained-run'))?.state).toMatchObject({
+      status: 'succeeded', latestToolResult: 'Result retained before marker failure',
+    });
+    const bridge = await createBridge();
+    try {
+      const pending = await bridge.prepareWorkerUpdates('parent_session', { signal: new AbortController().signal });
+      expect(pending.map(item => item.update.result)).toEqual(['Result retained before marker failure']);
+    } finally {
+      await bridge.dispose();
+    }
+  });
+
+  it('reads each sealed completion once across repeated intake and discovers a later completion', async () => {
+    await retainTerminalRun('First result');
+    const openedUpdates: string[] = [];
+    filesystemBoundary.onOpen = (path) => {
+      if (typeof path === 'string' && basename(path).startsWith('worker-update-') && path.endsWith('.sealed')) openedUpdates.push(path);
+    };
+    const bridge = await createBridge();
+    const signal = new AbortController().signal;
+    const first = await bridge.prepareWorkerUpdates('parent_session', { signal });
+    expect(first.map(item => item.update.result)).toEqual(['First result']);
+    const firstPath = openedUpdates[0];
+    let publicationAttempts = 0;
+    let publishedId: string | undefined;
+    const unbind = bridge.setWorkerUpdatePublisher('parent_session', async item => {
+      if (++publicationAttempts === 1) throw new Error('Transient transcript transport failure');
+      publishedId = item.localId;
+    });
+    for (let i = 0; i < 5; i += 1) {
+      await bridge.prepareWorkerUpdates('parent_session', { signal });
+      expect(await bridge.takeWorkerUpdate('parent_session', signal)).toBeNull();
+      const waiting = new AbortController();
+      const changed = bridge.waitForWorkerUpdateChange('parent_session', waiting.signal);
+      // Join recovery through the public intake boundary before aborting its quiet wait.
+      await bridge.prepareWorkerUpdates('parent_session', { signal });
+      waiting.abort();
+      expect(await changed).toBe(false);
+    }
+    expect(publishedId).toBe(first[0]?.localId);
+    expect(openedUpdates.filter(path => path === firstPath)).toHaveLength(1);
+    filesystemBoundary.onOpen = null;
+    await retainTerminalRun('Later external result');
+    filesystemBoundary.onOpen = (path) => {
+      if (typeof path === 'string' && basename(path).startsWith('worker-update-') && path.endsWith('.sealed')) openedUpdates.push(path);
+    };
+    const both = await bridge.prepareWorkerUpdates('parent_session', { signal });
+    expect(both.map(item => item.update.result).sort()).toEqual(['First result', 'Later external result']);
+    expect(openedUpdates.filter(path => path === firstPath)).toHaveLength(1);
+    expect(new Set(openedUpdates).size).toBe(2);
+    expect(openedUpdates).toHaveLength(2);
+    both.find(item => item.update.result === 'First result')!.acknowledgeAccepted();
+    expect((await bridge.prepareWorkerUpdates('parent_session', { signal })).map(item => item.update.result))
+      .toEqual(['Later external result']);
+    const later = both.find(item => item.update.result === 'Later external result')!;
+    const registry = await import('@/daemon/executionRunRegistry');
+    expect(await registry.acknowledgeExecutionRunWorkerUpdate({ sessionId: 'parent_session', localId: later.localId,
+      update: later.update })).toBe(true);
+    expect(await bridge.prepareWorkerUpdates('parent_session', { signal })).toEqual([]);
+    unbind();
+  });
+
   it('retains a separate exact terminal occurrence after parent report suppression and ACK', async () => {
     const { readRetainedExecutionRunRecord } = await import('@/daemon/executionRunRegistry');
     await retainTerminalRun('Unselected for parent', undefined, 'succeeded', { preset: 'custom', events: {} });

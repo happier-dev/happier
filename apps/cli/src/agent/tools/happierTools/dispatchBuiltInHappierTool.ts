@@ -19,7 +19,6 @@ import {
   changeTitleToolInputSchema,
   normalizeExecutionRunStartToolInput,
 } from './manualToolContracts';
-import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { actionInputValidationFailure } from '@happier-dev/protocol/actions/executor/actionInputValidation';
 
 type DispatchDeps = Readonly<{
@@ -80,13 +79,17 @@ function ok(result: unknown): HappierBuiltInToolDispatchResult {
   return { ok: true, result };
 }
 
-function err(errorCode: string, error: string, details?: unknown): HappierBuiltInToolDispatchResult {
+function err(errorCode: string, error: string, details?: unknown): Extract<HappierBuiltInToolDispatchResult, { ok: false }> {
   return {
     ok: false,
     errorCode,
     error,
     ...(details === undefined ? {} : { details }),
   };
+}
+
+export function unknownBuiltInHappierToolFailure(toolName: string): Extract<HappierBuiltInToolDispatchResult, { ok: false }> {
+  return err('unknown_tool', `Unknown built-in Happier tool: ${toolName}`);
 }
 
 function normalizeChangeTitleResult(result: unknown): HappierBuiltInToolDispatchResult {
@@ -167,7 +170,7 @@ export async function dispatchBuiltInHappierTool(params: Readonly<{
       requiredDirectActionIds: params.requiredDirectActionIds,
     });
     if (!isDirectToolAvailable) {
-      return err('unknown_tool', `Unknown built-in Happier tool: ${params.toolName}`);
+      return unknownBuiltInHappierToolFailure(params.toolName);
     }
   }
 
@@ -191,7 +194,7 @@ export async function dispatchBuiltInHappierTool(params: Readonly<{
       registry: params.registry,
       pluginToolCatalog: params.pluginToolCatalog,
     })) {
-      return err('unknown_tool', `Unknown built-in Happier tool: ${params.toolName}`);
+      return unknownBuiltInHappierToolFailure(params.toolName);
     }
   }
 
@@ -263,12 +266,7 @@ export async function dispatchBuiltInHappierTool(params: Readonly<{
   if (params.toolName === 'action_execute') {
     const parsed = actionExecuteToolInputSchema.safeParse(params.args ?? {});
     if (!parsed.success) return actionInputValidationFailure(parsed.error);
-    // Qualified Actions are admitted by the bridge's current Action discovery
-    // owner, independently of whether they declare a named Tool.
-    if (!parseQualifiedPluginActionId(parsed.data.actionId)) {
-      const availability = resolveAvailability(parsed.data.actionId);
-      if (!availability.available) return actionDisabled(availability);
-    }
+    // The bridge's current Action discovery owner admits the named or qualified target.
     return await params.deps.executeActionByToolName(
       'action_execute',
       {
@@ -290,5 +288,5 @@ export async function dispatchBuiltInHappierTool(params: Readonly<{
     );
   }
 
-  return err('unknown_tool', `Unknown built-in Happier tool: ${params.toolName}`);
+  return unknownBuiltInHappierToolFailure(params.toolName);
 }

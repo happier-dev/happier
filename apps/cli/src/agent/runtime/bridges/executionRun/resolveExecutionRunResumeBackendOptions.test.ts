@@ -51,6 +51,16 @@ function baseRun(launch: ExecutionRunState['launch']): ExecutionRunState {
 }
 
 describe('resolveExecutionRunResumeBackendOptions', () => {
+  it.each(['explicit', 'inherited', 'independent', 'retained'] as const)(
+    'projects only proven explicit model intent from a historical %s launch', selectionSource => {
+      const run = baseRun({ selectionSource, modelId: 'custom/native' });
+      expect(resolveExecutionRunResumeBackendOptions({ run })).toMatchObject({
+        modelId: 'custom/native', modelSelectionSource: selectionSource === 'explicit' ? 'explicit' : 'inherited',
+      });
+      expect(projectRetainedExecutionRunState(run).launch).toEqual(run.launch);
+    },
+  );
+
   it('rehydrates the immutable Run tool policy without inheriting parent grants', () => {
     const run = baseRun({
       allowedTools: ['mcp__wilson-brief__*'], unlistedTools: 'deny',

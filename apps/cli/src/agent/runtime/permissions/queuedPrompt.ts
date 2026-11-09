@@ -56,7 +56,7 @@ export type PermissionModeQueuedPromptMode = Readonly<{
 export type PermissionModeQueuedPrompt = Readonly<{
   /** Validated descriptive note backed by the original informational admission receipt. */
   fileReviewNote?: FileReviewNoteV1;
-  fileReviewNoteContext?: readonly Readonly<{ text: string; localId: string | null; userMessageSeq: number | null }>[];
+  fileReviewNoteContext?: readonly Readonly<{ note: FileReviewNoteV1; localId: string | null; userMessageSeq: number | null }>[];
   discussionAddressing?: DiscussionAddressingV1;
   actionRequestAttributionV1?: ActionRequestAttributionV1;
   text: string;
@@ -208,7 +208,7 @@ export function appendNextTurnContextToQueuedPrompt(
     if (item.returnedAnswer) answers.push({ reply: item.returnedAnswer, text: item.text,
       localId: item.localId, userMessageSeq: item.userMessageSeq ?? null });
     if (item.fileReviewNote && !(item.localId !== null && fileReviewNotes.some(note => note.localId === item.localId))) {
-      fileReviewNotes.push({ text: item.text, localId: item.localId, userMessageSeq: item.userMessageSeq ?? null });
+      fileReviewNotes.push({ note: item.fileReviewNote, localId: item.localId, userMessageSeq: item.userMessageSeq ?? null });
     }
     followDeliveries.push(...item.followDeliveries ?? []);
     // Retained information is represented context, not another native primary

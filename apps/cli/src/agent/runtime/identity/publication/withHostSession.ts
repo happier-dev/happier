@@ -19,6 +19,11 @@ function resolveOpenedRuntimeDescriptorV1(params: Readonly<{
   return descriptor?.agentId === params.agentId ? descriptor : null;
 }
 
+function capabilityRecord(value: unknown): Readonly<Record<string, unknown>> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Readonly<Record<string, unknown>> : null;
+}
+
 function mergeRuntimeCapabilities(hostCapabilities: unknown, agentCapabilities: unknown): unknown {
   if (
     hostCapabilities
@@ -28,9 +33,24 @@ function mergeRuntimeCapabilities(hostCapabilities: unknown, agentCapabilities: 
     && typeof agentCapabilities === 'object'
     && !Array.isArray(agentCapabilities)
   ) {
+    const hostBackend = capabilityRecord(Reflect.get(hostCapabilities, 'backend'));
+    const agentBackend = capabilityRecord(Reflect.get(agentCapabilities, 'backend'));
+    const hostSession = capabilityRecord(hostBackend?.session);
+    const agentSession = capabilityRecord(agentBackend?.session);
+    const hostMedia = capabilityRecord(hostSession?.media);
+    const agentMedia = capabilityRecord(agentSession?.media);
     return {
       ...hostCapabilities,
       ...agentCapabilities,
+      ...(hostBackend && agentBackend ? { backend: {
+        ...hostBackend,
+        ...agentBackend,
+        ...(hostSession && agentSession ? { session: {
+          ...hostSession,
+          ...agentSession,
+          ...(hostMedia && agentMedia ? { media: { ...hostMedia, ...agentMedia } } : {}),
+        } } : {}),
+      } } : {}),
     };
   }
   return agentCapabilities;

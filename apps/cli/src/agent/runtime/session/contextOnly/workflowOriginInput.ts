@@ -34,7 +34,6 @@ function record(value: unknown): Readonly<Record<string, unknown>> {
 /** Origin consumption reads committed facts. It never takes publisher custody or writes Pending. */
 export function createWorkflowOriginContextInputPort(options: WorkflowOriginInputOptions): HostContextOnlyInputPort {
   const offers = new Map<string, Offer>();
-  const acceptedRevisions = new Map<string, number>();
   const pendingAcks = new Map<string, number>();
   let observedWake = readSessionFollowWakeInvalidationGeneration();
   const execute = async (operation: WorkflowRunStorageOperation, signal?: AbortSignal) =>
@@ -124,6 +123,7 @@ export function createWorkflowOriginContextInputPort(options: WorkflowOriginInpu
   const observeDispatch = async (localInputId: string, signal: AbortSignal) => {
     if (await options.readDispatchFact(localInputId, signal) !== 'dispatched') return false;
     options.onDispatchedInput({ localInputId });
+    offers.delete(localInputId);
     return true;
   };
   const flushAcks = async (signal: AbortSignal) => {
@@ -176,7 +176,7 @@ export function createWorkflowOriginContextInputPort(options: WorkflowOriginInpu
               invocationCursor = typeof rowPage.nextCursor === 'string' ? rowPage.nextCursor : undefined;
             } while (invocationCursor && !signal.aborted);
           }
-          if (run.originDeliveryAckRevision === null || run.revision <= Math.max(run.originDeliveryAckRevision, acceptedRevisions.get(run.id) ?? 0)) continue;
+          if (run.originDeliveryAckRevision === null || run.revision <= Math.max(run.originDeliveryAckRevision, pendingAcks.get(run.id) ?? 0)) continue;
           const finalResult = source.resultEnvelope == null ? undefined : openWorkflowFinalResultStoredEnvelopeV1({
             ...encryption.runCrypto, binding: { v: 1, purpose: 'final_result', accountId: options.accountId, runId: run.id },
             envelope: parseWorkflowStoredContentEnvelopeV1(source.resultEnvelope),
@@ -202,7 +202,6 @@ export function createWorkflowOriginContextInputPort(options: WorkflowOriginInpu
                 && current.run.state === run.state && current.run.attentionRequired === run.attentionRequired;
             },
             acknowledgeAccepted: () => {
-              acceptedRevisions.set(run.id, Math.max(acceptedRevisions.get(run.id) ?? 0, run.revision));
               pendingAcks.set(run.id, Math.max(pendingAcks.get(run.id) ?? 0, run.revision));
             },
           } satisfies PreparedWorkerContextItem;
@@ -250,12 +249,14 @@ export function createWorkflowOriginContextInputPort(options: WorkflowOriginInpu
     },
     waitForChange: async (signal) => await waitForSessionFollowWakeInvalidation(observedWake, signal),
     isWorkflowStepDeliverable: async ({ localInputId }) => {
+      if (!offers.has(localInputId)) return false;
       const signal = new AbortController().signal;
       if (await observeDispatch(localInputId, signal)) return false;
       const current = await readOffer(localInputId, signal);
       return current !== null && current.run.state === 'running' && current.row.index.lifecycle === 'admitting';
     },
     reportWorkflowStepWithdrawn: async ({ localInputId }) => {
+      if (!offers.has(localInputId)) return;
       const signal = new AbortController().signal;
       if (await observeDispatch(localInputId, signal)) return;
       const current = await readOffer(localInputId, signal);

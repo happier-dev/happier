@@ -8,7 +8,7 @@ import type { AgentSessionNativeToolDescriptor } from '@happier-dev/plugin-sdk/a
 import { z } from 'zod/mini';
 
 import { projectSessionBoundActionToolInputSchema } from './actionToolContext';
-import { listBuiltInHappierTools } from './listBuiltInHappierTools';
+import { isBuiltInHappierToolAdmitted, listBuiltInHappierTools } from './listBuiltInHappierTools';
 import { resolveActionsSettingsWithEnvironmentOverride } from '@/settings/actionsSettings';
 import { projectMcpToolInputJsonSchema } from '@/mcp/server/projectMcpToolInputJsonSchema';
 import type { ProjectedPluginToolCatalogEntry } from '@/plugins/runtime/toolCatalog';
@@ -42,11 +42,11 @@ function isSessionAgentToolAvailableWithSettings(params: Readonly<{
     actionsSettings,
     { surface: 'agent', placement: null },
   );
-  return listBuiltInHappierTools({
+  return isBuiltInHappierToolAdmitted(params.toolName, {
     surface: 'agent',
     actionsSettings,
     isActionEnabled,
-  }).some((tool) => tool.name === params.toolName);
+  });
 }
 
 export function isSessionAgentToolAvailable(params: Readonly<{
@@ -70,6 +70,7 @@ export function resolveSessionNativeToolDescriptors(params: Readonly<{
   profileId?: string | null;
   codingPromptBehavior?: CodingPromptBehaviorV1 | null;
   sessionId: string;
+  happierToolsEnabled?: boolean;
   sessionMachineId?: string | null;
   sessionRootPath?: string | null;
   memoryRecallGuidanceEnabled: boolean;
@@ -95,6 +96,7 @@ export function resolveSessionNativeToolDescriptors(params: Readonly<{
   });
   const tools = listBuiltInHappierTools({
     surface: 'agent',
+    happierToolsEnabled: params.happierToolsEnabled,
     actionsSettings,
     isActionEnabled,
     sessionMemoryEnabled: params.sessionMemoryEnabled === true,

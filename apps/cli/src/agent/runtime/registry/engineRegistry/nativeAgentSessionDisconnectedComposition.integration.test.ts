@@ -84,7 +84,6 @@ function createTranscriptApi(params: Readonly<{
         outboundShapeLogger: { log: vi.fn() },
         getSocket: () => params.socket,
         getLatestTurnSnapshot: () => null,
-        getActiveLocalTurnProgressAt: () => null,
         getSessionConnectionSupervisor: () => null,
         getMetadataSnapshot: () => null,
         updateAgentState: vi.fn(async () => undefined),

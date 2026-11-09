@@ -200,7 +200,6 @@ export function createAcpSessionListingOwner(params: Readonly<{
         timeouts: {
           ...(timeouts.initializeMs ? { initMs: timeouts.initializeMs } : {}),
           ...(timeouts.idleMs ? { idleMs: timeouts.idleMs } : {}),
-          ...(timeouts.toolCallMs ? { toolCallMs: timeouts.toolCallMs } : {}),
           ...(params.runtime.definition?.timeouts ?? {}),
         },
         ...(params.runtime.definition?.stderrRules

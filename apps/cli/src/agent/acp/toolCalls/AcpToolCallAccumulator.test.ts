@@ -23,6 +23,34 @@ function observation(
 }
 
 describe('AcpToolCallAccumulator', () => {
+    it('does not republish authoritative named calls when only fallback inference changes', () => {
+        const accumulator = new AcpToolCallAccumulator();
+        accumulator.observe(observation(1, { name: 'write_file', status: 'pending' }, { semanticName: 'edit' }));
+        expect(accumulator.observe(observation(2, { name: 'write_file', status: 'pending' }, {
+            semanticName: 'write_file',
+        }))).toEqual({ kind: 'ignored', reason: 'duplicate' });
+    });
+
+    it('revises the stable terminal result when late standard or MCP identity enriches it', () => {
+        const accumulator = new AcpToolCallAccumulator();
+        const resultLocalId = createAcpToolIdentity(observation(1, {})).resultLocalId;
+        expect(accumulator.observe(observation(1, {
+            status: 'completed', rawOutput: { ok: true },
+        }, { semanticName: 'other' }))).toMatchObject({
+            kind: 'terminal', result: { localId: resultLocalId, toolName: 'other' }, publishResult: true,
+        });
+        expect(accumulator.observe(observation(2, { name: 'echo' }))).toMatchObject({
+            kind: 'late-enrichment', result: { localId: resultLocalId, toolName: 'echo' }, publishResult: true,
+        });
+        expect(accumulator.observe(observation(3, { toolMetadata: { mcp: { server: 'probe', tool: 'echo' } } })))
+            .toMatchObject({
+                kind: 'late-enrichment', result: { localId: resultLocalId, toolName: 'mcp__probe__echo' }, publishResult: true,
+            });
+        expect(accumulator.observe(observation(4, {
+            name: 'echo', toolMetadata: { mcp: { server: 'probe', tool: 'echo' } },
+        }))).toEqual({ kind: 'ignored', reason: 'duplicate' });
+    });
+
     it('exposes immutable active snapshots scoped to one session, turn, and optional sidechain', () => {
         const accumulator = new AcpToolCallAccumulator();
         accumulator.observe(observation(1, { status: 'pending' }, { toolCallId: 'main' }));
@@ -263,7 +291,7 @@ describe('AcpToolCallAccumulator', () => {
                 status: 'cancelled',
                 isError: true,
             },
-            publishResult: false,
+            publishResult: true,
         });
         expect(accumulator.observe(observation(3, { status: 'in_progress' }, {
             toolCallId: 'unseen-after-close',

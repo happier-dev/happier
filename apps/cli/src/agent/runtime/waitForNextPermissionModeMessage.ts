@@ -16,7 +16,6 @@ export async function waitForNextPermissionModeMessage<Mode, Message>(opts: {
   beforeCollectQueuedBatch?: (() => void | Promise<void>) | null;
   beforePendingMaterialize?: (() => boolean | Promise<boolean>) | null;
   onMetadataUpdate?: (() => void | Promise<void>) | null;
-  pendingDrainMaxPopPerWake?: number;
   pendingQueueDeliveryTiming?: SessionPendingQueueDeliveryTiming;
   inputConsumer?: SessionProviderInputConsumer<Mode, Message>;
 }): Promise<MessageBatch<Mode, Message> | null> {
@@ -26,7 +25,6 @@ export async function waitForNextPermissionModeMessage<Mode, Message>(opts: {
     reconcileWhenEmpty: 'skip',
     pendingQueueDeliveryTiming: opts.pendingQueueDeliveryTiming,
     refreshBeforeQueuedBatch: false,
-    pendingDrainMaxPopPerWake: opts.pendingDrainMaxPopPerWake,
   });
   return await inputConsumer.waitForNextInput({
     abortSignal: opts.abortSignal,
@@ -57,15 +55,12 @@ export function createSessionProviderInputConsumerSessionAdapter(
       ? { materializeNextPendingMessageSafely: (materializeOpts) => materializeNextPendingMessageSafely.call(session, materializeOpts) }
       : {}),
     getMetadataSnapshot: () => session.getMetadataSnapshot(),
+    getPendingMessageEditHoldIds: () => session.getPendingMessageEditHoldIds?.() ?? null,
     getAgentStateSnapshot: () => session.getAgentStateSnapshot(),
     readSubagentLiveWork: () => hostSubagentStore.readLiveWork(session.sessionId),
     subscribeSubagentLiveWork: listener => hostSubagentStore.subscribeLiveWork(session.sessionId, listener),
     getPendingQueueState: () => session.getPendingQueueState(),
-    readPendingQueueStateForLiveWork: async () => {
-      await session.refreshSessionSnapshotFromServerRequired({ reason: 'explicit-drain' });
-      if (!await session.reconcilePendingProviderInputCustodyBeforeMaterialization()) return { known: false };
-      return session.getPendingQueueState();
-    },
+    readPendingQueueStateForLiveWork: () => session.readPendingQueueStateForLiveWork(),
     shouldAttemptPendingMaterialization: () =>
       session.shouldAttemptPendingMaterialization?.() ?? true,
     hasPendingProviderInput: () => {

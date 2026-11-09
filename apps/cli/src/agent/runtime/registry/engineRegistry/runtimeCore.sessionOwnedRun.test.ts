@@ -50,6 +50,14 @@ import type { SessionRuntimeControls } from '@/rpc/handlers/sessionControls';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); resetInMemoryAccountSettingsContextForTests(); });
 
+import { ScmDiffSummaryGenerateOutputSchema, ExecutionRunSendRequestSchema, resolveExecutionRunInteractionAffordances } from '@happier-dev/protocol';
+import { executeScmDiffSummaryResultAction } from '@/scm/actions/executeScmDiffSummaryResultAction';
+import { scmDiffSummaryResultStore } from '@/agent/executionRuns/tasks/scmDiffSummary/results/resultStore';
+import { projectExecutionRunPublicState } from '@/agent/runtime/bridges/executionRun/publicState';
+import type { ExecutionRunState } from '@/agent/runtime/bridges/executionRun/executionRunTypes';
+import type { AgentExecutionRunConversationEventV1, AgentSessionExecutionRunRuntimeFactoryV1 } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentSessionCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
+
 const AGENT_ID = 'acme.session-agent';
 
 vi.mock('node:fs', async (importOriginal) => {
@@ -64,7 +72,7 @@ vi.mock('node:fs', async (importOriginal) => {
   };
 });
 
-function createContributions() {
+function createContributions(delivery: AgentSessionCapabilities['delivery'] = ['newTurn']) {
   const backend = {
     id: AGENT_ID,
     agentId: AGENT_ID,
@@ -91,7 +99,7 @@ function createContributions() {
           tools: { delivery: 'native_mcp' },
           sessions: {
             open: ['create', 'resume'],
-            delivery: ['newTurn'],
+            delivery,
             cancel: true,
             executionRunContext: { versions: [1] },
             workStateSources: [{ id: 'tasks', itemKinds: ['task'] }],
@@ -111,6 +119,95 @@ function createContributions() {
 }
 
 describe('resolveBackendRuntimeCore Session-owned Execution Run scope', () => {
+
+  it('continues Discuss on the same current detached summary Run after refinement', async () => {
+    const { backend, agent, contributes } = createContributions(['newTurn', 'steer', 'followUp']);
+    const inputs: Array<{ text: string; inputIds: readonly string[] }> = [];
+    let publish: ((event: AgentExecutionRunConversationEventV1) => void) | undefined;
+    // Only the external native Agent is substituted; adapter selection, public
+    // projection, saved-result admission and input delivery are production owners.
+    const factory: AgentSessionExecutionRunRuntimeFactoryV1 = {
+      async open() { throw new Error('Expected the retained conversation facet'); },
+      async openConversation() { return {
+        watch(listener) { publish = listener; return { dispose() {} }; },
+        async send(input) {
+          inputs.push({ text: input.input.text, inputIds: input.inputIds });
+          publish!({ kind: 'input-accepted', inputIds: input.inputIds, delivery: input.delivery });
+          publish!({ kind: 'turn-start', turnId: input.delivery.turnId, startedBy: 'host' });
+          publish!({ kind: 'message-delta', turnId: input.delivery.turnId, channel: 'assistant',
+            text: inputs.length === 1 ? '{"summaryMarkdown":"Refined summary"}' : 'The line changed to document the feature.' });
+          publish!({ kind: 'turn-complete', turnId: input.delivery.turnId });
+          return { status: 'admitted' };
+        },
+        async dispose() {},
+      }; },
+    };
+    const adapter = await resolveBackendRuntimeCore({
+      backend, agent, runtimeRegistry: { contributes }, executionSurfaces: createEmptyBackendExecutionSurfaces(),
+      runtimeOwner: { backendId: AGENT_ID,
+        selected: { kind: 'plugin_engine', ownerId: AGENT_ID, provenance: 'external', pluginId: AGENT_ID }, candidates: [] },
+      nativeAgentRuntime: { sessions: { async open() { throw new Error('Detached Run cannot open a Session'); },
+        executionRunContextV1: factory } },
+      nativeAgentRuntimeIdentity: { pluginId: AGENT_ID, pluginVersion: '1.0.0', agentId: AGENT_ID,
+        generation: 'summary-generation', isCurrent: () => true },
+    } as never);
+    const cwd = '/run/detached-summary';
+    const runtime = adapter!.runtimeCore.createExecutionRunBackend({ scope: 'detached', cwd,
+      runId: 'refined-summary', controllerOccurrenceId: 'refined-occurrence', callId: 'call', sidechainId: 'sidechain',
+      backendId: AGENT_ID, permissionMode: 'read_only',
+      start: { intent: 'scm_diff_summary', runClass: 'long_lived', retentionPolicy: 'resumable' },
+    } as never);
+    if (!runtime) throw new Error('Expected the native summary adapter');
+    let saved: Awaited<ReturnType<typeof scmDiffSummaryResultStore.create>> | undefined;
+    try {
+      const { runtimeId } = await runtime.provisionRuntime({ initialPrompt: 'Refine the captured summary.' });
+      await runtime.waitForTurnCompletion?.();
+      const state: ExecutionRunState = { runId: 'refined-summary', callId: 'call', sidechainId: 'sidechain',
+        sessionId: null, depth: 0, intent: 'scm_diff_summary', backendTarget: { kind: 'builtInAgent', agentId: AGENT_ID },
+        backendId: AGENT_ID, instructions: '', permissionMode: 'read_only', retentionPolicy: 'resumable',
+        runClass: 'long_lived', ioMode: 'streaming', status: 'running', startedAtMs: 1 };
+      // This current controller fixture models the remote Run read boundary.
+      const controller = { kind: 'backend', backend: runtime, cancelled: false, runtimeId, turnInFlight: false } as unknown as
+        Extract<ExecutionRunController, { kind: 'backend' }>;
+      const publicRun = projectExecutionRunPublicState(state, controller);
+      expect(publicRun.lifecycle.state).toBe('current');
+      expect(resolveExecutionRunInteractionAffordances(publicRun)).toMatchObject({
+        canSend: true, canSteer: false, canFollowUp: false,
+      });
+      saved = await scmDiffSummaryResultStore.create({ cwd, output: ScmDiffSummaryGenerateOutputSchema.parse({
+        success: true, sourceKey: 'comparison', runId: state.runId, requestedOutputs: ['summary'],
+        metadata: { source: { kind: 'workingTree' }, sourceKey: 'comparison' },
+        comparison: { id: 'comparison', source: { kind: 'workingTree' }, repository: { rootPath: cwd }, endpoints: {},
+          inventory: { state: 'complete', files: [], reasons: [] } },
+        outputs: { summary: { state: 'complete', value: { summaryMarkdown: 'Refined summary' } } },
+        analysis: { suppliedChangeRefs: [], analysedChangeRefs: [], remainingChangeRefs: [] },
+      }) });
+      const discussion = await executeScmDiffSummaryResultAction({ actionId: 'scm.diffSummary.discuss', cwd,
+        input: { cwd, resultId: saved.resultId, expectedRevision: saved.revision, message: 'Why did the line change?' },
+        actionContext: { surface: 'cli', executionRunTargetMachineId: 'machine-a' },
+        executeCanonicalAction: async (actionId, input) => {
+          if (actionId === 'execution.run.get') return { ok: true, result: { run: publicRun } };
+          if (actionId !== 'execution.run.send') throw new Error(`Unexpected child Action ${actionId}`);
+          const request = ExecutionRunSendRequestSchema.parse(input);
+          expect(request.runId).toBe(state.runId);
+          const accepted = await runtime.deliverInput(runtimeId, { text: request.message }, { localId: request.localInputId! });
+          expect(accepted.status).toBe('admitted');
+          return { ok: true, result: { ok: true } };
+        },
+      });
+      expect(discussion, JSON.stringify(discussion)).toMatchObject({ success: true, runId: state.runId, inputId: expect.any(String) });
+      await runtime.waitForTurnCompletion?.();
+      expect(inputs).toHaveLength(2);
+      expect(inputs[1]?.text).toContain('Why did the line change?');
+      expect(discussion).toMatchObject({ inputId: inputs[1]?.inputIds[0] });
+      expect((await scmDiffSummaryResultStore.read({ cwd, resultId: saved.resultId })))
+        .toMatchObject({ success: true, result: { revision: saved.revision } });
+    } finally {
+      await runtime.dispose();
+      if (saved) await scmDiffSummaryResultStore.delete({ cwd, resultId: saved.resultId, expectedRevision: saved.revision });
+    }
+  });
+
   it('publishes a terminal child workspace trust question through the real child context', async () => {
     const { backend, agent } = createContributions();
     setActiveAccountSettingsSnapshot({ scopeKey: 'child-trust', source: 'network', settingsVersion: 1,
@@ -533,6 +630,7 @@ describe('resolveBackendRuntimeCore Session-owned Execution Run scope', () => {
     } as never);
     const messages: import('@/agent/core/AgentMessage').AgentMessage[] = [];
     runtime?.subscribeMessages(message => messages.push(message));
+    expect(runtime?.interaction).toBeUndefined();
     await expect(runtime?.provisionRuntime({ initialPrompt: 'Run independently' })).resolves.toEqual({
       runtimeId: 'run-detached',
     });

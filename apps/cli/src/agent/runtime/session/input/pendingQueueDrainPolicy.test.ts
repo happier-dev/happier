@@ -5,23 +5,13 @@ import {
   type AccountSettings,
 } from '@happier-dev/protocol';
 import {
-  PENDING_QUEUE_DRAIN_ALL_MAX_POP_PER_WAKE,
-  PENDING_QUEUE_ONE_AT_A_TIME_MAX_POP_PER_WAKE,
   resolvePendingQueueRuntimeActivityDeferral,
   resolveSessionPendingQueueDeliveryTiming,
-  resolveSessionPendingQueueDrainMode,
-  resolveSessionPendingQueueMaxPopPerWake,
   runtimeIdleForPendingDrain,
   shouldDeferPendingQueueDrainForRuntimeActivity,
 } from './pendingQueueDrainPolicy';
 
 describe('pendingQueueDrainPolicy', () => {
-
-  it('resolves pending queue drain mode and max pop per wake from account settings', () => {
-    expect(resolveSessionPendingQueueDrainMode({ sessionPendingQueueDrainMode: 'drain_all' } as AccountSettings)).toBe('drain_all');
-    expect(resolveSessionPendingQueueMaxPopPerWake({ sessionPendingQueueDrainMode: 'drain_all' } as AccountSettings)).toBe(PENDING_QUEUE_DRAIN_ALL_MAX_POP_PER_WAKE);
-    expect(resolveSessionPendingQueueMaxPopPerWake({ sessionPendingQueueDrainMode: 'one_at_a_time' } as AccountSettings)).toBe(PENDING_QUEUE_ONE_AT_A_TIME_MAX_POP_PER_WAKE);
-  });
 
   it('defaults pending queue delivery timing to foreground-ready for missing or malformed settings', () => {
     expect(resolveSessionPendingQueueDeliveryTiming(null)).toBe(DEFAULT_SESSION_PENDING_QUEUE_DELIVERY_TIMING);

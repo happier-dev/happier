@@ -1,5 +1,6 @@
 import type { PromptStackEntryV1 } from '@happier-dev/protocol/prompts/library/promptStacksV1';
-import { resolveSessionProjectKey, type SessionProjectPromptStackInput, type SessionProjectKeyResolution } from '@/workspaces/resolveSessionProjectKey';
+import { readSessionProjectAccountRows, resolveSessionProjectKey, type SessionProjectAccountRowsReader,
+  type SessionProjectPromptStackInput, type SessionProjectKeyResolution } from '@/workspaces/resolveSessionProjectKey';
 import { createCliProjectSourceActionDeps } from '@/session/actions/projectSourceActionDeps';
 import { withCliPromptLibraryArtifactReader } from '@/agent/prompts/library/resolveCliPromptStackSystemAppendBlocks';
 import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -8,8 +9,10 @@ import { ProjectSourcesReadOutputV1Schema } from '@happier-dev/protocol/projects
 import { migrateProjectPromptStackSkillRules, readProjectAccountRows, readProjectAccountRowsObservation,
   type ProjectStackSkillMigrationResult, type ProjectAccountRowsObservation } from '@/workspaces/projectAccountRows';
 import { readProjectContextEntriesV1 } from '@happier-dev/protocol/projects/projectContextV1';
+import { resolveProjectContextSourceV1 } from '@happier-dev/protocol/projects/projectListProjectionV1';
 import type { QualifiedProjectKeyV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
+import { classifyHomeReadPreparationError } from '@/agent/prompts/library/homeReadPreparationError';
 
 export type { SessionProjectPromptStackInput } from '@/workspaces/resolveSessionProjectKey';
 
@@ -37,7 +40,7 @@ export function createSessionProjectPromptStackPreparation(binding: Readonly<{
     if (observation && !await (await observation).isCurrent()) projectPending('project_association_unavailable');
     binding.signal?.throwIfAborted();
   };
-  const readRows: typeof readProjectAccountRows = async input => {
+  const readRows: SessionProjectAccountRowsReader = async input => {
     observation ??= runWithServerHttpBaseUrl(serverHttpBaseUrl, () => readProjectAccountRowsObservation(input));
     const current = await observation;
     await assertCurrent();
@@ -78,7 +81,15 @@ export async function readCliProjectPromptStackContext(input: Readonly<{
     }, { credentials, serverId: projectRef.serverId, signal: options?.signal ?? signal }),
   });
   return readProjectContextEntriesV1({
-    readRows: () => readProjectAccountRows({ credentials, serverId: projectRef.serverId, signal }),
+    readRows: async () => {
+      const refs = await readProjectAccountRows({ credentials, serverId: projectRef.serverId, signal,
+        selection: { kinds: ['workspace-ref'], serverId: projectRef.serverId } });
+      const association = resolveProjectContextSourceV1({ projectRef, workspaceRefs: refs.workspaceRefs, organizationPresent: false });
+      if (association.kind === 'source') return { workspaceRefs: refs.workspaceRefs, organizations: [] };
+      const organization = await readProjectAccountRows({ credentials, serverId: projectRef.serverId, signal,
+        selection: { key: { kind: 'project-organization', ...projectRef } } });
+      return { workspaceRefs: refs.workspaceRefs, organizations: organization.organizations };
+    },
     readSource: request => sourceOwner.projectSourcesRead!(request, { signal }),
   }, projectRef);
 }
@@ -115,9 +126,19 @@ async function readResolvedSessionProjectPromptStack(input: SessionProjectPrompt
     input.signal?.throwIfAborted();
     if (!source.success || !source.data.ok) return projectPending('project_source_unavailable');
     shared = (source.data.source.attachments ?? []).flatMap(attachment => attachment.purpose === 'context' ? [attachment.entry] : []);
+  } else {
+    try {
+      const organization = await runWithServerHttpBaseUrl(serverHttpBaseUrl, () => readSessionProjectAccountRows(input,
+        { key: { kind: 'project-organization', serverId: workspaceRef.serverId, projectKey: resolved.projectKey } }));
+      shared = organization.organizations.find(row => row.key.serverId === workspaceRef.serverId
+        && row.key.projectKey === resolved.projectKey)?.value.promptStack ?? [];
+    } catch (error) {
+      input.signal?.throwIfAborted();
+      throw classifyHomeReadPreparationError(error);
+    }
   }
   input.signal?.throwIfAborted();
-  const entries = (workspaceRef.source ? shared : resolved.promptStack).map(entry => ({ ...entry,
+  const entries = shared.map(entry => ({ ...entry,
     ref: { ...entry.ref, serverId: entry.ref.serverId ?? serverId } }));
   const skillMigration = await migrateProjectPromptStackSkillRules({ credentials: input.credentials, serverId, serverHttpBaseUrl,
     projectKey: resolved.projectKey, entries, signal: input.signal, operationContext: input.operationContext });

@@ -153,7 +153,10 @@ describe('host ready after a provider successor starts', () => {
       async send(request) {
         providerDispatchCount += 1;
         hostTurnIds.push(request.delivery.turnId);
-        if (failure === 'prompt') throw new Error('Prompt dispatch failed before a native turn');
+        // A definite refusal settles an unstarted native turn. A transport
+        // throw instead means custody unknown and cannot promise ready here.
+        if (failure === 'prompt') return { status: 'rejected', retryable: false,
+          diagnostic: { code: 'prompt_dispatch_rejected', severity: 'error', message: 'Prompt rejected before a native turn' } };
         const answer = providerDispatchCount === 1 ? hostAnswer : secondHostAnswer;
         emit({ kind: 'input-accepted', inputIds: request.inputIds, delivery: request.delivery });
         emit({ kind: 'turn-start', turnId: request.delivery.turnId, startedBy: 'host' });

@@ -56,7 +56,8 @@ describe('execution run prepared input budget', () => {
     };
     const catalog = { ...profileCatalog,
       builtInProfilesByIntent: new Map(profileCatalog.builtInProfilesByIntent).set('task', taskProfile) };
-    const finalizeStartParamsForRuntime = async (params: ExecutionRunManagerStartParams, backend: ExecutionRunHostRuntime) => {
+    const finalizeStartParamsForRuntime = async (params: ExecutionRunManagerStartParams, prepareRuntime: () => ExecutionRunHostRuntime) => {
+      const backend = prepareRuntime();
       observed.push('prepare');
       expect([...controllers.values()].some(controller => controller.kind === 'backend' && controller.backend === backend)).toBe(true);
       return { ...params, instructions: 'prepared 😀', intentInput: { input: { prepared: true } } };
@@ -105,5 +106,37 @@ describe('execution run prepared input budget', () => {
       expect(dispatchedInstructions).not.toContain('unprepared');
       expect(runs.get(started.runId)?.instructions).toBe('prepared 😀');
     } finally { await runtime.dispose(); await voiceAgentManager.dispose(); }
+  });
+
+  it('settles a demanded context when profile finalization fails before provider effects', async () => {
+    const runs = new Map<string, ExecutionRunState>();
+    const controllers = new Map<string, ExecutionRunController>();
+    const dispose = vi.fn(async () => {});
+    const provisionRuntime = vi.fn(async () => ({ runtimeId: 'unexpected' }));
+    const runtime = { ...createTestExecutionRunHostRuntime(), dispose, provisionRuntime };
+    const voiceAgentManager = new VoiceAgentManager({ createRuntime: () => runtime });
+    const sendAcp = vi.fn(async () => {});
+    try {
+      const started = await startExecutionRun({
+        params: { sessionId: 'parent', intent: 'task', backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+          instructions: 'unprepared', permissionMode: 'read_only', retentionPolicy: 'resumable',
+          runClass: 'bounded', ioMode: 'request_response' },
+        finalizeStartParamsForRuntime: async (_params, prepareRuntime) => {
+          prepareRuntime();
+          throw new Error('Budget finalization refused');
+        },
+        parentProvider: 'claude', streamedTranscriptSession: null, sendAcp,
+        createRuntime: () => runtime, getNowMs: () => 1, budgetRegistry: null, runs, controllers,
+        enqueueMarkerWrite: async (_id, write) => { await write(); }, writeActivityMarker: async () => {},
+        finishRun: async (runId, next) => { runs.set(runId, { ...runs.get(runId)!, ...next }); },
+        executeBoundedRun: async () => { throw new Error('Refused preparation must not dispatch'); },
+        send: async () => ({ ok: true }), voiceAgentManager,
+      });
+      expect(runs.get(started.runId)).toMatchObject({ status: 'failed', error: { message: 'Budget finalization refused' } });
+      expect(controllers.has(started.runId)).toBe(false);
+      expect(dispose).toHaveBeenCalledOnce();
+      expect(provisionRuntime).not.toHaveBeenCalled();
+      expect(sendAcp).not.toHaveBeenCalled();
+    } finally { await voiceAgentManager.dispose(); }
   });
 });

@@ -104,6 +104,7 @@ export const ManagedServiceEndpointReadOpenRequestV1Schema = z.union([
     route: EndpointProjectionOpenRouteSchema,
     pathAndQuery: PathAndQuerySchema,
     headers: RequestHeadersSchema,
+    interactive: z.optional(z.literal(true)),
   }),
   z.strictObject({
     v: z.literal(1),
@@ -111,6 +112,7 @@ export const ManagedServiceEndpointReadOpenRequestV1Schema = z.union([
     route: ExactHandleRouteSchema,
     pathAndQuery: PathAndQuerySchema,
     headers: RequestHeadersSchema,
+    interactive: z.optional(z.literal(true)),
     method: z.optional(HttpMethodSchema),
     bodyBase64: z.optional(CanonicalBodyBase64Schema),
     timeoutMs: z.optional(PositiveTimeoutSchema),

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
+import { ChildProcess } from 'node:child_process';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ProviderBoundModelRefSchema } from '@happier-dev/protocol';
@@ -15,6 +16,10 @@ import {
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 import { sanitizeNativeAgentSessionBoundaryError } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionBoundaryError';
 import { logger } from '@/ui/logger';
+import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
+import { awaitTrackedRunnerAgentSessionOpen } from '@/daemon/agentRuntime/runnerAgentSessionOpenAttestation';
+import { projectSessionSpawnFailure } from '@/session/creation/projectSessionSpawnFailure';
+import type { TrackedSession } from '@/daemon/types';
 import * as privateBearerFile from '@/daemon/privateBearerFile';
 import { prepareRunnerDaemonPluginServices } from './runnerDaemonPluginServices';
 import { encodeRunnerDaemonPluginServiceWireValueV1 } from './agentRuntimeDaemonPluginServicesProtocol';
@@ -55,7 +60,63 @@ afterEach(async () => {
   })));
 });
 
+
 describe('current Agent runtime daemon service authority client', () => {
+
+  it.each([
+    ['connected_service_credential_reconnect_required', 'team_credential'],
+    ['provider_compatibility_unverified', 'agent_session_error'],
+    ['broker_unavailable', 'team_credential'],
+    ['update_required', 'team_credential'],
+    ['team_credential_usage_limit', 'team_credential'],
+    ['team_credential_provider_selection_not_current', 'agent_session_error'],
+    ['provider_endpoint_unavailable', 'agent_session_error'],
+  ] as const)('retains native binding refusal %s through exact-runner startup attribution', async (code, source) => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-native-binding-refusal-'));
+    roots.push(happyHomeDir);
+    const command = `${process.execPath} /fixture/.runner-snapshots/runner-a/index.mjs daemon start-sync`;
+    const runner = { pid: process.pid, processStartTimeMs: 1_717_171_717_000,
+      processCommandHash: hashProcessCommand(command), snapshotIdentity: 'snapshot:runner-a' };
+    processIdentityMock.mockResolvedValue({ pid: runner.pid, processStartTimeMs: runner.processStartTimeMs, command });
+    const { resolveSessionRunnerEntrypointIdentityFromProcessCommand } = await vi.importActual<
+      typeof import('@/daemon/sessionRunnerRuntime/resolveRunnerEntrypointIdentity')
+    >('@/daemon/sessionRunnerRuntime/resolveRunnerEntrypointIdentity');
+    runnerIdentityMock.mockImplementation(resolveSessionRunnerEntrypointIdentityFromProcessCommand);
+    const authority = await createTestAuthority({ happyHomeDir, runner });
+    await publishAgentRuntimeDaemonServiceAuthority({ ...authority, httpPort: 31_001, capability: 'A'.repeat(43) });
+    // Only the daemon HTTP transport and OS child-exit observation are substituted.
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      ok: false, error: { code, message: 'PRIVATE_UPSTREAM_DIAGNOSTIC' },
+    }), { status: 200, headers: { 'content-type': 'application/json' } })));
+    const refusal = await openCurrentRunnerTeamCredentialProviderBinding({ authority,
+      operation: { kind: 'provider_broker.binding.open', resourceId: 'resource-1',
+        expectedResourceRevision: 3, agentTargetKey: 'agent:acme.plugin/acme-agent', modelId: 'model-1' },
+    }).then(() => null, (error: unknown) => error);
+    expect(refusal).toBeInstanceOf(Error);
+    if (code === 'connected_service_credential_reconnect_required' || code === 'provider_compatibility_unverified') {
+      expect(refusal).toMatchObject({ code, retryable: false });
+    } else if (code === 'provider_endpoint_unavailable') {
+      expect(refusal).toMatchObject({ code, retryable: true, action: 'retry' });
+    }
+    const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error: refusal,
+      occurredAt: runner.processStartTimeMs + 1 });
+    expect(issue).toMatchObject({ code, source });
+    const childProcess = new ChildProcess();
+    Object.defineProperty(childProcess, 'exitCode', { value: 1 });
+    const tracked: TrackedSession = { startedBy: 'daemon', pid: runner.pid, happySessionId: authority.sessionId,
+      runnerProcessIdentity: runner, processStartTimeMs: runner.processStartTimeMs,
+      processCommandHash: runner.processCommandHash, childProcess };
+    const observed = await awaitTrackedRunnerAgentSessionOpen({ sessionId: authority.sessionId,
+      getTrackedSessions: () => [tracked], readStartupFailure: async () => issue, timeoutMs: null });
+    expect(observed).toEqual({ status: 'runner_exited', code });
+    if (observed.status !== 'runner_exited' || !observed.code) throw new Error('Missing native refusal attribution');
+    if (code === 'connected_service_credential_reconnect_required' || code === 'provider_compatibility_unverified') {
+      expect(projectSessionSpawnFailure({ errorCode: 'SPAWN_FAILED', errorMessage: 'Native startup refused',
+        errorDetail: { kind: 'launch_error', code: observed.code, message: 'Native startup refused' },
+      })).toMatchObject({ type: 'error', code: 'spawn_failed', retryable: false, launchError: { code } });
+    }
+  });
+
   it.each(['hit', 'miss', 'failed', 'cancelled', 'logger_failed'] as const)(
     'records a payload-free runner refusal read once without additional authority reads or RPCs (%s)',
     async outcome => {

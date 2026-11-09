@@ -132,6 +132,7 @@ describe('managed-service endpoint read protocol', () => {
         expect(ManagedServiceEndpointReadOpenRequestV1Schema.safeParse({
             ...common,
             route: exactHandleRoute(),
+            interactive: true,
             method: 'POST',
             bodyBase64: Buffer.from('{"hello":true}').toString('base64'),
             timeoutMs: 10_000,
@@ -139,7 +140,11 @@ describe('managed-service endpoint read protocol', () => {
         expect(ManagedServiceEndpointReadOpenRequestV1Schema.safeParse({
             ...common,
             route: endpointProjectionRoute(),
+            interactive: true,
         }).success).toBe(true);
+        expect(ManagedServiceEndpointReadOpenRequestV1Schema.safeParse({
+            ...common, route: exactHandleRoute(), interactive: false,
+        }).success).toBe(false);
 
         for (const mixedRoute of [
             {

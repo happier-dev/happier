@@ -477,6 +477,42 @@ describe('startup side effects: daemon session reporting retry', () => {
     }
   });
 
+  it.each([
+    ['daemon', ''],
+    ['terminal', ''],
+    ['terminal', 'yes'],
+  ] as const)('preserves report environment overrides for %s starts with autostart=%s', async (startedBy, autostart) => {
+    vi.stubEnv('HAPPIER_SESSION_AUTOSTART_DAEMON', autostart);
+    vi.stubEnv('HAPPIER_DAEMON_REPORT_SESSION_RETRY_TIMEOUT_MS', ' 250000 ');
+    vi.stubEnv('HAPPIER_DAEMON_REPORT_SESSION_RETRY_INTERVAL_MS', '5');
+    vi.stubEnv('HAPPIER_DAEMON_REPORT_SESSION_HTTP_TIMEOUT_MS', '50000');
+    let now = 0;
+    const attemptTimeouts: Array<number | undefined> = [];
+    const retryIntervals: number[] = [];
+    try {
+      await reportSessionToDaemonIfRunning({
+        sessionId: `session-env-${startedBy}-${autostart}`,
+        metadata: { startedBy } as Metadata,
+      }, {
+        notifyDaemonSessionStartedFn: async (_sessionId, _metadata, options) => {
+          attemptTimeouts.push(options?.timeoutMs ?? undefined);
+          return { error: 'No daemon running, no state file found' };
+        },
+        sleepFn: async (ms) => {
+          retryIntervals.push(ms);
+          now += 60_000;
+        },
+        nowFn: () => now,
+      });
+
+      expect(attemptTimeouts).toEqual([30_000, 30_000, 30_000]);
+      expect(retryIntervals).toEqual([50, 50]);
+      expect(now).toBe(120_000);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('throws after bounded retries when daemon readiness acknowledgement is required', async () => {
     let calls = 0;
     let now = 0;

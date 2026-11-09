@@ -90,13 +90,13 @@ export function resolveExecutionRunRuntimeBackendId(
   return resolveExecutionRunPublicBackendId(backendTarget);
 }
 
+/** The routing spelling of the one runtime lowering above, including external Agents. */
 export function resolveExecutionRunPublicBackendId(
   backendTarget: BackendTargetRefV1 | BackendTargetRefV2Input,
 ): string {
-  const canonicalBackendTarget = readBackendTargetRefV2(backendTarget);
-  return canonicalBackendTarget.sourceKind === 'configured'
-    ? canonicalBackendTarget.configuredBackendId ?? canonicalBackendTarget.backendId
-    : canonicalBackendTarget.backendId;
+  const runtimeTarget = resolveExecutionRunRuntimeBackendTarget(backendTarget);
+  if (!runtimeTarget) throw new Error('Invalid execution run backend target');
+  return runtimeTarget.kind === 'configuredAcpBackend' ? runtimeTarget.backendId : runtimeTarget.agentId;
 }
 
 export function matchesExecutionRunLegacyBackendId(

@@ -34,6 +34,7 @@ export type DeferredStartupSessionClientOptions = Pick<
     | 'durableMutationDeliveryInitiallyActive'
     | 'transformSessionInputBeforeCommit'
     | 'afterComposerAttachmentMessageAccepted'
+    | 'pendingMessageComposerAdmissionControls'
     | 'machineAdmissionTransport'
 >;
 
@@ -136,6 +137,7 @@ export async function createDeferredStartupBootstrap(params: Readonly<{
     createInitialRegisteredSessionStateFieldMutations?: DeferredStartupRegisteredStateMutationFactory;
     transformSessionInputBeforeCommit?: ApiSessionClientOptions['transformSessionInputBeforeCommit'];
     afterComposerAttachmentMessageAccepted?: ApiSessionClientOptions['afterComposerAttachmentMessageAccepted'];
+    createPendingMessageComposerAdmissionControls?: (sessionId: string) => ApiSessionClientOptions['pendingMessageComposerAdmissionControls'];
     machineAdmissionTransport?: ApiSessionClientOptions['machineAdmissionTransport'];
     /**
      * Alternate admitted API context for a runtime that must not initialize an
@@ -234,6 +236,8 @@ export async function createDeferredStartupBootstrap(params: Readonly<{
                             params.transformSessionInputBeforeCommit,
                         afterComposerAttachmentMessageAccepted:
                             params.afterComposerAttachmentMessageAccepted,
+                        pendingMessageComposerAdmissionControls:
+                            params.createPendingMessageComposerAdmissionControls?.(sessionRow.id),
                         machineAdmissionTransport:
                             params.machineAdmissionTransport,
                     }),

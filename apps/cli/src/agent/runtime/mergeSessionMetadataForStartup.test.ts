@@ -10,6 +10,13 @@ import { readCapabilityLaunchRestartFromMetadataV1, resolveCapabilityApplyTiming
 import { applyDisplayTitleSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
 
 describe('mergeSessionMetadataForStartup', () => {
+    it.each([undefined, { seed: 'saved-face' }] as const)('retains the existing face choice on attach (%j)', botFace => {
+        const current = createTestMetadata({ bot: { kind: 'bot' }, ...(botFace ? { botFace } : {}) });
+        const merged = mergeSessionMetadataForStartup({ current,
+            next: createTestMetadata({ botFace: { seed: 'fresh-process-default' } }),
+            mode: 'attach', nowMs: 2, attachMetadataIdentityPolicy: 'replace_with_runtime_identity' });
+        expect(merged.botFace).toEqual(botFace);
+    });
     it('preserves born authoring provenance across startup metadata and title updates', () => {
         const authoringOriginV1 = { kind: 'project' as const, accountId: 'original-account',
             workspace: { serverId: 'original-home', workspaceId: 'original-workspace', machineId: 'original-machine', rootPath: '/original/repo' }, page: 'scripts' as const };
@@ -476,6 +483,16 @@ describe('mergeSessionMetadataForStartup', () => {
 
         expect((merged as any).modelSelectionIntentV1).toEqual({ v: 1, updatedAt: 200, selection: null });
         expect((merged as any).modelOverrideV1).toEqual({ v: 1, updatedAt: 200, modelId: 'default' });
+    });
+
+    it.each([99, 100])('does not turn a captured model choice at %s into a newer intent', updatedAt => {
+        const selection = { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'retained' } as const;
+        const modelSelectionIntentV1 = { v: 1 as const, updatedAt: 100, selection };
+        const merged = mergeSessionMetadataForStartup({
+            current: createTestMetadata({ modelSelectionIntentV1 }), next: createTestMetadata(), nowMs: 200, mode: 'attach',
+            modelOverride: { v: 1, updatedAt, selection },
+        });
+        expect(merged.modelSelectionIntentV1).toEqual(modelSelectionIntentV1);
     });
 
     it('merges ACP config option overrides per entry through the session-state timestamp policy', () => {

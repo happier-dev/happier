@@ -3,9 +3,9 @@ import axios from 'axios';
 import { buildUsageLimitIssueFingerprint } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { activateInactiveUsageLimitResume } from '@/daemon/sessions/activateInactiveUsageLimitResume';
-import { normalizeUsageLimitRecoveryOperationResult } from '@/session/usageLimitRecoveryControls/sessionUsageLimitRecoveryOperationResult';
-import { createConnectedServiceContinuationMessageDispatcher } from '@/daemon/connectedServices/continuation/createConnectedServiceContinuationMessageDispatcher';
 import { ConnectedServiceTemporaryThrottleRetryScheduler } from '@/daemon/connectedServices/runtimeAuth/temporaryThrottleRetryScheduler';
+import { createConnectedServiceContinuationMessageDispatcher } from '@/daemon/connectedServices/continuation/createConnectedServiceContinuationMessageDispatcher';
+import { normalizeUsageLimitRecoveryOperationResult } from '@/session/usageLimitRecoveryControls/sessionUsageLimitRecoveryOperationResult';
 import { resolveSpawnChildEnvironment } from '@/daemon/spawn/resolveSpawnChildEnvironment';
 import { bindInactiveSessionControlLaunchScope } from '@/daemon/spawn/inactiveSessionControlLaunchScope';
 import { createCodexNativeSessionControls } from '../../../../../packages/plugins/codex/src/agent/runtime/controls';
@@ -1008,10 +1008,6 @@ describe('native inactive Agent session controls', () => {
       agentId: 'codex',
       backoffPolicy: {
         providerId: 'pi',
-        fallbackBackoffEnvKey: 'HAPPIER_TEST_FALLBACK_BACKOFF_MS',
-        maxAttemptsEnvKey: 'HAPPIER_TEST_MAX_ATTEMPTS',
-        defaultFallbackBackoffMs: 60_000,
-        defaultMaxAttempts: 3,
       },
       native: { checkNow: true, consumeResetCredit: false },
       dependencies: { acquireRuntimeRegistryLease: fixture.acquire },
@@ -1062,7 +1058,7 @@ describe('native inactive Agent session controls', () => {
           resetAtMs,
           nextCheckAtMs: resetAtMs,
           attemptCount: 0,
-          maxAttempts: 3,
+          maxAttempts: 0,
         },
       },
     });

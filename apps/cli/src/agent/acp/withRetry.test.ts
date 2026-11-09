@@ -31,12 +31,13 @@ describe('withRetry', () => {
     });
     const record = createAcpRequestFailureLogRecord({ operation: 'NewSession', error });
 
-    expect(record).toEqual({ operation: 'NewSession', failureKind: 'provider_rejection', requestErrorCode: -32000 });
+    expect(record).toEqual({ operation: 'NewSession', failureKind: 'provider_rejection', requestErrorCode: -32000,
+      requestErrorMessage: expect.any(String) });
     expect(JSON.stringify(record)).not.toContain(secret);
     expect(JSON.stringify(record)).not.toContain('onboarding_failed');
     expect(createAcpRequestFailureLogRecord({
       operation: 'NewSession', error: Object.assign(new Error('Rejected'), { code: secret }),
-    })).toEqual({ operation: 'NewSession', failureKind: 'provider_rejection' });
+    })).toEqual({ operation: 'NewSession', failureKind: 'provider_rejection', requestErrorMessage: 'Rejected' });
   });
 
   it('wraps non-Error thrown values with useful details', async () => {
@@ -119,6 +120,7 @@ describe('withRetry', () => {
       {
         operation: 'Initialize',
         failureKind: 'transport',
+        requestErrorMessage: expect.stringContaining('fetch failed'),
         failedAttempt: 1,
         nextAttempt: 2,
         maxAttempts: 2,

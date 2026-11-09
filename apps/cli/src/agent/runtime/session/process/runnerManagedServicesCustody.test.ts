@@ -1,3 +1,4 @@
+import { createUnavailableManagedServices } from '@/plugins/runtime/invocation/services/managedServicesAdapter';
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
@@ -283,6 +284,30 @@ describe('runner managed-services Provider custody', () => {
         });
     });
 
+    it.each(['environment', 'files'] as const)('round-trips authored %s credential destinations without name ceilings', kind => {
+        const scope = providerScope('session-credential-wire', 'provider-p');
+        const keys = Array.from({ length: 257 }, (_, index) => `TOKEN_${index}_${'X'.repeat(256)}`);
+        const request = kind === 'environment'
+            ? { kind, keys } as const
+            : { kind, fileIds: keys } as const;
+        const injection = kind === 'environment'
+            ? { kind, targetEnvironmentKeysByMaterializedKey: Object.fromEntries(keys.map(key => [key, key])) } as const
+            : { kind, pathsByFileId: Object.fromEntries(keys.map(key => [key, { environmentKey: key }])) } as const;
+        const authored: ManagedServiceSpec = {
+            id: 'credential-wire',
+            mode: { kind: 'spawn', launch: { executable: { kind: 'systemTool', id: 'gateway' } }, endpoint: { kind: 'none' } },
+            credentialBindings: [{ purpose: 'provider.inference', request, injection }],
+        };
+        const wire = RunnerManagedServicesCustodyRequestV1Schema.safeParse({
+            v: 1, kind: 'supervise', scope, spec: encodeRunnerManagedServiceSpecWireV1(authored),
+        });
+        expect(wire.success, wire.success ? undefined : JSON.stringify(wire.error.issues.map(issue => ({
+            code: issue.code, path: issue.path,
+            ...(issue.code === 'invalid_union' ? { branches: issue.errors.map(errors => [...new Set(errors.map(error => `${error.code}:${error.path.slice(0, 4).join('.')}`))]) } : {}),
+        })))).toBe(true);
+        if (wire.success) expect(wire.data).toMatchObject({ spec: { credentialBindings: authored.credentialBindings } });
+    });
+
     it('round-trips endpoint-free running snapshots through its custody wire', () => {
         const scope = providerScope('session-worker-wire', 'provider-p');
         const running: ManagedServiceSnapshot = {
@@ -501,6 +526,8 @@ describe('runner managed-services Provider custody', () => {
                 const request = input.request as {
                     requestId: string;
                     route: unknown;
+                    pathAndQuery?: string;
+                    interactive?: true;
                 };
                 if (
                     input.method
@@ -511,6 +538,7 @@ describe('runner managed-services Provider custody', () => {
                         claim: providerClaim(scope),
                         serviceId: spec.id,
                     });
+                    if (request.pathAndQuery === '/events') expect(request.interactive).toBe(true);
                     return {
                         v: 1,
                         requestId: request.requestId,
@@ -601,6 +629,7 @@ describe('runner managed-services Provider custody', () => {
 
         const streamed = await service.request({
             pathAndQuery: '/events',
+            interactive: true,
         });
         const streamedReader = streamed.body!.getReader();
         expect(new TextDecoder().decode(
@@ -1292,6 +1321,7 @@ describe('runner managed-services Provider custody', () => {
             async () => ++superviseCount === 1 ? pChild : qChild,
         );
         const services = Object.freeze({
+            ...createUnavailableManagedServices(),
             dependencies: {} as ManagedDependenciesService,
             supervise,
         }) satisfies ManagedServices;
@@ -1372,6 +1402,7 @@ describe('runner managed-services Provider custody', () => {
         const pDispose = vi.fn(async () => {});
         let establishmentSignal: AbortSignal | undefined;
         const services = Object.freeze({
+            ...createUnavailableManagedServices(),
             dependencies: {} as ManagedDependenciesService,
             supervise: vi.fn(async (
                 _requested: ManagedServiceSpec,
@@ -1420,6 +1451,7 @@ describe('runner managed-services Provider custody', () => {
         const pDispose = vi.fn(async () => {});
         const lateDispose = vi.fn(async () => {});
         const services = Object.freeze({
+            ...createUnavailableManagedServices(),
             dependencies: {} as ManagedDependenciesService,
             supervise: vi.fn(async (requested: ManagedServiceSpec) =>
                 requested.id === spec.id
@@ -1586,6 +1618,7 @@ describe('runner managed-services Provider custody', () => {
             return await reusedHandle.promise;
         });
         const services = Object.freeze({
+            ...createUnavailableManagedServices(),
             dependencies: {} as ManagedDependenciesService,
             supervise,
         }) satisfies ManagedServices;
@@ -1665,6 +1698,7 @@ describe('runner managed-services Provider custody', () => {
             return await reusedHandle.promise;
         });
         const services = Object.freeze({
+            ...createUnavailableManagedServices(),
             dependencies: {} as ManagedDependenciesService,
             supervise,
         }) satisfies ManagedServices;
@@ -1778,6 +1812,7 @@ describe('runner managed-services Provider custody', () => {
             throw new Error('supervision entered after exact disposal');
         });
         const services = Object.freeze({
+            ...createUnavailableManagedServices(),
             dependencies: {} as ManagedDependenciesService,
             supervise,
         }) satisfies ManagedServices;
@@ -1874,6 +1909,7 @@ describe('runner managed-services Provider custody', () => {
             throw new Error('supervision entered after exact disposal');
         });
         const services = Object.freeze({
+            ...createUnavailableManagedServices(),
             dependencies: {} as ManagedDependenciesService,
             supervise,
         }) satisfies ManagedServices;
@@ -1972,6 +2008,7 @@ describe('runner managed-services Provider custody', () => {
             return await reusedHandle.promise;
         });
         const services = Object.freeze({
+            ...createUnavailableManagedServices(),
             dependencies: {} as ManagedDependenciesService,
             supervise,
         }) satisfies ManagedServices;
@@ -2071,6 +2108,7 @@ describe('runner managed-services Provider custody', () => {
             return await reusedHandle.promise;
         });
         const services = Object.freeze({
+            ...createUnavailableManagedServices(),
             dependencies: {} as ManagedDependenciesService,
             supervise,
         }) satisfies ManagedServices;
@@ -2675,6 +2713,7 @@ describe('runner managed-services Provider custody', () => {
         const retainAdoptedProviderAuthority = vi.fn(async () => true);
         const releaseAdoptedProviderAuthority = vi.fn(async () => true);
         const runnerServices = Object.freeze({
+            ...createUnavailableManagedServices(),
             dependencies: Object.freeze({
                 status: vi.fn(),
                 ensure: vi.fn(),
@@ -2881,6 +2920,7 @@ describe('runner managed-services Provider custody', () => {
         let desiredQCurrent = true;
         const childDispose = vi.fn(async () => {});
         const services = Object.freeze({
+            ...createUnavailableManagedServices(),
             dependencies: {} as ManagedDependenciesService,
             supervise: vi.fn(async () => Object.freeze({
                 ...handle(spec.id),
@@ -2981,6 +3021,7 @@ describe('runner managed-services Provider custody', () => {
     it('settles through the exact adopted public outcome when the runner commit response is lost', async () => {
         const childDispose = vi.fn(async () => {});
         const services = Object.freeze({
+            ...createUnavailableManagedServices(),
             dependencies: {} as ManagedDependenciesService,
             supervise: vi.fn(async () => Object.freeze({
                 ...handle(spec.id),
@@ -3083,6 +3124,7 @@ describe('runner managed-services Provider custody', () => {
     it('cleans a proven pre-commit failure without adopting the Provider service', async () => {
         const childDispose = vi.fn(async () => {});
         const services = Object.freeze({
+            ...createUnavailableManagedServices(),
             dependencies: {} as ManagedDependenciesService,
             supervise: vi.fn(async () => Object.freeze({
                 ...handle(spec.id),
@@ -3178,6 +3220,7 @@ describe('runner managed-services Provider custody', () => {
     it('admits only one exact managed Provider adoption across distinct services and scopes', async () => {
         const disposeByServiceId = new Map<string, ReturnType<typeof vi.fn>>();
         const services = Object.freeze({
+            ...createUnavailableManagedServices(),
             dependencies: {} as ManagedDependenciesService,
             supervise: vi.fn(async (requested: ManagedServiceSpec) => {
                 const dispose = vi.fn(async () => {});
@@ -3292,6 +3335,7 @@ describe('runner managed-services Provider custody', () => {
             }),
         ));
         const services = Object.freeze({
+            ...createUnavailableManagedServices(),
             dependencies: {} as ManagedDependenciesService,
             supervise: vi.fn(async (requested: ManagedServiceSpec) =>
                 handle(requested.id)),
@@ -3359,6 +3403,7 @@ describe('runner managed-services Provider custody', () => {
 
     it('linearizes concurrent adoption claims that share one retained authority tuple', async () => {
         const services = Object.freeze({
+            ...createUnavailableManagedServices(),
             dependencies: {} as ManagedDependenciesService,
             supervise: vi.fn(async (requested: ManagedServiceSpec) =>
                 handle(requested.id)),
@@ -3464,6 +3509,7 @@ describe('runner managed-services Provider custody', () => {
         });
         const releaseAdoptedProviderAuthority = vi.fn(async () => true);
         const services = Object.freeze({
+            ...createUnavailableManagedServices(),
             dependencies: {} as ManagedDependenciesService,
             supervise: vi.fn(async () => handle(spec.id)),
         }) satisfies ManagedServices;
@@ -3602,6 +3648,7 @@ describe('runner managed-services Provider custody', () => {
             ['provider-three', successfulDispose],
         ]);
         const services = Object.freeze({
+            ...createUnavailableManagedServices(),
             dependencies: {} as ManagedDependenciesService,
             supervise: vi.fn(async (requested: ManagedServiceSpec) =>
                 Object.freeze({
@@ -3654,6 +3701,7 @@ describe('runner managed-services Provider custody', () => {
             dispose,
         }) satisfies ManagedServiceHandle;
         const services = Object.freeze({
+            ...createUnavailableManagedServices(),
             dependencies: {} as ManagedDependenciesService,
             supervise: vi.fn(async () => ownedHandle),
         }) satisfies ManagedServices;
@@ -3695,6 +3743,7 @@ describe('runner managed-services Provider custody', () => {
 
     it('checks retained Provider generation integrity under its exact manifest authority', async () => {
         const services = Object.freeze({
+            ...createUnavailableManagedServices(),
             dependencies: {} as ManagedDependenciesService,
             supervise: vi.fn(async (requested: ManagedServiceSpec) =>
                 handle(requested.id)),
@@ -3784,6 +3833,7 @@ describe('runner managed-services Provider custody', () => {
             dispose: childDispose,
         }) satisfies ManagedServiceHandle;
         const services = Object.freeze({
+            ...createUnavailableManagedServices(),
             dependencies: {} as ManagedDependenciesService,
             supervise: vi.fn(async () => ownedHandle),
         }) satisfies ManagedServices;
@@ -3867,6 +3917,7 @@ describe('runner managed-services Provider custody', () => {
             dispose: childDispose,
         }) satisfies ManagedServiceHandle;
         const services = Object.freeze({
+            ...createUnavailableManagedServices(),
             dependencies: {} as ManagedDependenciesService,
             supervise: vi.fn(async () => ownedHandle),
         }) satisfies ManagedServices;
@@ -3936,6 +3987,7 @@ describe('runner managed-services Provider custody', () => {
             dispose: childDispose,
         }) satisfies ManagedServiceHandle;
         const services = Object.freeze({
+            ...createUnavailableManagedServices(),
             dependencies: {} as ManagedDependenciesService,
             supervise: vi.fn(async () => ownedHandle),
         }) satisfies ManagedServices;
@@ -4006,6 +4058,7 @@ describe('runner managed-services Provider custody', () => {
         const disposeG1 = vi.fn(async () => {});
         const disposeG2 = vi.fn(async () => {});
         const services = Object.freeze({
+            ...createUnavailableManagedServices(),
             dependencies: {} as ManagedDependenciesService,
             supervise: vi.fn(async (requestedSpec) => Object.freeze({
                 ...handle(requestedSpec.id),
@@ -4092,6 +4145,7 @@ describe('runner managed-services Provider custody', () => {
             ['hard-revoked-three', successfulDispose],
         ]);
         const services = Object.freeze({
+            ...createUnavailableManagedServices(),
             dependencies: {} as ManagedDependenciesService,
             supervise: vi.fn(async (requested: ManagedServiceSpec) =>
                 Object.freeze({
@@ -4148,6 +4202,7 @@ describe('runner managed-services Provider custody', () => {
             dispose: childDispose,
         }) satisfies ManagedServiceHandle;
         const services = Object.freeze({
+            ...createUnavailableManagedServices(),
             dependencies: {} as ManagedDependenciesService,
             supervise: vi.fn(async () => ownedHandle),
         }) satisfies ManagedServices;
@@ -4206,6 +4261,7 @@ describe('runner managed-services Provider custody', () => {
             dispose,
         }) satisfies ManagedServiceHandle;
         const services = Object.freeze({
+            ...createUnavailableManagedServices(),
             dependencies: {} as ManagedDependenciesService,
             supervise: vi.fn(async () => ownedHandle),
         }) satisfies ManagedServices;
@@ -4280,6 +4336,7 @@ describe('runner managed-services Provider custody', () => {
             if (dispose.mock.calls.length === 1) throw cleanupFailure;
         });
         const services = Object.freeze({
+            ...createUnavailableManagedServices(),
             dependencies: {} as ManagedDependenciesService,
             supervise: vi.fn(async () => Object.freeze({
                 ...handle(spec.id),
@@ -4361,6 +4418,7 @@ describe('runner managed-services Provider custody', () => {
             .mockResolvedValueOnce(undefined);
         let superviseCount = 0;
         const services = Object.freeze({
+            ...createUnavailableManagedServices(),
             dependencies: {} as ManagedDependenciesService,
             supervise: vi.fn(async () => Object.freeze({
                 ...handle(spec.id),
@@ -4442,6 +4500,7 @@ describe('runner managed-services Provider custody', () => {
             if (dispose.mock.calls.length === 1) throw cleanupFailure;
         });
         const services = Object.freeze({
+            ...createUnavailableManagedServices(),
             dependencies: {} as ManagedDependenciesService,
             supervise: vi.fn(async () => Object.freeze({
                 ...handle(spec.id),
@@ -4538,6 +4597,7 @@ describe('runner managed-services Provider custody', () => {
             });
         });
         const services = Object.freeze({
+            ...createUnavailableManagedServices(),
             dependencies: {} as ManagedDependenciesService,
             supervise,
         }) satisfies ManagedServices;
@@ -4598,6 +4658,7 @@ describe('runner managed-services Provider custody', () => {
         const supervise = vi.fn(async () =>
             await establishment.promise);
         const services = Object.freeze({
+            ...createUnavailableManagedServices(),
             dependencies: {} as ManagedDependenciesService,
             supervise,
         }) satisfies ManagedServices;

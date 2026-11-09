@@ -1,5 +1,6 @@
 import type { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
 import { randomUUID } from 'node:crypto';
+import { readAgentStartupFailureDetails } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { convertBackendTargetRefV2ToV1, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { BackendTargetRefV1, ExecutionRunConnectedServicesLaunchV1, SessionInputCausalPermissionAuthorityV1 } from '@happier-dev/protocol';
 
@@ -22,6 +23,8 @@ import type { ExecutionRunPermissionRequestStoreProvider } from './executionRunP
 import { isExecutionRunControllerCurrent, settleExecutionRunController } from './settleExecutionRunController';
 import type { ExecutionRunEnsureResult } from './ensureExecutionRun';
 import type { ExecutionRunConnectedServicesSelectionReport } from './runtime/create';
+import { projectExecutionRunError } from './errors';
+import type { finishExecutionRun } from './finishExecutionRun';
 
 export type ExecutionRunResumeMaterializationHooks = Readonly<{
   onConnectedServicesSelection?: (selection: ExecutionRunConnectedServicesSelectionReport) => void | Promise<void>;
@@ -136,6 +139,8 @@ export async function resumeBackendControllerForResumableRun(args: Readonly<{
   getPermissionRequestStore?: ExecutionRunPermissionRequestStoreProvider | null;
   writeActivityMarker: (runId: string, nowMs: number, opts?: Readonly<{ force?: boolean; resumed?: boolean }>) => Promise<void>;
   getNowMs: () => number;
+  finishRun?: (runId: string, next: Parameters<typeof finishExecutionRun>[0]['next'],
+    toolResult: Parameters<typeof finishExecutionRun>[0]['toolResult']) => Promise<void>;
   onPublicStateUpdated?: (runId: string) => void;
   onModelOutput?: () => void;
   requireReplayCapture?: boolean;
@@ -182,10 +187,14 @@ export async function resumeBackendControllerForResumableRun(args: Readonly<{
       runId: args.runId, controller: resumeCtrl, controllers: args.controllers,
     }),
   });
-  const resumeFailure = (error: unknown): ExecutionRunEnsureResult => {
-    const missing = error instanceof Error && 'code' in error && error.code === 'AGENT_RESUME_PROVIDER_STATE_MISSING';
-    const errorCode = missing ? 'execution_run_provider_state_missing' : 'execution_run_failed';
+  const isMissingProviderState = (error: unknown) => error instanceof Error
+    && 'code' in error && error.code === 'AGENT_RESUME_PROVIDER_STATE_MISSING';
+  const resumeFailure = async (error: unknown, publishFailure = false): Promise<ExecutionRunEnsureResult> => {
+    const missing = isMissingProviderState(error);
+    const projected = projectExecutionRunError(error, { runId: args.runId });
+    const errorCode = missing ? 'execution_run_provider_state_missing' : projected.code;
     const message = error instanceof Error ? error.message : 'Resume failed';
+    const details = readAgentStartupFailureDetails(error);
     // Only the exact retained occurrence may publish this definitive result.
     // Keep its provider identity for inspection; an unavailable handle never
     // authorizes substitution of a new provider thread.
@@ -193,7 +202,18 @@ export async function resumeBackendControllerForResumableRun(args: Readonly<{
       args.runs.set(args.runId, { ...retainedRun, error: { code: errorCode, message } });
       args.onPublicStateUpdated?.(args.runId);
     }
-    return { ok: false, errorCode, error: message, resumeFailureKind: missing ? 'permanent' : 'indeterminate' };
+    if (!missing && publishFailure && args.finishRun) {
+      const current = args.runs.get(args.runId)!;
+      const finishedAtMs = args.getNowMs();
+      await args.finishRun(args.runId, { status: 'failed', summary: message, finishedAtMs, error: projected }, {
+        output: { status: 'failed', summary: message, runId: args.runId, callId: current.callId,
+          sidechainId: current.sidechainId, backendTarget: current.backendTarget, intent: current.intent,
+          startedAtMs: current.startedAtMs, finishedAtMs, error: projected },
+        isError: true,
+      });
+    }
+    return { ok: false, errorCode, error: message, ...(details ? { details } : {}),
+      resumeFailureKind: missing ? 'permanent' : 'indeterminate' };
   };
   let backend: ExecutionRunHostRuntime;
   try {
@@ -242,7 +262,7 @@ export async function resumeBackendControllerForResumableRun(args: Readonly<{
           )
         : resolveExecutionRunIntentProfile(args.run.intent);
       const shouldMaterializeInTranscript = args.run.sessionId !== null
-        && profile.transcriptMaterialization !== 'none';
+        && profile.transcriptMaterialization === 'full';
       return shouldMaterializeInTranscript && args.streamedTranscriptSession && args.run.ioMode === 'streaming'
         ? createStreamedTranscriptWriter({
             provider: args.parentProvider,
@@ -328,7 +348,7 @@ export async function resumeBackendControllerForResumableRun(args: Readonly<{
         )
       : resolveExecutionRunIntentProfile(args.run.intent);
     const shouldMaterializeInTranscript = args.run.sessionId !== null
-      && profile.transcriptMaterialization !== 'none';
+      && profile.transcriptMaterialization === 'full';
     const sendAcp: ExecutionRunTranscriptPublisher = shouldMaterializeInTranscript
       ? args.sendAcp
       : async () => {};
@@ -392,9 +412,16 @@ export async function resumeBackendControllerForResumableRun(args: Readonly<{
     args.onPublicStateUpdated?.(args.runId);
     return { ok: true };
   } catch (error: unknown) {
-    rollbackProvisionalResume();
-    await retireResumeOccurrence();
-    return resumeFailure(error);
+    if (isMissingProviderState(error)) {
+      rollbackProvisionalResume();
+      await retireResumeOccurrence();
+      return resumeFailure(error);
+    }
+    try {
+      return await resumeFailure(error, isCurrentResumeOccurrence());
+    } finally {
+      await retireResumeOccurrence();
+    }
   } finally {
     delete resumeCtrl.resumeMaterialization;
   }

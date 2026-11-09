@@ -541,6 +541,56 @@ describe('ACP Account catalog hydration', () => {
     } finally { release(); await pending; }
   });
 
+  it.each([
+    { custody: 'daemon', damage: 'partial' }, { custody: 'invocation', damage: 'partial' },
+    { custody: 'daemon', damage: 'unavailable' }, { custody: 'invocation', damage: 'unavailable' },
+  ] as const)('keeps newer $damage ACP row evidence ahead of a delayed save receipt ($custody)', async ({ custody, damage }) => {
+    const credentials = account();
+    let sourceSnapshot = getActiveAccountSettingsSnapshot()!;
+    const operationContext = custody === 'invocation' ? createInvocationSavedSecretOperationContextV1({
+      credentials, serverHttpBaseUrl: resolveServerHttpBaseUrl(), snapshot: sourceSnapshot,
+      readSourceSnapshot: () => sourceSnapshot,
+      isCurrent: async () => true,
+    }) : undefined;
+    const store = createCliAcpCatalogStore({ credentials, operationContext });
+    const previous = { status: 'ready' as const, revision: 4, record: record('earlier-save') };
+    await store.publish(previous);
+    vi.spyOn(axios, 'get').mockImplementation(async input => {
+      const path = new URL(String(input)).pathname;
+      if (path === '/v1/account/encryption/currentness') return { status: 200, data: currentness };
+      if (path === '/v1/account/entity-rows/acp') return { status: 200, data: { status: 'present', revision: 5,
+        content: { t: 'plain', v: { v: damage === 'partial' ? 1 : 99,
+          definitions: [...record('newer-observation').definitions, { id: 'unreadable-neighbor' }] } } } };
+      throw new Error(`Unexpected partial ACP observation: ${path}`);
+    });
+    const damaged = await store.readCatalog();
+    expect(damaged).toMatchObject(damage === 'partial' ? { status: 'partial', reason: 'incomplete-inventory',
+      record: { definitions: [{ launch: { command: 'newer-observation' } }] } }
+      : { status: 'unavailable', reason: 'invalid-stored-content' });
+    expect(await store.publish(damaged)).toBe(true);
+    const read = () => operationContext?.readSnapshot() ?? getActiveAccountSettingsSnapshot();
+    for (const observation of [damaged, { status: 'loading' as const },
+      { status: 'unavailable' as const, reason: 'unreachable' }]) {
+      await store.publish(observation);
+      const current = read()?.acpCatalog;
+      expect(await store.publish(previous)).toBe(false);
+      expect(read()?.acpCatalog).toBe(current);
+    }
+    expect(damaged).toMatchObject({ revision: 5 });
+    const withdrawn = read()?.acpCatalog;
+    sourceSnapshot = { ...sourceSnapshot, settingsVersion: 8, acpCatalog: previous };
+    if (!operationContext) setActiveAccountSettingsSnapshot(sourceSnapshot);
+    expect(read()?.acpCatalog).toBe(withdrawn);
+    if (operationContext) {
+      expect(await operationContext.replaceAccountSettings({ ...sourceSnapshot, settingsVersion: 9 })).toBe(true);
+      expect(read()?.acpCatalog).toBe(withdrawn);
+    }
+    expect(await store.publish({ status: 'ready', revision: 'absent', source: 'fresh', sourceSettingsVersion: 7,
+      record: record('retained-source') })).toBe(false);
+    expect(await store.publish({ ...previous, revision: 6 })).toBe(true);
+    expect(read()?.acpCatalog).toMatchObject({ status: 'ready', revision: 6 });
+  });
+
   it('withdraws invocation ACP authority during refresh and does not regress its acknowledged row revision', async () => {
     const credentials = account();
     const snapshot = getActiveAccountSettingsSnapshot()!;

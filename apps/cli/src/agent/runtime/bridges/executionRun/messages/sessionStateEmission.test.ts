@@ -7,6 +7,12 @@ import { createExactTurnUsageAccumulator } from '@/usage/exactTurnUsage';
 import { createStreamedTranscriptWriter } from '@/api/session/streamedTranscriptWriter';
 import type { ExecutionRunState } from '../executionRunTypes';
 import { createExecutionRunControllerMessageHandler, createExecutionRunTranscriptProjection } from './sessionStateEmission';
+import { buildAcpAgentMessageEnvelope } from '@/api/session/acpMessageEnvelope';
+import { normalizeRawMessage } from '@happier-dev/session-core/raw';
+import { createReducer, projectSidechainMessages, reducer } from '@happier-dev/session-core/reducer';
+import type { CommittedTranscriptMessageOptions } from '@/api/session/transcriptPort';
+import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
+import { projectWalkthroughStopExchanges } from '../../../../../../../ui/sources/components/sessions/files/walkthrough/walkthroughStopExchanges';
 
 // One runtime, one lifetime: the signal must stay stable across calls so
 // subscribers do not accumulate against a fresh controller each read.
@@ -92,6 +98,52 @@ function createRunningRun(): ExecutionRunState {
 }
 
 describe('createExecutionRunControllerMessageHandler', () => {
+  it('joins a streamed walkthrough answer to its admitted stop question after the controller advances', async () => {
+    // Captured QA shape: Session seq 25 is participant_message.v1 with a stop stamp;
+    // seq 26 is an ACP sidechain message with happierStreamSegmentV1 (2026-10-25).
+    const ctrl = createController();
+    ctrl.currentInputTurn = { turnId: 'question-turn', inputIds: ['stop-question'], state: 'active' };
+    const commits: { body: ACPMessageData; options: CommittedTranscriptMessageOptions }[] = [];
+    ctrl.streamWriter = createStreamedTranscriptWriter({
+      provider: 'codex',
+      durableCommitsRequireExplicitEnable: true,
+      session: { async enqueueAgentMessageCommitted(_provider, body, options) {
+        commits.push({ body, options });
+        return { persisted: true, delivered: true };
+      } },
+    });
+    const handler = createExecutionRunControllerMessageHandler({
+      ctrl, runId: 'run_1', sidechainId: 'sidechain_1', ioMode: 'streaming',
+      computeSidechainStreamText: text => text, sendAcp: async () => {}, parentProvider: 'codex',
+      runs: new Map([['run_1', createRunningRun()]]), backendSupportsResume: true,
+      writeActivityMarker: async () => {}, getNowMs: () => 1792950807023,
+    });
+    try {
+      handler({ type: 'model-output', textDelta: 'The shortcuts tab currently shows the shared settings values.' });
+      // A delayed durable flush must retain the turn of the text, not read new custody.
+      ctrl.currentInputTurn = { turnId: 'later-turn', inputIds: ['later-question'], state: 'active' };
+      await ctrl.streamWriter.flushAll({ reason: 'turn-end' });
+      expect(commits).toHaveLength(1);
+      const row = commits[0]!;
+      const answer = normalizeRawMessage('answer-row', row.options.localId, 1792950807023,
+        buildAcpAgentMessageEnvelope({ provider: 'codex', body: row.body, meta: row.options.meta }));
+      const question = normalizeRawMessage('question-row', 'stop-question', 1792950799668, {
+        role: 'user', content: { type: 'text', text: '<evidence> Stop question' },
+        meta: { displayText: 'Should the shortcuts tab display shortcut-specific content?',
+          scmWalkthroughQuestionV1: { resultId: 'saved-reading', revision: 1, stopIds: ['settings-ui'] },
+          happier: { kind: 'participant_message.v1', payload: { recipient: { kind: 'execution_run', runId: 'run_1' } } } },
+      });
+      expect(question?.role).toBe('user');
+      expect(answer?.role).toBe('agent');
+      const state = createReducer();
+      const messages = reducer(state, [...(question ? [question] : []), ...(answer ? [answer] : [])], null).messages;
+      const projected = projectWalkthroughStopExchanges({ runId: 'run_1', resultId: 'saved-reading',
+        stopIds: new Set(['settings-ui']), messages, runMessages: projectSidechainMessages(state, 'sidechain_1') });
+      expect(projected.get('settings-ui')?.[0]?.answer).toBe('The shortcuts tab currently shows the shared settings values.');
+      expect(answer?.meta?.happierExecutionRunInputTurnV1).toMatchObject({ turnId: 'question-turn', inputIds: ['stop-question'] });
+    } finally { ctrl.streamWriter.discard(); }
+  });
+
   it.each(['request_response', 'streaming'] as const)('commits an anonymous streamed message once while retaining repeated text in distinct messages (%s)', async ioMode => {
     const ctrl = createController();
     const rows = new Map<string, string>();
