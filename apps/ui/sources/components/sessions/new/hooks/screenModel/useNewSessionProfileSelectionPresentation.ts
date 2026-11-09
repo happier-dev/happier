@@ -15,6 +15,7 @@ export function useNewSessionProfileSelectionPresentation(params: Readonly<{
     selectProfile: (profileId: string) => void;
     canSelectProfile: (profileId: string) => boolean;
     profileAvailabilityById: ReadonlyMap<string, ProfileAvailability>;
+    profileLaunchFailure?: Readonly<{ profileId: string; message: string }> | null;
     clearProfileRouteParam: () => void;
 }>): Readonly<{
     profilesGroupTitles: Readonly<{ favorites: string; custom: string; builtIn: string }>;
@@ -35,6 +36,7 @@ export function useNewSessionProfileSelectionPresentation(params: Readonly<{
     }, [params.canSelectProfile]);
 
     const getProfileSubtitleExtra = React.useCallback((profile: { id: string }) => {
+        if (params.profileLaunchFailure?.profileId === profile.id) return params.profileLaunchFailure.message;
         const availability = params.profileAvailabilityById.get(profile.id) ?? { available: true };
         if (availability.available || !availability.reason) return null;
         if (availability.reason.startsWith('agent-not-ready:')) return t('common.unavailable');
@@ -54,7 +56,7 @@ export function useNewSessionProfileSelectionPresentation(params: Readonly<{
             return t('newSession.profileAvailability.cliNotDetected', { cli: cliLabel });
         }
         return availability.reason;
-    }, [params.profileAvailabilityById]);
+    }, [params.profileAvailabilityById, params.profileLaunchFailure]);
 
     const onPressProfile = React.useCallback((profile: { id: string }) => {
         if (!params.canSelectProfile(profile.id)) return;

@@ -15,9 +15,13 @@ type UseNewSessionCreateSessionActionParams = Readonly<
 
 export function useNewSessionCreateSessionAction(params: UseNewSessionCreateSessionActionParams): Readonly<{
     handleCreateSession: UseCreateNewSessionResult['handleCreateSession'];
+    newSessionAfterSendMode: UseCreateNewSessionResult['newSessionAfterSendMode'];
+    handOffLaunchToBackground: UseCreateNewSessionResult['handOffLaunchToBackground'];
     providerLaunchError: UseCreateNewSessionResult['providerLaunchError'];
+    profileLaunchFailure: UseCreateNewSessionResult['profileLaunchFailure'];
     retryProviderLaunch: UseCreateNewSessionResult['retryProviderLaunch'];
     managedMachineCreationProgress: UseCreateNewSessionResult['managedMachineCreationProgress'];
+    retainedManagedMachine: UseCreateNewSessionResult['retainedManagedMachine'];
     retryManagedMachineInstallation: UseCreateNewSessionResult['retryManagedMachineInstallation'];
     retryManagedMachineSetup: UseCreateNewSessionResult['retryManagedMachineSetup'];
     continueWithoutManagedMachineSetup: UseCreateNewSessionResult['continueWithoutManagedMachineSetup'];
