@@ -51,11 +51,14 @@ export type MarkdownEditMode = 'raw' | 'rich';
  *
  * Identical to `CodeEditorHandle`:
  * - `getValue()` returns the current markdown synchronously (a mirror on native).
- * - `flushPendingChange()` resolves once any debounced edit has been committed
- *   to the host (always `await` it before persisting — on native it round-trips
- *   the WebView, see R5).
+ * - `flushPendingChange()` publishes confirmed current bytes, including queued
+ *   text commands, and rejects if the engine cannot confirm them. Always await
+ *   it before persisting; native round-trips the WebView (R5).
  */
 export type MarkdownEditorHandle = Readonly<{
+    /** Shared text commands coexist with rich-formatting commands on the combined surface ref. */
+    runTextCommand?: (command: import('@/components/ui/code/editor/codeEditorTypes').CodeEditorCommand, beforeApply?: () => void) => void;
+    subscribeHistory?: import('@/components/ui/code/editor/codeEditorTypes').TextEditorHandle['subscribeHistory'];
     find?: import('@/components/ui/code/editor/codeEditorTypes').CodeEditorFindHandle;
     getValue: () => string;
     flushPendingChange: () => Promise<void>;
@@ -75,7 +78,10 @@ export type MarkdownEditorProps = Readonly<{
     /** Markdown to seed the editor with (frontmatter already stripped by the host). */
     value: string;
     /** Emits the full markdown document on debounced edits (suppressed on initial seed — R-A7). */
-    onChange: (value: string) => void;
+    onChange: (value: string, change?: import('@/components/ui/code/editor/codeEditorTypes').CodeEditorDocumentChange) => void;
+    history?: import('@/components/ui/code/editor/codeEditorTypes').EditorDocumentHistory;
+    /** The platform engine and its imperative handle are ready for host commands. */
+    onReady?: () => void;
     /** Disables editing while still rendering the document. */
     readOnly?: boolean;
     /** `canvas`: the document is the page (an Artifact) — no frame, on the page's surface. Default framed. */

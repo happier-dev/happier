@@ -52,7 +52,7 @@ import { resolveToolErrorSummary } from '@/components/tools/shell/presentation/r
 import { ToolOutcomeStatus } from '@/components/tools/shell/presentation/ToolOutcomeStatus';
 import { readHappierActionCallId } from '@/components/sessions/transcript/references/happierActionToolResult';
 import { resolveToolActionFailure } from '@/components/tools/shell/presentation/resolveToolActionFailure';
-import { formatApprovalStatusLabel } from '@/components/approvals/approvalStatusLabel';
+import { formatApprovalStatusLabel, formatToolPermissionDecisionLabel } from '@/components/approvals/approvalStatusLabel';
 import { ActivitySpinner, iconMatchedSpinnerSize } from '@/components/ui/feedback/ActivitySpinner';
 import { buildApprovalToolCallLocation, selectMatchingToolApprovalRequests, readDeclinedApprovalAtCall, readToolOutputText } from './toolApprovalPromptMatching';
 import { isAskUserQuestionToolName } from '@happier-dev/protocol/activity/agentRequestSummary';
@@ -329,7 +329,8 @@ const ToolTimelineRowContent = React.memo((props: ToolTimelineRowProps & { displ
     const statusKind = resolveToolStatusIndicatorKind(toolForRendering, declinedApproval);
     const actionFailure = statusKind === 'error' ? resolveToolActionFailure(toolForRendering) : null;
     // A refusal is the product working as designed: its mark stays in the quiet ink, never the failure rose.
-    const isRefusal = actionFailure?.outcome === 'refused';
+    const isRefusal = actionFailure?.outcome === 'refused'
+        || formatToolPermissionDecisionLabel(toolForRendering.permission) !== null;
     const terminalStatusSummary =
         statusKind === 'error'
             ? (resolveToolErrorSummary(toolForRendering) ?? t('common.error'))

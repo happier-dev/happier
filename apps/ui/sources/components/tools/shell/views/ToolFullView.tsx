@@ -39,6 +39,8 @@ import { isSubAgentTranscriptToolName } from '@happier-dev/protocol/tools/v2';
 import { resolveInactiveSessionToolCallFailure } from '../permissions/resolveInactiveSessionToolCallFailure';
 import { ToolError } from '@/components/tools/shell/presentation/ToolError';
 import { resolveToolPermissionTerminalErrorMessage } from '../permissions/resolveToolPermissionTerminalErrorMessage';
+import { formatToolPermissionDecisionLabel } from '@/components/approvals/approvalStatusLabel';
+import { ToolOutcomeStatus } from '@/components/tools/shell/presentation/ToolOutcomeStatus';
 import type { TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
 import { useHistoricalTranscriptAgentId } from '@/components/sessions/transcript/attribution/SessionTranscriptAgentAttributionContext';
 import { normalizeSessionAddress, sessionAddressKey } from '@/sync/domains/session/sessionAddress';
@@ -106,7 +108,9 @@ function ToolFullViewContent({ tool, owningMessageId, sessionId, serverId, metad
 
     const permissionTerminalError = permissionTerminalErrorMessage ? (
         <TextSelectabilityScope selectable>
-            <ToolError message={permissionTerminalErrorMessage} />
+            {formatToolPermissionDecisionLabel(toolForRendering.permission)
+                ? <ToolOutcomeStatus testID="tool-details-permission-decision" label={permissionTerminalErrorMessage} glyph="minus-circle" tone="quiet" />
+                : <ToolError message={permissionTerminalErrorMessage} />}
         </TextSelectabilityScope>
     ) : null;
 

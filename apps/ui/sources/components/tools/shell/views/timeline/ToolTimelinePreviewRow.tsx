@@ -20,6 +20,7 @@ import { ToolOutcomeStatus } from '@/components/tools/shell/presentation/ToolOut
 import { resolveToolActionFailure } from '@/components/tools/shell/presentation/resolveToolActionFailure';
 import { t } from '@/text';
 import { resolveToolPermissionTerminalErrorMessage } from '@/components/tools/shell/permissions/resolveToolPermissionTerminalErrorMessage';
+import { formatToolPermissionDecisionLabel } from '@/components/approvals/approvalStatusLabel';
 import { useOptionalSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
 import { readTranscriptProjectCommandCall } from '@/components/sessions/transcript/references/transcriptProjectCommandReference';
 import { ProjectCommandToolTimelineRowHeader } from './ProjectCommandToolTimelineRowHeader';
@@ -84,7 +85,8 @@ export const ToolTimelinePreviewRow = React.memo(function ToolTimelinePreviewRow
 
     const statusKind = resolveToolStatusIndicatorKind(model.toolForRendering);
     const actionFailure = statusKind === 'error' ? resolveToolActionFailure(model.toolForRendering) : null;
-    const isRefusal = actionFailure?.outcome === 'refused';
+    const isRefusal = actionFailure?.outcome === 'refused'
+        || formatToolPermissionDecisionLabel(model.toolForRendering.permission) !== null;
     const headerSubtitle = collapsedDetailLevel === 'title' ? null : model.subtitle;
     const headerStatusText = collapsedDetailLevel === 'title' ? null : model.statusText;
     const { density, iconSize } = deriveToolTimelineDensity(collapsedDetailLevel);

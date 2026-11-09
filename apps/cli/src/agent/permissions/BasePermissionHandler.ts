@@ -3687,7 +3687,7 @@ export abstract class BasePermissionHandler {
             responseAllowedTools,
             updatedPermissions,
             requestSource,
-            permissionDecisionActorV1,
+            currentDecisionBlocksApproval ? undefined : permissionDecisionActorV1,
             remoteMediationSettlementId,
         );
         const orphanedQuestionAnswer = effectiveResponse.approved && isAgentStructuredQuestionRequest(context)

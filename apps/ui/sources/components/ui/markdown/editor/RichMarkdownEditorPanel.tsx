@@ -3,7 +3,7 @@ import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
-import type { TextEditorHandle } from '@/components/ui/code/editor/codeEditorTypes';
+import type { CodeEditorDocumentChange, EditorDocumentHistory, TextEditorHandle } from '@/components/ui/code/editor/codeEditorTypes';
 import { usePublishCodeEditorHandle } from '@/components/ui/code/editor/usePublishCodeEditorHandle';
 import { CommandMenu } from '@/components/ui/commandMenu';
 import { LinkBubble } from '@/components/ui/linkBubble';
@@ -51,8 +51,8 @@ import { t } from '@/text';
  *    `onUnavailable` fallback — so the full document is always preserved
  *    byte-for-byte.
  *
- * The `frontmatter` value is kept in a ref (updated each render) so the wrapped
- * handle reads the current frontmatter even though it is created once.
+ * The current frontmatter is projected from the seed and shared-history edits,
+ * so an unrelated render cannot replace live bytes with an older seed.
  *
  * Props mirror `FileEditorPanel` (resetKey/editorRef/value/onChange) plus
  * `onUnavailable`, which the native surface uses to hand the freshest markdown
@@ -72,8 +72,10 @@ function RichMarkdownEditorPanelImpl(props: Readonly<{
     editorRef: Readonly<React.MutableRefObject<TextEditorHandle | null>>;
     onEditorHandleChange?: (handle: TextEditorHandle | null) => void;
     value: string;
-    onChange: (next: string) => void;
+    onChange: (next: string, change?: CodeEditorDocumentChange) => void;
+    history?: EditorDocumentHistory;
     onUnavailable?: (latestMarkdown: string) => void;
+    onReady?: () => void;
     readOnly?: boolean;
     changeDebounceMs?: number;
     bridgeMaxChunkBytes?: number;
@@ -103,12 +105,40 @@ function RichMarkdownEditorPanelImpl(props: Readonly<{
     // sees `body`; `frontmatter` is shown read-only and re-prepended on every
     // markdown hand-off (S1 / §5.3). Memoized on `props.value` so a stable seed
     // is fed to the surface across unrelated re-renders.
-    const { frontmatter, body } = React.useMemo(() => extractFrontMatter(props.value), [props.value]);
+    const { frontmatter: seedFrontmatter, body } = React.useMemo(() => extractFrontMatter(props.value), [props.value]);
+    const [frontmatter, setFrontmatter] = React.useState(seedFrontmatter);
 
-    // The wrapped handle / onChange are created once but must always reattach the
-    // CURRENT frontmatter, so mirror it into a ref updated on every render.
+    // Hosts may keep a stable seed while live text belongs to an external store.
+    // Adopt a new seed only when it changes; Undo can update frontmatter in between.
     const frontmatterRef = React.useRef<string | null>(frontmatter);
-    frontmatterRef.current = frontmatter;
+    const frontmatterSeedRef = React.useRef({ value: props.value, resetKey: props.resetKey });
+    if (frontmatterSeedRef.current.value !== props.value || frontmatterSeedRef.current.resetKey !== props.resetKey) {
+        frontmatterSeedRef.current = { value: props.value, resetKey: props.resetKey };
+        frontmatterRef.current = seedFrontmatter;
+        setFrontmatter(seedFrontmatter);
+    }
+    const updateFrontmatter = React.useCallback((next: string | null) => {
+        frontmatterRef.current = next;
+        setFrontmatter(next);
+    }, []);
+    const bodyHistory = React.useMemo<EditorDocumentHistory | undefined>(() => props.history ? {
+        getSnapshot: () => props.history!.getSnapshot(),
+        subscribe: listener => props.history!.subscribe(listener),
+        undo: value => {
+            const result = props.history!.undo(reattachFrontMatter(frontmatterRef.current, value));
+            if (result === null) return null;
+            const next = extractFrontMatter(result);
+            updateFrontmatter(next.frontmatter);
+            return next.body;
+        },
+        redo: value => {
+            const result = props.history!.redo(reattachFrontMatter(frontmatterRef.current, value));
+            if (result === null) return null;
+            const next = extractFrontMatter(result);
+            updateFrontmatter(next.frontmatter);
+            return next.body;
+        },
+    } : undefined, [props.history, updateFrontmatter]);
 
     // Publish a WRAPPED handle onto the parent's CodeEditorHandle ref. The surface
     // returns body-only markdown, so the wrapper reattaches frontmatter before the
@@ -124,13 +154,21 @@ function RichMarkdownEditorPanelImpl(props: Readonly<{
             flushPendingChange: () => instance.flushPendingChange(),
             focus: () => instance.focus?.(),
             find: instance.find,
+            runCommand: command => {
+                if (typeof command === 'object' && 'replaceDocument' in command) {
+                    const next = extractFrontMatter(command.replaceDocument);
+                    instance.runTextCommand?.({ ...command, replaceDocument: next.body }, () => updateFrontmatter(next.frontmatter));
+                } else instance.runTextCommand?.(command);
+            },
+            subscribeHistory: instance.subscribeHistory,
         });
-    }, [publishEditorHandle]);
+    }, [publishEditorHandle, updateFrontmatter]);
 
     // Reattach frontmatter to the body-only markdown the surface emits before it
     // flows up to the host (keeps the host's tracked text + dirty state correct).
-    const handleSurfaceChange = React.useCallback((next: string) => {
-        props.onChange(reattachFrontMatter(frontmatterRef.current, next));
+    const handleSurfaceChange = React.useCallback((next: string, change?: CodeEditorDocumentChange) => {
+        if (change) props.onChange(reattachFrontMatter(frontmatterRef.current, next), change);
+        else props.onChange(reattachFrontMatter(frontmatterRef.current, next));
     }, [props.onChange]);
 
     // Native fallback: the surface hands its freshest body-only markdown; reattach
@@ -240,7 +278,9 @@ function RichMarkdownEditorPanelImpl(props: Readonly<{
                     resetKey={props.resetKey}
                     value={body}
                     onChange={handleSurfaceChange}
+                    history={bodyHistory}
                     onUnavailable={handleSurfaceUnavailable}
+                    onReady={props.onReady}
                     readOnly={props.readOnly}
                     changeDebounceMs={props.changeDebounceMs}
                     bridgeMaxChunkBytes={props.bridgeMaxChunkBytes}

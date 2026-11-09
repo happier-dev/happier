@@ -299,6 +299,7 @@ export function MarkdownCodeEditorField(props: MarkdownCodeEditorFieldProps) {
                             onChange={onChange}
                             history={history}
                             onUnavailable={onUnavailable}
+                            onReady={props.onReady}
                             readOnly={props.readOnly}
                             changeDebounceMs={props.changeDebounceMs}
                             bridgeMaxChunkBytes={props.bridgeMaxChunkBytes}

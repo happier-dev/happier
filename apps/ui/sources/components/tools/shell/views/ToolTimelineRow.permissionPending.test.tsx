@@ -434,6 +434,22 @@ describe('ToolTimelineRow (permission pending)', () => {
         expect(screen.findAllByType('PermissionFooter' as any)).toHaveLength(0);
     });
 
+    it.each(['denied', 'canceled'] as const)('presents a person’s Shell %s decision quietly in the row', async (status) => {
+        const { makeToolCall } = await import('@/dev/testkit');
+        const tool = makeToolCall({ name: 'Bash', state: 'error', result: null,
+            permission: { id: 'shell-permission', status, decision: status === 'denied' ? 'denied' : 'abort',
+                ...(status === 'denied' ? { decisionActor: { kind: 'accountUser', accountId: 'owner', relationship: 'owner' } as const } : {}) },
+        });
+        const screen = await renderWithSessionTranscriptSource(<ToolTimelineRow tool={tool} metadata={null}
+            sessionId="s1" messageId="shell-decision" interaction={{ canSendMessages: true, canApprovePermissions: true }} />,
+            createTestSessionTranscriptSource());
+        expect(screen.findByTestId('tool-timeline-row-permission-blocked')?.props.accessibilityLabel)
+            .toBe(`approvals.status.${status === 'denied' ? 'rejected' : 'canceled'}`);
+        const outcome = screen.tree.root.findAll(node => node.props.testID === 'tool-timeline-row-permission-blocked'
+            && typeof node.props.tone === 'string')[0];
+        expect(outcome?.props.tone).toBe('quiet');
+    });
+
     it('renders a visible and accessible denied status in an activity-feed row', async () => {
         const tool: any = {
             id: 'tool-denied',

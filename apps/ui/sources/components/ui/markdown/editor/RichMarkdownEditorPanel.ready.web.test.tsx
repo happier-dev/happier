@@ -15,6 +15,8 @@ import { executeFindAction } from '@/keyboard/findActionRuntime';
 import type { TextEditorHandle } from '@/components/ui/code/editor/codeEditorTypes';
 import { useMarkdownEditMode, type MarkdownEditModeState } from './useMarkdownEditMode';
 import { storage } from '@/sync/domains/state/storageStore';
+import { createEditorDocumentHistory } from '@/components/ui/code/editor/editorDocumentHistory';
+import { CodeEditor } from '@/components/ui/code/editor/CodeEditor.web';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -50,7 +52,55 @@ vi.mock('@tiptap/react', async (importOriginal) => {
 });
 
 describe('rich markdown ready-panel boundary (web)', () => {
-    it('switches Rich to Raw and back through the real mode owner without a phantom draft', async () => {
+    it('uses the full-document history for a raw frontmatter edit and subsequent rich body edits', async () => {
+        engine.ready = true;
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+        const root = createRoot(container);
+        const original = '---\ntitle: Before\n---\n# Body\n';
+        const draft = original.replace('Before', 'After');
+        const history = createEditorDocumentHistory();
+        history.record(original, draft);
+        const editorRef = { current: null as TextEditorHandle | null };
+        let text = draft;
+        function Field() {
+            return <RichMarkdownEditorPanel editorRef={editorRef} resetKey="full-document-history" value={draft} history={history}
+                onChange={(next, change) => { if (!change) history.record(text, next); text = next; }} changeDebounceMs={500} hideFooterToolbar />;
+        }
+        try {
+            await act(async () => root.render(<Field />));
+            await act(async () => { await vi.dynamicImportSettled(); });
+            expect('undo' in engine.current!.commands).toBe(false);
+            await act(async () => {
+                container.querySelector('.ProseMirror')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true }));
+            });
+            expect(text).toBe(original);
+            expect(editorRef.current?.getValue()).toBe(original);
+            await act(async () => root.render(<Field />));
+            expect(editorRef.current?.getValue()).toBe(original);
+            const editor = engine.current!;
+            await act(async () => { editor.commands.insertContentAt(1, 'Updated '); });
+            await act(async () => { await editorRef.current?.flushPendingChange(); });
+            const edited = text;
+            expect(edited).toContain('Updated');
+            await act(async () => { editorRef.current?.runCommand?.('undo'); });
+            expect(text).toBe(original);
+            await act(async () => { editorRef.current?.runCommand?.('redo'); });
+            expect(text).toBe(edited);
+            await act(async () => { editor.commands.insertContentAt(1, 'Pending '); });
+            const pending = '---\ntitle: Before\n---\n' + editor.getMarkdown();
+            const replacement = '---\ntitle: Replacement\n---\n# New body\n';
+            await act(async () => { editorRef.current?.runCommand?.({ replaceDocument: replacement }); });
+            expect(text).toBe(replacement);
+            await act(async () => { editorRef.current?.runCommand?.('undo'); });
+            expect(text).toBe(pending);
+            await act(async () => { editorRef.current?.runCommand?.('undo'); });
+            expect(text).toBe(edited);
+            await act(async () => { editorRef.current?.runCommand?.('undo'); });
+            expect(text).toBe(original);
+        } finally { await act(async () => root.unmount()); container.remove(); }
+    });
+    it('retains one full-document history through real Raw and Rich mode switches', async () => {
         engine.ready = true;
         const originalSettings = storage.getState().settings;
         storage.setState({ settings: { ...originalSettings, experiments: true, markdownDefaultEditMode: 'rich',
@@ -58,38 +108,56 @@ describe('rich markdown ready-panel boundary (web)', () => {
         const container = document.createElement('div');
         document.body.appendChild(container);
         const root = createRoot(container);
-        const initial = '# Guide\n\n- one\n- two\n';
+        const initial = '---\ntitle: Before\n---\n# Guide\n\n- one\n- two\n';
+        const history = createEditorDocumentHistory();
+        const editorRef = { current: null as TextEditorHandle | null };
         let mode: MarkdownEditModeState | null = null;
         let text = initial;
+        const onChange = (next: string, change?: { history: 'undo' | 'redo' }) => {
+            if (!change) history.record(text, next);
+            text = next;
+        };
         function Field() {
-            const [value, setValue] = React.useState(initial);
-            text = value;
-            const editorRef = React.useRef<TextEditorHandle | null>(null);
-            mode = useMarkdownEditMode({ value, language: 'markdown', baseResetKey: 'mode', editorHandleRef: editorRef, onValueChange: setValue });
+            // File hosts keep the seed stable; the mounted surface owns live bytes.
+            mode = useMarkdownEditMode({ value: initial, language: 'markdown', baseResetKey: 'mode', editorHandleRef: editorRef, onValueChange: onChange });
             return mode.showRich ? <RichMarkdownEditorPanel editorRef={editorRef} resetKey={mode.resetKey}
-                value={mode.seedText} onChange={setValue} hideFooterToolbar /> : null;
+                value={mode.seedText} onChange={onChange} history={history} changeDebounceMs={500} hideFooterToolbar />
+                : <CodeEditor ref={handle => { editorRef.current = handle; }} resetKey={mode.resetKey}
+                    value={mode.seedText} language="markdown" onChange={onChange} history={history} />;
         }
         const currentMode = () => { if (!mode) throw new Error('Mode owner not mounted'); return mode; };
         try {
-            await act(async () => root.render(<Field />));
+            await act(async () => root.render(<KeyboardShortcutProvider handlers={{}}><Field /></KeyboardShortcutProvider>));
             await act(async () => { await vi.dynamicImportSettled(); });
             expect(currentMode().showRich).toBe(true);
             await act(async () => { await currentMode().onToggle('raw'); });
             expect(text).toBe(initial);
             expect(currentMode().markdownEditMode).toBe('raw');
+            expect(container.querySelector('textarea')).not.toBeNull();
+            const raw = initial.replace('Before', 'Raw');
+            await act(async () => { editorRef.current!.runCommand!({ replaceDocument: raw }); });
+            expect(text).toBe(raw);
             await act(async () => { await currentMode().onToggle('rich'); });
             await act(async () => { await vi.dynamicImportSettled(); });
-            expect(text).toBe(initial);
+            expect(text).toBe(raw);
             expect(currentMode().showRich).toBe(true);
             const editor = engine.current!;
-            let lastTextEnd = 0;
-            editor.state.doc.descendants((node, position) => { if (node.isText) lastTextEnd = position + node.nodeSize; });
-            await act(async () => { editor.commands.insertContentAt(lastTextEnd, ' '); });
-            const edited = editor.getMarkdown();
-            expect(edited.trimEnd()).toBe(initial.trimEnd());
+            await act(async () => { editor.commands.insertContentAt(1, 'Rich '); });
+            const edited = '---\ntitle: Raw\n---\n' + editor.getMarkdown();
             await act(async () => { await currentMode().onToggle('raw'); });
             expect(text).toBe(edited);
-            expect(text).not.toBe(initial);
+            expect(container.querySelector('textarea')?.value).toBe(edited);
+            await act(async () => { editorRef.current!.runCommand!('undo'); });
+            expect(text).toBe(raw);
+            await act(async () => { editorRef.current!.runCommand!('undo'); });
+            expect(text).toBe(initial);
+            await act(async () => { editorRef.current!.runCommand!('redo'); });
+            expect(text).toBe(raw);
+            await act(async () => { await currentMode().onToggle('rich'); });
+            await act(async () => { await vi.dynamicImportSettled(); });
+            await act(async () => { editorRef.current!.runCommand!('redo'); });
+            expect(text).toBe(edited);
+            expect(editorRef.current!.getValue()).toBe(edited);
         } finally {
             await act(async () => root.unmount()); container.remove(); storage.setState({ settings: originalSettings });
         }
@@ -189,9 +257,11 @@ describe('rich markdown ready-panel boundary (web)', () => {
         const root = createRoot(container);
         const editorRef: React.MutableRefObject<CodeEditorHandle | null> = { current: null };
         const onChange = vi.fn();
+        const readyValues: string[] = [];
+        const onReady = () => { readyValues.push(editorRef.current?.getValue() ?? 'missing-handle'); };
         try {
             await act(async () => {
-                root.render(<RichMarkdownEditorPanel resetKey="deferred" value="**Seed**" editorRef={editorRef} onChange={onChange} />);
+                root.render(<RichMarkdownEditorPanel resetKey="deferred" value="**Seed**" editorRef={editorRef} onChange={onChange} onReady={onReady} />);
             });
             // Commit the Suspense render before waiting for its lazy imports.
             await act(async () => {
@@ -200,6 +270,7 @@ describe('rich markdown ready-panel boundary (web)', () => {
             expect(engine.sawNull).toBe(true);
             expect(container.querySelector('[data-testid="file-details-rich-editor-toolbar:bold"]')?.getAttribute('aria-pressed')).toBe('true');
             expect(editorRef.current?.getValue()).toContain('**Seed**');
+            expect(readyValues).toEqual(['**Seed**']);
             expect(onChange).not.toHaveBeenCalled();
         } finally {
             await act(async () => root.unmount());

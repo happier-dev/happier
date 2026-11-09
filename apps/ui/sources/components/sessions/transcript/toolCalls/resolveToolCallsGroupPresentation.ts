@@ -1,14 +1,14 @@
 import type { ToolCallMessage } from '@happier-dev/session-core/messages';
 import type { TranscriptPermissionDisabledReason } from '@/utils/sessions/deriveTranscriptInteraction';
 import { resolveInactiveSessionToolCallFailure } from '@/components/tools/shell/permissions/resolveInactiveSessionToolCallFailure';
-import { formatApprovalDecisionFailureLabel, formatApprovalStatusLabel } from '@/components/approvals/approvalStatusLabel';
+import { formatApprovalDecisionFailureLabel, formatApprovalStatusLabel, formatToolPermissionDecisionLabel } from '@/components/approvals/approvalStatusLabel';
 import { resolveToolActionFailure, toolActionOutcomeLabel } from '@/components/tools/shell/presentation/resolveToolActionFailure';
 import { resolveToolStatusIndicatorKind } from '@/components/tools/shell/presentation/resolveToolStatusIndicatorKind';
 import { readDeclinedApprovalAtToolCall } from '@/components/tools/shell/views/toolApprovalPromptMatching';
 import type { OpenApprovalArtifactForSession } from '@/sync/domains/artifacts/approvalArtifacts';
 import { projectReviewToolMessage } from '@/components/sessions/reviews/messages/projectReviewToolMessage';
 
-export type ToolCallsGroupStatus = 'running' | 'completed' | 'error' | 'refused' | 'permission_denied' | 'permission_canceled';
+export type ToolCallsGroupStatus = 'running' | 'completed' | 'error' | 'refused' | 'permission_denied';
 
 /** What a group's header says: its one status, and how many calls failed or were refused. */
 export type ToolCallsGroupSummary = Readonly<{
@@ -35,7 +35,6 @@ export function resolveToolCallsGroupSummary(params: Readonly<{
     let hasDecisionRefusal = false;
     let failuresAreActionOutcomes = false;
     let sawPermissionDenied = false;
-    let sawPermissionCanceled = false;
     let sawRunning = false;
     for (const message of params.toolMessages) {
         const tool = resolveInactiveSessionToolCallFailure({
@@ -64,8 +63,12 @@ export function resolveToolCallsGroupSummary(params: Readonly<{
             }
         }
         if (kind === 'permission_blocked') {
-            if (tool.permission?.status === 'denied') sawPermissionDenied = true;
-            else if (tool.permission?.status === 'canceled') sawPermissionCanceled = true;
+            const decisionLabel = formatToolPermissionDecisionLabel(tool.permission);
+            if (decisionLabel) {
+                refused += 1;
+                hasDecisionRefusal = true;
+                refusalLabels.add(decisionLabel);
+            } else if (tool.permission?.status === 'denied') sawPermissionDenied = true;
             // A declined Action approval has no permission request: the Action was refused by the person.
             else {
                 refused += 1;
@@ -81,9 +84,8 @@ export function resolveToolCallsGroupSummary(params: Readonly<{
             : failed > 0 ? 'error'
                 : refused > 0 ? 'refused'
                     : sawPermissionDenied ? 'permission_denied'
-                        : sawPermissionCanceled ? 'permission_canceled'
-                            : sawRunning ? 'running'
-                                : 'completed';
+                        : sawRunning ? 'running'
+                            : 'completed';
     return { status, failed, refused, failuresAreActionOutcomes,
         ...(hasDecisionRefusal ? { refusalLabel: [...refusalLabels].join(' · ') } : {}),
     };

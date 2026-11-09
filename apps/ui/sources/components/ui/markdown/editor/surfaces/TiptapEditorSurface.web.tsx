@@ -3,11 +3,14 @@ import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { EditorContent, useEditor } from '@tiptap/react';
 import type { Editor } from '@tiptap/core';
+import type { CodeEditorCommand, CodeEditorHistory } from '@/components/ui/code/editor/codeEditorTypes';
 
 import { TextInput } from '@/components/ui/text/Text';
 import { useLocalSetting } from '@/sync/store/settingsReadHooks';
 import { resolveCodeEditorFontMetrics } from '@/components/ui/code/editor/codeEditorFontMetrics';
 import { getDefaultFont, getMonoFont } from '@/constants/Typography';
+import { requestOpenExternalUrl } from '@/utils/url/requestOpenExternalUrl';
+import { retainDeep } from '@/sync/domains/state/structuralSharing';
 
 import type {
     LinkBubbleState,
@@ -66,6 +69,17 @@ import {
 
 const DEFAULT_CHANGE_DEBOUNCE_MS = 250;
 
+function openMarkdownLink(href: string): void {
+    if (/^https?:\/\//i.test(href.trim())) {
+        void requestOpenExternalUrl(href);
+        return;
+    }
+    // Other schemes and browser-relative links remain explicit, person-only operations.
+    if (typeof window !== 'undefined' && typeof window.open === 'function') {
+        window.open(href, '_blank', 'noopener,noreferrer');
+    }
+}
+
 export type { MarkdownEditorSurfaceRef } from './TiptapWebViewSurface.native';
 
 export const TiptapEditorSurface = React.forwardRef<MarkdownEditorSurfaceRef, MarkdownEditorProps>(
@@ -87,6 +101,8 @@ export const TiptapEditorSurface = React.forwardRef<MarkdownEditorSurfaceRef, Ma
 
         // --- Latest-prop refs (kept current via effects; read inside callbacks) ---
         const onChangeRef = React.useRef(props.onChange);
+        const onReadyRef = React.useRef(props.onReady);
+        onReadyRef.current = props.onReady;
         const changeDebounceMsRef = React.useRef<number>(
             typeof props.changeDebounceMs === 'number' ? props.changeDebounceMs : DEFAULT_CHANGE_DEBOUNCE_MS,
         );
@@ -101,6 +117,10 @@ export const TiptapEditorSurface = React.forwardRef<MarkdownEditorSurfaceRef, Ma
         const pendingChangeRef = React.useRef<string | null>(null);
         const changeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
         const editorRef = React.useRef<Editor | null>(null);
+        const historyRef = React.useRef(props.history);
+        historyRef.current = props.history;
+        const readOnlyRef = React.useRef(readOnly);
+        readOnlyRef.current = readOnly;
 
         // Selection subscribers (the chrome subscribes via the controller).
         const selectionSubscribersRef = React.useRef(new Set<(state: MarkdownSelectionState) => void>());
@@ -144,6 +164,38 @@ export const TiptapEditorSurface = React.forwardRef<MarkdownEditorSurfaceRef, Ma
             pendingChangeRef.current = null;
         }, []);
 
+        const runTextCommand = React.useCallback((command: CodeEditorCommand, beforeApply?: () => void) => {
+            const live = editorRef.current;
+            if (!live || live.isDestroyed || readOnlyRef.current) return;
+            flushPendingChange();
+            let replacement: string | null = null;
+            let history: 'undo' | 'redo' | undefined;
+            if (command === 'undo' || command === 'redo') {
+                if (!historyRef.current) { live.commands[command](); return; }
+                const current = seedDocumentRef.current && live.state.doc.eq(seedDocumentRef.current) ? seedRef.current : live.getMarkdown();
+                replacement = historyRef.current[command](current);
+                history = command;
+            } else if (typeof command === 'object' && 'replaceDocument' in command) {
+                replacement = command.replaceDocument;
+                history = command.history;
+            }
+            if (replacement === null) return;
+            const next = replacement;
+            ignoreChangeRef.current = true;
+            try {
+                runWithPreservedTiptapViewState(live, () => {
+                    live.commands.setContent(markdownToDoc(next));
+                    normalizeSoftBreaks(live);
+                });
+                seedRef.current = next;
+                seedDocumentRef.current = live.state.doc;
+                latestValueRef.current = next;
+            } finally { ignoreChangeRef.current = false; }
+            beforeApply?.();
+            if (history) onChangeRef.current(next, { history });
+            else onChangeRef.current(next);
+        }, [flushPendingChange]);
+
         const scheduleChange = React.useCallback(
             (next: string) => {
                 pendingChangeRef.current = next;
@@ -162,14 +214,23 @@ export const TiptapEditorSurface = React.forwardRef<MarkdownEditorSurfaceRef, Ma
             [flushPendingChange],
         );
 
+        // Every transaction (each typed character) projects the selection again; an unchanged projection keeps its
+        // identity so the toolbar's state does not change and its chips are not re-rendered per key.
+        const selectionStateRef = React.useRef<MarkdownSelectionState | undefined>(undefined);
+        const readRetainedSelectionState = React.useCallback((editor: Editor): MarkdownSelectionState => {
+            const state = retainDeep(selectionStateRef.current, readSelectionState(editor, historyRef.current?.getSnapshot()));
+            selectionStateRef.current = state;
+            return state;
+        }, []);
+
         const notifySelection = React.useCallback((editor: Editor) => {
             const subscribers = selectionSubscribersRef.current;
             if (subscribers.size === 0) return;
-            const state = readSelectionState(editor);
+            const state = readRetainedSelectionState(editor);
             for (const subscriber of subscribers) {
                 subscriber(state);
             }
-        }, []);
+        }, [readRetainedSelectionState]);
 
         // Lane H: compute + notify link bubble subscribers. Fires on selection
         // updates (same trigger as `notifySelection`) so the host can render the
@@ -257,16 +318,36 @@ export const TiptapEditorSurface = React.forwardRef<MarkdownEditorSurfaceRef, Ma
         const editor = useEditor(
             {
                 extensions: createMarkdownEditorExtensions({
+                    sharedHistory: Boolean(props.history),
                     onMenuTriggerChange: (state) => notifyMenuTriggerRef.current(state),
                     onMenuTriggerKeyDown: (event) => notifyMenuKeyDownRef.current(event),
                 }),
                 content: markdownToDoc(props.value),
                 editable: !readOnly,
                 // Scope the prose stylesheet to THIS editor's contenteditable.
-                editorProps: { attributes: { class: proseClass } },
+                editorProps: {
+                    attributes: { class: proseClass },
+                    handleKeyDown: (_view, event) => {
+                        if (!historyRef.current || event.isComposing || readOnlyRef.current || event.altKey || !(event.metaKey || event.ctrlKey)) return false;
+                        const key = event.key.toLowerCase();
+                        if (key !== 'z' && key !== 'y') return false;
+                        event.preventDefault();
+                        runTextCommand(key === 'y' || event.shiftKey ? 'redo' : 'undo');
+                        return true;
+                    },
+                    handleDOMEvents: {
+                        beforeinput: (view, event) => {
+                            if (!historyRef.current || readOnlyRef.current || view.composing || event.isComposing
+                                || (event.inputType !== 'historyUndo' && event.inputType !== 'historyRedo')) return false;
+                            event.preventDefault();
+                            runTextCommand(event.inputType === 'historyUndo' ? 'undo' : 'redo');
+                            return true;
+                        },
+                    },
+                },
             },
             // eslint-disable-next-line react-hooks/exhaustive-deps
-            [props.resetKey],
+            [props.resetKey, Boolean(props.history)],
         );
 
         const richFind = React.useMemo(() => editor ? createTiptapFind(editor) : null, [editor]);
@@ -299,27 +380,22 @@ export const TiptapEditorSurface = React.forwardRef<MarkdownEditorSurfaceRef, Ma
                     const live = editorRef.current;
                     if (!live) return;
                     runMarkdownEditorCommand(live, command, {
-                        // Parity with native `Linking.openURL`: open the active link
-                        // in a new tab. `noopener,noreferrer` prevents the opened page
-                        // from accessing `window.opener` (tab-nabbing) or leaking the
-                        // referrer (matches the command-registry default opener).
-                        openLink: (href: string) => {
-                            if (typeof window !== 'undefined' && typeof window.open === 'function') {
-                                window.open(href, '_blank', 'noopener,noreferrer');
-                            }
-                        },
+                        openLink: openMarkdownLink,
                     });
                 },
                 subscribeSelection: (callback: (state: MarkdownSelectionState) => void) => {
                     selectionSubscribersRef.current.add(callback);
                     // Push the current state immediately so the toolbar is correct
                     // on first paint.
-                    const live = editorRef.current;
-                    if (live && !live.isDestroyed) {
-                        callback(readSelectionState(live));
-                    }
+                    const publish = () => {
+                        const live = editorRef.current;
+                        if (live && !live.isDestroyed) callback(readRetainedSelectionState(live));
+                    };
+                    const unsubscribeHistory = historyRef.current?.subscribe(publish);
+                    if (!unsubscribeHistory) publish();
                     return () => {
                         selectionSubscribersRef.current.delete(callback);
+                        unsubscribeHistory?.();
                     };
                 },
                 // Lane F: slash menu trigger subscription.
@@ -348,11 +424,7 @@ export const TiptapEditorSurface = React.forwardRef<MarkdownEditorSurfaceRef, Ma
                         }
                     }
                     runMarkdownEditorCommand(live, command, {
-                        openLink: (href: string) => {
-                            if (typeof window !== 'undefined' && typeof window.open === 'function') {
-                                window.open(href, '_blank', 'noopener,noreferrer');
-                            }
-                        },
+                        openLink: openMarkdownLink,
                     });
                 },
                 // Lane H: link bubble subscription.
@@ -409,7 +481,9 @@ export const TiptapEditorSurface = React.forwardRef<MarkdownEditorSurfaceRef, Ma
         React.useEffect(() => {
             if (!editor || editor.isDestroyed) return;
             try {
-                editor.setEditable(!readOnly);
+                // Editability is host state, not a user edit. Emitting an update
+                // here can flush the old empty buffer over an arriving document.
+                editor.setEditable(!readOnly, false);
             } catch {
                 // ignore
             }
@@ -473,6 +547,12 @@ export const TiptapEditorSurface = React.forwardRef<MarkdownEditorSurfaceRef, Ma
                     if (live && !live.isDestroyed) live.commands.focus();
                 },
                 find: richFind?.find,
+                runTextCommand,
+                subscribeHistory: (listener: (state: CodeEditorHistory) => void) => {
+                    const shared = historyRef.current;
+                    if (shared) return shared.subscribe(listener);
+                    return controllerRef.current?.subscribeSelection(state => listener({ canUndo: state.canUndo, canRedo: state.canRedo })) ?? (() => {});
+                },
                 runCommand: (command) => controllerRef.current?.runCommand(command),
                 subscribeSelection: (callback) =>
                     controllerRef.current?.subscribeSelection(callback) ?? (() => {}),
@@ -485,8 +565,12 @@ export const TiptapEditorSurface = React.forwardRef<MarkdownEditorSurfaceRef, Ma
                 subscribeLinkBubble: (callback) =>
                     controllerRef.current?.subscribeLinkBubble?.(callback) ?? (() => {}),
             }),
-            [flushPendingChange, richFind],
+            [flushPendingChange, richFind, runTextCommand],
         );
+
+        React.useEffect(() => {
+            if (editor) onReadyRef.current?.();
+        }, [editor]);
 
         // Flush any pending debounced change on unmount.
         React.useEffect(() => {

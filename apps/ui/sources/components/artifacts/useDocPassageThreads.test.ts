@@ -221,6 +221,29 @@ describe('Doc passage thread demand', () => {
             && request.path === '/v1/discussions/committed-thread/messages')).toHaveLength(1);
     });
 
+    it('shows the latest committed reply body beside its passage after remounting the Doc', async () => {
+        const { artifact, client, network, hook } = await mountedDoc(1);
+        for (let seq = 2; seq <= 4; seq += 1) {
+            await client.post({ discussionId: 'committed-thread', localId: `retry-${seq}`,
+                content: { v: 1, parts: [{ t: 'text', text: `Committed reply ${seq}` }] } });
+        }
+        function Margin() {
+            const current = useDocCollaboration(artifact);
+            return createElement(Fragment, null, current?.margin.renderCard('committed-thread'));
+        }
+        await hook.unmount();
+        for (let mount = 0; mount < 2; mount += 1) {
+            clearDiscussionRepositoryRegistryForTests();
+            const screen = await renderScreen(createElement(Margin));
+            const latestId = network.messages[3]!.id;
+            await waitForHomeGovernance(() => expect(screen.findByTestId(`session-discussion-message-content-${latestId}`)).not.toBeNull());
+            expect(screen.getTextContent()).toContain('Committed reply 4');
+            expect(screen.getTextContent()).not.toContain('Committed reply 3');
+            expect(screen.findByTestId('artifact:passage-thread:committed-thread.reply')).not.toBeNull();
+            await screen.unmount();
+        }
+    });
+
     it('shows a held Discussion draft beside its Doc passage and withdraws it when the canonical approval settles', async () => {
         const { artifact, scope } = await mountedDoc(1);
         function Margin() {

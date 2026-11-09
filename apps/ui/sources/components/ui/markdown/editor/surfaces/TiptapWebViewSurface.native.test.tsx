@@ -1,6 +1,9 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installSignedOutAuthForTest } from '@/dev/testkit/fixtures/signedOutAuth';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -19,6 +22,7 @@ const unistylesState = vi.hoisted(() => ({
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock({
+        Platform: { OS: 'ios' },
         View: 'View',
         PixelRatio: {
             getFontScale: () => 1,
@@ -59,9 +63,16 @@ vi.mock('@/sync/store/hooks', () => ({
     useLocalSetting: () => 1,
 }));
 
-import { TiptapWebViewSurface } from './TiptapWebViewSurface.native';
-import { renderScreen } from '@/dev/testkit';
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
+const { storage } = await import('@/sync/domains/state/storage');
+const { TiptapWebViewSurface } = await import('./TiptapWebViewSurface.native');
+const { requestOpenExternalUrl } = await import('@/utils/url/requestOpenExternalUrl');
+const initialStorage = storage.getState();
+afterEach(async () => { storage.setState(initialStorage, true); await homes.reset(); });
+import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import type { MarkdownEditorSurfaceRef } from './TiptapWebViewSurface.native';
+import { createEditorDocumentHistory } from '@/components/ui/code/editor/editorDocumentHistory';
 
 function emitEnvelope(envelope: any) {
     if (!lastWebViewProps?.onMessage) throw new Error('WebView onMessage missing');
@@ -94,6 +105,119 @@ function readRequestDocRequestId(callStartIndex: number): string {
 }
 
 describe('TiptapWebViewSurface (native)', () => {
+    it('applies HTTP Action policy at the real native bridge while retaining local tel links', async () => {
+        const restoreAuth = installSignedOutAuthForTest();
+        openURLSpy.mockClear();
+        try {
+            await renderScreen(<TiptapWebViewSurface resetKey="links" value="Open" onChange={vi.fn()} />);
+            storage.setState(state => ({ settings: { ...state.settings,
+                actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1, actions: { 'links.openExternal': { enabled: false } } }),
+            } }));
+            // Settle the lazy real executor before driving fire-and-forget bridge callbacks.
+            expect(await requestOpenExternalUrl('https://example.test/guide')).toBe(false);
+            await act(async () => {
+                emitEnvelope({ v: 1, type: 'openLink', payload: { href: 'https://example.test/guide' } });
+                await flushHookEffects();
+            });
+            expect(openURLSpy).not.toHaveBeenCalled();
+            emitEnvelope({ v: 1, type: 'openLink', payload: { href: 'tel:+123456789' } });
+            expect(openURLSpy).toHaveBeenCalledExactlyOnceWith('tel:+123456789');
+            openURLSpy.mockClear();
+            storage.setState(state => ({ settings: { ...state.settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1 }) } }));
+            await act(async () => {
+                emitEnvelope({ v: 1, type: 'openLink', payload: { href: 'https://example.test/guide' } });
+                await flushHookEffects();
+            });
+            await vi.waitFor(() => expect(openURLSpy).toHaveBeenCalledExactlyOnceWith('https://example.test/guide'));
+        } finally { restoreAuth(); }
+    });
+    it('rejects a flush the WebView never confirms and leaves pending history untouched', async () => {
+        vi.useFakeTimers();
+        try {
+            const history = createEditorDocumentHistory();
+            history.record('before', 'after');
+            const ref = React.createRef<MarkdownEditorSurfaceRef>();
+            await renderScreen(<TiptapWebViewSurface ref={ref} resetKey="unconfirmed" value="after" onChange={vi.fn()} history={history} />);
+            emitEnvelope({ v: 1, type: 'ready', payload: {} });
+            const failed = ref.current!.flushPendingChange().then(() => false, () => true);
+            await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+            expect(await failed).toBe(true);
+            expect(ref.current!.getValue()).toBe('after');
+            expect(history.getSnapshot()).toEqual({ canUndo: true, canRedo: false });
+            const beforeApply = vi.fn();
+            await act(async () => { ref.current!.runTextCommand!({ replaceDocument: 'replacement' }, beforeApply); });
+            await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+            expect(await ref.current!.flushPendingChange().then(() => false, () => true)).toBe(true);
+            expect(beforeApply).not.toHaveBeenCalled();
+            expect(ref.current!.getValue()).toBe('after');
+            const retryStart = postMessageSpy.mock.calls.length;
+            await act(async () => { ref.current!.runTextCommand!('undo'); });
+            const retryId = readRequestDocRequestId(retryStart);
+            await act(async () => { emitEnvelope({ v: 1, type: 'docSnapshot', payload: { requestId: retryId, doc: 'after' } }); });
+            expect(ref.current!.getValue()).toBe('before');
+        } finally { vi.useRealTimers(); }
+    });
+    it('flushes pending rich typing before an explicit replacement so each keeps its own undo step', async () => {
+        postMessageSpy.mockClear();
+        const history = createEditorDocumentHistory();
+        let text = 'seed';
+        const onChange = (next: string) => { history.record(text, next); text = next; };
+        const ref = React.createRef<MarkdownEditorSurfaceRef>();
+        await renderScreen(<TiptapWebViewSurface ref={ref} resetKey="replace-history" value={text} onChange={onChange} history={history} />);
+        emitEnvelope({ v: 1, type: 'ready', payload: {} });
+        const start = postMessageSpy.mock.calls.length;
+        await act(async () => { ref.current!.runTextCommand!({ replaceDocument: 'replacement' }); });
+        const requestId = readRequestDocRequestId(start);
+        const flush = ref.current!.flushPendingChange().then(() => true, () => false);
+        expect(postMessageSpy.mock.calls.slice(start).map(([raw]) => JSON.parse(String(raw))).filter(message => message.type === 'requestDoc')).toHaveLength(1);
+        const afterStart = postMessageSpy.mock.calls.length;
+        await act(async () => { emitEnvelope({ v: 1, type: 'docSnapshot', payload: { requestId, doc: 'pending typing' } }); });
+        const afterId = readRequestDocRequestId(afterStart);
+        await act(async () => { emitEnvelope({ v: 1, type: 'docSnapshot', payload: { requestId: afterId, doc: 'replacement' } }); });
+        expect(await flush).toBe(true);
+        expect(text).toBe('replacement');
+        expect(history.undo(text)).toBe('pending typing');
+        expect(history.undo('pending typing')).toBe('seed');
+    });
+    it('reinitializes a cancelled rich draft from the original seed even when only resetKey changes', async () => {
+        postMessageSpy.mockClear();
+        const ref = React.createRef<MarkdownEditorSurfaceRef>();
+        const onChange = vi.fn();
+        const screen = await renderScreen(<TiptapWebViewSurface ref={ref} resetKey="edit" value="original" onChange={onChange} />);
+        emitEnvelope({ v: 1, type: 'ready', payload: {} });
+        emitEnvelope({ v: 1, type: 'docChanged', payload: { doc: 'cancelled rich draft' } });
+        const pendingStart = postMessageSpy.mock.calls.length;
+        const cancelledFlush = ref.current!.flushPendingChange().then(() => null, error => error);
+        const cancelledRequestId = readRequestDocRequestId(pendingStart);
+        await screen.update(<TiptapWebViewSurface ref={ref} resetKey="cancelled" value="original" onChange={onChange} />);
+        expect(await cancelledFlush).toBeInstanceOf(Error);
+        emitEnvelope({ v: 1, type: 'docSnapshot', payload: { requestId: cancelledRequestId, doc: 'cancelled rich draft' } });
+        expect(ref.current!.getValue()).toBe('original');
+        const start = postMessageSpy.mock.calls.length;
+        emitEnvelope({ v: 1, type: 'ready', payload: {} });
+        expect(findPostedEnvelope('init', start)?.payload.doc).toBe('original');
+    });
+    it('routes the native keyboard Undo through shared history after flushing pending Markdown', async () => {
+        postMessageSpy.mockClear();
+        const history = createEditorDocumentHistory();
+        let text = 'before';
+        const onChange = vi.fn((next: string, change?: { history: 'undo' | 'redo' }) => {
+            if (!change) history.record(text, next);
+            text = next;
+        });
+        const ref = React.createRef<MarkdownEditorSurfaceRef>();
+        await renderScreen(<TiptapWebViewSurface ref={ref} resetKey="shared-history" value={text} onChange={onChange} history={history} />);
+        emitEnvelope({ v: 1, type: 'ready', payload: {} });
+        const start = postMessageSpy.mock.calls.length;
+        await act(async () => { emitEnvelope({ v: 1, type: 'history.command', payload: { command: 'undo' } }); });
+        const requestId = readRequestDocRequestId(start);
+        await act(async () => { emitEnvelope({ v: 1, type: 'docSnapshot', payload: { requestId, doc: 'after pending edit' } }); });
+        expect(text).toBe('before');
+        expect(ref.current!.getValue()).toBe('before');
+        expect(onChange).toHaveBeenLastCalledWith('before', { history: 'undo' });
+        expect(findPostedEnvelope('text.command', start)?.payload.command).toEqual({ replaceDocument: 'before', history: 'undo' });
+        expect(history.getSnapshot()).toEqual({ canUndo: false, canRedo: true });
+    });
     it('keeps Find requested before readiness and accepts only matching, valid runtime results', async () => {
         postMessageSpy.mockClear();
         const ref = React.createRef<MarkdownEditorSurfaceRef>();
@@ -128,18 +252,22 @@ describe('TiptapWebViewSurface (native)', () => {
     it('seeds the editor with init only after the editor reports ready', async () => {
         postMessageSpy.mockClear();
         lastWebViewProps = null;
+        const onReady = vi.fn();
 
         await renderScreen(React.createElement(TiptapWebViewSurface, {
             resetKey: '1',
             value: 'hello world',
             onChange: vi.fn(),
             changeDebounceMs: 10,
+            onReady,
         }));
 
         // No init posted before ready.
         expect(findPostedEnvelope('init')).toBeNull();
+        expect(onReady).not.toHaveBeenCalled();
 
         emitEnvelope({ v: 1, type: 'ready', payload: { ok: true } });
+        expect(onReady).toHaveBeenCalledOnce();
 
         const init = findPostedEnvelope('init');
         expect(init).toEqual(expect.objectContaining({
@@ -469,11 +597,11 @@ describe('TiptapWebViewSurface (native)', () => {
         expect(lastWebViewProps?.source?.html).not.toBe(firstHtml);
     });
 
-    it('resets bridge readiness on resetKey remount so sync requests wait for the replacement WebView', async () => {
+    it('rejects an unconfirmed flush after reset and confirms a retry once the replacement WebView is ready', async () => {
         postMessageSpy.mockClear();
         lastWebViewProps = null;
 
-        const ref = React.createRef<any>();
+        const ref = React.createRef<MarkdownEditorSurfaceRef>();
         const screen = await renderScreen(React.createElement(TiptapWebViewSurface, {
             ref,
             resetKey: '1',
@@ -495,7 +623,7 @@ describe('TiptapWebViewSurface (native)', () => {
             );
         });
 
-        await ref.current.flushPendingChange();
+        await expect(ref.current!.flushPendingChange()).rejects.toThrow();
 
         expect(findPostedEnvelope('setDoc', callCountBeforeReset)).toBeNull();
         expect(findPostedEnvelope('requestDoc', callCountBeforeReset)).toBeNull();
@@ -507,6 +635,12 @@ describe('TiptapWebViewSurface (native)', () => {
             type: 'init',
             payload: expect.objectContaining({ doc: 'replacement markdown' }),
         }));
+        const retryStart = postMessageSpy.mock.calls.length;
+        const confirmed = ref.current!.flushPendingChange();
+        const requestId = readRequestDocRequestId(retryStart);
+        emitEnvelope({ v: 1, type: 'docSnapshot', payload: { requestId, doc: 'replacement markdown' } });
+        await confirmed;
+        expect(ref.current!.getValue()).toBe('replacement markdown');
     });
 
     it('fails closed to raw via onUnavailable carrying the latest markdown on an error envelope', async () => {

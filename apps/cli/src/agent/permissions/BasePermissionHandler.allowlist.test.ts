@@ -4575,6 +4575,39 @@ describe('BasePermissionHandler allowlist', () => {
     expect(session.rpcHandlerManager.handlers.get('permission')).toBeTypeOf('function');
   });
 
+  it.each([
+    { approved: true, policyDecision: 'denied', attributed: false },
+    { approved: true, policyDecision: 'abort', attributed: false },
+    { approved: false, policyDecision: 'denied', attributed: true },
+  ] as const)('attributes only the person\'s effective permission decision: %j', async ({ approved, policyDecision, attributed }) => {
+    const session = new FakeSession();
+    const handler = new TestPermissionHandler(session as never);
+    let currentPolicy: PermissionResult | undefined;
+    const pending = handler.request('policy-attribution', 'Bash', { command: ['bash', '-lc', 'echo policy'] }, {
+      resolveCurrentPermissionDecision: () => currentPolicy,
+    });
+    currentPolicy = { decision: policyDecision };
+    const rpc = session.rpcHandlerManager.handlers.get('session.permission.respond')!;
+
+    await expect(rpc({
+      id: 'policy-attribution',
+      approved,
+      decision: approved ? 'approved' : 'denied',
+    })).resolves.toBeUndefined();
+    await expect(pending).resolves.toEqual({ decision: policyDecision });
+    const completed = session.agentState.completedRequests['policy-attribution'];
+    expect(completed).toEqual(expect.objectContaining({ status: 'denied', decision: policyDecision }));
+    if (attributed) {
+      expect(completed.permissionDecisionActorV1).toEqual({
+        kind: 'accountUser',
+        accountId: 'account-owner',
+        relationship: 'owner',
+      });
+    } else {
+      expect(completed).not.toHaveProperty('permissionDecisionActorV1');
+    }
+  });
+
   it('fails closed without a server-stamped account actor and persists the attributed actor before completion', async () => {
     const session = new FakeSession();
     const handler = new TestPermissionHandler(session as any);

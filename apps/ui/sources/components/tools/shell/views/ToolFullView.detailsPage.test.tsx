@@ -140,6 +140,19 @@ const createSessionPendingCall = makeToolCall({
 });
 
 describe('ToolFullView as the tool-details page', () => {
+  it.each(['denied', 'canceled'] as const)('keeps the Shell %s decision quiet in details and its header', async (status) => {
+    const tool = makeToolCall({ name: 'Bash', state: 'error', result: { error: 'Terminal permission outcome' },
+      permission: { id: 'shell-permission', status, decision: status === 'denied' ? 'denied' : 'abort',
+        ...(status === 'denied' ? { decisionActor: { kind: 'accountUser', accountId: 'owner', relationship: 'owner' } as const } : {}) },
+    });
+    const screen = await renderScreen(<ToolFullView tool={tool} owningMessageId="shell-decision" sessionId="s1"
+      header={<ToolDetailsPageHeader tool={tool} metadata={null} />} />);
+    const label = formatApprovalStatusLabel(status === 'denied' ? 'rejected' : 'canceled');
+    expect(headerOutcome(screen)).toBe(label);
+    expect(collectHostText(screen.tree).join('\n')).toContain(label);
+    expect(screen.findByTestId('tool-error-body')).toBeNull();
+  });
+
   it('presents contextual Session operands without inventing a value for malformed input', async () => {
     for (const [input, sessionId, expectedSession] of [
       [{}, 'originating-session', 'originating-session'],

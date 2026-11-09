@@ -27,7 +27,7 @@ import {
 import { ToolError } from '@/components/tools/shell/presentation/ToolError';
 import type { DeclinedApprovalDisposition } from '@/components/tools/shell/presentation/resolveToolStatusIndicatorKind';
 import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
-import { formatApprovalStatusLabel } from '@/components/approvals/approvalStatusLabel';
+import { formatApprovalStatusLabel, formatToolPermissionDecisionLabel } from '@/components/approvals/approvalStatusLabel';
 import { useDestinationRouter } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -204,7 +204,7 @@ export const ToolCallDetailsSections = React.memo(
               ]}
             />
           </ItemGroup>
-        ) : tool.state === 'error' && tool.result != null ? (
+        ) : tool.state === 'error' && tool.result != null && !formatToolPermissionDecisionLabel(tool.permission) ? (
           <ItemGroup
             title={t('tools.fullView.error')}
             testID="tool-details-error"

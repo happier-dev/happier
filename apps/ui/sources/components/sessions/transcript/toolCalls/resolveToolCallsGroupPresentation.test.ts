@@ -11,6 +11,17 @@ import type { ToolCall } from '@happier-dev/session-core/messages';
 const groupStatus = (params: Parameters<typeof resolveToolCallsGroupSummary>[0]) => resolveToolCallsGroupSummary(params).status;
 
 describe('hidden tool group presentation', () => {
+    it.each(['denied', 'canceled'] as const)('summarises a person’s Shell %s decision with the approval vocabulary', (status) => {
+        const base = createToolCallMessageFixture();
+        const message = createToolCallMessageFixture({ tool: { ...base.tool, name: 'Bash', state: 'error',
+            permission: { id: 'shell-permission', status, decision: status === 'denied' ? 'denied' : 'abort',
+                ...(status === 'denied' ? { decisionActor: { kind: 'accountUser', accountId: 'owner', relationship: 'owner' } } : {}) },
+        } });
+        expect(resolveToolCallsGroupSummary({ toolMessages: [message] })).toMatchObject({
+            status: 'refused', refused: 1, failed: 0,
+            refusalLabel: formatApprovalStatusLabel(status === 'denied' ? 'rejected' : 'canceled'),
+        });
+    });
     it.each([undefined, 'approved', 'pending'] as const)('stops an unsettled tool glyph on a stopped Session with permission %s', (permissionStatus) => {
         const tool: ToolCall = { ...createToolCallMessageFixture().tool,
             ...(permissionStatus ? { permission: { id: 'permission', status: permissionStatus } } : {}) };

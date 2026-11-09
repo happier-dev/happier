@@ -73,6 +73,21 @@ describe('ToolTimelinePreviewRow (error indicator)', () => {
         expect(collectHostText(screen.tree)).not.toContain('Ripgrep search timed out');
     });
 
+    it.each(['denied', 'canceled'] as const)('presents a person’s Shell %s decision quietly in the collapsed preview', async (status) => {
+        const { createToolCallMessageFixture } = await import('@/dev/testkit/fixtures/transcriptFixtures');
+        const base = createToolCallMessageFixture();
+        const message = createToolCallMessageFixture({ tool: { ...base.tool, name: 'Bash', state: 'error', result: null,
+            permission: { id: 'shell-permission', status, decision: status === 'denied' ? 'denied' : 'abort',
+                ...(status === 'denied' ? { decisionActor: { kind: 'accountUser', accountId: 'owner', relationship: 'owner' } } : {}) },
+        } });
+        const screen = await renderScreen(<ToolTimelinePreviewRow toolMessage={message} metadata={null} />);
+        expect(screen.findByTestId('tool-timeline-preview-row-permission-blocked')?.props.accessibilityLabel)
+            .toBe(`approvals.status.${status === 'denied' ? 'rejected' : 'canceled'}`);
+        const outcome = screen.tree.root.findAll(node => node.props.testID === 'tool-timeline-preview-row-permission-blocked'
+            && typeof node.props.tone === 'string')[0];
+        expect(outcome?.props.tone).toBe('quiet');
+    });
+
     it('shows a visible and accessible denied status in collapsed previews', async () => {
         const message = makeToolMessage({
             state: 'error',

@@ -1,6 +1,7 @@
 import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { readApprovalExecutionFailure } from '@happier-dev/protocol/approvals/approvalExecutionFailure';
 import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import type { ToolCall } from '@happier-dev/session-core/messages';
 
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { t } from '@/text';
@@ -27,6 +28,15 @@ export function formatApprovalDecisionFailureLabel(code: string): string | null 
     if (code === 'approval_rejected') return formatApprovalStatusLabel('rejected');
     if (code === 'approval_canceled') return formatApprovalStatusLabel('canceled');
     return null;
+}
+
+/** Shell permissions retain the same decision vocabulary as Action approvals. */
+export function formatToolPermissionDecisionLabel(permission: ToolCall['permission']): string | null {
+    if (permission?.status === 'canceled') return formatApprovalStatusLabel('canceled');
+    if (permission?.status !== 'denied') return null;
+    const actor = permission.decisionActor?.kind;
+    if (actor !== 'accountUser' && actor !== 'externalHuman') return null;
+    return formatApprovalStatusLabel(permission.decision === 'abort' ? 'canceled' : 'rejected');
 }
 
 /**

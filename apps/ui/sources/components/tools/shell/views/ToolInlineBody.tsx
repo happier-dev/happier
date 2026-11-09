@@ -14,6 +14,8 @@ import { knownTools } from '@/components/tools/catalog';
 import type { KnownToolDefinition } from '@/components/tools/catalog/_types';
 import { ToolHeaderActionsContext } from '@/components/tools/shell/presentation/ToolHeaderActionsContext';
 import { ToolError } from '@/components/tools/shell/presentation/ToolError';
+import { ToolOutcomeStatus } from '@/components/tools/shell/presentation/ToolOutcomeStatus';
+import { formatToolPermissionDecisionLabel } from '@/components/approvals/approvalStatusLabel';
 import {
     ToolSectionSpacingProvider,
     ToolSectionView,
@@ -184,7 +186,9 @@ export const ToolInlineBody = React.memo(function ToolInlineBody(props: {
         // Render an explicit status so the user understands why the tool did not run.
         return (
             <TextSelectabilityScope selectable>
-                <ToolError message={errorDisplay.override} messageId={props.messageId} blockId="tool-error-override" />
+                {formatToolPermissionDecisionLabel(tool.permission)
+                    ? <ToolOutcomeStatus testID="tool-permission-decision" label={errorDisplay.override} glyph="minus-circle" tone="quiet" />
+                    : <ToolError message={errorDisplay.override} messageId={props.messageId} blockId="tool-error-override" />}
             </TextSelectabilityScope>
         );
     }

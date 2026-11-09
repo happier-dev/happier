@@ -295,9 +295,9 @@ describe('ToolCallsGroupUnitHeaderRow', () => {
         expect(screen.findAllByType(ActivitySpinner)).toHaveLength(0);
         expect(screen.findAllByProps({ name: 'check-circle' })).toHaveLength(0);
         expect(screen.findAllByProps({ name: 'minus-circle' }).length).toBeGreaterThan(0);
-        expect(screen.findByTestId('tool-calls-group-status:permission_canceled')).toMatchObject({
+        expect(screen.findByTestId('tool-calls-group-status:refused')).toMatchObject({
             props: {
-                accessibilityLabel: 'errors.permissionCanceled',
+                accessibilityLabel: 'approvals.status.canceled',
             },
         });
     });

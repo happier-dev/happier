@@ -29,7 +29,7 @@ import { artifactViewRoute } from './artifactBrowserModel';
 
 /**
  * One passage thread beside its passage in the Doc (C5 lab K1-A/R/ST): the passage it is about, the
- * comment that started it in the Discussion's own message anatomy, the latest reply as one line, and
+ * comment that started it in the Discussion's own message anatomy, the latest reply, and
  * the thread's suggested edit — its card while open, its one-line receipt (with Undo) once decided.
  * A passage that changed keeps its old quote and leads to the revision it was written against.
  */
@@ -242,13 +242,17 @@ export function ArtifactPassageThreadCard(
         >
           <DiscussionSpeakerFace message={latestReply} serverId={serverId} viewerAccountId={props.viewerAccountId}
             agentId={readAgentId(latestReply)} size={16} markSize={ICON_SIZE.sm} testID={(kind) => `${testID}.reply.face-${kind}`} />
-          <Text variant="meta" numberOfLines={1} style={styles.replyText}>
-            {t('artifacts.browser.passage.replied', {
-              name:
-                resolveSpeakerLabel(latestReply),
-              time: formatShortRelativeTime(latestReply.createdAt),
-            })}
-          </Text>
+          <View style={styles.replyContent}>
+            <Text variant="meta" numberOfLines={1} style={styles.replyText}>
+              {t('artifacts.browser.passage.replied', {
+                name:
+                  resolveSpeakerLabel(latestReply),
+                time: formatShortRelativeTime(latestReply.createdAt),
+              })}
+            </Text>
+            <DiscussionMessageContent message={latestReply} serverId={serverId}
+              resolveAccountLabel={resolveAccountLabel} resolveSessionLabel={resolveSessionLabel} textStyle={styles.text} />
+          </View>
         </Pressable>
       ) : null}
       {props.waitingApprovalId ? <DiscussionWaitingApprovalCard approvalId={props.waitingApprovalId} serverId={serverId}
@@ -374,7 +378,8 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.space.s6,
     paddingLeft: theme.space.s32 + theme.space.s2,
   },
-  replyText: { flex: 1, minWidth: 0, color: theme.colors.text.secondary },
+  replyContent: { flex: 1, minWidth: 0 },
+  replyText: { color: theme.colors.text.secondary },
   noticeLine: { flexDirection: 'row', alignItems: 'flex-start', gap: theme.space.s8 },
   noticeActions: { flexDirection: 'row', alignSelf: 'flex-end', gap: theme.space.s8 },
   earlier: { color: theme.colors.text.tertiary },

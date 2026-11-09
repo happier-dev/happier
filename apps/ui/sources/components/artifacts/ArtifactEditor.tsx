@@ -46,8 +46,14 @@ export function ArtifactEditor(props: Readonly<{ artifact: DecryptedArtifact | n
     const [quota, setQuota] = React.useState<ArtifactQuota | null>(null);
     const [conflict, setConflict] = React.useState(false);
     const editorRef = React.useRef<CodeEditorHandle | null>(null);
-    // A new document starts with the cursor in its source, as the field did.
-    React.useEffect(() => { if (mode === 'new') editorRef.current?.focus?.(); }, [mode]);
+    const initialFocusRequested = React.useRef(false);
+    // Engines boot after the page mounts. Ask once when the active surface can accept focus;
+    // a mode switch must not take the cursor back from the title or another control.
+    const focusNewDocument = React.useCallback(() => {
+        if (mode !== 'new' || initialFocusRequested.current) return;
+        initialFocusRequested.current = true;
+        editorRef.current?.focus?.();
+    }, [mode]);
     const draftChanged = React.useCallback((title: string, body: string) => mode === 'new'
         ? title.trim().length > 0 || body.trim().length > 0
         : title !== (opening?.title ?? '') || body !== (opening?.body ?? ''), [mode, opening]);
@@ -178,6 +184,7 @@ export function ArtifactEditor(props: Readonly<{ artifact: DecryptedArtifact | n
                             language="markdown"
                             onChange={setBody}
                             editorRef={editorRef}
+                            onReady={focusNewDocument}
                             presentation="canvas"
                         />
                     </View>

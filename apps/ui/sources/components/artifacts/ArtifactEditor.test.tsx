@@ -43,7 +43,7 @@ vi.mock('@react-navigation/native', async () => {
 });
 // The platform editor surface (Monaco on web, a CodeMirror WebView on native) is the boundary: a host node
 // with the same value/onChange contract, so the editor's own draft, save and refusal logic stays real.
-const editorBoundary = vi.hoisted(() => ({ pendingValue: null as string | null, rejectFlush: false }));
+const editorBoundary = vi.hoisted(() => ({ pendingValue: null as string | null, rejectFlush: false, ready: false, focused: false }));
 vi.mock('@/components/ui/code/editor/CodeEditor', async () => {
     const React = await import('react');
     return {
@@ -58,6 +58,7 @@ vi.mock('@/components/ui/code/editor/CodeEditor', async () => {
             latestProps.current = props;
             // Real platform engines retain their handle across ordinary renders.
             React.useImperativeHandle(ref, () => ({
+                focus: () => { if (editorBoundary.ready) editorBoundary.focused = true; },
                 getValue: () => editorBoundary.pendingValue ?? value.current,
                 flushPendingChange: async () => {
                     if (editorBoundary.rejectFlush) throw new Error('snapshot_unconfirmed');
@@ -67,7 +68,7 @@ vi.mock('@/components/ui/code/editor/CodeEditor', async () => {
                     latestProps.current.onChange(value.current);
                 },
             }), []);
-            return React.createElement('CodeEditor', { testID: props.testID, value: props.value, onChangeText: (next: string) => {
+            return React.createElement('CodeEditor', { testID: props.testID, value: props.value, onReady: props.onReady, onChangeText: (next: string) => {
                 value.current = next;
                 props.onChange(next);
             } });
@@ -114,6 +115,23 @@ describe('ArtifactEditor', () => {
         vi.mocked(Modal.alert).mockClear();
         editorBoundary.pendingValue = null;
         editorBoundary.rejectFlush = false;
+        editorBoundary.ready = false;
+        editorBoundary.focused = false;
+    });
+
+    it('focuses a new document when its engine becomes ready without taking focus back on a later ready event', async () => {
+        await restoreEditorHome('https://artifact-editor-focus.test');
+        const ArtifactEditor = await loadArtifactEditor();
+        getStorage().setState({ settings: { ...getStorage().getState().settings, markdownDefaultEditMode: 'raw' } });
+        const screen = await renderScreen(<ArtifactEditor artifact={null} mode="new" />);
+        expect(editorBoundary.focused).toBe(false);
+        editorBoundary.ready = true;
+        await act(async () => { screen.findHostByTestId('artifact-editor:body:source')!.props.onReady(); });
+        expect(editorBoundary.focused).toBe(true);
+        editorBoundary.focused = false;
+        await act(async () => { screen.findHostByTestId('artifact-editor:body:source')!.props.onReady(); });
+        expect(editorBoundary.focused).toBe(false);
+        await screen.unmount();
     });
 
     it('invites writing in an empty Doc and removes the hint as the real body changes', async () => {

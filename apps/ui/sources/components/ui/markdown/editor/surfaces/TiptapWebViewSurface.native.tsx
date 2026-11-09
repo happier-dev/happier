@@ -22,8 +22,9 @@ import type {
 import { resolveMarkdownEditorTheme } from '../markdownEditorTheme';
 import { buildTiptapWebViewHtml } from '../bridge/tiptapWebViewHtml';
 import { resolveNativeOpenableMarkdownHref } from '../core/tiptap/markdownLinkOpening';
-import type { CodeEditorFindHandle, CodeEditorFindSnapshot } from '@/components/ui/code/editor/codeEditorTypes';
+import type { CodeEditorCommand, CodeEditorFindHandle, CodeEditorFindSnapshot, CodeEditorHistory } from '@/components/ui/code/editor/codeEditorTypes';
 import { readCodeMirrorFindStatus } from '@/components/ui/code/editor/bridge/codeEditorFindBridge';
+import { requestOpenExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 
 /**
  * Native TipTap editor surface (Lane N / N2).
@@ -79,6 +80,7 @@ type MenuTriggerKeyDownPayload = MenuTriggerKeyDownEvent;
 type LinkBubbleChangedPayload = LinkBubbleState | null;
 
 type InboundEnvelope =
+    | Readonly<{ v: 1; type: 'history.command'; payload: { command: 'undo' | 'redo' } }>
     | Readonly<{ v: 1; type: 'ready'; payload: unknown }>
     | Readonly<{ v: 1; type: 'find.status'; payload: unknown }>
     | Readonly<{ v: 1; type: 'docChanged'; payload: DocChangedPayload }>
@@ -231,6 +233,11 @@ function asSelectionStatePayload(payload: unknown): SelectionStatePayload | null
  */
 function parseInboundEnvelope(decoded: WebViewBridgeEnvelopeV1): InboundEnvelope | null {
     switch (decoded.type) {
+        case 'history.command': {
+            const payload = decoded.payload;
+            return isRecord(payload) && (payload.command === 'undo' || payload.command === 'redo')
+                ? { v: 1, type: 'history.command', payload: { command: payload.command } } : null;
+        }
         case 'ready':
             return { v: 1, type: 'ready', payload: decoded.payload };
         case 'find.status':
@@ -333,6 +340,8 @@ export const TiptapWebViewSurface = React.forwardRef<MarkdownEditorSurfaceRef, M
         // `ready`) and reset this flag on resetKey. The messenger owns only the
         // chunked transport + decode/dispatch (D8/R-A5).
         const readyRef = React.useRef(false);
+        const onReadyRef = React.useRef(props.onReady);
+        onReadyRef.current = props.onReady;
         const findOpenRef = React.useRef(false);
         const findSnapshotRef = React.useRef<CodeEditorFindSnapshot>({ query: '', options: { matchCase: false, regex: false }, status: { kind: 'idle' } });
         const findListenersRef = React.useRef(new Set<() => void>());
@@ -341,7 +350,7 @@ export const TiptapWebViewSurface = React.forwardRef<MarkdownEditorSurfaceRef, M
         // fallback path hands to `onUnavailable` (R-A17).
         const lastDocRef = React.useRef(props.value);
         const pendingDocRequestRef = React.useRef(
-            new Map<string, { resolve: () => void; timeoutId: ReturnType<typeof setTimeout> }>(),
+            new Map<string, { resolve: (confirmed: boolean) => void; timeoutId: ReturnType<typeof setTimeout> }>(),
         );
         const latestReadOnlyRef = React.useRef(readOnly);
         latestReadOnlyRef.current = readOnly;
@@ -365,6 +374,10 @@ export const TiptapWebViewSurface = React.forwardRef<MarkdownEditorSurfaceRef, M
 
         // Keep the latest prop callbacks in refs so the message handler stays stable.
         const onChangeRef = React.useRef(props.onChange);
+        const historyRef = React.useRef(props.history);
+        historyRef.current = props.history;
+        const historyCommandRef = React.useRef<Promise<void> | null>(null);
+        const historySubscribersRef = React.useRef(new Set<(state: CodeEditorHistory) => void>());
         const onUnavailableRef = React.useRef(props.onUnavailable);
         onChangeRef.current = props.onChange;
         onUnavailableRef.current = props.onUnavailable;
@@ -374,12 +387,13 @@ export const TiptapWebViewSurface = React.forwardRef<MarkdownEditorSurfaceRef, M
                 buildTiptapWebViewHtml({
                     theme: webViewTheme,
                     readOnly,
+                    sharedHistory: Boolean(props.history),
                     changeDebounceMs,
                     maxChunkBytes,
                     uiFontScale,
                     osFontScale: typeof PixelRatio.getFontScale === 'function' ? PixelRatio.getFontScale() : 1,
                 }),
-            [webViewTheme, readOnly, changeDebounceMs, maxChunkBytes, uiFontScale],
+            [webViewTheme, readOnly, changeDebounceMs, maxChunkBytes, uiFontScale, Boolean(props.history)],
         );
 
         // Forward ref to `handleEnvelope` (defined below). The messenger reads its
@@ -446,18 +460,30 @@ export const TiptapWebViewSurface = React.forwardRef<MarkdownEditorSurfaceRef, M
             });
         }, [postEnvelope]);
 
-        const flushPendingChange = React.useCallback(async (): Promise<void> => {
-            if (!readyRef.current) return;
+        const requestDocumentSnapshot = React.useCallback(async (): Promise<void> => {
+            if (!readyRef.current) throw new Error('editor_document_snapshot_unconfirmed');
             const requestId = createMessageId();
-            return await new Promise<void>((resolve) => {
+            const confirmed = await new Promise<boolean>((resolve) => {
                 const timeoutId = setTimeout(() => {
                     pendingDocRequestRef.current.delete(requestId);
-                    resolve();
+                    resolve(false);
                 }, FLUSH_TIMEOUT_MS);
                 pendingDocRequestRef.current.set(requestId, { resolve, timeoutId });
                 postEnvelope({ v: 1, type: 'requestDoc', payload: { requestId } });
             });
+            if (!confirmed) throw new Error('editor_document_snapshot_unconfirmed');
         }, [postEnvelope]);
+        const flushPendingChange = React.useCallback(async (): Promise<void> => {
+            const command = historyCommandRef.current;
+            if (command) {
+                try { await command; }
+                catch (error) {
+                    if (historyCommandRef.current === command) historyCommandRef.current = null;
+                    throw error;
+                }
+            }
+            await requestDocumentSnapshot();
+        }, [requestDocumentSnapshot]);
 
         const runCommand = React.useCallback(
             (command: MarkdownEditorCommand) => {
@@ -467,15 +493,54 @@ export const TiptapWebViewSurface = React.forwardRef<MarkdownEditorSurfaceRef, M
             [postEnvelope],
         );
 
+        const runTextCommand = React.useCallback((command: CodeEditorCommand, beforeApply?: () => void) => {
+            if (latestReadOnlyRef.current) return;
+            const replace = (doc: string, history?: 'undo' | 'redo') => {
+                beforeApply?.();
+                lastDocRef.current = doc;
+                if (readyRef.current) postEnvelope({ v: 1, type: 'text.command', payload: { command: { replaceDocument: doc, ...(history ? { history } : {}) } } });
+                if (history) onChangeRef.current(doc, { history });
+                else onChangeRef.current(doc);
+            };
+            if ((command === 'undo' || command === 'redo') && historyRef.current) {
+                const pending = (historyCommandRef.current ?? Promise.resolve()).catch(() => {}).then(async () => {
+                    const history = historyRef.current;
+                    if (!history || latestReadOnlyRef.current) return;
+                    await requestDocumentSnapshot();
+                    if (history !== historyRef.current || !readyRef.current) return;
+                    const next = history[command](lastDocRef.current);
+                    if (next !== null) replace(next, command);
+                });
+                historyCommandRef.current = pending;
+                void pending.catch(() => {});
+            } else if (typeof command === 'object' && 'replaceDocument' in command) {
+                if (!historyRef.current) { replace(command.replaceDocument, command.history); return; }
+                const pending = (historyCommandRef.current ?? Promise.resolve()).catch(() => {}).then(async () => {
+                    const history = historyRef.current;
+                    await requestDocumentSnapshot();
+                    if (!readyRef.current || history !== historyRef.current || latestReadOnlyRef.current) return;
+                    replace(command.replaceDocument, command.history);
+                });
+                historyCommandRef.current = pending;
+                // Public flush observes failure; detached toolbar/keyboard commands must not leak it.
+                void pending.catch(() => {});
+            }
+            else if (readyRef.current) postEnvelope({ v: 1, type: 'text.command', payload: { command } });
+        }, [requestDocumentSnapshot, postEnvelope]);
+
         const subscribeSelection = React.useCallback(
             (callback: (state: MarkdownSelectionState) => void) => {
                 selectionSubscribersRef.current.add(callback);
                 // Replay the latest known selection so the subscriber starts in sync.
-                if (lastSelectionStateRef.current) {
+                const unsubscribeHistory = historyRef.current?.subscribe(history => {
+                    if (lastSelectionStateRef.current) callback({ ...lastSelectionStateRef.current, ...history });
+                });
+                if (!unsubscribeHistory && lastSelectionStateRef.current) {
                     callback(lastSelectionStateRef.current);
                 }
                 return () => {
                     selectionSubscribersRef.current.delete(callback);
+                    unsubscribeHistory?.();
                 };
             },
             [],
@@ -593,6 +658,15 @@ export const TiptapWebViewSurface = React.forwardRef<MarkdownEditorSurfaceRef, M
                 flushPendingChange,
                 focus: () => messenger.webViewRef.current?.requestFocus?.(),
                 runCommand,
+                runTextCommand,
+                subscribeHistory: listener => {
+                    const shared = historyRef.current;
+                    if (shared) return shared.subscribe(listener);
+                    historySubscribersRef.current.add(listener);
+                    const state = lastSelectionStateRef.current;
+                    listener({ canUndo: state?.canUndo ?? false, canRedo: state?.canRedo ?? false });
+                    return () => { historySubscribersRef.current.delete(listener); };
+                },
                 subscribeSelection,
                 subscribeMenuTrigger,
                 subscribeMenuKeyDown,
@@ -601,20 +675,22 @@ export const TiptapWebViewSurface = React.forwardRef<MarkdownEditorSurfaceRef, M
                 measureEditorViewportInWindow,
                 subscribeLinkBubble,
             }),
-            [find, flushPendingChange, runCommand, subscribeSelection, subscribeMenuTrigger, subscribeMenuKeyDown, runMenuCommand, subscribeEditorViewportLayout, measureEditorViewportInWindow, subscribeLinkBubble],
+            [find, flushPendingChange, runCommand, runTextCommand, subscribeSelection, subscribeMenuTrigger, subscribeMenuKeyDown, runMenuCommand, subscribeEditorViewportLayout, measureEditorViewportInWindow, subscribeLinkBubble],
         );
 
         const clearPendingDocRequests = React.useCallback(() => {
             for (const pending of pendingDocRequestRef.current.values()) {
                 clearTimeout(pending.timeoutId);
-                pending.resolve();
+                pending.resolve(false);
             }
             pendingDocRequestRef.current.clear();
         }, []);
 
         React.useEffect(() => {
             readyRef.current = false;
-            pendingInitRef.current = { doc: lastDocRef.current };
+            historyCommandRef.current = null;
+            lastDocRef.current = props.value;
+            pendingInitRef.current = { doc: props.value };
             lastSelectionStateRef.current = null;
             const resetSelectionState = createNeutralSelectionState();
             for (const subscriber of selectionSubscribersRef.current) {
@@ -663,9 +739,14 @@ export const TiptapWebViewSurface = React.forwardRef<MarkdownEditorSurfaceRef, M
                 if (!envelope) return;
 
                 switch (envelope.type) {
+                    case 'history.command': {
+                        runTextCommand(envelope.payload.command);
+                        return;
+                    }
                     case 'ready': {
                         readyRef.current = true;
                         sendInit();
+                        onReadyRef.current?.();
                         if (findOpenRef.current) {
                             const { query, options } = findSnapshotRef.current;
                             postEnvelope({ v: 1, type: 'find.set', payload: { query, options } });
@@ -689,20 +770,21 @@ export const TiptapWebViewSurface = React.forwardRef<MarkdownEditorSurfaceRef, M
                     }
 
                     case 'docSnapshot': {
-                        lastDocRef.current = envelope.payload.doc;
-                        onChangeRef.current(envelope.payload.doc);
-
                         const pending = pendingDocRequestRef.current.get(envelope.payload.requestId);
-                        if (pending) {
-                            pendingDocRequestRef.current.delete(envelope.payload.requestId);
-                            clearTimeout(pending.timeoutId);
-                            pending.resolve();
+                        if (!pending) return;
+                        if (lastDocRef.current !== envelope.payload.doc) {
+                            lastDocRef.current = envelope.payload.doc;
+                            onChangeRef.current(envelope.payload.doc);
                         }
+                        pendingDocRequestRef.current.delete(envelope.payload.requestId);
+                        clearTimeout(pending.timeoutId);
+                        pending.resolve(true);
                         return;
                     }
 
                     case 'selectionState': {
-                        const state = envelope.payload;
+                        const state = historyRef.current ? { ...envelope.payload, ...historyRef.current.getSnapshot() } : envelope.payload;
+                        if (!historyRef.current) for (const listener of historySubscribersRef.current) listener({ canUndo: state.canUndo, canRedo: state.canRedo });
                         lastSelectionStateRef.current = state;
                         for (const subscriber of selectionSubscribersRef.current) {
                             subscriber(state);
@@ -740,7 +822,10 @@ export const TiptapWebViewSurface = React.forwardRef<MarkdownEditorSurfaceRef, M
                         // allowed absolute schemes the native host can actually
                         // hand to `Linking` (reject relative/javascript/file/etc).
                         const href = resolveNativeOpenableMarkdownHref(envelope.payload.href);
-                        if (href) {
+                        if (href && /^https?:\/\//i.test(href)) {
+                            void requestOpenExternalUrl(href);
+                        } else if (href) {
+                            // Non-HTTP schemes remain person-only native operations.
                             void Linking.openURL(href).catch(() => {
                                 /* unsupported/invalid URL — ignore */
                             });
@@ -757,7 +842,7 @@ export const TiptapWebViewSurface = React.forwardRef<MarkdownEditorSurfaceRef, M
                     }
                 }
             },
-            [sendInit, postEnvelope],
+            [sendInit, postEnvelope, runTextCommand],
         );
 
         // Keep the messenger's `onEnvelope` pointed at the latest handler.

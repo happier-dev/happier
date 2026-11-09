@@ -162,9 +162,7 @@ export const ToolCallsGroupHeaderChrome = React.memo(function ToolCallsGroupHead
                 ? props.outcomes?.refusalLabel ?? t('toolView.actionOutcome.refused')
                 : props.status === 'permission_denied'
                 ? t('errors.permissionDenied')
-                : props.status === 'permission_canceled'
-                    ? t('errors.permissionCanceled')
-                    : null;
+                : null;
 
     return (
         <HappierPressable

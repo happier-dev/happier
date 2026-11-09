@@ -3,6 +3,7 @@ import type { ToolCall } from "@happier-dev/session-core/messages";
 import type { Metadata } from '@happier-dev/session-core/state';
 
 import { getAgentCore } from '@/agents/catalog/catalog';
+import { formatToolPermissionDecisionLabel } from '@/components/approvals/approvalStatusLabel';
 import { t } from '@/text';
 import type { TranscriptPermissionDisabledReason } from '@/utils/sessions/deriveTranscriptInteraction';
 
@@ -20,25 +21,16 @@ export function resolveToolPermissionTerminalErrorMessage(params: Readonly<{
     historicalAgentId?: string | null;
 }>): string | null {
     const permission = params.tool.permission;
-    if (!permission) return null;
-    if (permission.status !== 'denied' && permission.status !== 'canceled') return null;
-
-    if (permission.status === 'denied') {
-        const canBlameReadOnlyMode = (() => {
-            if (params.metadata?.permissionMode !== 'read-only') return false;
-            const agentId = params.historicalAgentId ?? resolveAgentIdFromSessionMetadata(params.metadata);
-            if (!agentId) return false;
-            return getAgentCore(agentId)?.permissions?.modeGroup === 'codexLike';
-        })();
-
-        return canBlameReadOnlyMode
-            ? t('errors.permissionDeniedReadOnlyMode')
-            : t('errors.permissionDenied');
-    }
-
-    // canceled
-    if (params.permissionDisabledReason === 'inactive') {
-        return t('errors.permissionCanceledSessionInactive');
-    }
-    return t('errors.permissionCanceled');
+    const decision = formatToolPermissionDecisionLabel(permission);
+    if (decision) return decision;
+    if (permission?.status !== 'denied') return null;
+    const canBlameReadOnlyMode = (() => {
+        if (params.metadata?.permissionMode !== 'read-only') return false;
+        const agentId = params.historicalAgentId ?? resolveAgentIdFromSessionMetadata(params.metadata);
+        if (!agentId) return false;
+        return getAgentCore(agentId)?.permissions?.modeGroup === 'codexLike';
+    })();
+    return canBlameReadOnlyMode
+        ? t('errors.permissionDeniedReadOnlyMode')
+        : t('errors.permissionDenied');
 }

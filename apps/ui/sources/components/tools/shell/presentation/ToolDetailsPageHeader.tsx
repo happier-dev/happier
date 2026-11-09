@@ -8,7 +8,7 @@ import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
-import { formatApprovalStatusLabel } from '@/components/approvals/approvalStatusLabel';
+import { formatApprovalStatusLabel, formatToolPermissionDecisionLabel } from '@/components/approvals/approvalStatusLabel';
 import { buildToolHeaderModel } from './buildToolHeaderModel';
 import { toolActionOutcomeLabel } from './resolveToolActionFailure';
 import type { DeclinedApprovalDisposition, ToolStatusIndicatorKind } from './resolveToolStatusIndicatorKind';
@@ -62,13 +62,15 @@ export const ToolDetailsPageHeader = React.memo(function ToolDetailsPageHeader(
   const tool = model.toolForRendering;
   // One outcome owner for this header and the page's Result section.
   const declinedApproval = props.declinedApproval ?? null;
+  const decisionLabel = formatToolPermissionDecisionLabel(tool.permission)
+    ?? (declinedApproval ? formatApprovalStatusLabel(declinedApproval) : null);
   const result = React.useMemo(() => resolveToolCallOutcome(tool, declinedApproval), [declinedApproval, tool]);
   let outcome: React.ReactNode;
-  if (result.kind === 'status' && result.indicator === 'permission_blocked' && declinedApproval) {
+  if (result.kind === 'status' && result.indicator === 'permission_blocked' && decisionLabel) {
     // A person's decision uses the request's vocabulary and quiet mark.
     outcome = (
       <View style={styles.outcome}>
-        <ToolOutcomeStatus testID="tool-details-outcome" label={formatApprovalStatusLabel(declinedApproval)} glyph="minus-circle" tone="quiet" />
+        <ToolOutcomeStatus testID="tool-details-outcome" label={decisionLabel} glyph="minus-circle" tone="quiet" />
       </View>
     );
   } else if (result.kind === 'status') {

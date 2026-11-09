@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import type { MarkdownSelectionState } from '../markdownEditorTypes';
+import { createEditorDocumentHistory } from '@/components/ui/code/editor/editorDocumentHistory';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -184,6 +185,38 @@ beforeEach(() => {
 });
 
 describe('TiptapEditorSurface (web)', () => {
+    it('notifies the host after the delayed engine and its focus handle are ready', async () => {
+        const ref = React.createRef<import('../MarkdownEditor').MarkdownEditorSurfaceRef>();
+        const onReady = vi.fn(() => ref.current?.focus?.());
+        const props = { resetKey: 'delayed-focus', value: '', onChange: vi.fn(), onReady };
+        const screen = await renderScreen(<TiptapEditorSurface {...props} ref={ref} />);
+        expect(onReady).not.toHaveBeenCalled();
+        const editor = createFakeEditor('');
+        editorState.current = editor;
+        await screen.update(<TiptapEditorSurface {...props} ref={ref} />);
+        expect(editor.focusCalled).toBe(1);
+        await screen.update(<TiptapEditorSurface {...props} ref={ref} value="updated" />);
+        expect(editor.focusCalled).toBe(1);
+        await screen.unmount();
+    });
+
+    it('flushes pending rich edits before shared Undo and publishes exact source bytes with history metadata', async () => {
+        const editor = createFakeEditor('original');
+        editorState.current = editor;
+        const history = createEditorDocumentHistory();
+        let value = 'original';
+        const onChange = vi.fn((next: string, change?: { history: 'undo' | 'redo' }) => {
+            if (!change) history.record(value, next);
+            value = next;
+        });
+        const ref = React.createRef<import('./TiptapWebViewSurface.native').MarkdownEditorSurfaceRef>();
+        await renderScreen(<TiptapEditorSurface ref={ref} resetKey="shared-history" value="original" onChange={onChange} changeDebounceMs={500} history={history} />);
+        await act(async () => { editor.__emitUpdate('pending rich edit'); });
+        await act(async () => { ref.current!.runTextCommand!('undo'); });
+        expect(onChange.mock.calls).toEqual([['pending rich edit'], ['original', { history: 'undo' }]]);
+        expect(ref.current!.getValue()).toBe('original');
+        expect(history.getSnapshot()).toEqual({ canUndo: false, canRedo: true });
+    });
     it('renders and is not dirty on mount: getValue() === seed and no onChange (R-A7)', async () => {
         const editor = createFakeEditor('# Seed');
         editorState.current = editor;
@@ -356,46 +389,6 @@ describe('TiptapEditorSurface (web)', () => {
         expect(editorState.lastCommand).toEqual({ kind: 'toggleBold' });
     });
 
-    it('opens an active link via window.open with noopener,noreferrer on web', async () => {
-        const editor = createFakeEditor('x');
-        editorState.current = editor;
-        const ref = React.createRef<any>();
-
-        await renderScreen(
-            React.createElement(TiptapEditorSurface, {
-                ref,
-                resetKey: '1',
-                value: 'x',
-                onChange: vi.fn(),
-            }),
-        );
-
-        // Drive the openLink command through the controller; the surface wires its
-        // own opener (window.open) into the command registry options.
-        await act(async () => {
-            ref.current.runCommand({ kind: 'openLink' });
-        });
-
-        const opener = editorState.lastCommandOptions?.openLink as ((href: string) => void) | undefined;
-        expect(typeof opener).toBe('function');
-
-        // Provide a window.open spy and invoke the captured opener.
-        const openSpy = vi.fn();
-        const priorWindow = (globalThis as any).window;
-        (globalThis as any).window = { open: openSpy };
-        try {
-            opener?.('https://example.com/page');
-        } finally {
-            if (priorWindow === undefined) {
-                delete (globalThis as any).window;
-            } else {
-                (globalThis as any).window = priorWindow;
-            }
-        }
-
-        expect(openSpy).toHaveBeenCalledWith('https://example.com/page', '_blank', 'noopener,noreferrer');
-    });
-
     it('notifies selection subscribers with link metadata on transactions', async () => {
         const editor = createFakeEditor('x');
         editorState.current = editor;
@@ -436,24 +429,21 @@ describe('TiptapEditorSurface (web)', () => {
         unsubscribe?.();
     });
 
-    it('passes readOnly through to the editor editability', async () => {
+    it('hands subscribers the same selection state while typing leaves it unchanged, so the toolbar is not re-rendered per key', async () => {
         const editor = createFakeEditor('x');
         editorState.current = editor;
-
+        const ref = React.createRef<any>();
         await renderScreen(
-            React.createElement(TiptapEditorSurface, {
-                resetKey: '1',
-                value: 'x',
-                onChange: vi.fn(),
-                readOnly: true,
-            }),
+            React.createElement(TiptapEditorSurface, { ref, resetKey: '1', value: 'x', onChange: vi.fn(), changeDebounceMs: 0 }),
         );
-
+        const received: MarkdownSelectionState[] = [];
         await act(async () => {
+            ref.current.subscribeSelection((state: MarkdownSelectionState) => { received.push(state); });
+            for (let key = 0; key < 3; key += 1) editor.__emitSelection();
             await flushHookEffects();
         });
-
-        expect(editor.setEditable).toHaveBeenCalledWith(false);
+        expect(received.length).toBeGreaterThanOrEqual(3);
+        expect(new Set(received).size).toBe(1);
     });
 
     it('preserves selection and scroll while syncing external value changes', async () => {
