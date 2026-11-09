@@ -129,6 +129,11 @@ export const SessionSpawnNewActionInputV2Schema = lazyZodSchema(() => SessionSpa
 ));
 export type SessionSpawnNewActionInputV2 = z.infer<typeof SessionSpawnNewActionInputV2Schema>;
 
+/** Voice's host binds the catalog default before ordinary creation admission. */
+export const SessionSpawnNewActionVoiceInputV2Schema = lazyZodSchema(() => z.partial(SessionSpawnNewActionInputV2BaseSchema, {
+  agentTarget: true,
+}).check(z.superRefine(refineSessionDirectoryIntentCheckoutV1), z.superRefine(refineDiscussionParticipantSpawn)));
+
 export function admitSessionSpawnNewActionInputV2(input: SessionSpawnNewActionInputV2): SessionSpawnNewInputV2 {
   const { organizationPlacement, ...selection } = input;
   return { ...selection, ...(organizationPlacement ? { organizationPlacement: {

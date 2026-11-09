@@ -2,6 +2,19 @@
 
 This document defines when Happier preserves old behavior across UI, CLI, daemon, server, installers, and persisted state. The goal is safe upgrades and mixed-version operation without turning undeployed implementation history into permanent compatibility debt.
 
+## Explicit Saved Secret repair (unreleased 0.3)
+
+`secrets.shared.repair` adds a client-placed Action with closed resource-id and
+revision input and closed value-free completion metadata. It uses the unchanged
+internal envelope-census/repair transport and exact-revision owner; existing
+Saved Secret Actions, grants, content and persistence formats do not change.
+Protocol, generated Action projections and the answering UI load together under
+the current 0.3 direct cut. Older development readers do not recognize the new
+Action; no optional field is silently ignored, no wire epoch or package version
+changes, and no compatibility adapter is introduced. The inspected `../0.2`
+frontier `7b37d65ca75e58560f8f3ca850958ac5407d2e75` has no shared Saved Secret
+Action family at the scoped source paths, including staged and unstaged changes.
+
 ## Session Action cause continuity (unreleased 0.3)
 
 The closed `SessionActionRpcOriginV1` adds optional canonical
@@ -1063,7 +1076,11 @@ record during migration. Selection entries distinguish account IDs from
 definition, so a local choice made before the first account fetch follows its
 legacy profile through a collision rename. The shared composition owner supplies the startup theme,
 settings screens and running theme from the same account library and local
-selection. A local library is bound to its original Account before migration;
+selection. Migration bookkeeping lives in keyed persistent UI state, outside
+device Settings. The storage boundary imports the current 0.2 predecessor's
+`themeProfileLegacyAccountScope` binding before exposing its retained library;
+a failed binding copy leaves the source intact and withholds that library.
+A local library is bound to its original Account before migration;
 another Account cannot consume it. The existing Home identity-alias transition
 moves that binding with the Account cache. Migration preserves colliding
 profiles under deterministic alternative IDs. Migration edits and their identity
@@ -1736,7 +1753,14 @@ Development CLI and UI Usage Session evidence use the query-owned
 `/v2/usage/session-evidence` projection, without inventory or singleton fallbacks.
 It returns only the selected Sessions. The optional 0.3 development request flag
 `readWorkFacts: true` returns compact actor-scoped Session SystemRecord content
-with a small authorized Session projection and optional turns. Successful compact
+with a small authorized Session projection and optional turns. Its optional
+`workFactKinds` scope defaults to `['work']`; Coach requests `['work', 'coach']`.
+Each compact row carries a `records` array of kind and opaque content, using the
+existing `work_facts.v1` kind with separate `work` and `coach` local ids. The
+opened payload identifies its kind; the client rejects a substituted kind and
+uses the existing Session-mode and content-version owners for both. This is an
+unshipped 0.3 replacement: old `how_you_work` records are reread, without a
+migration or a compatibility reader. Successful compact
 rows omit `detail`; refusals retain typed `detail` results. Missing records remain
 unknown, and malformed or wrong-mode envelopes fail closed. The compact option
 and its producer/consumer schemas load together; no migration or startup backfill
@@ -1986,7 +2010,11 @@ an effect to a Keep acquisition. The existing custodian retention-update Action
 can edit or remove the choice under its ordinary authority and review.
 The Session archive and Run terminal owners publish their end into that retained
 policy; the existing Home retention admission and controller drain/native-effect
-path execute it. Delete keeps its existing shared Action review. There is no
+path execute it. Unarchiving the bound Session withdraws its end timestamp and
+advances the existing intent revision, canceling scope cleanup that has not been
+submitted. An already-submitted native effect retains its exact request and
+settlement path; reopening does not cancel that effect or revive a deleted
+resource. Delete keeps its existing shared Action review. There is no
 second FIN deletion decision, timer or settlement receipt.
 
 The retained admitted-input JSON optionally carries the choice, source and source
@@ -4099,6 +4127,22 @@ their headline and breadcrumb. Its absence remains readable on older answers.
 Disk refs reuse the served `nodeId` as both `itemId` and path, including exact-byte
 ids; invented item labels confer no authority. A rejected collection preserves
 `storage_item_not_collectable` through RPC and Action output normalization.
+Disk nodes now carry the Storage owner's required `verdict` and `collectable`
+facts. List, Map and Rings consume them; protection and in-use display flags do
+not reconstruct cleanup eligibility. Virtual rows retain their display exclusions,
+and collection admission still belongs to Storage. This changes the closed,
+unreleased 0.3 DiskNode V1 and retained scan-index projection in place: matching
+Protocol, daemon and UI readers reload together, and earlier development scan
+indexes require a new scan. No migration or compatibility adapter is added.
+The inspected `../0.2` frontier `7b37d65ca75e58560f8f3ca850958ac5407d2e75`
+has no Storage scan contract, including scoped staged and unstaged paths.
+
+Guard, Processes, Vitals and Storage read adapters share the Machine daemon RPC
+failure projection. They preserve the existing safe `errorCode` and
+`failureCause`, including the failing phase, through Actions and parked watches;
+their stores retain these diagnostics until recovery. Storage keeps its existing
+policy, permission and approval presentation reasons at that adapter. This changes
+no RPC failure vocabulary, admission, cancellation settlement or retry behavior.
 Session-bound Storage tools default an omitted Machine target through the existing
 Action contextual-default owner, while explicit targets remain explicit.
 Accepted Storage operations use the transport's unbounded operation wait with
@@ -6202,6 +6246,15 @@ affect only future admissions, never admitted Runs. All 0.3 components update
 together; older-component interoperability and rollback are unsupported. There is
 no reverse migration, dual write, Workflow compatibility mode or rollback-only writer.
 
+The current-development storage `get` request accepts `projection: 'control'`
+for state, revision and the original root progress, or `projection: 'revision'`
+for state and revision alone. These projections omit accepted-program,
+checkpoint, result and key-census response bodies. Full reads remain the opening
+and recovery contract. The same access and Account-mode owner admits each read;
+root disclosure keeps its mode and envelope-binding validation. This optional
+closed request field follows the same 0.3 coordinated update, with no persisted
+format or released-reader change.
+
 Current-development root progress optionally retains accepted destination leaf
 labels and exact last-observed invocation facts in `stepProgress.destinations`.
 The same root envelope/currentness projection carries them through lean Run
@@ -7306,6 +7359,15 @@ the routing identity is not an ignorable extension for older closed readers.
 No migration, alternate routing owner or wire epoch is added.
 
 ## SDK protocol evolution
+
+Unreleased 0.3 Voice Session creation allows `agentTarget` omission on its Voice
+surface only. The Voice host binds the existing inventory's complete default
+target before strict Action admission, review or daemon dispatch. Named tools,
+discovered execution and Voice action blocks use the same surface schema.
+Canonical Action/RPC inputs, stored approval operands and Agent identities stay
+closed and fully bound; malformed explicit targets remain invalid. Refresh the
+UI host with the matching Protocol source. No daemon change, wire epoch,
+persisted format or compatibility adapter is introduced.
 
 Unreleased 0.3 native duration facts add optional `idleAfterMs` beside `afterMs` in
 the existing closed `ProviderNativeOptionFactsV1.duration` object. Modal's closed

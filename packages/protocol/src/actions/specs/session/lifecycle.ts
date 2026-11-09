@@ -12,7 +12,7 @@ import { SessionOpenDestinationSchema } from '../../sessionOpenDestination.js';
 import { type ActionInputHints } from '../../metadata.js';
 import type { ExternalActionTargetV1 } from '../../externalActionApi.js';
 import { type ActionInputOption } from '../../actionInputHints.js';
-import { SessionSpawnNewInputV2Schema, SessionSpawnNewActionInputV2Schema, SessionSpawnNewActionInputV2BaseSchema } from '../../../sessions/creation/sessionSpawnNewInputV2.js';
+import { SessionSpawnNewInputV2Schema, SessionSpawnNewActionInputV2Schema, SessionSpawnNewActionInputV2BaseSchema, SessionSpawnNewActionVoiceInputV2Schema } from '../../../sessions/creation/sessionSpawnNewInputV2.js';
 import { refineSessionDirectoryIntentCheckoutV1 } from '../../../sessions/creation/sessionDirectoryIntentV1.js';
 import { AGENT_PERMISSION_INTENTS_V1 } from '../../../runtime/permissionIntentV1.js';
 import { SessionCreationKeyV1Schema } from '../../../sessions/creation/sessionCreationIdentityV1.js';
@@ -129,7 +129,7 @@ export const SessionSpawnNewInputHints = {
     { path: 'directory', title: 'Directory intent', widget: 'json', required: true, optionsSourceId: 'sessions.spawn.paths.recent' },
     { path: 'machineSetupPlanInput', title: 'Machine software setup', description: 'Install the selected software on this Machine before starting the Agent. This spawn approval includes setup.', widget: 'json' },
     { path: 'organizationPlacement', title: 'Organization placement', widget: 'json' },
-    { path: 'agentTarget', title: 'Agent target', description: 'Backend options carry target keys. For agent:<pluginId>/<localId>, use {kind:"agent",identity:{pluginId,localId}}; retain definitionId for a configured Agent.', widget: 'json', required: true, optionsSourceId: 'agents.backends.enabled' },
+    { path: 'agentTarget', title: 'Agent target', description: 'Copy the selected catalog row\'s complete agentTarget. A configured Agent uses {kind:"agent",identity:{pluginId,localId},definitionId}; definitionId belongs beside identity.', widget: 'json', required: true, optionsSourceId: 'agents.backends.enabled' },
     { path: 'modelSelection', title: 'Model selection', description: 'Native model options carry a model id in option.value. Use {v:1,ref:{agentTargetKey,providerConnectionId:null,modelId:option.value},updatedAt:<milliseconds>}, with the selected Agent target key. Provider catalog choices retain their structured ref. A Connected Account profile is not a providerConnectionId.', widget: 'json', optionsSourceId: 'agents.models.available' },
     { path: 'title', title: 'Title', widget: 'text' },
     { path: 'permissionMode', title: 'Permission mode', description: `Canonical intent: ${AGENT_PERMISSION_INTENTS_V1.join(', ')}. Use "read-only" for read-only access.`, widget: 'text' },
@@ -726,6 +726,12 @@ function createSessionSpawnActionSpecs() {
       mcpToolName: 'session_spawn_new',
     },
     surfaceBindings: {
+      voice: {
+        inputSchema: SessionSpawnNewActionVoiceInputV2Schema,
+        inputHints: { ...SessionSpawnNewInputHints, fields: SessionSpawnNewInputHints.fields.map(field => field.path === 'agentTarget'
+          ? { ...field, required: false, description: `${field.description} Omit agentTarget to use the configured default Agent; the host resolves its exact catalog target.` }
+          : field) },
+      },
       mcp: { inputSchema: SessionSpawnNewTerminalInputSchema },
       api: {
         inputSchema: SessionSpawnNewApiInputSchema,
@@ -740,7 +746,7 @@ function createSessionSpawnActionSpecs() {
       },
     },
     examples: {
-      voice: { argsExample: '{"executionTarget":{"serverId":"active","machineId":"machine-1"},"directory":{"kind":"path","path":"/workspace/project"},"agentTarget":{"kind":"agent","identity":{"pluginId":"happier.agent.claude","localId":"claude"}},"initialInput":{"text":"Help me inspect this workspace."}}' },
+      voice: { argsExample: '{"executionTarget":{"serverId":"active","machineId":"machine-1"},"directory":{"kind":"path","path":"/workspace/project"},"initialInput":{"text":"Help me inspect this workspace."}}' },
     },
     surfaces: {
       ui: true,

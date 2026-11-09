@@ -40,6 +40,7 @@ import {
 } from './resolveDisabledVoiceActionIds';
 import { jsonError, jsonOk, serializeVoiceActionExecuteResult } from './voiceActionResult';
 import { executeSpokenAction, type SpokenActionTurnOrigin } from './executeSpokenAction';
+import { bindVoiceSessionSpawnInput } from './actionImpl/bindSessionSpawnInput';
 import type { VoiceHostTextPlayback } from '@happier-dev/plugin-sdk/voice/client';
 
 export { serializeVoiceActionExecuteResult } from './voiceActionResult';
@@ -393,10 +394,15 @@ export function createVoiceToolHandlers(
     const serverId = boundAddress?.serverId ?? ctx?.serverId ?? (
       !hasNaturalSessionReference ? deps.currentSessionAddress?.serverId ?? deps.currentServerId : null
     ) ?? (actionId === 'session.list' ? getActiveServerSnapshot().serverId : null);
-    const actionInput = boundAddress ? { ...input, returnToSessionId: boundAddress.sessionId }
+    let actionInput = boundAddress ? { ...input, returnToSessionId: boundAddress.sessionId }
       : useAwareness ? { ...input, view: 'awareness' } : parameters;
     if (useAwareness && actionInput && typeof actionInput === 'object') {
       Reflect.deleteProperty(actionInput, 'includeLastMessagePreview');
+    }
+    if (actionId === 'session.spawn_new') {
+      const bound = await bindVoiceSessionSpawnInput(actionInput, actionExecute, ctx?.signal);
+      if (!bound.ok) return serializeVoiceActionExecuteResult(actionId, bound, { canonicalResult });
+      actionInput = bound.input;
     }
     let res: Awaited<ReturnType<typeof actionExecute>>;
     try {

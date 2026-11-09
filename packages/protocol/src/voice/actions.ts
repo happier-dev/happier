@@ -1,6 +1,7 @@
 import { z } from 'zod/mini';
 import { listVoiceActionBlockSpecs, resolveVoiceClientToolNameAlias } from '../actions/actionSpecs.js';
 import { projectActionInputIssues } from '../actions/executor/actionInputValidation.js';
+import { resolveActionCatalogSurfaceProjection } from '../actions/actionCatalog.js';
 
 export const VOICE_ACTIONS_TAG = 'voice_actions' as const;
 
@@ -49,7 +50,7 @@ function listVoiceActionSchemaEntries(): VoiceActionSchemaEntry[] {
   return listVoiceActionBlockSpecs().flatMap((spec) => {
     const toolName = spec.bindings?.voiceClientToolName;
     if (!toolName) return [];
-    return [{ toolName, inputSchema: spec.inputSchema }];
+    return [{ toolName, inputSchema: resolveActionCatalogSurfaceProjection(spec, 'voice').inputSchema }];
   });
 }
 
@@ -220,7 +221,9 @@ export function extractVoiceActionsFromAssistantText(
     const parsedActions = rawActions.map(parseVoiceAssistantAction);
     const actions = parsedActions.flatMap((parsed) => parsed && 'action' in parsed ? [parsed.action] : []);
 
-    if (rawActions.length > 0 && actions.length === 0) {
+    // Reject the block together: executing a valid subset would silently omit
+    // requested work while preserving narration that says it all succeeded.
+    if (actions.length !== rawActions.length) {
       const invalidInputs = parsedActions.flatMap((parsed) => parsed && 'invalidInput' in parsed ? [parsed.invalidInput] : []);
       return invalidInputs.length > 0
         ? { ...invalidActionBlock, assistantText: `I couldn't run that action because its input was invalid. ${invalidInputs.join(' ')}` }

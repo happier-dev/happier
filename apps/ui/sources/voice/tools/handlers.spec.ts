@@ -1437,9 +1437,25 @@ describe('voice tool handlers', () => {
   });
 
   it.each([
-    ['s1', 'named'], ['', 'named'], ['s1', 'discovered'], ['', 'discovered'],
-  ] as const)('creates and opens a Session on the configured Voice Machine and admits its Voice follow-up (%s, %s)', async (sourceSessionId, entry) => {
+    ['s1', 'named', 'codex'], ['', 'named', 'codex'], ['s1', 'discovered', 'codex'], ['', 'discovered', 'codex'],
+    ['', 'named', 'configured-default'], ['', 'discovered', 'configured-default'],
+  ] as const)('creates and opens a Session on the configured Voice Machine and admits its Voice follow-up (%s, %s, %s)', async (sourceSessionId, entry, agentChoice) => {
     state.settings.voice.canApproveRequests = false;
+    const configuredDefault = agentChoice === 'configured-default';
+    const selectedAgentTarget = configuredDefault
+      ? { kind: 'agent' as const, identity: { pluginId: 'happier.agent.custom-acp', localId: 'custom-acp' }, definitionId: 'qa-c-exact-args' }
+      : { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
+    if (configuredDefault) {
+      const { AcpBackendDefinitionV1Schema } = await import('@happier-dev/protocol/acp/catalog/settingsV1');
+      const definition = AcpBackendDefinitionV1Schema.parse({ id: 'qa-c-exact-args', name: 'qa-c-exact-args', title: 'Configured default',
+        launch: { kind: 'command', command: 'review', args: [] }, createdAt: 1, updatedAt: 1 });
+      const previous = account.request.getMockImplementation()!;
+      account.request.mockImplementation(async (url, init) => new URL(String(url)).pathname === ACP_CATALOG_ROWS_ROUTE_V1
+        ? Response.json({ status: 'present', revision: 2, content: { t: 'plain', v: { v: 1, definitions: [definition] } } })
+        : previous(url, init));
+      const { rememberLastUsedBackendSelection } = await import('@/sync/domains/state/newSessionTargetUiState');
+      rememberLastUsedBackendSelection(storage.getState().settingsScope, { lastUsedBackendTarget: selectedAgentTarget });
+    }
     const { buildLocalVoiceAgentSystemPrompt } = await import('@happier-dev/agents');
     const { extractVoiceActionsFromAssistantText } = await import('@happier-dev/protocol/voice/actions');
     const prompt = buildLocalVoiceAgentSystemPrompt({ sessionId: 's1' });
@@ -1471,13 +1487,7 @@ describe('voice tool handlers', () => {
       creationKey: 'manual:voice-v2-contract',
       executionTarget,
       directory: { kind: 'path', path: '/tmp/s1' },
-      agentTarget: {
-        kind: 'agent',
-        identity: {
-          pluginId: 'happier.agent.codex',
-          localId: 'codex',
-        },
-      },
+      ...(!configuredDefault ? { agentTarget: selectedAgentTarget } : {}),
       initialInput: {
         text: 'Inspect this project.',
       },
@@ -1520,7 +1530,15 @@ describe('voice tool handlers', () => {
 
     const { getActionSpec} = await import('@happier-dev/protocol/actions/actionSpecs');
     const parsedSpawnInput = getActionSpec('session.spawn_new').inputSchema.safeParse(spawnInput);
-    expect(parsedSpawnInput.success, JSON.stringify(parsedSpawnInput)).toBe(true);
+    expect(parsedSpawnInput.success, JSON.stringify(parsedSpawnInput)).toBe(!configuredDefault);
+    if (configuredDefault) {
+      // RUN100: the catalog supplied the right default; the model nested its
+      // definition inside identity. Never silently repair an explicit operand.
+      const invalid = JSON.parse(await tools.spawnSession({ ...spawnInput, agentTarget: { kind: 'agent',
+        identity: { ...selectedAgentTarget.identity, definitionId: 'qa-c-exact-args' } } }));
+      expect(invalid).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+      expect(daemonRpc).not.toHaveBeenCalledWith(expect.objectContaining({ method: RPC_METHODS.SESSION_SPAWN_NEW }));
+    }
     // RUN93 emitted this unclosed invokeAction envelope twice. No Action ran;
     // its "Creating ... now" prose must not become a successful final response.
     const malformed = extractVoiceActionsFromAssistantText(
@@ -1561,7 +1579,7 @@ describe('voice tool handlers', () => {
     });
     expect(daemonRpc).toHaveBeenCalledWith(expect.objectContaining({
       serverUrl: homeUrlA, sessionId: 'm1', method: RPC_METHODS.SESSION_SPAWN_NEW,
-      payload: { ...spawnInput, executionTarget: { serverId: homeA, machineId: 'm1' } },
+      payload: { ...spawnInput, agentTarget: selectedAgentTarget, executionTarget: { serverId: homeA, machineId: 'm1' } },
     }));
 
     // The new Session arrives through the ordinary server projection. Global

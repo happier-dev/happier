@@ -2653,6 +2653,15 @@ resolver, and policy edits withdraw prepared context before dispatch. Accepted
 progress also checks the exact observed policy alongside publisher, attachment
 and represented-frontier currentness.
 
+In development source, Voice's `spawnSession` / `session.spawn_new` input may
+omit `agentTarget` to use the configured New Session default. The Voice host
+reads `agents.backends.list` for the requested Machine and Home and copies the
+complete `agentTarget` from its `defaultTargetKey` row before ordinary Action
+review and admission. The inventory's existing preference owner selects the
+default; the Voice agent does not reconstruct it. Explicit selections remain
+strict: a configured Agent carries `definitionId` beside `identity`, never
+inside it. Deferred approval retains the fully bound target.
+
 In development source, ordinary `session.spawn_new` accepts optional
 `machineSetupPlanInput` with Home, Machine, sources and exclusions only; removal,
 app execution and software updates retain their separate Actions. The spawn review
@@ -4805,8 +4814,10 @@ The development Protocol contract separates personal Account/group labels from a
 definition name: `accounts.rename` and `labels.set/reset` share the presentation-row writer,
 while `pools.patch.displayName` still changes the definition. Acknowledgement Actions address
 an exact adoption subject or Account/machine warning; explicit `false`, empty warning ids and
-literal machine ids keep their meaning. Disclosure Actions are client-placed and address the
-current device's existing local disclosure owner, not an Account row.
+literal machine ids keep their meaning. The pool detail menu's Edit label uses `labels.set/reset`
+through the existing inline name editor; Rename continues to edit the pool definition.
+The unused development-only disclosure Actions and their metadata transfer path have been removed;
+service-rail folding remains device-local.
 The mounted Agent pool-adoption dismissal enters `acknowledgements.set` with
 its captured Home and Account before the metadata owner writes its row.
 
@@ -6423,10 +6434,8 @@ These preferences change only the named navigation surface; hiding an App-rail
 icon does not hide its destination from the launcher, columns or command palette.
 Unknown or temporarily removed item ids remain saved; current catalogs decide
 which items can render. Stored reads drop unknown object fields, while Action
-inputs reject them. The older `sessionCockpitBarSurfaceIds` and
-`compactAppDestinationPreferencesV1` preferences seed only absent surface entries;
-an explicit empty phone pin list stays empty. Mounting a navigation surface does
-not migrate or write either historical preference. Device-local Action placement
+inputs reject them. Absent surface entries use their catalog defaults; mounting a
+navigation surface does not write preferences. Device-local Action placement
 requires the answering client and does not synchronize these preferences to the
 Account or other devices.
 
@@ -7994,6 +8003,16 @@ Action admission or a grant over another Account's Session.
 Direct Home DELETE retains its inactive guard and typed absent/active/conflict
 responses. Delete adds no separate liveness read.
 
+In 0.3 development, the same `session.delete` Action also accepts
+`{ machineId, runId }` for a terminal detached conversation. This operand reaches
+the exact online Machine through the existing Machine RPC transport. The daemon
+bridge admits only the starting Account's detached record, using its existing
+request scope, and refuses a running conversation. This branch has no Stop child.
+It removes Happier's retained history and visibility marker; it never deletes or
+opens the Agent's native conversation. Detached Run details use the existing
+Delete control and Session confirmation. `{ sessionId }` keeps the Home route
+and Stop and Delete behavior described above.
+
 In current 0.3 development,
 ordinary `session.open` navigates without starting a process. Explicit `intent: 'resume'`
 resumes through the same Action admission and exact-Home Session reader; durable
@@ -9287,6 +9306,16 @@ The `updatedAt`/`expectedUpdatedAt` fields on these Actions are aliases for the
 private resource's revision concurrency token, not wall-clock timestamps.
 The existing encrypted/plain private-resource mutation owner remains the writer;
 these Actions do not recreate the retired Account Settings secret writer.
+
+The 0.3 development `secrets.shared.repair` Action exposes the Saved Secret
+editor's **Finish sharing** recovery to UI, Agent and MCP callers. Its closed
+input names only the resource and exact revision; its closed result reports
+`complete` or `incomplete` with that identity and revision. The answering app
+uses the existing Account encryption and recipient-envelope repair owner to
+prepare only owed envelopes for the already-approved audience. Neither values,
+data keys nor envelopes enter the public Action input or result. The existing
+recipient-readiness view explains incomplete recovery. Automatic custody sweeps
+and repair after approved writes remain internal owner maintenance.
 
 The 0.3 development `secrets.shared.reveal` Action is a narrower client-only
 person operation: exact shared reference/revision input, resource-management
