@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { getAgentBehavior } from './catalog';
+import { resolveSessionPermissionBehavior } from '@/sync/ops/sessionPermissionAnswers';
 import { getPermissionFooterCopy } from './permissionUiCopy';
 
 const UNAVAILABLE_PROTOCOL_COPY = {
@@ -33,13 +33,13 @@ describe('getPermissionFooterCopy', () => {
         expect(getPermissionFooterCopy('claude')).toEqual(CLAUDE_COPY);
     });
 
-    it('reads the same protocol a bundled Agent publishes through its UI behavior', () => {
-        // The behavior projection — not a bundled-only core lookup — is the one
-        // owner the footer consults, so a bundled and an installed Agent reach
-        // this copy the same way.
-        expect(getPermissionFooterCopy(getAgentBehavior('codex').permissions?.promptProtocol))
+    it('reads the frozen predecessor protocol used by legacy permission presenters', () => {
+        const behavior = (agentId: string) => resolveSessionPermissionBehavior({
+            agentId, metadata: { flavor: agentId }, accountScope: null,
+        });
+        expect(getPermissionFooterCopy(behavior('codex')?.promptProtocol))
             .toEqual(CODEX_DECISION_COPY);
-        expect(getPermissionFooterCopy(getAgentBehavior('claude').permissions?.promptProtocol))
+        expect(getPermissionFooterCopy(behavior('claude')?.promptProtocol))
             .toEqual(CLAUDE_COPY);
     });
 });
