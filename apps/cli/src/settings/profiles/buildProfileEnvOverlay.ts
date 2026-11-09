@@ -1,11 +1,10 @@
 import { buildBackendTargetKey } from '@happier-dev/protocol/backends/targets/backendTargetRef';
-import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { readBackendTargetKeyV2, type BackendTargetRefV2Input } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { isLaunchProfileV2 } from '@happier-dev/protocol/profiles/read';
-import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { validateLaunchProfileV2ReservedEnvironment } from '@happier-dev/protocol/profiles/v2/schema';
 import type { AIBackendProfile, LaunchProfileV2 } from '@happier-dev/protocol';
 
-import { isPermissionMode, type PermissionMode } from '@/api/types';
+import { isPermissionMode, type PermissionMode } from '@/api/permissionModes';
 import { expandEnvironmentVariables } from '@/utils/expandEnvVars';
 
 type SecretPromptFn = (promptLabel: string) => Promise<string>;
@@ -39,14 +38,11 @@ function extractTemplateVarNames(value: string): string[] {
   return out;
 }
 
-function resolvePermissionModeSeed(profile: AIBackendProfile | LaunchProfileV2, agentId: string): PermissionMode | null {
-  const legacyTarget = { kind: 'builtInAgent' as const, agentId };
-  const targetKey = buildBackendTargetKey(legacyTarget);
-  const targetKeyV2 = buildBackendTargetKeyV2(
-    readBackendTargetRefV2(legacyTarget),
-  );
-  const raw = profile.defaultPermissionModeByTargetKey?.[targetKeyV2]
-    ?? profile.defaultPermissionModeByTargetKey?.[targetKey];
+function resolvePermissionModeSeed(profile: AIBackendProfile | LaunchProfileV2, target: BackendTargetRefV2Input): PermissionMode | null {
+  const targetKey = readBackendTargetKeyV2(target);
+  const legacyTarget = typeof target === 'object' && target.kind === 'builtInAgent' ? target : null;
+  const raw = (targetKey ? profile.defaultPermissionModeByTargetKey?.[targetKey] : undefined)
+    ?? (legacyTarget ? profile.defaultPermissionModeByTargetKey?.[buildBackendTargetKey(legacyTarget)] : undefined);
   if (typeof raw !== 'string') return null;
   const trimmed = raw.trim();
   if (!trimmed) return null;
@@ -55,6 +51,7 @@ function resolvePermissionModeSeed(profile: AIBackendProfile | LaunchProfileV2, 
 
 export async function buildProfileEnvOverlay(params: Readonly<{
   agentId: string;
+  backendTarget?: BackendTargetRefV2Input;
   profile: AIBackendProfile | LaunchProfileV2;
   processEnv: NodeJS.ProcessEnv;
   promptSecretFn: SecretPromptFn | null;
@@ -140,7 +137,7 @@ export async function buildProfileEnvOverlay(params: Readonly<{
     envOverlayRaw: overlayRaw,
     foregroundSatisfiedSecretRequirementNames:
       Object.freeze(foregroundSatisfiedSecretRequirementNames),
-    permissionModeSeed: resolvePermissionModeSeed(params.profile, params.agentId),
+    permissionModeSeed: resolvePermissionModeSeed(params.profile, params.backendTarget ?? { kind: 'builtInAgent', agentId: params.agentId }),
   };
 }
 

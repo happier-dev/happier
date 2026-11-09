@@ -12,7 +12,7 @@ import { beginActivePromptLibraryCatalogRefresh, commitActivePromptLibraryCatalo
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import type { PromptLibraryCatalogKeyV1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { createCliPromptLibraryStore } from './promptLibraryStore';
-import { runWithoutRequesterSessionCurrentnessCheckpoint } from '@/daemon/sessionEncryption/requesterCurrentness';
+
 export { readActivePromptLibraryCatalog } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
 const pending = new Map<string, {
@@ -72,7 +72,7 @@ async function demandActivePromptLibraryRecord(input: ActivePromptLibraryDemand)
       const owned: OperationRead = { completion: Promise.resolve(), rowsObserved: false, readers: new Set() };
       entry = owned;
       reads.set(input.signal, owned);
-      const publish = async (catalog: PromptLibraryCatalogSnapshotV1) => runWithoutRequesterSessionCurrentnessCheckpoint(async () => {
+      const publish = async (catalog: PromptLibraryCatalogSnapshotV1) => (async () => {
         if (reads.get(input.signal) !== owned) return;
         const snapshot = operation.readSnapshot();
         if (!snapshot || !await operation.commitPromptLibraryCatalog({ expectedSettingsVersion: snapshot.settingsVersion, catalog })) {
@@ -80,7 +80,7 @@ async function demandActivePromptLibraryRecord(input: ActivePromptLibraryDemand)
         }
         owned.rowsObserved = true;
         for (const reader of owned.readers) reader();
-      });
+      })();
       owned.completion = (async () => {
         let catalog: PromptLibraryCatalogSnapshotV1;
         try { catalog = await createCliPromptLibraryStore(input).readPromptLibraryCatalog(publish,

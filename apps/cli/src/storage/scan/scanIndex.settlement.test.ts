@@ -85,6 +85,7 @@ it.each([{ folders: 2048, files: 16 }, { folders: 8192, files: 32 }])('settles c
         const started = performance.now(); index.finish(volumeId, 'cancelled');
         const finishMs = performance.now() - started;
         const writes = db.prepare('SELECT COUNT(*) AS count FROM settlement_writes WHERE ref>1').get();
+        console.log(JSON.stringify({ qa: 'retained-index-settlement', folders, facts: folders * files + 1, bytes: bytes + 4096, finishMs, writes }));
         expect(index.state()?.progress.sizedBytes).toBe(bytes + 4096);
         // A stop with no new observations must not rewrite completed siblings.
         expect(writes).toEqual({ count: 0 });

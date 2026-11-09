@@ -10,7 +10,7 @@ import { CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1, ConnectedAccountCatalogRowRead
   type ConnectedAccountCatalogKeyV1, type ConnectedAccountCatalogRecordV1,
   type ConnectedAccountCatalogRowMutationV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
-import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { parseSavedSecretRefV1, type SharedSavedSecretReferenceSelectionV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { resolveCliAccountStorageContext } from '@/api/client/accountKvJsonTransport';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -26,6 +26,7 @@ import { resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn } from '@/daemo
 import { runConnectedAccountBindingStage } from '@/daemon/connectedServices/purposeBindings/bindingDiagnostics';
 
 type CatalogWrite = Readonly<{ record: ConnectedAccountCatalogRecordV1; expectedRevision: number | 'absent';
+  selectedSecrets?: Readonly<Record<string, SharedSavedSecretReferenceSelectionV1>>;
   sourceSettingsVersion?: number; settingsMutation?: ConnectedAccountCatalogRowMutationV1['settingsMutation'] }>;
 
 /** Captured Home transport only. Protocol owns opening, absence admission and retained-source cutover. */
@@ -46,7 +47,6 @@ export function createCliConnectedAccountCatalogStore(input: Readonly<{
   };
   const verifyCurrent = async () => {
     assertCurrent();
-    if (context && !await context.isCurrent(input.signal)) throw Object.assign(new Error('Captured Connected Account retired'), { code: 'scope-retired' });
     assertCurrent();
   };
   const compatibilityHeaders = buildCurrentAccountStoredContentCompatibilityHttpHeaders();
@@ -121,6 +121,7 @@ export function createCliConnectedAccountCatalogStore(input: Readonly<{
       : await runWithServerHttpBaseUrl(base, async () => {
         const { captureSavedSecretReferencesForOperation } = await import('@/settings/secrets/hydrateSavedSecretCatalog');
         return captureSavedSecretReferencesForOperation({ expectedScopeKey: scopeKey, references,
+          selectedSecrets: Object.values(value.selectedSecrets ?? {}),
           signal: input.signal, ...(context ? { operationContext: context } : {}) });
       });
     await verifyCurrent();

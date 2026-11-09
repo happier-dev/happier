@@ -82,7 +82,10 @@ it('reads a stopped legacy invocation counter as the retained target total befor
         database.close();
         index = createStorageScanIndex({ activeServerDir: home });
         await index.initialize([volume], true);
-        expect(index.state()?.progress).toEqual({ sizedBytes: 8192, usedBytes: 0, items: 2 });
+        expect(index.state()?.progress).toEqual({ sizedBytes: 8192, items: 2 });
         expect(index.readView().state?.progress).toEqual(index.state()?.progress);
+        const resumed = await index.begin({ volumeId: volume.id, root: home, target: { folderPath: home }, resume: true,
+            fullDiskAccess: { state: 'not_applicable', binary: { name: 'fixture', path: process.execPath } } });
+        expect(resumed.progress).toEqual({ sizedBytes: 8192, items: 2 });
     } finally { index.close(); await rm(home, { recursive: true, force: true }); }
 });

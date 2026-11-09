@@ -123,6 +123,7 @@ describe.skipIf(process.platform !== 'linux' && process.platform !== 'darwin')('
         try {
             const exitedAt = await rawExit;
             expect(killAt).toBeGreaterThan(0);
+            console.log(JSON.stringify({ qa: 'raw-helper-cancel-to-exit', elapsedMs: exitedAt - killAt }));
         } finally { lines.close(); child.kill('SIGKILL'); removeHappierTempDir(spool); }
         const controller = new AbortController();
         let adapterKillAt = 0;
@@ -131,6 +132,7 @@ describe.skipIf(process.platform !== 'linux' && process.platform !== 'darwin')('
             onRecord: (record) => { if (record.type === 'dir-start') { adapterKillAt = performance.now(); controller.abort(); } },
         });
         await expect(scan.done).rejects.toMatchObject({ name: 'AbortError' });
+        console.log(JSON.stringify({ qa: 'adapter-cancel-through-close-and-spool-cleanup', elapsedMs: performance.now() - adapterKillAt }));
     });
 
     it('consumes prior-directory hints while measuring changed files afresh', async () => {

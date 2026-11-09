@@ -4,6 +4,22 @@ import { AIBackendProfileSchema } from '@happier-dev/protocol/profiles/backendPr
 import { ProviderProfileSetupRequiredError, RemovedLegacyProfileError, resolveProfileForAgent } from './resolveProfileForAgent';
 
 describe('resolveProfileForAgent', () => {
+  it('resolves a profile before an implicit target is selected and applies canonical deny-only compatibility to exact targets', () => {
+    const profile = { v: 2 as const, id: 'configured', name: 'Configured', extraEnvironmentVariables: [],
+      defaultPermissionModeByTargetKey: {}, defaultPersistenceModeByTargetKey: {},
+      compatibilityByTargetKey: { 'agent:happier.agent.custom-acp/custom-acp:definition:blocked': false,
+        'agent:happier.agent.claude/claude': true },
+      preferredAgentTargetKey: 'agent:happier.agent.custom-acp/custom-acp:definition:chosen',
+      createdAt: 1, updatedAt: 1 };
+    expect(resolveProfileForAgent({ query: profile.id, customProfiles: [profile] })).toEqual(profile);
+    expect(resolveProfileForAgent({ backendTarget: { kind: 'agent',
+      identity: { pluginId: 'happier.agent.custom-acp', localId: 'custom-acp' }, definitionId: 'chosen' },
+      query: profile.id, customProfiles: [profile] })).toEqual(profile);
+    expect(() => resolveProfileForAgent({ backendTarget: { kind: 'agent',
+      identity: { pluginId: 'happier.agent.custom-acp', localId: 'custom-acp' }, definitionId: 'blocked' },
+      query: profile.id, customProfiles: [profile] })).toThrow(/not compatible/i);
+    expect(resolveProfileForAgent({ agentId: 'codex', query: profile.id, customProfiles: [profile] })).toEqual(profile);
+  });
   it('refuses a disabled destination profile by id or name', () => {
     const profile = { v: 2 as const, id: 'focused', name: 'Focused', extraEnvironmentVariables: [],
       defaultPermissionModeByTargetKey: {}, defaultPersistenceModeByTargetKey: {}, compatibilityByTargetKey: {},
@@ -41,7 +57,7 @@ describe('resolveProfileForAgent', () => {
     const profile = {
       v: 2 as const, id: 'focused', name: 'Focused', extraEnvironmentVariables: [],
       defaultPermissionModeByTargetKey: {}, defaultPersistenceModeByTargetKey: {},
-      compatibilityByTargetKey: { 'agent:claude': true }, createdAt: 1, updatedAt: 1,
+      compatibilityByTargetKey: { 'agent:claude': true, 'agent:codex': false }, createdAt: 1, updatedAt: 1,
     };
     expect(resolveProfileForAgent({ agentId: 'claude', query: 'focused', customProfiles: [profile] })).toEqual(profile);
     expect(() => resolveProfileForAgent({ agentId: 'codex', query: 'focused', customProfiles: [profile] }))

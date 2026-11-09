@@ -1,4 +1,5 @@
 import { isBackendTargetDisabledByAccountSettings } from '@happier-dev/protocol/account/settings/accountSettings';
+import { readBackendTargetKeyV2, type BackendTargetRefV2Input } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 import type { BackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
@@ -10,7 +11,7 @@ function formatBackendDisabledMessage(label: string): string {
 
 export function assertBackendEnabledByAccountSettings(params: Readonly<{
   agentId?: AgentId;
-  backendTarget?: BackendTargetRefV1;
+  backendTarget?: BackendTargetRefV2Input;
   settings: Record<string, unknown>;
 }>): void {
   const backendTarget = params.backendTarget
@@ -23,7 +24,7 @@ export function assertBackendEnabledByAccountSettings(params: Readonly<{
   if (!isBackendTargetDisabledByAccountSettings(params.settings, backendTarget)) return;
 
   throw new Error(formatBackendDisabledMessage(
-    backendTarget.kind === 'configuredAcpBackend' ? backendTarget.backendId : backendTarget.agentId,
+    readBackendTargetKeyV2(backendTarget) ?? 'Agent',
   ));
 }
 

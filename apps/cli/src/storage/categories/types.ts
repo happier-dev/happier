@@ -1,6 +1,6 @@
 import type { DaemonPublicVoiceModelPackEntry, DaemonPublicVoiceModelPackRuntime } from '@/daemon/voiceInference/publicModelPacks/runtime';
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import type { BrowserRecordingDaemonService } from '@/daemon/browser/recording/service';
+import type { BrowserRecordingDaemonService } from '../../daemon/recording/service';
 import type { createManagedSessionDirectories, ManagedSessionDirectoryEntry } from '@/session/creation/managedSessionDirectories';
 import type { HappierStorageCategoryIdV1, StorageItemV1, StorageReasonV1, StorageCategoryGroupV1, MachineStoragePolicyV1, StorageReadIssueV1 } from '@happier-dev/protocol/storage/storageV1';
 import type { ScmWorktreeEnrichmentEntry } from '@happier-dev/protocol/scm';

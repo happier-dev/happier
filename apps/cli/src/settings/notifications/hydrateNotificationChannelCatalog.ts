@@ -16,10 +16,11 @@ export async function hydrateNotificationChannelCatalogForOperation(input: Reado
     input.signal?.throwIfAborted();
     await input.assertCurrent?.();
     const snapshot = operation.readSnapshot();
-    if (!snapshot || !await operation.isCurrent()
-      || !await operation.commitNotificationChannelCatalog({ expectedSettingsVersion: snapshot.settingsVersion, catalog })) {
+    if (!snapshot || !await operation.isCurrent(input.signal)
+      || !await operation.commitNotificationChannelCatalog({ expectedSettingsVersion: snapshot.settingsVersion, catalog, signal: input.signal })) {
       throw Object.assign(new Error('Notification Account retired'), { code: 'scope-retired' });
     }
+    input.signal?.throwIfAborted();
   };
   const catalog = await createCliNotificationChannelStore({ credentials: operation.credentials,
     operationContext: operation, signal: input.signal }).readNotificationChannelCatalog(commit);

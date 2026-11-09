@@ -5,8 +5,8 @@ import { storageAbsolutePath as resolve, physicalStoragePathWithoutFollowingLeaf
 import type { StorageCategoryItem, StorageCleanupItem } from './categories/types';
 import type { NativeDiskMeasurement, NativeDiskMeasureRequest } from './measure/nativeDiskMeasure';
 import { readStoragePathIdentity } from './trash/removeStoragePath';
-import { pilePathContains } from './pileStore';
-import { foldStorageDescendantVerdicts } from './categoryCatalog';
+import { minimalPileUnion, pilePathContains } from './pileStore';
+import { foldStorageDescendantVerdicts, intrinsicStorageItem } from './categoryCatalog';
 
 export type ResolvedPileItem = Readonly<{
     item: StorageCleanupItem; fingerprint?: string; fingerprintRequired?: boolean; ownFingerprint?: string;
@@ -21,8 +21,8 @@ export type PileReviewDeps = Readonly<{
     measure(request: NativeDiskMeasureRequest): Promise<NativeDiskMeasurement>;
     trashAvailability?(path: string): Promise<PileReviewV1['trashVolumes'][number]>;
     cleanupLimitation?(path: string, items: readonly StorageCleanupItem[]): Promise<StorageReasonV1 | null>;
-    /** One current catalog/protection read per pass, discarded before the next execution recheck. */
-    freshFacts?(): Promise<Pick<PileReviewDeps, 'resolve' | 'classify' | 'cleanupLimitation'>>;
+    /** Current target facts; the operation owns inventory acquisition, not each recheck. */
+    freshFacts?(ref: PileItemRefV1): Promise<Pick<PileReviewDeps, 'resolve' | 'classify' | 'cleanupLimitation'>>;
 }>;
 export class PileFactError extends Error {
     constructor(readonly code: 'changed_since_review' | 'missing' | 'facts_unavailable' | 'storage_forbidden', readonly reason?: StorageReasonV1) {
@@ -38,9 +38,6 @@ type PileClassification = Awaited<ReturnType<PileReviewDeps['classify']>>;
 export type PileChildFact = Readonly<{ ref: PileItemRefV1; item: StorageCategoryItem; ownFingerprint?: string; ownVerdict: PileClassification }>;
 type PileExpectFacts = Readonly<{ ref: PileItemRefV1; item: StorageCleanupItem; ownFingerprint?: string; ownVerdict: PileClassification;
     ownClassification: PileClassification; children: readonly PileChildFact[] }>;
-function intrinsicItem<T extends StorageCleanupItem>(item: T): T {
-    return item.ownVerdict ? { ...item, ...item.ownVerdict, loses: item.ownVerdict.loses } : item;
-}
 export function pileFactsExpect(facts: PileExpectFacts, completedChildren: ReadonlySet<string> = new Set(),
     reviewedFacts: Pick<PileExpectFacts, 'children' | 'ownVerdict' | 'ownClassification'> = facts): string {
     const identity = (ref: PileItemRefV1) => [ref.itemId, ref.path, ref.identity.dev, ref.identity.ino ?? ref.identity.fileId, ref.identity.kind];
@@ -78,7 +75,7 @@ export function pileFactsExpect(facts: PileExpectFacts, completedChildren: Reado
 /** Shared review/apply fact boundary; callers never supply catalog or protection authority. */
 export async function readPileFacts(ref: PileItemRefV1, deps: PileReviewDeps) {
     try {
-        const current = await deps.freshFacts?.() ?? deps;
+        const current = await deps.freshFacts?.(ref) ?? deps;
         const path = await physicalPathWithoutFollowingLeaf(resolve(ref.path));
         if (!canonicalAbsolutePathsEqual(path, resolve(ref.path))) throw new PileFactError('changed_since_review');
         const identity = await readStoragePathIdentity(path);
@@ -92,7 +89,7 @@ export async function readPileFacts(ref: PileItemRefV1, deps: PileReviewDeps) {
             throw new PileFactError('facts_unavailable', resolved.item.reason.code === 'unsupported' ? resolved.item.reason : undefined);
         const canonicalPath = await physicalPathWithoutFollowingLeaf(resolve(resolved.item.path));
         if (!canonicalAbsolutePathsEqual(path, canonicalPath) || resolved.item.itemId !== ref.itemId) throw new PileFactError('changed_since_review');
-        const ownVerdict = intrinsicItem(resolved.item);
+        const ownVerdict = intrinsicStorageItem(resolved.item);
         const ownClassification = await current.classify(path, ownVerdict);
         const freshRef: PileItemRefV1 = { ...ref, path, title: resolved.item.title, identity: { ...identity, ...(resolved.fingerprint ? { fingerprint: resolved.fingerprint } : {}) } };
         const children: PileChildFact[] = [];
@@ -102,13 +99,14 @@ export async function readPileFacts(ref: PileItemRefV1, deps: PileReviewDeps) {
             const childIdentity = await readStoragePathIdentity(childPath);
             const childFingerprint = item.ownFingerprint ?? item.fingerprint;
             if (item.fingerprintRequired && !childFingerprint) throw new PileFactError('facts_unavailable');
-            const ownItem = intrinsicItem(item);
+            const ownItem = intrinsicStorageItem(item);
             const classification = await current.classify(childPath, ownItem);
             children.push({ item: { ...item, ...classification,
                 loses: classification.loses ? [...classification.loses] : ownItem.loses }, ownFingerprint: childFingerprint, ownVerdict: ownItem,
                 ref: { itemId: item.itemId, path: childPath, title: item.title, identity: childIdentity, collectedAt: ref.collectedAt, collectedBy: ref.collectedBy } });
         }
         const classification = foldStorageDescendantVerdicts({ ...ownClassification, collectable: resolved.item.collectable,
+            categoryId: resolved.item.categoryId, retirementKind: resolved.item.retirementKind,
             loses: ownClassification.loses ? [...ownClassification.loses] : undefined }, children.map(child => child.item));
         if (classification.verdict !== 'forbidden') {
             const limitation = await current.cleanupLimitation?.(path, [resolved.item, ...children.map(child => child.item)]);
@@ -126,13 +124,13 @@ export async function reviewPile(refs: readonly PileItemRefV1[], deps: PileRevie
     const facts: Awaited<ReturnType<typeof readPileFacts>>[] = [];
     for (const ref of refs) {
         try { facts.push(await readPileFacts(ref, deps)); }
-        catch (error) { review.staying.push({ item: { itemId: ref.itemId, path: ref.path, ...(ref.title === undefined ? {} : { title: ref.title }) },
+        catch (error) {
+            if (error !== null && typeof error === 'object' && 'code' in error && error.code === 'policy_unavailable') throw error;
+            review.staying.push({ item: { itemId: ref.itemId, path: ref.path, ...(ref.title === undefined ? {} : { title: ref.title }) },
             reason: error instanceof PileFactError && error.reason ? error.reason
                 : { code: error instanceof PileFactError && error.code !== 'storage_forbidden' ? error.code : 'facts_unavailable' } }); }
     }
-    const minimal = facts.filter((fact, index) => !facts.some((parent, parentIndex) => parentIndex !== index
-        && pilePathContains(parent.ref.path, fact.ref.path)
-        && (!canonicalAbsolutePathsEqual(parent.ref.path, fact.ref.path) || parentIndex < index)));
+    const minimal = minimalPileUnion(facts, fact => fact.ref.path);
     if (!minimal.length) return review;
     const actionable = minimal.filter(fact => fact.classification.verdict !== 'forbidden');
     const selected = facts.filter(fact => fact.classification.verdict !== 'forbidden'

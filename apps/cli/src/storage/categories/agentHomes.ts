@@ -11,11 +11,11 @@ export const agentHomes: StorageCategoryDefinition = {
     async items(context) {
         const result = [];
         const [homes, materialized, isolation] = agentHomes.roots(context);
-        for (const root of [homes!, materialized!]) for (const path of await entries(root, unavailableDirectory(context, 'agentHomes'))) result.push(item('agentHomes', path,
+        for (const root of [homes!, materialized!]) for (const path of await entries(root, unavailableDirectory(context, 'agentHomes'), context.discoveryPaths)) result.push(item('agentHomes', path,
             { verdict: 'keep', reason: { code: 'agent_home' }, collectable: true, loses: [{ code: 'agent_home' }] },
             { title: opaqueItemTitle(path, 'Agent home'), evidence: ['connected_service_home'] }));
         const facts = new Map(context.isolationFacts.map(fact => [fact.path, fact.state]));
-        for (const path of await directoriesAtDepth(isolation!, 3, unavailableDirectory(context, 'agentHomes'))) {
+        for (const path of await directoriesAtDepth(isolation!, 3, unavailableDirectory(context, 'agentHomes'), context.discoveryPaths)) {
             const state = facts.get(path);
             const live = state === 'running' || isInUse(path, context);
             let resumeState: boolean | null = false;

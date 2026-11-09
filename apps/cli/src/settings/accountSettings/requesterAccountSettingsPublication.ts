@@ -6,6 +6,7 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import { applyAccountSettingsV2Update, bootstrapAccountSettingsContext } from './bootstrapAccountSettingsContext';
 import { normalizeAccountSettingsVersionHint } from './accountSettingsVersion';
+import type { ActiveAccountSettingsKeys } from './activeAccountSettingsSnapshot';
 
 /** Settings belongs to the captured Account/Home lifetime, independently of catalog demand. */
 export function createRequesterAccountSettingsPublication(input: Readonly<{
@@ -14,7 +15,7 @@ export function createRequesterAccountSettingsPublication(input: Readonly<{
   operationContext: SavedSecretOperationContextV1;
 }>) {
   const context = input.operationContext;
-  const listeners = new Set<() => void>();
+  const subscriptions = new Set<() => void>();
   const retirement = new AbortController();
   let publication = new AbortController();
   let highestVersion = context.readSnapshot()?.settingsVersion ?? 0;
@@ -59,7 +60,6 @@ export function createRequesterAccountSettingsPublication(input: Readonly<{
       highestVersion = next.settingsVersion;
       needsFreshSettingsWitness = false;
       ready = true;
-      for (const listener of listeners) listener();
       return true;
     })().catch(error => ({ error }));
   };
@@ -96,7 +96,13 @@ export function createRequesterAccountSettingsPublication(input: Readonly<{
       observe({ kind: 'hint', version: Math.max(highestVersion, minimum) }, true);
       return await ensureCurrent(signal);
     },
-    subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
-    dispose() { retirement.abort(); invalidate(); unsubscribe(); listeners.clear(); },
+    subscribe(listener: () => void, keys: ActiveAccountSettingsKeys) {
+      if (retirement.signal.aborted) return () => undefined;
+      const unsubscribeSettings = context.subscribeAccountSettings(listener, keys);
+      const release = () => { subscriptions.delete(release); unsubscribeSettings(); };
+      subscriptions.add(release);
+      return release;
+    },
+    dispose() { retirement.abort(); invalidate(); unsubscribe(); for (const release of subscriptions) release(); },
   });
 }

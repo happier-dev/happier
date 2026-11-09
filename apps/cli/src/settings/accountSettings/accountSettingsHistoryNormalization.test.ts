@@ -41,7 +41,7 @@ describe('captured CLI Account Settings history normalization', () => {
     expect(await normalizeCliAccountSettingsHistoryAfterTransfer({ ...input, serverBaseUrl: 'https://captured.home/' }))
       .toEqual({ status: 'complete' });
     expect(detailReads).toBe(1);
-    expect(currentnessReads).toBe(4);
+    expect(currentnessReads).toBe(2);
     settingsVersion++;
     expect(await normalizeCliAccountSettingsHistoryAfterTransfer(input)).toEqual({ status: 'complete' });
     expect(detailReads).toBe(2);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildConnectedServicesAccountChangeV1 } from '@happier-dev/protocol/changes';
+import { buildAccountIdentitiesChangeV1, buildConnectedServicesAccountChangeV1 } from '@happier-dev/protocol/changes';
 
 import { changesRequireSavedSecretCatalogRefresh } from './savedSecretCatalogChangeInvalidation';
 
@@ -8,6 +8,8 @@ describe('changesRequireSavedSecretCatalogRefresh', () => {
     [{ kind: 'savedSecretResource', entityId: 'resource-a' }],
     [{ kind: 'account', entityId: 'teams' }],
     [{ kind: 'account', entityId: 'self', hint: { accountEncryptionTransitionId: 'transition-a' } }],
+    [buildAccountIdentitiesChangeV1()],
+    [{ kind: 'account', entityId: 'self', hint: { linkedProviders: true } }],
   ])('refreshes for material or Team/Group authorization changes', (change) => {
     expect(changesRequireSavedSecretCatalogRefresh([change])).toBe(true);
   });

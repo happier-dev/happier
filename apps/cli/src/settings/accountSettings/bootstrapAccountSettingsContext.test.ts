@@ -95,7 +95,8 @@ describe('bootstrapAccountSettingsContext', () => {
       bootstrapAccountSettingsContext({ ...options, shouldCommit: () => current }),
     ]);
     await expect.poll(() => logs.mock.calls.filter(([label, fact]) => label === '[accountSettings] Bootstrap phase'
-      && fact?.phase === 'cache_read' && fact?.status === 'completed').length).toBe(4);
+      && fact && typeof fact === 'object' && 'phase' in fact && fact.phase === 'cache_read'
+      && 'status' in fact && fact.status === 'completed').length).toBe(4);
     cancelled.abort();
     current = false;
     response.resolve({ status: 200, data: { version: 2, content: { t: 'plain', v: {} } } });

@@ -1,7 +1,7 @@
 import { AGENT_IDS, type AgentId } from '@happier-dev/agents';
-import { buildBackendTargetKey } from '@happier-dev/protocol/backends/targets/backendTargetRef';
+import { readBackendTargetKeyV2, type BackendTargetRefV2Input } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { isLaunchProfileV2 } from '@happier-dev/protocol/profiles/read';
-import { isProfileCompatibleWithAgent } from '@happier-dev/protocol/profiles/profileCompatibility';
+import { isProfileCompatibleWithAgent, isProfileCompatibleWithBackendTarget } from '@happier-dev/protocol/profiles/profileCompatibility';
 import { PROVIDER_MIGRATION_SOURCE_PROFILE_IDS } from '@happier-dev/protocol/profiles/builtInBackendProfiles';
 import { resolveBackendProfile } from '@happier-dev/protocol/profiles/resolveBackendProfile';
 import type { AIBackendProfile, LaunchProfileV2 } from '@happier-dev/protocol';
@@ -77,12 +77,25 @@ function formatCandidatesList(candidates: ReadonlyArray<Readonly<{ id: string; n
   return candidates.map((c) => `${c.id} (${c.name})`).join(', ');
 }
 
+export function assertProfileCompatibleWithBackendTarget(profile: CliAiLaunchProfile, backendTarget: BackendTargetRefV2Input): void {
+  if (!isProfileCompatibleWithBackendTarget(profile, backendTarget)) {
+    throw new Error(`Profile "${profile.name}" (${profile.id}) is not compatible with ${readBackendTargetKeyV2(backendTarget)}.`);
+  }
+}
+
 export function resolveProfileForAgent(params: Readonly<{
-  agentId: AgentId;
+  agentId?: AgentId;
+  backendTarget?: BackendTargetRefV2Input;
   query: string;
   customProfiles: ReadonlyArray<CliAiLaunchProfile>;
   terminalMigratedProfileIds?: ReadonlySet<string>;
 }>): CliAiLaunchProfile {
+  const backendTarget = params.backendTarget ?? (params.agentId
+    ? { kind: 'builtInAgent' as const, agentId: params.agentId } : null);
+  const assertCompatible = (profile: CliAiLaunchProfile): CliAiLaunchProfile => {
+    if (backendTarget) assertProfileCompatibleWithBackendTarget(profile, backendTarget);
+    return profile;
+  };
   const queriedProfile = params.customProfiles.find((profile) => profile.id === params.query)
     ?? params.customProfiles.find((profile) => profile.name.toLocaleLowerCase() === params.query.toLocaleLowerCase());
   if (queriedProfile?.enabled === false) {
@@ -103,12 +116,7 @@ export function resolveProfileForAgent(params: Readonly<{
   const terminalSourceProfileId = slim?.id ?? migrationSourceProfileId ?? params.query.trim();
   if (params.terminalMigratedProfileIds?.has(terminalSourceProfileId)) {
     if (!slim) throw new MigratedLegacyProfileError(params.query.trim());
-    const targetKey = buildBackendTargetKey({ kind: 'builtInAgent', agentId: params.agentId });
-    if (slim.compatibilityByTargetKey[targetKey] !== false
-      && (Object.keys(slim.compatibilityByTargetKey).length === 0 || slim.compatibilityByTargetKey[targetKey] === true)) {
-      return slim;
-    }
-    throw new Error(`Profile "${slim.name}" (${slim.id}) is not compatible with ${params.agentId}.`);
+    return assertCompatible(slim);
   }
   const legacyProfiles = params.customProfiles.filter((profile): profile is AIBackendProfile => !isLaunchProfileV2(profile));
   const explicitLegacy = migrationSourceProfileId === null
@@ -121,14 +129,8 @@ export function resolveProfileForAgent(params: Readonly<{
   if (slim && resolved.ok && !exactSlim) {
     throw new Error(`Ambiguous profile name "${params.query}". Matches: ${formatCandidatesList([slim, resolved.profile])}. Use --profile <id>.`);
   }
-  if (slim) {
-    const targetKey = buildBackendTargetKey({ kind: 'builtInAgent', agentId: params.agentId });
-    if (slim.compatibilityByTargetKey[targetKey] !== false
-      && (Object.keys(slim.compatibilityByTargetKey).length === 0 || slim.compatibilityByTargetKey[targetKey] === true)) {
-      return slim;
-    }
-    throw new Error(`Profile "${slim.name}" (${slim.id}) is not compatible with ${params.agentId}.`);
-  }
+  if (slim) return assertCompatible(slim);
+
   if (!resolved.ok) {
     if (resolved.reason === 'ambiguous_name') {
       throw new Error(
@@ -148,16 +150,45 @@ export function resolveProfileForAgent(params: Readonly<{
   if (params.terminalMigratedProfileIds?.has(profile.id)) {
     throw new MigratedLegacyProfileError(profile.id);
   }
-  if (isProfileCompatibleWithAgent(profile, params.agentId)) {
+  if (!backendTarget || isProfileCompatibleWithBackendTarget(profile, backendTarget)) {
     return profile;
   }
 
   const supportedAgentIds = AGENT_IDS.filter((agentId) => isProfileCompatibleWithAgent(profile, agentId));
   const supportedList = supportedAgentIds.length > 0 ? supportedAgentIds.join(', ') : '(none)';
-  const firstSuggestion = supportedAgentIds.length > 0 ? supportedAgentIds[0] : null;
-  const hint = firstSuggestion
-    ? ` Try: happier ${firstSuggestion} --profile ${profile.id}`
-    : '';
+  throw new Error(`Profile "${profile.name}" (${profile.id}) is not compatible with ${readBackendTargetKeyV2(backendTarget)}. Supported agents: ${supportedList}.`);
+}
 
-  throw new Error(`Profile "${profile.name}" (${profile.id}) is not compatible with ${params.agentId}. Supported agents: ${supportedList}.${hint}`);
+/** Resolves one Account Profile through the canonical catalog and migration-facts owners. */
+export async function resolveAccountProfileForSessionStart(params: Readonly<{
+  query: string;
+  credentials: import('@/persistence').StoredCredentials;
+  accountSettingsContext: import('@/settings/accountSettings/bootstrapAccountSettingsContext').AccountSettingsContext;
+  backendTarget?: BackendTargetRefV2Input;
+}>): Promise<Readonly<{ profile: CliAiLaunchProfile; accountSettingsContext: import('@/settings/accountSettings/bootstrapAccountSettingsContext').AccountSettingsContext }>> {
+  const { readAccountLaunchProfiles, ProfileCatalogUnavailableError } = await import('./readProfilesFromAccountSettings');
+  const { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken } = await import('@/settings/accountSettings/activeAccountSettingsSnapshot');
+  const { resolveAccountSettingsScopeKey } = await import('@/settings/accountSettings/accountSettingsScopeKey');
+  const lifetimeToken = getActiveAccountSettingsSnapshotLifetimeToken();
+  const scopeKey = resolveAccountSettingsScopeKey(params.credentials);
+  const capture = (profile: CliAiLaunchProfile) => {
+    const active = getActiveAccountSettingsSnapshot();
+    if (active?.scopeKey !== scopeKey || getActiveAccountSettingsSnapshotLifetimeToken() !== lifetimeToken) {
+      throw new ProfileCatalogUnavailableError('unavailable');
+    }
+    return { profile, accountSettingsContext: { ...params.accountSettingsContext, ...active, whenRefreshed: null } };
+  };
+  const resolve = (snapshot: Awaited<ReturnType<typeof readAccountLaunchProfiles>>) => resolveProfileForAgent({
+    query: params.query, backendTarget: params.backendTarget,
+    customProfiles: snapshot.visibleProfiles, terminalMigratedProfileIds: snapshot.terminalMigratedProfileIds,
+  });
+  try {
+    return capture(resolve(await readAccountLaunchProfiles(params.accountSettingsContext.settings, params.credentials)));
+  } catch (error) {
+    if (!(error instanceof ProviderProfileMigrationFactsUnavailableError)) throw error;
+    const { prepareProviderConnectionsCatalogForCli } = await import('@/providers/settings/hydrate');
+    const catalog = await prepareProviderConnectionsCatalogForCli({ expectedScopeKey: resolveAccountSettingsScopeKey(params.credentials) });
+    if (catalog.status !== 'ready') throw error;
+    return capture(resolve(await readAccountLaunchProfiles(getActiveAccountSettingsSnapshot()?.settings, params.credentials)));
+  }
 }

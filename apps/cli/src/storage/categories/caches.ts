@@ -42,7 +42,7 @@ export async function managedAcpCacheCleanupLimitation(path: string, deps: Stora
 
 async function cacheLeaves(path: string, installs: readonly ManagedAcpInstall[], context: StorageCategoryContext): Promise<readonly string[]> {
     if (!installs.some(install => !canonicalAbsolutePathsEqual(path, install.installRoot) && contains(path, install.installRoot))) return [path];
-    return (await Promise.all((await entries(path, unavailableDirectory(context, 'caches')))
+    return (await Promise.all((await entries(path, unavailableDirectory(context, 'caches'), context.discoveryPaths))
         .map(child => cacheLeaves(child, installs, context)))).flat();
 }
 
@@ -86,9 +86,9 @@ export const caches: StorageCategoryDefinition = {
         const liveSnapshots = context.deps.readLiveRunnerSnapshotPaths?.();
         const skillRoot = join(context.deps.happyHomeDir, 'skills');
         const liveSkills = await timeWebLatencyPhase('storage.catalog.skill-store', () => context.deps.readLiveSkillCachePaths?.());
-        for (const { path: root, title } of cacheRoots(context)) for (const entry of await entries(root, unavailableDirectory(context, 'caches'))) {
+        for (const { path: root, title } of cacheRoots(context)) for (const entry of await entries(root, unavailableDirectory(context, 'caches'), context.discoveryPaths)) {
           const leaves = root === skillRoot && entry === join(skillRoot, 'cache')
-            ? await entries(entry, unavailableDirectory(context, 'caches')) : await cacheLeaves(entry, installs, context);
+            ? await entries(entry, unavailableDirectory(context, 'caches'), context.discoveryPaths) : await cacheLeaves(entry, installs, context);
           for (const path of leaves) {
             let verdict: StorageCategoryVerdict;
             const install = byPath.get(path);

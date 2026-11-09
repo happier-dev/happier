@@ -56,7 +56,7 @@ export const modelPacks: StorageCategoryDefinition = {
         const result = [];
         const packsRoot = join(context.deps.activeServerDir, 'voiceInference', 'packs');
         const owned = new Map(context.modelPacks.map(pack => [join(packsRoot, pack.directoryKey), pack]));
-        for (const root of modelPacks.roots(context)) for (const path of await entries(root, unavailableDirectory(context, 'modelPacks'))) {
+        for (const root of modelPacks.roots(context)) for (const path of await entries(root, unavailableDirectory(context, 'modelPacks'), context.discoveryPaths)) {
             const pack = owned.get(path);
             result.push(item('modelPacks', path, isInUse(path, context) ? inUse : pack ? modelPackCanGo(pack.lastUsedAt, context) : check,
                 { title: opaqueItemTitle(path, 'Model pack'),

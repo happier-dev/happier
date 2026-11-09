@@ -11,7 +11,7 @@ import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/
 import type { StoredCredentials } from '@/persistence';
 import { parseSettingsFromContent, sealAccountSettingsV2RawContent } from './updateAccountSettingsV2WithRetry';
 import { resolveAccountSettingsScopeKey } from './accountSettingsScopeKey';
-import { runWithRequesterSessionCurrentnessCheckpoint, runWithoutRequesterSessionCurrentnessCheckpoint } from '@/daemon/sessionEncryption/requesterCurrentness';
+
 
 // Keep Protocol's completion evidence with the captured credential lifetime, Account and Home.
 // Protocol still recaptures head/destination authority; this never caches admission.
@@ -60,7 +60,7 @@ export async function normalizeCliAccountSettingsHistoryAfterTransfer(input: Rea
   // Optional history work can outlive the catalog's first-ready publication.
   // Own its read checkpoint rather than borrowing one that can finish earlier.
   // Only an actual history mutation leaves it for fresh requester authority.
-  return runWithRequesterSessionCurrentnessCheckpoint(() => normalizeAccountSettingsHistoryClientV1({ checkpoint, destinationAuthority: input.destinationAuthority,
+  return (() => normalizeAccountSettingsHistoryClientV1({ checkpoint, destinationAuthority: input.destinationAuthority,
     ...(input.savedSecretRecovery ? { savedSecretRecovery: input.savedSecretRecovery } : {}),
     ...(input.expectedProfileTransferRevision === undefined ? {} : { expectedProfileTransferRevision: input.expectedProfileTransferRevision }), ports: {
     isCurrent,
@@ -76,12 +76,12 @@ export async function normalizeCliAccountSettingsHistoryAfterTransfer(input: Rea
         return { status: response.status, data: response.data };
       };
       if (request.method === 'GET') return dispatch();
-      return runWithoutRequesterSessionCurrentnessCheckpoint(async () => {
+      return (async () => {
         if (!await isCurrent()) unavailable(0, 'Captured Account Settings scope retired');
         return dispatch();
-      });
+      })();
     },
-    readCurrentness: () => fetchAccountEncryptionCurrentness({ token: input.credentials.token,
+    readCurrentness: () => fetchAccountEncryptionCurrentness({ credentials: input.credentials, token: input.credentials.token,
       serverBaseUrl, authorizationHeaders: headersFor({ method: 'GET', path: '/v1/account/encryption/currentness' }),
       ...(input.signal ? { signal: input.signal } : {}) }),
     resolveTransferMaterial: async mode => {
@@ -98,5 +98,5 @@ export async function normalizeCliAccountSettingsHistoryAfterTransfer(input: Rea
       credentials: input.credentials, emptyEnvelopeKind: content.t })).raw,
     resealSnapshot: (raw, recorded) => sealAccountSettingsV2RawContent({ credentials: input.credentials,
       raw, envelopeKind: recorded.t, randomBytes: size => new Uint8Array(randomBytes(size)) }),
-  } }));
+  } }))();
 }

@@ -1,12 +1,12 @@
 import { appendFile, link, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createProcessCustodyFixture } from '@/testkit/processCustodyFixture';
 import type { PileItemRefV1, StorageActorV1, StorageSizeV1 } from '@happier-dev/protocol/storage/storageV1';
 import { PileApplyResultV1Schema } from '@happier-dev/protocol/storage/storageV1';
 import type { StorageCategoryAdapter, StorageCategoryItem, StorageCleanupItem } from './categories/types';
-import { createPileStore } from './pileStore';
+import { createPileStore, minimalPileUnion } from './pileStore';
 import { reviewPile, type PileReviewDeps } from './reviewPile';
 import { applyPile } from './applyPile';
 import { measureNativeDisk } from './measure/nativeDiskMeasure';
@@ -29,6 +29,16 @@ describe.skipIf(process.platform === 'win32' && process.arch !== 'x64')('canonic
     });
     afterAll(async () => { await disposeNative?.(); if (scratch) await rm(scratch, { recursive: true, force: true }); });
 
+    it('reads each selected path once when reducing a thousand retained siblings and nested duplicates', () => {
+        const siblings = Array.from({ length: 1_000 }, (_, index) => ({ path: join(scratch, 'union-cost', `sibling-${index}`) }));
+        const parent = { path: join(scratch, 'union-cost', 'selected') };
+        const items = [...siblings, { path: join(parent.path, 'child') }, parent, { ...parent }];
+        let pathReads = 0;
+        const reduced = minimalPileUnion(items, item => { pathReads++; return item.path; });
+        expect(reduced).toEqual([...siblings, parent]);
+        expect(pathReads).toBe(items.length);
+    });
+
     it('persists a minimal physical union with trusted identity/actor, drops swaps and isolates Accounts', async () => {
         const folder = join(scratch, 'union'); await mkdir(folder); const child = join(folder, 'child'); await writeFile(child, 'data');
         const store = createPileStore({ activeServerDir: join(scratch, 'state'), now: () => 100 });
@@ -45,6 +55,29 @@ describe.skipIf(process.platform === 'win32' && process.arch !== 'x64')('canonic
         expect(await store.get('owner')).toMatchObject({ items: [], droppedSinceLastView: [{ itemId: folder, reason: { code: 'changed_since_review' } }] });
     });
 
+    it('retains dropped facts across readers and restarts until an explicit Account-scoped acknowledgement', async () => {
+        const activeServerDir = join(scratch, 'dropped-state');
+        const store = createPileStore({ activeServerDir });
+        const first = join(scratch, 'first-drop'); const second = join(scratch, 'second-drop');
+        await writeFile(first, 'first'); await writeFile(second, 'second');
+        await store.set('owner', { add: [await ref(first), await ref(second)] }, actor);
+        await rename(first, `${first}-gone`);
+        const dropped = [{ itemId: first, path: first, reason: { code: 'missing' } }];
+        expect((await store.get('owner')).droppedSinceLastView).toEqual(dropped);
+        expect((await store.get('owner')).droppedSinceLastView).toEqual(dropped);
+        const reopened = createPileStore({ activeServerDir });
+        expect((await reopened.get('owner')).droppedSinceLastView).toEqual(dropped);
+        await store.set('other', { acknowledgeDropped: [first] }, { accountId: 'other', kind: 'person' });
+        expect((await store.get('owner')).droppedSinceLastView).toEqual(dropped);
+        await rename(second, `${second}-gone`);
+        await store.set('owner', { acknowledgeDropped: [first] }, actor);
+        // Acknowledging the displayed drop preserves a different drop discovered meanwhile.
+        expect((await store.get('owner')).droppedSinceLastView.map(item => item.itemId)).toEqual([second]);
+        await reopened.set('owner', { acknowledgeDropped: [second] }, actor);
+        expect((await store.get('owner')).droppedSinceLastView).toEqual([]);
+        expect((await reopened.get('owner')).droppedSinceLastView).toEqual([]);
+    });
+
     it('remembers declines until allocated bytes or last-change day changes', async () => {
         const path = join(scratch, 'decline'); await writeFile(path, 'one');
         const item = { ref: await ref(path), size: { ...zero, allocatedBytes: 4096 }, lastChangedAt: 86_400_000 };
@@ -57,6 +90,76 @@ describe.skipIf(process.platform === 'win32' && process.arch !== 'x64')('canonic
         await store.decline('owner', [item]);
         await rename(path, `${path}-old`); await writeFile(path, 'replacement');
         expect(await store.isDeclined('owner', item)).toBe(false);
+    });
+
+    it('publishes only changed pile and decline facts, including pruning and expiry', async () => {
+        const path = join(scratch, 'publication-item'); await writeFile(path, 'retained');
+        let publications = 0;
+        const store = createPileStore({ activeServerDir: join(scratch, 'publication-state'), now: () => 1,
+            onChanged: () => { publications++; } });
+        await store.set('owner', { clear: true }, actor);
+        await store.removeActed('owner', ['missing']); await store.decline('owner', []);
+        expect(publications).toBe(0);
+        const selected = await ref(path);
+        await store.set('owner', { add: [selected] }, actor);
+        expect(publications).toBe(1);
+        await store.set('owner', { clear: true, add: [selected] }, actor);
+        expect(publications).toBe(1);
+        await store.set('owner', { add: [selected] }, actor);
+        expect(publications).toBe(1);
+        const declined = { ref: selected, size: zero };
+        await store.decline('owner', [declined]); expect(publications).toBe(2);
+        await store.decline('owner', [declined]); expect(publications).toBe(2);
+        await store.decline('owner', [{ ...declined, size: { ...zero, allocatedBytes: 4_096 } }, declined]);
+        expect(publications).toBe(2);
+        expect(await store.isDeclined('owner', { ...declined, size: { ...zero, allocatedBytes: 4096 } })).toBe(false);
+        expect(publications).toBe(3);
+        await rename(path, `${path}-gone`);
+        expect((await store.get('owner')).items).toEqual([]); expect(publications).toBe(4);
+        await store.get('owner'); expect(publications).toBe(4);
+        await store.set('owner', { acknowledgeDropped: [path] }, actor); expect(publications).toBe(5);
+        const surviving = await ref(`${path}-gone`);
+        await store.set('owner', { add: [surviving] }, actor); expect(publications).toBe(6);
+        await store.removeActed('owner', [surviving.itemId]); expect(publications).toBe(7);
+        expect((await store.get('owner')).items).toEqual([]);
+        await store.removeActed('owner', [surviving.itemId]); expect(publications).toBe(7);
+    });
+
+    it('does no full-history serialization for absent or unchanged declines and persists one actual expiry', async () => {
+        const path = join(scratch, 'decline-cost-item'); await writeFile(path, 'retained');
+        const selected = await ref(path);
+        let publications = 0;
+        const activeServerDir = join(scratch, 'decline-cost-state');
+        const store = createPileStore({ activeServerDir, onChanged: () => { publications++; } });
+        // Reuse the catalog's 1,000-retained-sibling scale, not a product capacity limit.
+        const history = Array.from({ length: 1_000 }, (_, index) => ({
+            ref: { ...selected, itemId: `retained-${index}` }, size: zero,
+        }));
+        await store.decline('owner', history);
+        publications = 0;
+        // Observe the real JSON encoder without replacing the store or its persistence logic.
+        const encoded = vi.spyOn(JSON, 'stringify');
+        const stateEncodes = () => encoded.mock.calls.filter(([value]) => value !== null && typeof value === 'object'
+            && 'items' in value && 'declined' in value && 'dropped' in value).length;
+        try {
+            for (let observation = 0; observation < 3; observation++) {
+                expect(await store.isDeclined('owner', { ref: { ...selected, itemId: 'new-candidate' }, size: zero })).toBe(false);
+                expect(await store.isDeclined('owner', history[0]!)).toBe(true);
+            }
+            await store.set('owner', { clear: true }, actor);
+            await store.removeActed('owner', ['missing']);
+            await store.decline('owner', [history[0]!]);
+            await store.get('owner');
+            expect(stateEncodes()).toBe(0);
+            expect(publications).toBe(0);
+            expect(await store.isDeclined('owner', { ...history[0]!, size: { ...zero, allocatedBytes: 4_096 } })).toBe(false);
+            expect(stateEncodes()).toBe(1);
+            expect(publications).toBe(1);
+            const reopened = createPileStore({ activeServerDir });
+            expect(await reopened.isDeclined('owner', history[0]!)).toBe(false);
+            expect(await reopened.isDeclined('owner', history[1]!)).toBe(true);
+            expect(stateEncodes()).toBe(1);
+        } finally { encoded.mockRestore(); }
     });
 
     async function fixtures(name: string) {

@@ -1,4 +1,5 @@
 import {
+  isAccountCurrentnessChangeV1,
   readConnectedServicesAccountChangeV1,
   TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1,
 } from '@happier-dev/protocol/changes';
@@ -8,10 +9,6 @@ type SavedSecretRelevantChange = Readonly<{
   entityId: string;
   hint?: unknown;
 }>;
-
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
 
 /**
  * One daemon-side decision for changes that can retire Saved Secret material.
@@ -25,8 +22,6 @@ export function changesRequireSavedSecretCatalogRefresh(
     if (change.kind !== 'account') return false;
     if (readConnectedServicesAccountChangeV1(change)) return true;
     if (change.entityId === TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1) return true;
-    return change.entityId === 'self'
-      && (!isRecord(change.hint)
-        || Object.keys(change.hint).some((key) => key !== 'settingsVersion'));
+    return isAccountCurrentnessChangeV1(change);
   });
 }

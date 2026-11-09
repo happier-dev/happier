@@ -5,6 +5,7 @@ import { PROFILE_TRANSFER_ROUTE_V1 } from '@happier-dev/protocol/profiles/profil
 import { PROFILE_ROWS_ROUTE_V1, PROFILE_REFERENCE_GUARD_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileRecordV1';
 import { AccountSettingsV2UpdateRequestSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { SharedSavedSecretPromoteInputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
+import { SavedSecretResourceMaterialsResponseV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { PROMPT_LIBRARY_ROWS_ROUTE_V1, PromptLibraryRowsListResponseV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { encryptSecretStringV1 } from '@happier-dev/protocol/crypto/settingsSecretStringsV1';
 import { ConnectedAccountCatalogRowMutationV1Schema, type ConnectedAccountCatalogRecordV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
@@ -196,6 +197,8 @@ describe('Connected catalog source admission', () => {
         if (path === PROFILE_REFERENCE_GUARD_ROUTE_V1) return { status: 200, data: { status: 'ready', revision: 3 } };
         if (path === PROFILE_TRANSFER_ROUTE_V1 || path.startsWith('/v1/account/entity-rows/')) return { status: 200, data: { status: 'absent' } };
         if (path === '/v1/account/saved-secrets/resources/materials') return { status: 200, data: { resources } };
+        if (path === '/v1/account/saved-secrets/resources') return { status: 200, data: { resources:
+          SavedSecretResourceMaterialsResponseV1Schema.parse({ resources }).resources.flatMap(resource => 'entry' in resource ? [resource.entry] : []) } };
         if (path === '/v1/artifacts') return { status: 200, data: [] };
         if (path === '/v2/account/settings/history') return { status: 200, data: { snapshots: [] } };
         return { status: 404, data: { error: 'unsupported' } };

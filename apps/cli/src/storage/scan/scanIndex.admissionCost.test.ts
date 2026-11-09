@@ -18,6 +18,28 @@ vi.mock('node:fs/promises', async importOriginal => {
     return { ...actual, rm: vi.fn(actual.rm) };
 });
 
+it('does not JSON-encode retained SQLite rows just to budget admission work', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'scan-admission-encoding-'));
+    const volumeId = 'admission-encoding'; const root = '/retained';
+    const index = createStorageScanIndex({ activeServerDir });
+    const admission = { volumeId, root, target: { folderPath: root }, usedBytes: 0,
+        fullDiskAccess: { state: 'not_applicable' as const, binary: { name: 'fixture', path: process.execPath } } };
+    await index.initialize([], true); await index.begin(admission);
+    const db = openProtectedSqliteDatabaseSync(join(activeServerDir, 'storage', 'scans', `${createHash('sha256').update(volumeId).digest('hex')}.sqlite`));
+    seedRetainedScanIndex(db, root, 399); index.finish(volumeId, 'complete');
+    const encoding = vi.spyOn(JSON, 'stringify');
+    try {
+        await index.begin(admission);
+        // These are SQLite row identities, not wire/state payloads that
+        // legitimately need encoding. Include paths and directories as well
+        // as normalized entry references in this CPU-work count.
+        const rowEncodings = encoding.mock.calls.filter(([value]) => typeof value === 'object' && value !== null
+            && ('ref' in value || 'id' in value || 'path' in value)).length;
+        expect(rowEncodings).toBe(0);
+        expect(db.prepare('SELECT COUNT(*) AS n FROM baseline_entries').get()).toEqual({ n: 399 });
+    } finally { encoding.mockRestore(); db.close(); index.close(); await rm(activeServerDir, { recursive: true, force: true }); }
+});
+
 it('yields retained admission row work while readers keep the committed tree', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'scan-admission-cost-'));
     const volumeId = 'admission-cost'; const root = '/retained';
@@ -80,13 +102,14 @@ it('yields retained admission row work while readers keep the committed tree', a
     try {
         const admitted = await index.begin(admission);
         observing = false;
+        console.log(JSON.stringify({ qa: 'sto19-admission-cost', retained: 300103, turns, maxRows, firstRead, copyingRead, deletingRead }));
         expect(observerError).toBeUndefined();
         expect(turns).toBeGreaterThan(0);
-        // The smallest scheduling record in this fixture is a reference; each
-        // logical row has at most seven fixed bookkeeping changes. Derive the
-        // regression bound from the actual native page and that row payload.
+        // Each logical row has at most seven bookkeeping changes. The work
+        // quantum is SQLite's maximum table-cell count in the actual page:
+        // 8-byte leaf header, 2-byte pointer, payload-length and rowid varints.
         const pageBytes = z.object({ page_size: z.number() }).parse(db.prepare('PRAGMA page_size').get()).page_size;
-        expect(maxRows).toBeLessThanOrEqual(Math.ceil(pageBytes / Buffer.byteLength(JSON.stringify({ ref: 1 }))) * 7 + 7);
+        expect(maxRows).toBeLessThanOrEqual(Math.floor((pageBytes - 8) / (2 + 1 + 1)) * 7 + 7);
         expect(firstRead && copyingRead && deletingRead).toBe(true);
         expect(admitted.scanId).not.toBe(before.state?.scanId);
         expect(index.readView().nodes).toEqual([]);
@@ -262,6 +285,7 @@ it('prepares fresh prior-directory hints without visiting retained file leaves i
     let projection: Awaited<ReturnType<typeof index.writePriorProjection>>;
     try {
         projection = await index.writePriorProjection(volumeId);
+        console.log(JSON.stringify({ qa: 'sto19-prior-cost', retained: 300103, visits, maxVisits }));
         expect(visits).toBeGreaterThan(0);
         expect(maxVisits).toBeLessThanOrEqual(199);
         expect((await readFile(projection!.path, 'utf8')).trim().split('\n')).toHaveLength(199);

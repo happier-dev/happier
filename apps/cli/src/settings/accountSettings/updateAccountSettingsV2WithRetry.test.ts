@@ -71,6 +71,42 @@ function mutableConfigurationForTest(): {
 }
 
 describe('updateAccountSettingsV2WithRetry', () => {
+  it.each(['plain', 'e2ee'] as const)('preserves fresh scoped approval rows when rebasing a writer that omits them (%s)', async (mode) => {
+    const credentials = createLegacyCredentialsStub();
+    const rows = [{ actionId: 'session.stop', scope: { kind: 'machine', machineId: 'A' },
+      approvalRequiredSurfaces: ['cli'], approvalWaivedSurfaces: [] }];
+    const initial = { actionsSettingsV1: { v: 1, actions: {}, scopedApprovalPreferences: rows } };
+    const winner = { actionsSettingsV1: { ...initial.actionsSettingsV1, scopedApprovalPreferences: [...rows,
+      { ...rows[0]!, scope: { kind: 'machine', machineId: 'B' } }] } };
+    const seal = (raw: Record<string, unknown>): AccountSettingsStoredContentEnvelope => mode === 'plain'
+      ? { t: 'plain', v: raw } : { t: 'encrypted', c: sealAccountScopedBlobCiphertext({
+        kind: 'account_settings', material: credentials.encryption, payload: raw,
+        randomBytes: n => new Uint8Array(n).fill(9),
+      }) };
+    const writes: Array<{ expectedVersion: number; content: AccountSettingsStoredContentEnvelope | null }> = [];
+    const result = await updateAccountSettingsV2WithRetry({ credentials,
+      // The inspected 0.2 reader drops the unknown optional scoped root.
+      mutation: { operations: [{ op: 'set', key: 'actionsSettingsV1',
+        value: { v: 1, actions: { 'session.stop': { enabled: false } } } }] },
+      deps: { fetchSettings: async () => ({ content: seal(initial), version: 1 }),
+        resolveAccountEncryptionMode: async () => mode,
+        updateSettings: async request => {
+          writes.push(request);
+          return writes.length === 1 ? { success: false, error: 'version-mismatch', currentVersion: 2,
+            currentContent: seal(winner) } : { success: true, version: 3 };
+        }, writeCache: async () => {} },
+    });
+    expect(result).toMatchObject({ status: 'applied', version: 3 });
+    expect(writes.map(write => write.expectedVersion)).toEqual([1, 2]);
+    const stored = writes[1]!.content;
+    if (!stored) throw new Error('Expected persisted Settings');
+    const opened = stored.t === 'plain' ? stored.v : openAccountScopedBlobCiphertext({
+      kind: 'account_settings', material: credentials.encryption, ciphertext: stored.c,
+    })?.value;
+    expect(opened).toMatchObject({ actionsSettingsV1: { actions: { 'session.stop': { enabled: false } },
+      scopedApprovalPreferences: winner.actionsSettingsV1.scopedApprovalPreferences } });
+  });
+
   it('restores an encrypted Machine offline preference while preserving a retained Replay budget', async () => {
     const credentials = createLegacyCredentialsStub();
     const raw = { sessionReplayMaxSeedChars: 1024, machineOfflineAlertsV1: { machineIds: ['peer', 'qa-machine'] } };

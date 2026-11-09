@@ -75,10 +75,19 @@ describe('validateSpawnProfileEnvironment', () => {
   });
 
   it('rejects dynamic agent-owned keys in canonical V2 profiles and mismatched caller overlays', () => {
+    // An Account editor can save this external key while its Agent is offline;
+    // the native spawn owner has that Agent's declarations at the point of effect.
+    const offlineProfile = { ...slim, extraEnvironmentVariables: [{ name: 'THIRD_PARTY_AUTH', value: '' }],
+      envVarRequirements: [{ name: 'THIRD_PARTY_AUTH', kind: 'secret' as const, required: true }] };
     expect(validateSpawnProfileEnvironment({
-      rawSettings: { profiles: [{ ...slim, extraEnvironmentVariables: [{ name: 'THIRD_PARTY_AUTH', value: 'secret' }] }] },
+      rawSettings: {},
+      profileCatalog: { ...activeAuthority, status: 'ready', records: [{ revision: 4, record: {
+        v: 1, id: slim.id, enabled: true, promptStack: [], skillSeeds: [],
+        secretBindings: { THIRD_PARTY_AUTH: 'happier:shared-secret:v1:private-key' },
+        definition: { kind: 'inline', profile: offlineProfile },
+      } }], diagnostics: [], referenceGuardRevision: 4 },
       profileId: 'focused',
-      providedEnvironmentVariables: { THIRD_PARTY_AUTH: 'secret' },
+      providedEnvironmentVariables: { THIRD_PARTY_AUTH: '' },
       reservedEnvironmentVariableNames: new Set(['THIRD_PARTY_AUTH']),
     })).toMatchObject({ ok: false, reason: 'reserved_environment' });
 

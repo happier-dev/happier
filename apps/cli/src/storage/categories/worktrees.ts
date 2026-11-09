@@ -12,7 +12,7 @@ import { worktreeVerdict } from '../worktrees/worktreeVerdicts';
 import { assertStoragePathIdentity, readStoragePathIdentity } from '../trash/removeStoragePath';
 import { physicalStoragePathWithoutFollowingLeaf } from '../storagePath';
 
-type WorktreeContext = Pick<StorageCategoryContext, 'deps' | 'projects' | 'worktrees' | 'sessions' | 'inUse' | 'discoveryIssues'>;
+type WorktreeContext = Pick<StorageCategoryContext, 'deps' | 'projects' | 'worktrees' | 'sessions' | 'inUse' | 'discoveryIssues' | 'discoveryPaths'>;
 
 function roots(context: WorktreeContext) {
     const repos = [...context.projects.map(project => project.repositoryRoot), ...context.worktrees.map(worktree => worktree.repositoryRoot)];
@@ -113,7 +113,7 @@ function mainLosses(worktree: StorageWorktree): StorageReasonV1[] | undefined {
 export async function readStorageWorktreeItems(context: WorktreeContext): Promise<readonly StorageCategoryItem[]> {
         const registered = new Map(context.worktrees.map(worktree => [worktree.path, worktree]));
         const paths = [...new Set([...registered.keys(), ...(await Promise.all(roots(context)
-            .map(root => directoriesAtDepth(root, 1, unavailableDirectory(context, 'worktrees'))))).flat()])]
+            .map(root => directoriesAtDepth(root, 1, unavailableDirectory(context, 'worktrees'), context.discoveryPaths)))).flat()])]
             .filter(path => !context.deps.trashRoots?.().some(root => contains(root, path)));
         const result: StorageCategoryItem[] = await Promise.all(paths.map(async path => {
             const worktree = await resolveWorktree(path, context);
@@ -127,7 +127,8 @@ export async function readStorageWorktreeItems(context: WorktreeContext): Promis
             const drafts = await Promise.all(sessions.map(session => context.deps.readSessionDraftPresence?.(session.sessionId)
                 ?? Promise.resolve({ status: 'unknown' as const })));
             const draft = drafts.some(value => value.status === 'present') ? 'present' : drafts.some(value => value.status === 'unknown') ? 'unknown' : 'absent';
-            const inUse = context.inUse.paths.some(live => contains(path, live)) || sessions.some(session => session.running);
+            const inUse = context.inUse.paths.some(live => contains(path, live))
+                || (context.inUse.cwdPaths ?? []).some(cwd => contains(path, cwd)) || sessions.some(session => session.running);
             const verdict = worktree.retentionKind === 'orphan'
                 ? { verdict: 'caution' as const, collectable: true,
                     reason: { code: 'not_rebuildable' as const, detail: { kind: 'orphan' } } }
@@ -160,27 +161,11 @@ export async function readStorageWorktreeItems(context: WorktreeContext): Promis
                 ...(retirementKind ? { retirementKind } : {}), ...(references ? { referenceOwnerData: references.ownerData } : {}),
                 ...(fingerprint ? { fingerprint, ownFingerprint: fingerprint } : {}) };
         }));
-        return result.map((parent): StorageCategoryItem => {
-            if (parent.retirementKind === 'main' || parent.retirementKind === 'common') return parent;
-            const nested = result.filter(child => !canonicalAbsolutePathsEqual(parent.path, child.path) && contains(parent.path, child.path));
-            if (!nested.length) return parent;
-            const unsafe = nested.some(child => child.verdict !== 'safe');
-            const unknown = nested.some(child => child.verdict === 'check');
-            const knownFingerprints = parent.ownFingerprint && nested.every(child => child.fingerprint);
-            const nestedVerdict = parent.verdict === 'keep' || parent.verdict === 'check' ? {}
-                : unknown ? check
-                    : unsafe ? { verdict: 'keep' as const, collectable: true,
-                        reason: { code: 'contains' as const, detail: { count: nested.length } } } : {};
-            return { ...parent, ownVerdict: parent, nestedWorktreePaths: nested.map(child => child.path),
-                fingerprint: knownFingerprints ? `sha256:${createHash('sha256').update(JSON.stringify([parent.ownFingerprint,
-                    nested.map(child => [child.path, child.fingerprint, child.verdict, child.reason]).sort((a, b) => String(a[0]).localeCompare(String(b[0])))])).digest('hex')}` : undefined,
-                ...nestedVerdict,
-                ...(unsafe ? { loses: [...(parent.loses ?? []), ...nested.flatMap(child => child.loses ?? [child.reason])] } : {}),
-                evidence: [...parent.evidence, unsafe ? 'nested_worktree_kept' : 'nested_worktrees_children_first'] };
-        });
+        return result;
 }
 export const worktrees: StorageCategoryDefinition = {
-    id: 'worktrees', roots, items: readStorageWorktreeItems,
+    id: 'worktrees', roots: context => [...new Set([...roots(context), ...context.worktrees.map(worktree => worktree.path)])],
+    items: readStorageWorktreeItems,
     async bindAdapter(value, context) {
         const worktree = await resolveWorktree(value.path, context);
         if (!worktree) throw new StorageCategoryAdapterError('owner_unavailable');

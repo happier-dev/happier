@@ -28,7 +28,7 @@ import { captureSavedSecretReferencesForOperation } from "@/settings/secrets/sav
 import { listSavedSecretReferenceCatalogRefsV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import type { ArtifactFolderActionPortV1 } from '@happier-dev/protocol/prompts/library/promptFolderActionsV1';
-import { runWithRequesterSessionCurrentnessCheckpoint, runWithoutRequesterSessionCurrentnessCheckpoint } from '@/daemon/sessionEncryption/requesterCurrentness';
+
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 
 /** Captures the incumbent Home/Account/key lifetime, without a parallel Settings publication. */
@@ -106,7 +106,7 @@ export function createCliPromptLibraryStore(input: Readonly<{
     const catalog = await loadPromptLibraryCatalogV1({ ...context, signal: input.signal, ...options,
       readRows,
       skillMigration: {
-        writeRecord: value => runWithoutRequesterSessionCurrentnessCheckpoint(() => writeRecord(value)),
+        writeRecord: value => (() => writeRecord(value))(),
         readArtifact: ref => runWithServerHttpBaseUrl(base, async () => {
           if (ref.serverId !== undefined && ref.serverId !== base) {
             const capturedHomeId = input.credentials.requesterSessionCredentialScope?.serverId
@@ -120,16 +120,16 @@ export function createCliPromptLibraryStore(input: Readonly<{
           return result;
         }),
       },
-      ...(onReady ? { onReadyBeforeCleanup: async (catalog: PromptLibraryCatalogSnapshotV1) => runWithoutRequesterSessionCurrentnessCheckpoint(async () => {
+      ...(onReady ? { onReadyBeforeCleanup: async (catalog: PromptLibraryCatalogSnapshotV1) => (async () => {
         const admitted = await readStorageContext();
         assertCurrent();
         if (admitted.mode !== context.mode) throw Object.assign(new Error('Account mode changed'), { code: 'account-mode-mismatch' });
         await onReady(catalog);
-      }) } : {}),
+      })() } : {}),
       transfer: {
-        readSourceSnapshot: () => runWithoutRequesterSessionCurrentnessCheckpoint(readSourceSnapshot),
-        initializeRecord: value => runWithoutRequesterSessionCurrentnessCheckpoint(() => writeRecord(value)),
-        replaceSource: async value => runWithoutRequesterSessionCurrentnessCheckpoint(async () => {
+        readSourceSnapshot: () => (readSourceSnapshot)(),
+        initializeRecord: value => (() => writeRecord(value))(),
+        replaceSource: async value => (async () => {
           const current = await readStorageContext();
           if (current.mode !== context.mode) throw Object.assign(new Error('Account mode changed'), { code: 'account-mode-mismatch' });
           const response = await replaceAccountSettingsV2RawForOwnerCutover({ credentials: input.credentials,
@@ -143,8 +143,8 @@ export function createCliPromptLibraryStore(input: Readonly<{
           return response.success ? { status: 'applied', settingsVersion: response.version }
             : response.error === 'version-mismatch' ? { status: 'conflict', currentSettingsVersion: response.currentVersion }
               : { status: 'rejected' };
-        }),
-        retainLegacyRoleArtifacts: raw => runWithoutRequesterSessionCurrentnessCheckpoint(() => runWithServerHttpBaseUrl(base, async () => {
+        })(),
+        retainLegacyRoleArtifacts: raw => (() => runWithServerHttpBaseUrl(base, async () => {
           assertCurrent();
           const accountId = readAccountIdFromToken(input.credentials.token);
           if (!accountId) throw new Error('Account identity unavailable');
@@ -156,10 +156,10 @@ export function createCliPromptLibraryStore(input: Readonly<{
           } });
           assertCurrent();
           return receipts;
-        })),
-        normalizeHistory: value => runWithoutRequesterSessionCurrentnessCheckpoint(() => normalizeAccountSettingsHistoryClientV1({ destinationAuthority: value, ports: {
+        }))(),
+        normalizeHistory: value => (() => normalizeAccountSettingsHistoryClientV1({ destinationAuthority: value, ports: {
           request: (path, value) => requestResponse(path, value.body),
-          readCurrentness: () => fetchAccountEncryptionCurrentness({ token: input.credentials.token, serverBaseUrl: base,
+          readCurrentness: () => fetchAccountEncryptionCurrentness({ credentials: input.credentials, token: input.credentials.token, serverBaseUrl: base,
             authorizationHeaders: headers, signal: input.signal }),
           isCurrent: async () => { try { await assertCredentialCurrent(); return true; } catch { return false; } },
           resolveTransferMaterial: async mode => {
@@ -179,14 +179,14 @@ export function createCliPromptLibraryStore(input: Readonly<{
               payload: raw, randomBytes: length => new Uint8Array(randomBytes(length)) }) };
           },
           unavailable: (_status, message) => { throw new Error(message); },
-        } })),
+        } }))(),
       } });
     return { context, catalog };
   };
   const readPromptLibraryCatalog = async (...args: Parameters<typeof preparePromptLibraryCatalog>) => {
     // Only reads share requester evidence. Every transfer/migration callback
     // above that can publish or mutate leaves preparation before its fences.
-    const { context, catalog } = await runWithRequesterSessionCurrentnessCheckpoint(() => preparePromptLibraryCatalog(...args), { readOnly: true });
+    const { context, catalog } = await (() => preparePromptLibraryCatalog(...args))();
     const admitted = await readStorageContext();
     assertCurrent();
     return admitted.mode === context.mode ? catalog : { status: 'unavailable' as const, reason: 'account-mode-mismatch' as const };

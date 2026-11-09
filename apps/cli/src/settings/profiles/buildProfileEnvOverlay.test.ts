@@ -44,6 +44,16 @@ function makeDeepSeekProfile() {
 }
 
 describe('buildProfileEnvOverlay', () => {
+  it('seeds permissions for the exact configured target rather than its carrier', async () => {
+    const { buildProfileEnvOverlay } = await import('./buildProfileEnvOverlay.js');
+    const result = await buildProfileEnvOverlay({ agentId: 'custom-acp',
+      backendTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.custom-acp', localId: 'custom-acp' }, definitionId: 'chosen' },
+      profile: { v: 2, id: 'configured', name: 'Configured', extraEnvironmentVariables: [{ name: 'TEAM_FLAG', value: 'on' }],
+        defaultPermissionModeByTargetKey: { 'agent:happier.agent.custom-acp/custom-acp:definition:chosen': 'read-only' },
+        defaultPersistenceModeByTargetKey: {}, compatibilityByTargetKey: {}, createdAt: 1, updatedAt: 1 },
+      processEnv: {}, promptSecretFn: null, reservedEnvironmentVariableNames: new Set(), requiredSecretRequirementNamesMissingBinding: new Set() });
+    expect(result).toMatchObject({ permissionModeSeed: 'read-only', envOverlayRaw: { TEAM_FLAG: 'on' } });
+  });
   it('applies a slim profile without invoking legacy secret resolution', async () => {
     const { buildProfileEnvOverlay } = await import('./buildProfileEnvOverlay.js');
     const result = await buildProfileEnvOverlay({
@@ -66,12 +76,6 @@ describe('buildProfileEnvOverlay', () => {
       permissionModeSeed: 'acceptEdits',
     });
   });
-  it('exports buildProfileEnvOverlay', async () => {
-    await expect(import('./buildProfileEnvOverlay.js')).resolves.toMatchObject({
-      buildProfileEnvOverlay: expect.any(Function),
-    });
-  });
-
   it('rejects adapter-owned environment keys from the authoritative runtime projection before resolving secrets', async () => {
     const { buildProfileEnvOverlay } = await import('./buildProfileEnvOverlay.js');
     await expect(buildProfileEnvOverlay({

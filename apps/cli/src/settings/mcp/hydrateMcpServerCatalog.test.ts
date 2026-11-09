@@ -14,11 +14,12 @@ import { clearActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshot,
   getActiveAccountSettingsSnapshotLifetimeToken, resetActiveAccountSettingsSnapshotForTests,
   setActiveAccountSettingsSnapshot, subscribeActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createDeferred } from '@/testkit/async/deferred';
+import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { prepareActiveMcpServerCatalog, projectMcpServerCatalogRefreshFailure, refreshActiveMcpServerCatalog, refreshActiveMcpServerCatalogAfterChange, refreshDemandedActiveMcpServerCatalog } from './hydrateMcpServerCatalog';
 import { createCliMcpServerStore, createCliMcpServerStoreForOperation } from './mcpServerStore';
 import { createProjectSessionRuntimeFixture } from '@/daemon/testkit/projectSessionRuntimeFixture';
 import { prepareRequesterSessionBootstrap } from "@/daemon/sessionEncryption/requesterSessionCredentials";
-import { runWithRequesterSessionCurrentnessCheckpoint } from "@/daemon/sessionEncryption/requesterCurrentness";
+
 import { createMcpServerActionExecuteV1 } from '@happier-dev/protocol/mcp/servers/serverActionsV1';
 import { McpRulesSetOutputV1Schema } from '@happier-dev/protocol/actions/specs/capabilityRules';
 import { reachRulesToDraftsV1 } from '@happier-dev/protocol/reach/reachRulesChangeV1';
@@ -192,11 +193,11 @@ describe('CLI MCP catalog Account publication', () => {
       return { status: 200, data: { status: 'updated', revision: 1, cursor: 1 } };
     });
     const operationContext = prepared.admitted.savedSecretOperationContext;
-    const result = await runWithRequesterSessionCurrentnessCheckpoint(async () => {
+    const result = await (async () => {
       expect(await prepared.admitted.isCurrent()).toBe(true);
       try { return await createCliMcpServerStoreForOperation({ operationContext }).readCatalogForOperation(); }
       catch { return null; }
-    });
+    })();
     expect(sourceRead).toBe(true);
     if (revoked) {
       expect(writes).toBe(0);
@@ -399,6 +400,96 @@ describe('CLI MCP catalog Account publication', () => {
       .toEqual({ ok: true, result: { ok: false, code: 'conflict' } });
     expect(catalog.bindings[0]?.enabled).toBe(true);
     expect(catalog.servers).toEqual(originalServers);
+  });
+
+  it.each([false, true])('reconciles concurrent tool snapshots only while the tested configuration is unchanged (changed=%s)', async configurationChanged => {
+    const credentials = seedAccount();
+    let revision = 3;
+    let catalog: McpServerCatalogV1 = { v: 1, servers: [{ id: 'server', name: 'server', transport: 'stdio',
+      stdio: { command: 'echo', args: [] }, env: {}, createdAt: 1, updatedAt: 1 }], bindings: [] };
+    mockAccountReads(async () => ({ status: 'present', revision, content: { t: 'plain', v: catalog } }));
+    const writes: number[] = [];
+    const bothCaptured = createDeferred();
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+      if (new URL(String(url)).pathname !== '/v1/account/entity-rows/mcp') throw new Error('Unexpected effect');
+      const mutation = McpServerCatalogRowMutationV1Schema.parse(body);
+      if (typeof mutation.expectedRevision !== 'number') throw new Error('Expected active catalog');
+      writes.push(mutation.expectedRevision);
+      if (writes.length === 2) bothCaptured.resolve();
+      await bothCaptured.promise;
+      if (configurationChanged && revision === 3) {
+        catalog = { ...catalog, servers: catalog.servers.map(server => ({ ...server,
+          stdio: { command: 'changed-command', args: [] }, updatedAt: 2 })) };
+        revision += 1;
+      }
+      if (mutation.expectedRevision !== revision) return { status: 409, data: { status: 'conflict', revision } };
+      const opened = openMcpServerCatalogContentV1({ content: mutation.content, mode: 'plain', material: null });
+      if (opened.status !== 'opened') throw new Error('Expected readable current write');
+      catalog = opened.catalog;
+      return { status: 200, data: { status: 'updated', revision: ++revision, cursor: revision } };
+    });
+    const stores = ['first-machine', 'second-machine'].map(machineId => ({ machineId,
+      store: createCliMcpServerStoreForOperation({ operationContext: createInvocationSavedSecretOperationContextV1({
+        credentials, serverHttpBaseUrl: 'https://home.example.test', snapshot: getActiveAccountSettingsSnapshot()!,
+        isCurrent: async () => true,
+      }) }),
+    }));
+    const captured = await Promise.all(stores.map(({ store }) => store.readCatalogForOperation()));
+    const results = await Promise.all(stores.map(({ store, machineId }, index) => store.mutate({
+      kind: 'tools-snapshot', serverId: 'server', snapshot: { checkedAt: index + 1, machineId,
+        tools: [{ name: 'echo', tokens: 1 }] },
+    }, 3, captured[index])));
+    expect(results.map(result => result.status)).toEqual(configurationChanged ? ['conflict', 'conflict'] : ['updated', 'updated']);
+    expect(writes).toEqual(configurationChanged ? [3, 3] : [3, 3, 4]);
+    if (configurationChanged) {
+      expect(catalog.servers[0]?.stdio?.command).toBe('changed-command');
+      expect(catalog.servers[0]?.toolsSnapshot).toBeUndefined();
+    } else {
+      expect(catalog.servers[0]?.toolsSnapshot).toMatchObject({ tools: [{ name: 'echo' }] });
+    }
+  });
+
+  it.each([false, true])('refuses a snapshot conflict without revision advancement even if a later read is newer (alreadyRebased=%s)', async alreadyRebased => {
+    const credentials = seedAccount();
+    let revision = 3;
+    let catalog: McpServerCatalogV1 = { v: 1, servers: [{ id: 'server', name: 'server', transport: 'stdio',
+      stdio: { command: 'echo', args: [] }, env: {}, createdAt: 1, updatedAt: 1 }], bindings: [] };
+    mockAccountReads(async () => ({ status: 'present', revision, content: { t: 'plain', v: catalog } }));
+    const writes: number[] = [];
+    let refused = false;
+    vi.spyOn(axios, 'post').mockImplementation(async (_url, body) => {
+      const mutation = McpServerCatalogRowMutationV1Schema.parse(body);
+      if (typeof mutation.expectedRevision !== 'number') throw new Error('Expected active catalog');
+      writes.push(mutation.expectedRevision);
+      if (alreadyRebased && writes.length === 1) {
+        revision += 1;
+        return { status: 409, data: { status: 'conflict', revision } };
+      }
+      if (!refused) {
+        refused = true;
+        const conflictRevision = revision;
+        // A different write commits only after this non-advancing conflict.
+        // Its later visibility must not authorize replaying the refused write.
+        revision += 1;
+        catalog = { ...catalog, bindings: [{ id: 'peer-rule', serverId: 'server', enabled: true,
+          target: { t: 'allMachines' }, createdAt: 1, updatedAt: 1 }] };
+        return { status: 409, data: { status: 'conflict', revision: conflictRevision } };
+      }
+      const opened = openMcpServerCatalogContentV1({ content: mutation.content, mode: 'plain', material: null });
+      if (opened.status !== 'opened') throw new Error('Expected readable current write');
+      catalog = opened.catalog;
+      return { status: 200, data: { status: 'updated', revision: ++revision, cursor: revision } };
+    });
+    const store = createCliMcpServerStoreForOperation({ operationContext: createInvocationSavedSecretOperationContextV1({
+      credentials, serverHttpBaseUrl: 'https://home.example.test', snapshot: getActiveAccountSettingsSnapshot()!,
+      isCurrent: async () => true,
+    }) });
+    const captured = await store.readCatalogForOperation();
+    expect(await store.mutate({ kind: 'tools-snapshot', serverId: 'server', snapshot: {
+      checkedAt: 1, machineId: 'machine', tools: [{ name: 'echo', tokens: 1 }],
+    } }, 3, captured)).toEqual({ status: 'conflict', revision: alreadyRebased ? 4 : 3 });
+    expect(writes).toEqual(alreadyRebased ? [3, 4] : [3]);
+    expect(catalog.servers[0]?.toolsSnapshot).toBeUndefined();
   });
 
   it('publishes row-only changes without advancing preference revision or rewriting the retained root', async () => {

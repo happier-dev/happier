@@ -32,7 +32,7 @@ export function createStorageProtectedFolders(deps: StorageProtectedFoldersDeps)
     const identity = (value: string) => storagePhysicalPathComparisonKey(value, platform);
     if (mode === 'remove') {
       // Consume the classifier's actual rules, never a second built-in folder list.
-      const builtIns = storageProtectionRules({ ...facts, userProtectedFolders: [], inUsePaths: [], mainCheckouts: [] })
+      const builtIns = storageProtectionRules({ ...facts, userProtectedFolders: [], inUsePaths: [], inUseCwds: [], mainCheckouts: [] })
         .filter(rule => rule.tier === 'forbidden' || rule.tier === 'keep');
       for (const rule of builtIns) {
         let builtIn: string;
@@ -56,7 +56,7 @@ export function createStorageProtectedFolders(deps: StorageProtectedFoldersDeps)
       : previous.filter((_value, index) => !matching[index]);
     await actor.assertCurrent();
     const answer = await resourcesPolicy.set({ expectedRevision: snapshot.revision, patch: { storage: { protectedFolders } } }, {
-      ...(signal ? { signal } : {}), verifyCurrent: async () => { await actor.assertCurrentAuthority(); return true; },
+      ...(signal ? { signal } : {}),
     });
     await actor.assertCurrent();
     return answer;

@@ -66,4 +66,7 @@ it('does not turn an unknown nested checkout into confirmed collectable Keep or 
         reason: { code: 'unsupported', detail: { cause: 'checkout_reference_owner_unavailable' } },
         loses: expect.arrayContaining([expect.objectContaining({ code: 'main_checkout' })]) });
     expect(values.find(value => value.path === parent)).toMatchObject({ verdict: 'check', collectable: false, reason: { code: 'facts_unavailable' } });
+    // The category and catalog must not independently fold the same child's
+    // unknown fact into two losses; review/apply consume one descendant model.
+    expect(values.find(value => value.path === parent)?.loses?.filter(reason => reason.code === 'facts_unavailable')).toHaveLength(1);
 });

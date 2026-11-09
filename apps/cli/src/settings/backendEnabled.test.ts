@@ -4,6 +4,13 @@ import { accountSettingsParse, buildBackendTargetKey } from '@happier-dev/protoc
 import { assertBackendEnabledByAccountSettings } from './backendEnabled';
 
 describe('assertBackendEnabledByAccountSettings', () => {
+  it('rejects the exact disabled configured definition while allowing a neighboring definition', () => {
+    const settings = accountSettingsParse({ backendEnabledByTargetKey: {
+      'agent:happier.agent.custom-acp/custom-acp:definition:blocked': false } });
+    const identity = { pluginId: 'happier.agent.custom-acp', localId: 'custom-acp' };
+    expect(() => assertBackendEnabledByAccountSettings({ backendTarget: { kind: 'agent', identity, definitionId: 'blocked' }, settings })).toThrow(/disabled/i);
+    expect(() => assertBackendEnabledByAccountSettings({ backendTarget: { kind: 'agent', identity, definitionId: 'chosen' }, settings })).not.toThrow();
+  });
   it('does not throw when the backendEnabledByTargetKey map is missing', () => {
     expect(() => assertBackendEnabledByAccountSettings({
       agentId: 'codex' as any,

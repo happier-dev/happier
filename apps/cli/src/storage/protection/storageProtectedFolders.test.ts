@@ -30,11 +30,11 @@ describe('storage protected-folder policy owner', () => {
       expect(await owner.remove({ path }, { actor })).toMatchObject({ status: 'applied', policy: { storage: { protectedFolders: [{ path: twin }] } } });
     } finally { policy.stop(); await rm(home, { recursive: true, force: true }); }
   });
-  it('writes physical list deltas through real metadata CAS, retaining neighboring policy and refusing stale custody', async () => {
+  it('writes physical list deltas through real metadata CAS, retaining neighboring policy and local cancellation', async () => {
     const { createStorageProtectedFolders } = await import('./storageProtectedFolders');
     const root = await realpath(await mkdtemp(join(tmpdir(), 'happier-protected-policy-')));
     let metadata: Record<string, unknown> = { neighbor: 'retained' }; let version = 1;
-    let onRead: (() => void) | undefined; let authorized = true;
+    let onRead: (() => void) | undefined;
     const runtime = createMachineResourcesPolicyRuntime({ port: {
       read: async () => { onRead?.(); return { status: 'ready', metadata, metadataVersion: version }; },
       compareAndSwap: async input => {
@@ -46,9 +46,7 @@ describe('storage protected-folder policy owner', () => {
       const home = join(root, 'home'); const folder = join(home, 'personal'); await mkdir(folder, { recursive: true });
       const alias = join(home, 'alias'); await symlink(folder, alias, 'junction');
       await runtime.reload();
-      const actor: StorageOperationActor = { accountId: 'owner', custodianAccountId: 'owner', kind: 'person', assertCurrent: async () => {}, assertCurrentAuthority: async () => {
-        if (!authorized) throw Object.assign(new Error('revoked'), { code: 'unauthorized' });
-      } };
+      const actor: StorageOperationActor = { accountId: 'owner', custodianAccountId: 'owner', kind: 'person', assertCurrent: async () => {}, assertCurrentAuthority: async () => {} };
       const owner = createStorageProtectedFolders({ resourcesPolicy: runtime, readProtectionFacts: () => ({ homeDir: home }) });
       const added = await owner.add({ path: '~\\alias' }, { actor });
       expect(added.status === 'unavailable' ? added.reason : added.status).toBe('applied');
@@ -56,11 +54,10 @@ describe('storage protected-folder policy owner', () => {
       expect(await owner.add({ path: folder }, { actor })).toMatchObject({ status: 'unchanged' });
       expect(metadata.neighbor).toBe('retained');
       expect(await owner.remove({ path: join(home, 'Documents') }, { actor })).toEqual({ status: 'unsupported', reason: 'built_in_protection' });
-      onRead = () => { authorized = false; };
-      // The policy writer projects a denied CAS as unavailable. The RPC owner
-      // separately verifies authority before disclosing this service result.
-      expect(await owner.remove({ path: folder }, { actor })).toMatchObject({ status: 'unavailable' });
-      onRead = undefined; authorized = true;
+      const controller = new AbortController();
+      onRead = () => { controller.abort(); };
+      expect(await owner.remove({ path: folder }, { actor, signal: controller.signal })).toMatchObject({ status: 'unavailable' });
+      onRead = undefined;
       expect(runtime.read()).toMatchObject({ policy: { storage: { protectedFolders: [{ path: folder }], logRetentionDays: 30 } } });
       expect(await owner.remove({ path: alias }, { actor })).toMatchObject({ status: 'applied', policy: { storage: { protectedFolders: [] } } });
       expect(await owner.add({ path: folder }, { actor: { ...actor, accountId: 'manager' } })).toMatchObject({ status: 'applied' });

@@ -1,10 +1,11 @@
 import { MachineStoragePolicyV1Schema, type DiskNodeV1, type StorageItemV1, type StorageSizeV1, type StorageReasonV1, type StorageEvidenceV1 } from '@happier-dev/protocol/storage/storageV1';
 import type { StorageProtectionFacts } from '../protection/protectedPaths';
 import { classifyPath, classifyPaths } from '../protection/protectedPaths';
-import { lstat, readdir } from 'node:fs/promises';
+import { lstat, readdir, stat } from 'node:fs/promises';
 import { storagePathBasename as basename, storagePathDirname as dirname, storagePathJoin as join,
-  storagePathsEqual as canonicalAbsolutePathsEqual, storagePathContains, storagePathToFs } from '../storagePath';
+  createStoragePathIndex, storagePathsEqual as canonicalAbsolutePathsEqual, storagePathContains, storagePathToFs } from '../storagePath';
 import type { NativeDiskScanRequest } from '../measure/nativeDiskMeasure';
+import type { StoragePathUse } from '../categories/types';
 
 export type StorageSuggestionGroup = 'can-be-rebuilt' | 'old-and-unused' | 'outside-happier';
 export type StorageRecognitionCandidate = Readonly<{
@@ -22,11 +23,12 @@ export type StorageRecognitionCandidate = Readonly<{
 }>;
 /** Scan discovery and retained summary projection use the same live repository facts. */
 export function storageCandidateRepositoryFacts(path: string, repositoryRoots: readonly string[],
-  use: Readonly<{ reliable: boolean; paths: readonly string[] }> | undefined): Pick<StorageRecognitionCandidate, 'repositoryRoot' | 'repositoryInUse'> {
+  use: StoragePathUse | undefined): Pick<StorageRecognitionCandidate, 'repositoryRoot' | 'repositoryInUse'> {
   const repositoryRoot = repositoryRoots.filter(root => storagePathContains(root, path))
     .sort((left, right) => right.length - left.length)[0];
   const repositoryInUse = repositoryRoot && use?.reliable === true
-    ? use.paths.some(path => storagePathContains(repositoryRoot, path) || storagePathContains(path, repositoryRoot)) : undefined;
+    ? use.paths.some(path => storagePathContains(repositoryRoot, path) || storagePathContains(path, repositoryRoot))
+      || (use.cwdPaths ?? []).some(cwd => storagePathContains(repositoryRoot, cwd)) : undefined;
   return { repositoryRoot, repositoryInUse };
 }
 export type StorageRecognitionFacts = Readonly<{
@@ -63,12 +65,22 @@ const cacheBase = (facts: Pick<StorageRecognitionFacts, 'protection'>) => (facts
 const localAppData = (facts: Pick<StorageRecognitionFacts, 'protection'>) => (facts.protection.env ?? process.env).LOCALAPPDATA ?? join(facts.protection.homeDir, 'AppData', 'Local');
 const downloadsRoot = (facts: Pick<StorageRecognitionFacts, 'protection'>) => facts.protection.knownFolders?.Downloads ?? join(facts.protection.homeDir, 'Downloads');
 
-/** Shortcut and recognizer paths share the same daemon environment authority. */
-export function resolveStorageScanShortcuts(facts: Pick<StorageRecognitionFacts, 'protection'>) {
+/** Shortcut and recognizer paths share the same daemon authority. Historical paths are not existence facts. */
+export async function resolveStorageScanShortcuts(facts: Pick<StorageRecognitionFacts, 'protection'>, knownPaths: readonly string[] = []) {
   const platform = facts.protection.platform ?? process.platform;
   const cache = platform === 'darwin' ? join(facts.protection.homeDir, 'Library', 'Caches')
     : platform === 'win32' ? localAppData(facts) : cacheBase(facts);
-  return [{ kind: 'downloads' as const, path: downloadsRoot(facts) }, { kind: 'cache' as const, path: cache }];
+  const candidates = [{ kind: 'downloads' as const, path: downloadsRoot(facts) }, { kind: 'cache' as const, path: cache },
+    ...knownPaths.map(path => ({ kind: 'folder' as const, path }))];
+  const pathIndex = createStoragePathIndex(candidates, candidate => candidate.path, platform);
+  const unique = candidates.filter(candidate => pathIndex.exact(candidate.path) === candidate);
+  const folders = await Promise.all(unique.map(async candidate => {
+    try { return (await stat(storagePathToFs(candidate.path))).isDirectory(); }
+    // Shortcut candidates are optional; an unusable folder must not prevent
+    // the measured Storage inventory or its valid peer shortcuts from loading.
+    catch { return false; }
+  }));
+  return unique.filter((_candidate, index) => folders[index]);
 }
 const pythonManifests = ['pyproject.toml', 'setup.py', 'setup.cfg', 'requirements.txt', 'Pipfile'];
 const projectManifests = ['package.json', 'Cargo.toml', 'pom.xml', 'build.gradle', 'build.gradle.kts', 'CMakeLists.txt', 'Makefile', ...pythonManifests];
@@ -231,7 +243,7 @@ export type StorageSuggestionsDeps = Readonly<{
   readProtectionFacts: () => StorageProtectionFacts | Promise<StorageProtectionFacts>;
   readCompletedScan?: () => Promise<CompletedStorageSuggestionScan | null>;
   readIgnoredPaths?: StorageRecognitionFacts['readIgnoredPaths'];
-  isDeclined?: (item: StorageItemV1) => boolean | Promise<boolean>;
+  readDeclined?: (items: readonly StorageItemV1[]) => ReadonlySet<string> | Promise<ReadonlySet<string>>;
   volumeForPath?: (path: string) => string | undefined;
   now?: () => number;
   suggestUnusedAfterDays?: () => number;
@@ -256,9 +268,11 @@ export function createStorageSuggestions(deps: StorageSuggestionsDeps) {
   async function select(candidates: readonly Suggestion[], options: StorageSuggestionListOptions) {
     const selected = candidates.filter(({ item, group }) => (!options.group || options.group === group)
       && (!options.quickestForVolume || item.verdict === 'safe' && deps.volumeForPath?.(item.path) === options.quickestForVolume));
+    const declined = options.callerKind !== 'person' && selected.length > 0
+      ? await deps.readDeclined?.(selected.map(({ item }) => item)) : undefined;
     const items: StorageItemV1[] = []; let declinedCount = 0;
     for (const { item } of selected) {
-      if (options.callerKind !== 'person' && await deps.isDeclined?.(item)) { declinedCount += 1; continue; }
+      if (declined?.has(item.itemId)) { declinedCount += 1; continue; }
       items.push(item);
     }
     return { items: items.sort((left, right) => right.size.freesBytes - left.size.freesBytes || left.path.localeCompare(right.path)), declinedCount };

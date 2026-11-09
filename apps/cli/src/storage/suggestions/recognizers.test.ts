@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import * as fsPromises from 'node:fs/promises';
 import { vi } from 'vitest';
-import { createStorageSuggestions, isEmptyStorageFolder, recognizeStorageCandidate, readStorageScanHints, type StorageRecognitionFacts } from './recognizers';
+import { createStorageSuggestions, isEmptyStorageFolder, recognizeStorageCandidate, readStorageScanHints, storageCandidateRepositoryFacts, type StorageRecognitionFacts } from './recognizers';
 import type { StorageItemV1 } from '@happier-dev/protocol/storage/storageV1';
 
 // Genuine OS boundary: preserve real reads while observing the indexed-file syscall budget.
@@ -18,6 +18,13 @@ const size = { allocatedBytes: 4096, freesBytes: 4096, sharedBytes: 0, sharedExt
 async function fixture() { const home = await realpath(await mkdtemp(join(tmpdir(), 'happier-suggestions-'))); fixtures.push(home); return home; }
 afterEach(async () => { await Promise.all(fixtures.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
 describe('verified storage recognizers', () => {
+  it('treats a repository containing a standalone cwd as in use, without claiming every repository below a parent cwd', () => {
+    const use = { reliable: true, paths: [], cwdPaths: ['/projects/one'] };
+    expect(storageCandidateRepositoryFacts('/projects/one/node_modules', ['/projects/one'], use).repositoryInUse).toBe(true);
+    expect(storageCandidateRepositoryFacts('/projects/one/node_modules', ['/projects/one'],
+      { ...use, cwdPaths: ['/projects'] }).repositoryInUse).toBe(false);
+  });
+
   it('projects scan descriptors from the recognizer table and positive ignored-path evidence', async () => {
     const home = await fixture(); const repo = join(home, 'project');
     const facts: StorageRecognitionFacts = { protection: { homeDir: home }, now: Date.now(), suggestUnusedAfterDays: 30,
@@ -85,6 +92,8 @@ describe('verified storage recognizers', () => {
       const containment = coverage.result.filter(script => script.url.endsWith('/storage/storagePath.ts'))
         .flatMap(script => script.functions).find(fn => fn.functionName === 'storagePathContains');
       expect(containment).toBeDefined();
+      if (process.env.STO19_PROFILE === '1') console.log(JSON.stringify({ qa: 'sto19-recognizer-eligibility',
+        ordinaryFiles: files, offeredRoots: catalog.length, containmentCalls: containment!.ranges[0].count }));
       expect(result.items).toContainEqual(expect.objectContaining({ path: download, evidence: expect.arrayContaining(['recognizer:old-download']) }));
       // Ordinary files have no overlap decision to make; their number cannot
       // multiply containment work by the already-offered roots.
@@ -115,7 +124,7 @@ describe('verified storage recognizers', () => {
     let item: StorageItemV1 = { itemId: 'cache', path, title: 'Cache', kind: 'category-item', categoryId: 'caches', size,
       verdict: 'safe', reason: { code: 'reinstalls' }, evidence: ['managed_cache_root'], collectable: true };
     const suggestions = createStorageSuggestions({ readCatalogItems: async () => [item], readProtectionFacts: () => ({ homeDir: home }),
-      isDeclined: value => value.size.allocatedBytes === 4096 });
+      readDeclined: values => new Set(values.filter(value => value.size.allocatedBytes === 4096).map(value => value.itemId)) });
     expect((await suggestions.list({ callerKind: 'person' })).items).toHaveLength(1);
     expect(await suggestions.list({ callerKind: 'agent' })).toMatchObject({ items: [], declinedCount: 1 });
     item = { ...item, size: { ...size, allocatedBytes: 8192 } };

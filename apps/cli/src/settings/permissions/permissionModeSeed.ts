@@ -1,5 +1,6 @@
 import { readAccountSettingValueForBackendTarget } from '@happier-dev/protocol/account/settings/accountSettings';
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
+import type { BackendTargetRefV2Input } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { AGENT_IDS, resolvePermissionModeGroupForAgent, type AgentId } from '@happier-dev/agents';
 
 import type { PermissionMode } from '@/api/types';
@@ -37,7 +38,7 @@ export function normalizePermissionModeForAgentStart(opts: { agentId: string; va
 
 export function resolveAccountDefaultPermissionModeFromAccountSettings(opts: {
   agentId: string;
-  backendTarget?: BackendTargetRefV1;
+  backendTarget?: BackendTargetRefV2Input;
   accountSettings: unknown;
 }): PermissionMode | null {
   const preferredTarget = opts.backendTarget
@@ -61,7 +62,7 @@ export function resolveAccountDefaultPermissionModeFromAccountSettings(opts: {
 
 export function resolvePermissionModeSeedForAgentStart(opts: {
   agentId: string;
-  backendTarget?: BackendTargetRefV1;
+  backendTarget?: BackendTargetRefV2Input;
   explicitPermissionMode: unknown;
   inferredPermissionMode?: unknown;
   accountSettings: unknown;

@@ -8,6 +8,34 @@ import { openProtectedSqliteDatabaseSync } from '@/daemon/persistence/sqliteSync
 import { createStorageScanIndex } from './scanIndex';
 import { seedRetainedScanIndex } from './scanIndex.retained.testkit';
 
+it('publishes running progress for committed folder contents before the next helper heartbeat', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'scan-progress-projection-'));
+    const volumeId = 'progress'; const root = '/scanning'; const index = createStorageScanIndex({ activeServerDir });
+    try {
+        await index.initialize([], true);
+        await index.begin({ volumeId, root, target: { folderPath: root },
+            fullDiskAccess: { state: 'not_applicable', binary: { name: 'fixture', path: process.execPath } } });
+        index.withIngestBatch(volumeId, () => {
+            index.ingest(volumeId, { v: 1, type: 'dir-start', id: root, name: 'scanning',
+                allocatedBytes: 0, logicalBytes: 0, ownLogicalBytes: 0, items: 1, mtimeMs: 2000,
+                flags: { atLeast: true }, children: [], files: [], folded: { items: 0, allocatedBytes: 0, logicalBytes: 0 },
+                ageGroupBytes: { unknown: 0, months3: 0, months6: 0, months12: 0 }, complete: false, streamed: true, relistOnly: false });
+            index.ingest(volumeId, { v: 1, type: 'progress', sizedBytes: 0, items: 0, currentPath: root });
+            index.ingest(volumeId, { v: 1, type: 'dir-entry', parent: root, visible: true, retained: false, replaceFacts: true,
+                node: { id: `${root}/notes`, name: 'notes', kind: 'file', allocatedBytes: 4096, logicalBytes: 3, items: 1,
+                    mtimeMs: 2000, flags: { atLeast: false } } });
+            index.ingest(volumeId, { v: 1, type: 'fact', owner: `${root}/notes`,
+                fact: { key: 'notes-inode', pathId: `${root}/notes`, allocatedBytes: 4096, mtimeMs: 2000, ageIncluded: true } });
+        });
+        const page = index.readView();
+        expect(page.nodes.some(node => node.name === 'notes')).toBe(true);
+        expect(page.state).toMatchObject({ status: 'running', progress: { sizedBytes: 4096, items: 2, currentPath: root } });
+        // A delayed helper heartbeat cannot make the already displayed work disappear.
+        index.ingest(volumeId, { v: 1, type: 'progress', sizedBytes: 0, items: 0 });
+        expect(index.state()?.progress).toMatchObject({ sizedBytes: 4096, items: 2 });
+    } finally { index.close(); await rm(activeServerDir, { recursive: true, force: true }); }
+});
+
 it('projects completed nodes from one prepared snapshot while preserving trusted facts and child-first order', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'scan-completed-projection-'));
     const volumeId = 'projection'; const root = '/retained'; const index = createStorageScanIndex({ activeServerDir });
@@ -71,6 +99,7 @@ it('projects completed nodes from one prepared snapshot while preserving trusted
             for (const wholeDisk of [false, true]) {
                 prepares = 0; stateReads = 0;
                 const actual = [...(wholeDisk ? index.iterateWholeDiskCandidates() : index.iterateCompletedNodes())];
+                console.log(JSON.stringify({ qa: 'sto19-completed-projection', wholeDisk, nodes: actual.length, prepares, stateReads }));
                 expect(actual).toEqual(expected);
                 const positions = new Map(actual.map((node, position) => [node.path, position]));
                 for (const [position, node] of actual.entries()) {

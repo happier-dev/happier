@@ -6,7 +6,7 @@ import type { createTrashStore } from './trash/trashStore';
 import { PileFactError, pileFactsExpect, readPileFacts, storageSizeFromMeasurement } from './reviewPile';
 import { readStoragePathIdentity } from './trash/removeStoragePath';
 import { storagePathsEqual as canonicalAbsolutePathsEqual } from './storagePath';
-import { pilePathContains } from './pileStore';
+import { minimalPileUnion } from './pileStore';
 
 export type PileApplyInput = Readonly<{
     items: readonly Readonly<{ ref: PileItemRefV1; expect: string }>[];
@@ -25,9 +25,7 @@ export async function applyPile(input: PileApplyInput, deps: PileApplyDeps): Pro
     const emptiedEntries = new Set<string>();
     const acted: string[] = [];
     const completedChildren = new Set<string>();
-    const reduced = input.items.filter((item, index) => !input.items.some((parent, parentIndex) => index !== parentIndex
-        && pilePathContains(parent.ref.path, item.ref.path)
-        && (!canonicalAbsolutePathsEqual(parent.ref.path, item.ref.path) || parentIndex < index)));
+    const reduced = minimalPileUnion(input.items, item => item.ref.path);
     async function execute(checked: PileApplyInput['items'][number], ancestorBeforeEffect?: () => Promise<void>): Promise<boolean> {
         try {
             await input.assertCurrent?.();
@@ -97,7 +95,7 @@ export async function applyPile(input: PileApplyInput, deps: PileApplyDeps): Pro
             const code = typeof error === 'object' && error !== null && 'code' in error ? error.code : undefined;
             if (error instanceof PileFactError && code === 'storage_forbidden') {
                 result.outcomes.push({ itemId: checked.ref.itemId, status: 'refused', reason: error.reason });
-            } else if (code === 'changed_since_review' || code === 'missing' || code === 'ENOENT' || code === 'facts_unavailable' || code === 'unauthorized') {
+            } else if (code === 'changed_since_review' || code === 'missing' || code === 'ENOENT' || code === 'facts_unavailable' || code === 'unauthorized' || code === 'policy_unavailable') {
                 result.outcomes.push({ itemId: checked.ref.itemId, status: 'skipped', reason: error instanceof PileFactError && error.reason
                     ? error.reason : { code: code === 'ENOENT' ? 'missing' : code } });
             } else result.outcomes.push({ itemId: checked.ref.itemId, status: 'failed', reason: { code: 'operation_failed' } });

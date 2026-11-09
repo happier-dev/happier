@@ -65,6 +65,7 @@ it('visits only the requested parent children for a size sorted retained page', 
         });
         try {
             const page = index.readView({ view: { tab: 'folders', depth: 1, sort: { by: 'size', direction: 'desc' } } });
+            console.log(JSON.stringify({ qa: 'sto19-page-cost', entries: 300103, visits, comparisonVisits, priorVisits, priorDirectoryVisits, plans }));
             expect(page.nodes.map(node => node.name)).toEqual(expectedNames);
             expect(page.nodes.every(node => node.deltaSincePrevious === 0)).toBe(true);
             expect(visits).toBeLessThanOrEqual(22);

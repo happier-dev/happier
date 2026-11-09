@@ -1,4 +1,5 @@
-import axios, { type AxiosRequestConfig } from 'axios';
+import axios from '@/api/client/credentialAxios';
+import { type AxiosRequestConfig } from 'axios';
 import { randomBytes } from 'node:crypto';
 import {
   AUTHORING_MEMORY_ACCOUNT_SCOPED_BLOB_KIND_V1, AUTHORING_MEMORY_ROUTE_V1,
