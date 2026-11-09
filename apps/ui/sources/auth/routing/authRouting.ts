@@ -181,6 +181,16 @@ export function isPublicRouteForUnauthenticated(segments: string[]): boolean {
   )
     return true;
 
+  // The native approvals specimen draws the real approval card and answered line with fixture
+  // requests and an inert responder, no account or machine data. Exact dev/debug route only.
+  if (
+    isDevRouteEnabled() &&
+    first === 'dev' &&
+    normalized[1] === 'native-approvals' &&
+    normalized.length === 2
+  )
+    return true;
+
   // The media specimen opens the real Media stage on bundled sample pictures with inert edits,
   // no account or machine data. Exact dev/debug route only.
   if (

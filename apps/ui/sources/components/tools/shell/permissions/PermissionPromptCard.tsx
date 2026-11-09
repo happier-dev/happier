@@ -110,16 +110,28 @@ export const PermissionPromptCard = React.memo(function PermissionPromptCard(pro
             : previewDetailLevel;
     const isPreviewVisible = inlineDetailLevel !== 'title' && inlineDetailLevel !== 'compact';
 
+    const origin = props.request.nativeChoices?.origin;
+    const fromSubagent = origin !== undefined && (origin.subagentId !== undefined || origin.sessionId !== props.sessionId);
     const effectiveSubtitle = React.useMemo(() => {
-        const subtitle = headerText.subtitle;
-        if (!subtitle) return null;
-        if (!isPreviewVisible) return subtitle;
-        const normalizedLower = headerText.normalizedToolName.trim().toLowerCase();
-        const isShellTool = normalizedLower === 'bash' || normalizedLower === 'execute' || normalizedLower === 'shell' || normalizedLower === 'codexbash';
-        // The question card's own body already leads with the question and its header.
-        const isQuestionTool = normalizedLower === 'askuserquestion';
-        return isShellTool || isQuestionTool ? null : subtitle;
-    }, [headerText.normalizedToolName, headerText.subtitle, isPreviewVisible]);
+        const subtitle = (() => {
+            const base = headerText.subtitle;
+            if (!base) return null;
+            if (!isPreviewVisible) return base;
+            const normalizedLower = headerText.normalizedToolName.trim().toLowerCase();
+            const isShellTool = normalizedLower === 'bash' || normalizedLower === 'execute' || normalizedLower === 'shell' || normalizedLower === 'codexbash';
+            // The question card's own body already leads with the question and its header.
+            const isQuestionTool = normalizedLower === 'askuserquestion';
+            return isShellTool || isQuestionTool ? null : base;
+        })();
+        // A subagent's request names the subagent first (lab mb B `mbAppr:child`).
+        if (!fromSubagent) return subtitle;
+        return t('capabilities.session.toolAsk.fromSubagent', { subtitle: subtitle ?? '' }).replace(/\s*·\s*$/, '');
+    }, [fromSubagent, headerText.normalizedToolName, headerText.subtitle, isPreviewVisible]);
+    // The viewer's availability is the caller-specific projection on the pending request, never re-decided here.
+    const nativeChoiceAvailability = props.request.nativeChoiceAvailability;
+    const footerPermission = React.useMemo(() => nativeChoiceAvailability
+        ? { ...model.tool.permission, nativeChoiceAvailability } : model.tool.permission,
+    [model.tool.permission, nativeChoiceAvailability]);
 
     const [headerActions, setHeaderActions] = React.useState<React.ReactNode | null>(null);
     const chrome = props.chrome ?? 'card';
@@ -168,7 +180,7 @@ export const PermissionPromptCard = React.memo(function PermissionPromptCard(pro
                         : { executionRun: props.executionRun })}
                     embedded={true}
                     alignFirstButtonToStart={true}
-                    permission={model.tool.permission}
+                    permission={footerPermission}
                     serverId={props.serverId}
                     toolName={props.request.tool}
                     toolInput={props.request.arguments}

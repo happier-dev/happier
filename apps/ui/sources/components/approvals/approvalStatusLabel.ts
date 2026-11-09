@@ -39,6 +39,15 @@ export function formatToolPermissionDecisionLabel(permission: ToolCall['permissi
     return formatApprovalStatusLabel(permission.decision === 'abort' ? 'canceled' : 'rejected');
 }
 
+/** A native answer reads as the exact offered label that was applied, never a normalized decision word. */
+export function resolveNativePermissionAnswer(permission: ToolCall['permission']): Readonly<{ label: string; refused: boolean }> | null {
+    const chosen = permission?.nativeChoice;
+    if (!chosen || permission.status === 'pending' || permission.status === 'canceled') return null;
+    const choice = permission.nativeChoices?.choices.find(candidate => candidate.id === chosen.choiceId);
+    if (!choice) return null;
+    return { label: choice.label, refused: choice.decision === 'denied' || choice.decision === 'abort' };
+}
+
 /**
  * The status a request reads as: an executed receipt whose Action refused its effect is Failed,
  * and a confidential entry reads as what became of the entry. The detail page and the retained tab

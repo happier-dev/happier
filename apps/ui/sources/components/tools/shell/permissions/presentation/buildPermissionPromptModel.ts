@@ -51,6 +51,7 @@ export function buildPermissionPromptModel(input: {
             ...(input.request.turnId ? { turnId: input.request.turnId } : {}),
             ...(input.request.source ? { source: input.request.source } : {}),
             ...(input.request.permissionSuggestions !== undefined ? { suggestions: input.request.permissionSuggestions } : {}),
+            ...(input.request.nativeChoices ? { nativeChoices: input.request.nativeChoices } : {}),
             ...(identity ? { mcpTool: identity } : {}) },
     };
 

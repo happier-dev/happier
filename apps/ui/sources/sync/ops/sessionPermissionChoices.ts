@@ -1,5 +1,6 @@
 import { extractShellCommand } from '@happier-dev/protocol/activity/shellCommand';
-import type { SessionPermissionRespondRpcParamsV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
+import type { NativePermissionChoicesV1, NativePermissionChoiceAvailabilityV1, SessionPermissionRespondRpcParamsV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
+import { NativePermissionChoicesV1Schema } from '@happier-dev/protocol/sessions/permissions/nativeChoicesV1';
 import type { ResolvedMcpToolIdentityV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
 import { parseParenIdentifier } from '@happier-dev/session-core/tools';
 
@@ -9,8 +10,13 @@ import { resolveSessionPermissionAnswerPolicy, resolveSessionPermissionAnswers, 
     type resolveSessionPermissionBehavior } from './sessionPermissionAnswers';
 
 export type SessionPermissionChoice = Readonly<{
-    id: 'allow' | 'always_allow' | 'allow_all_edits' | 'allow_subcommand' | 'allow_command' | 'allow_execpolicy' | 'mcp_always_allow' | 'deny' | 'stop';
+    id: string;
     label: string;
+    decision?: NativePermissionChoicesV1['choices'][number]['decision'];
+    scope?: NativePermissionChoicesV1['choices'][number]['scope'];
+    rulePreview?: string;
+    allowsFeedback?: boolean;
+    availability?: NativePermissionChoiceAvailabilityV1;
     response: Omit<SessionPermissionRespondRpcParamsV1, 'id' | 'turnId' | 'answers'>;
     catalog?: Readonly<{ identity: ResolvedMcpToolIdentityV1; source?: string }>;
 }>;
@@ -24,15 +30,38 @@ export function canPersistSessionMcpPermission(input: Readonly<{
 }
 
 /** The Session's choices, shared by its transcript and every permission presenter. */
-export function resolveSessionPermissionChoices(input: Readonly<{
+type SessionPermissionChoicesInput = Readonly<{
     toolName: string;
     toolInput?: unknown;
     source?: string;
     suggestions?: unknown;
     mcpTool?: ResolvedMcpToolIdentityV1;
     canWriteCatalog?: boolean;
-    permissionBehavior: ReturnType<typeof resolveSessionPermissionBehavior>;
-}>): readonly SessionPermissionChoice[] {
+    permissionBehavior?: ReturnType<typeof resolveSessionPermissionBehavior>;
+    /** Retained transcript content is decoded at this presentation boundary. */
+    nativeChoices?: unknown;
+    nativeChoiceAvailability?: readonly NativePermissionChoiceAvailabilityV1[];
+}>;
+
+export function resolveSessionPermissionChoices(input: SessionPermissionChoicesInput): readonly SessionPermissionChoice[] {
+    if (input.nativeChoices !== undefined) {
+        const native = NativePermissionChoicesV1Schema.safeParse(input.nativeChoices);
+        if (!native.success) return [];
+        const { requirementId, choices } = native.data;
+        const availability = new Map(input.nativeChoiceAvailability?.map(value => [value.choiceId, value]));
+        return choices.map(choice => ({
+            id: choice.id, label: choice.label, decision: choice.decision, scope: choice.scope,
+            ...(choice.rulePreview !== undefined ? { rulePreview: choice.rulePreview } : {}),
+            ...(choice.allowsFeedback !== undefined ? { allowsFeedback: choice.allowsFeedback } : {}),
+            ...(availability.has(choice.id) ? { availability: availability.get(choice.id)! } : {}),
+            response: { nativeChoice: { requirementId, choiceId: choice.id } },
+        }));
+    }
+    return resolveStoredSessionPermissionChoices(input);
+}
+
+/** C6 frozen reader for stored occurrences predating producer-owned choices. */
+function resolveStoredSessionPermissionChoices(input: SessionPermissionChoicesInput): readonly SessionPermissionChoice[] {
     const { toolName, permissionBehavior } = input;
     const policy = resolveSessionPermissionAnswerPolicy({ permissionBehavior, suggestions: input.suggestions });
     const answers = resolveSessionPermissionAnswers({ toolName, protocol: policy.protocol, source: input.source });

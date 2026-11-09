@@ -49,10 +49,10 @@ import { ApprovalPromptCard } from '../approvals/ApprovalPromptCard';
 import { resolveInactiveSessionToolCallFailure } from '../permissions/resolveInactiveSessionToolCallFailure';
 import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 import { resolveToolErrorSummary } from '@/components/tools/shell/presentation/resolveToolErrorSummary';
-import { ToolOutcomeStatus } from '@/components/tools/shell/presentation/ToolOutcomeStatus';
+import { PermissionAnswerOutcomeStatus, ToolOutcomeStatus } from '@/components/tools/shell/presentation/ToolOutcomeStatus';
 import { readHappierActionCallId } from '@/components/sessions/transcript/references/happierActionToolResult';
 import { resolveToolActionFailure } from '@/components/tools/shell/presentation/resolveToolActionFailure';
-import { formatApprovalStatusLabel, formatToolPermissionDecisionLabel } from '@/components/approvals/approvalStatusLabel';
+import { formatApprovalStatusLabel, formatToolPermissionDecisionLabel, resolveNativePermissionAnswer } from '@/components/approvals/approvalStatusLabel';
 import { ActivitySpinner, iconMatchedSpinnerSize } from '@/components/ui/feedback/ActivitySpinner';
 import { buildApprovalToolCallLocation, selectMatchingToolApprovalRequests, readDeclinedApprovalAtCall, readToolOutputText } from './toolApprovalPromptMatching';
 import { isAskUserQuestionToolName } from '@happier-dev/protocol/activity/agentRequestSummary';
@@ -346,7 +346,12 @@ const ToolTimelineRowContent = React.memo((props: ToolTimelineRowProps & { displ
                     }) ?? t('errors.permissionDenied')
                 )
                 : null;
-    const headerTerminalStatus = terminalStatusSummary ? (
+    // A native decision collapses to the exact label that was applied, who answered and when (lab mb B).
+    const nativeAnswerPermission = statusKind !== 'error' && resolveNativePermissionAnswer(toolForRendering.permission)
+        ? toolForRendering.permission : undefined;
+    const headerTerminalStatus = nativeAnswerPermission ? (
+        <PermissionAnswerOutcomeStatus permission={nativeAnswerPermission} serverId={props.serverId} />
+    ) : terminalStatusSummary ? (
         <ToolOutcomeStatus
             testID={statusKind === 'permission_blocked' ? 'tool-timeline-row-permission-blocked' : 'tool-timeline-row-error'}
             label={terminalStatusSummary}

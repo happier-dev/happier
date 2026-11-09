@@ -4,6 +4,7 @@ import type { AgentState, Metadata } from '@happier-dev/session-core/state';
 import type { ReducerState } from '@happier-dev/session-core/reducer';
 import { listPendingRequestLists, readSharedMetadataActionConfirmationState, readSharedMetadataPresentationCompletedRequests } from '@happier-dev/session-core/pending';
 import { deriveTranscriptInteraction, type TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
+import { retainDeep } from '@/sync/domains/state/structuralSharing';
 import type { SessionTranscriptActions, SessionTranscriptSource, TranscriptHistoryState } from './types';
 
 export type ReadOnlySessionTranscriptSnapshot = Readonly<{
@@ -136,7 +137,9 @@ export function createReadOnlySessionTranscriptSource(input: ReadOnlySessionTran
         loadSidechain: null, navigate: null, actions,
         update: (snapshot) => {
             suppliedHistoryState = snapshot.historyState;
-            current = materialize(snapshot);
+            const next = materialize(snapshot);
+            // An unrelated update keeps the pending projection's identity, so its subscribers do not re-render.
+            current = { ...next, pending: retainDeep(current.pending, next.pending) };
             notify();
         },
     };

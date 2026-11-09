@@ -5,6 +5,7 @@ import type { TranscriptObservationMetadata } from "./transcriptObservationProve
 import type { TranscriptAccountActorMetadata } from "./transcriptAccountActor.js";
 import type { ResolvedMcpToolIdentityV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
 import type { SessionQuestionHandlerV1 } from '@happier-dev/protocol/sessions/permissions/v1';
+import type { NativePermissionChoiceAnswerV1, NativePermissionChoicesV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 
 export type ToolCall = {
     // Provider-side identifier for this tool call (e.g. ACP callId, Claude tool_use id).
@@ -21,6 +22,9 @@ export type ToolCall = {
     description: string | null;
     result?: any;
     permission?: {
+        nativeChoices?: NativePermissionChoicesV1;
+        /** The offered choice that was applied; its label is read from `nativeChoices`. */
+        nativeChoice?: NativePermissionChoiceAnswerV1;
         id: string;
         /** Exact request custody; never inferred from the Session's latest turn. */
         turnId?: string;

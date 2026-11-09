@@ -6,6 +6,7 @@ import { extractShellCommand } from '@happier-dev/protocol/activity/shellCommand
 import { formatPermissionRequestSummary } from '@happier-dev/protocol/activity/agentRequestSummary';
 import type { SessionPermissionDecisionActorV1 } from '@happier-dev/protocol/sessions/permissions/v1';
 import type { ResolvedMcpToolIdentityV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
+import type { NativePermissionChoicesV1, NativePermissionChoiceAvailabilityV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 import React, { useRef, useState } from 'react';
 import { View, Platform, type LayoutChangeEvent } from 'react-native';
 import { isHappierPageRowNarrow } from '@happier-dev/plugin-ui/presentation';
@@ -18,16 +19,16 @@ import { resolveAgentIdForPermissionUi } from '@/agents/catalog/resolve';
 import { useHistoricalTranscriptAgentId } from '@/components/sessions/transcript/attribution/SessionTranscriptAgentAttributionContext';
 import { getPermissionFooterCopy } from '@/agents/catalog/permissionUiCopy';
 import {
-    answerSessionPermission,
     resolveSessionPermissionAnswerPolicy,
     resolveSessionPermissionBehavior,
     supportsSessionPermissionPersistence,
-    type SessionPermissionAnswer,
 } from '@/sync/ops/sessionPermissionAnswers';
 import { parseParenIdentifier } from "@happier-dev/session-core/tools";
 import { Text } from '@/components/ui/text/Text';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { PermissionDecisionButton } from './PermissionDecisionButton';
+import { PermissionFooterOfferedChoices } from './PermissionFooterOfferedChoices';
+import { isOfferedPermissionChoice, isRefusingPermissionChoice, selectPrimaryOfferedChoice } from './offeredChoiceLayout';
 import { Icon } from '@/components/ui/icons/Icon';
 import {
     clearPermissionAnswerUnconfirmed,
@@ -51,6 +52,8 @@ type PermissionFooterProps = PromptResponseOrigin & {
         id: string;
         turnId?: string;
         source?: string;
+        nativeChoices?: NativePermissionChoicesV1;
+        nativeChoiceAvailability?: readonly NativePermissionChoiceAvailabilityV1[];
         status: "pending" | "approved" | "denied" | "canceled";
         reason?: string;
         mode?: string;
@@ -289,10 +292,13 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
     const source = useSessionTranscriptSource();
     const interaction = source.useInteraction();
     const agentState = source.useAgentState();
+    const projectedRequest = source.usePendingRequests().permissionRequests.find(request => request.id === permission.id);
     // A loaded request supersedes a retained transcript projection, including
     // clearing its source. Otherwise keep the request's projected scope.
     const loadedRequest = agentState?.requests?.[permission.id];
     const requestSource = loadedRequest ? loadedRequest.source : permission.source;
+    const nativeChoices = projectedRequest ? projectedRequest.nativeChoices : loadedRequest ? loadedRequest.nativeChoices : permission.nativeChoices;
+    const nativeChoiceAvailability = projectedRequest?.nativeChoiceAvailability ?? permission.nativeChoiceAvailability;
     const onceOnlyApproval = executionRun === undefined
         && !supportsSessionPermissionPersistence(requestSource);
     const actions = source.actions;
@@ -336,6 +342,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
     const [storedLoadingForSessionPrefix, setLoadingForSessionPrefix] = useState(false);
     const [storedLoadingForSessionCommandName, setLoadingForSessionCommandName] = useState(false);
     const [storedLoadingExecPolicy, setLoadingExecPolicy] = useState(false);
+    const [storedLoadingChoiceId, setLoadingChoiceId] = useState<string | null>(null);
     const [storedActionFailure, setStoredActionFailure] = useState<PermissionActionFailureDisplay | null>(null);
     const permissionActionInFlight = useRef<PermissionActionInFlight | null>(null);
     const isMounted = useRef(true);
@@ -391,7 +398,6 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
     // behavior therefore requires an owning machine and otherwise fails closed.
     const permissionBehavior = resolveSessionPermissionBehavior({ agentId, metadata, accountScope });
     const copy = getPermissionFooterCopy(permissionBehavior?.promptProtocol);
-    const permissionFooterBehavior = permissionBehavior?.footer;
     // The primary Allow once / Always for this session / Deny decisions share
     // one answer owner with the plugin UI Host API, so both mean the same
     // provider decision.
@@ -400,21 +406,23 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
         suggestions: permission?.suggestions,
     });
     const choices = resolveSessionPermissionChoices({ toolName, toolInput, source: requestSource,
+        nativeChoices, nativeChoiceAvailability,
         suggestions: permission.suggestions, permissionBehavior,
         mcpTool: executionRun === undefined ? permission.mcpTool : undefined,
         canWriteCatalog: canApprovePermissions && catalogScope !== null });
     const hasChoice = (id: typeof choices[number]['id']) => choices.some(choice => choice.id === id);
     const isCodexDecision = answerPolicy.protocol === 'codexDecision';
-    const shouldUsePermissionUpdates = answerPolicy.usePermissionUpdates;
-    const answerThroughSession = (answer: SessionPermissionAnswer) => answerSessionPermission({
-        requestId: permission.id,
-        ...(projectedTurnId !== undefined ? { turnId: projectedTurnId } : {}),
-        ...(requestSource !== undefined ? { source: requestSource } : {}),
-        toolName,
-        answer,
-        policy: answerPolicy,
-        respondToPermission: async (params) => { if (actions) await actions.respondToPermission(params); },
-    });
+    const submitPermissionChoice = async (choiceId: typeof choices[number]['id'], feedback?: string) => {
+        const choice = choices.find(candidate => candidate.id === choiceId);
+        if (!choice) return;
+        const nativeChoice = choice.response.nativeChoice;
+        await actions?.respondToPermission({
+            id: permission.id,
+            ...(projectedTurnId !== undefined ? { turnId: projectedTurnId } : {}),
+            ...choice.response,
+            ...(nativeChoice && feedback !== undefined ? { nativeChoice: { ...nativeChoice, feedback } } : {}),
+        });
+    };
     // MCP tools named by the catalog get the one choice that outlives the session (P8 U8.5, lab xa A).
     const mcpIdentity = hasChoice('mcp_always_allow') ? permission.mcpTool : null;
     const alwaysAllowNode = mcpIdentity ? (
@@ -427,7 +435,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
             canWriteCatalog={canApprovePermissions}
             pending={permission.status === 'pending'}
             answerForSession={async () => {
-                await answerThroughSession('allowForSession');
+                await submitPermissionChoice('always_allow');
                 markTranscriptPromptAnswered(source, permission.id);
             }}
             renderDecision={(decision) => (
@@ -446,15 +454,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
             )}
         />
     ) : null;
-    const execPolicyCommand = (() => {
-        const proposedAmendment = toolInput?.proposedExecpolicyAmendment ?? toolInput?.proposed_execpolicy_amendment;
-        if (Array.isArray(proposedAmendment)) {
-            return proposedAmendment.filter((part: unknown): part is string => typeof part === 'string' && part.length > 0);
-        }
-        return [];
-    })();
     const canApproveExecPolicy = hasChoice('allow_execpolicy');
-    const shouldHandleStopWithoutSessionAbort = permissionFooterBehavior?.stopHandling === 'denyOnly';
 
     if (disabledReason === 'inactive') {
         return null;
@@ -562,22 +562,14 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                 await executionRun.respond?.({ requestId: permission.id, approved: true });
                 return;
             }
-            await answerThroughSession('allowOnce');
+            await submitPermissionChoice('allow');
         });
     };
 
     const handleApproveAllEdits = async () => {
-        if (onceOnlyApproval) return;
-        if (permission.status !== 'pending' || loadingButton !== null || loadingAllEdits || loadingForSession) return;
-
+        if (permission.status !== 'pending' || isCurrentRequestLoading || !hasChoice('allow_all_edits')) return;
         await runPermissionAction('approve_all_edits', setLoadingAllEdits, async () => {
-            await actions?.respondToPermission({
-                id: permission.id, approved: true, mode: 'acceptEdits',
-                ...(projectedTurnId !== undefined ? { turnId: projectedTurnId } : {}),
-                ...(shouldUsePermissionUpdates ? {
-                    updatedPermissions: [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }],
-                } : {}),
-            });
+            await submitPermissionChoice('allow_all_edits');
         });
     };
 
@@ -586,81 +578,21 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
         if (permission.status !== 'pending' || loadingButton !== null || loadingAllEdits || loadingForSession || loadingForSessionPrefix || !toolName) return;
 
         await runPermissionAction('approve_for_session', setLoadingForSession, async () => {
-            await answerThroughSession('allowForSession');
+            await submitPermissionChoice('always_allow');
         });
     };
 
     const handleApproveForSessionSubcommand = async () => {
-        if (onceOnlyApproval) return;
-        if (permission.status !== 'pending' || loadingButton !== null || loadingAllEdits || loadingForSession || loadingForSessionPrefix || loadingForSessionCommandName || !toolName) return;
-
-        const command = extractShellCommand(toolInput);
-        const lower = toolName.toLowerCase();
-        if (!command || !(lower === 'bash' || lower === 'execute' || lower === 'shell')) return;
-
-        if (!isBroadShellGrantEligible(command)) return;
-        const parts = command.trim().split(/\s+/).filter(Boolean);
-        const cmd = parts[0];
-        const sub = parts[1];
-        const canUseSubcommand =
-            Boolean(cmd) &&
-            Boolean(sub) &&
-            !sub.startsWith('-') &&
-            // Only offer subcommand-level approvals for common subcommand CLIs.
-            ['git', 'npm', 'yarn', 'pnpm', 'cargo', 'docker', 'kubectl', 'gh', 'brew'].includes(cmd);
-        if (!canUseSubcommand) return;
-
+        if (permission.status !== 'pending' || isCurrentRequestLoading || !hasChoice('allow_subcommand')) return;
         await runPermissionAction('approve_for_session_subcommand', setLoadingForSessionPrefix, async () => {
-            const toolIdentifier = `${toolName}(${cmd} ${sub}:*)`;
-            if (shouldUsePermissionUpdates) {
-                const parsed = parseParenIdentifier(toolIdentifier);
-                const rules = [
-                    parsed
-                        ? { toolName: parsed.name, ...(parsed.spec ? { ruleContent: parsed.spec } : {}) }
-                        : { toolName: toolIdentifier },
-                ];
-                await actions?.respondToPermission({
-                    id: permission.id, approved: true,
-                    allowedTools: [toolIdentifier],
-                    updatedPermissions: [{ type: 'addRules', rules, behavior: 'allow', destination: 'session' }],
-                    ...(projectedTurnId !== undefined ? { turnId: projectedTurnId } : {}),
-                });
-            } else {
-                await actions?.respondToPermission({ id: permission.id, approved: true, allowedTools: [toolIdentifier], ...(projectedTurnId !== undefined ? { turnId: projectedTurnId } : {}) });
-            }
+            await submitPermissionChoice('allow_subcommand');
         });
     };
 
     const handleApproveForSessionCommandName = async () => {
-        if (onceOnlyApproval) return;
-        if (permission.status !== 'pending' || loadingButton !== null || loadingAllEdits || loadingForSession || loadingForSessionPrefix || loadingForSessionCommandName || !toolName) return;
-
-        const command = extractShellCommand(toolInput);
-        const lower = toolName.toLowerCase();
-        if (!command || !(lower === 'bash' || lower === 'execute' || lower === 'shell')) return;
-
-        if (!isBroadShellGrantEligible(command)) return;
-        const first = command.trim().split(/\s+/).filter(Boolean)[0];
-        if (!first) return;
-
+        if (permission.status !== 'pending' || isCurrentRequestLoading || !hasChoice('allow_command')) return;
         await runPermissionAction('approve_for_session_command', setLoadingForSessionCommandName, async () => {
-            const toolIdentifier = `${toolName}(${first}:*)`;
-            if (shouldUsePermissionUpdates) {
-                const parsed = parseParenIdentifier(toolIdentifier);
-                const rules = [
-                    parsed
-                        ? { toolName: parsed.name, ...(parsed.spec ? { ruleContent: parsed.spec } : {}) }
-                        : { toolName: toolIdentifier },
-                ];
-                await actions?.respondToPermission({
-                    id: permission.id, approved: true,
-                    allowedTools: [toolIdentifier],
-                    updatedPermissions: [{ type: 'addRules', rules, behavior: 'allow', destination: 'session' }],
-                    ...(projectedTurnId !== undefined ? { turnId: projectedTurnId } : {}),
-                });
-            } else {
-                await actions?.respondToPermission({ id: permission.id, approved: true, allowedTools: [toolIdentifier], ...(projectedTurnId !== undefined ? { turnId: projectedTurnId } : {}) });
-            }
+            await submitPermissionChoice('allow_command');
         });
     };
 
@@ -672,7 +604,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                 await executionRun.respond?.({ requestId: permission.id, approved: false });
                 return;
             }
-            await answerThroughSession('deny');
+            await submitPermissionChoice('deny');
         });
     };
 
@@ -680,7 +612,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
         if (permission.status !== 'pending' || loadingButton !== null || loadingAllEdits || loadingForSession) return;
 
         await runPermissionAction('stop', (loading) => setLoadingButton(loading ? 'abort' : null), async () => {
-            await actions?.respondToPermission({ id: permission.id, approved: false, decision: 'abort', ...(projectedTurnId !== undefined ? { turnId: projectedTurnId } : {}) });
+            await submitPermissionChoice('stop');
         });
     };
     
@@ -688,7 +620,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
         if (permission.status !== 'pending' || loadingButton !== null || loadingForSession || loadingExecPolicy) return;
         
         await runPermissionAction('approve', (loading) => setLoadingButton(loading ? 'allow' : null), async () => {
-            await answerThroughSession('allowOnce');
+            await submitPermissionChoice('allow');
         });
     };
     
@@ -697,29 +629,14 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
         if (permission.status !== 'pending' || loadingButton !== null || loadingForSession || loadingExecPolicy) return;
         
         await runPermissionAction('approve_for_session', setLoadingForSession, async () => {
-            await answerThroughSession('allowForSession');
+            await submitPermissionChoice('always_allow');
         });
     };
 
     const handleDecisionApproveExecPolicy = async () => {
-        if (permission.status !== 'pending' || loadingButton !== null || loadingForSession || loadingExecPolicy || !canApproveExecPolicy) return;
-
+        if (permission.status !== 'pending' || isCurrentRequestLoading || !hasChoice('allow_execpolicy')) return;
         await runPermissionAction('approve_execpolicy', setLoadingExecPolicy, async () => {
-            await actions?.respondToPermission({
-                id: permission.id, approved: true, decision: 'approved_execpolicy_amendment',
-                execPolicyAmendment: { command: execPolicyCommand },
-                ...(projectedTurnId !== undefined ? { turnId: projectedTurnId } : {}),
-            });
-        });
-    };
-    
-    // Shared by both prompt protocols: an Agent whose descriptor declares
-    // `stopHandling: 'denyOnly'` stops the tool call without aborting the run.
-    const handleStopWithoutSessionAbort = async () => {
-        if (permission.status !== 'pending' || loadingButton !== null || loadingAllEdits || loadingForSession || loadingExecPolicy) return;
-        
-        await runPermissionAction('stop', (loading) => setLoadingButton(loading ? 'abort' : null), async () => {
-            await actions?.respondToPermission({ id: permission.id, approved: false, decision: 'denied', ...(projectedTurnId !== undefined ? { turnId: projectedTurnId } : {}) });
+            await submitPermissionChoice('allow_execpolicy');
         });
     };
 
@@ -930,6 +847,36 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                             )}
                         </PermissionDecisionButton>
                     ))}
+                </View>
+                {actionFailureNode}
+            </View>
+        );
+    }
+
+    // Offered native choices (lab mb B): every choice the agent offered, in its words and its order.
+    if (nativeChoices) {
+        const offeredChoices = choices.filter(isOfferedPermissionChoice);
+        const loadingChoiceId = isCurrentRequestLoading ? storedLoadingChoiceId : null;
+        const handleChoose = (choiceId: string) => {
+            const choice = offeredChoices.find(candidate => candidate.id === choiceId);
+            if (!choice || !isPending || isCurrentRequestLoading || choice.availability?.allowed === false) return;
+            const kind = isRefusingPermissionChoice(choice) ? (choice.decision === 'abort' ? 'stop' : 'deny')
+                : choice.scope === 'once' ? 'approve' : 'approve_for_session';
+            void runPermissionAction(kind, (loading) => setLoadingChoiceId(loading ? choiceId : null),
+                () => submitPermissionChoice(choiceId));
+        };
+        return (
+            <View onLayout={onDecisionsLayout} style={[styles.container, embedded ? styles.containerEmbedded : styles.containerStandalone]}>
+                <View style={answerUnconfirmed ? styles.buttonContainerWithheld : null}>
+                    <PermissionFooterOfferedChoices
+                        choices={offeredChoices}
+                        primaryId={selectPrimaryOfferedChoice(offeredChoices)}
+                        narrow={stacked}
+                        disabled={!isPending || answerUnconfirmed || isCurrentRequestLoading}
+                        busyChoiceId={loadingChoiceId}
+                        onChoose={handleChoose}
+                        primaryRef={primaryAnswerRef}
+                    />
                 </View>
                 {actionFailureNode}
             </View>
@@ -1170,7 +1117,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                             isCodexAborted && styles.buttonSelected,
                             (isCodexApproved || isCodexApprovedForSession || isCodexApprovedExecPolicy) && styles.buttonInactive
                         ]}
-                        onPress={shouldHandleStopWithoutSessionAbort ? handleStopWithoutSessionAbort : handleStop}
+                        onPress={handleStop}
                         disabled={actionsDisabled}
                         activeOpacity={isPending ? 0.7 : 1}
                     >
@@ -1455,7 +1402,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                         isStopped && styles.buttonSelected,
                         (isApproved || isDeniedViaNo) && styles.buttonInactive,
                     ]}
-                    onPress={shouldHandleStopWithoutSessionAbort ? handleStopWithoutSessionAbort : handleStop}
+                    onPress={handleStop}
                     disabled={primaryActionsDisabled}
                     activeOpacity={isPending ? 0.7 : 1}
                 >
