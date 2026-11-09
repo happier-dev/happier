@@ -24,7 +24,7 @@ export type AgentAcpToolNameResolver = (
       toolCallCountSincePrompt: number;
     }>;
   }>
-) => string | null | undefined;
+) => string | Readonly<{ toolName: string; input: Readonly<Record<string, unknown>> }> | null | undefined;
 
 export type AgentAcpToolNamePattern = Readonly<{
   name: string;

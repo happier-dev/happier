@@ -7,6 +7,14 @@ import {
 } from './toolNames.js';
 
 describe('Gemini ACP tool names', () => {
+  it.each([
+    ['GeminiPatch', 'Patch'], ['GeminiDiff', 'Diff'], ['GeminiReasoning', 'Reasoning'], ['think', 'Reasoning'],
+  ])('projects the native %s alias before shared normalization', (toolName, canonical) => {
+    const resolve = buildGeminiAcpToolNameResolver({});
+    expect(resolve({ toolName, toolCallId: 'native-call', input: {}, context: { toolCallCountSincePrompt: 0 } }))
+      .toBe(canonical);
+  });
+
   it('recovers MCP identity from native correlation rather than a human title or operand', () => {
     const resolve = buildGeminiAcpToolNameResolver({ mcpServers: { 'team-docs__archive': { command: 'bridge' } },
       mcpToolPolicy: { 'team-docs__archive': { unlisted: 'ask', tools: { read: 'ask', 'read__file': 'ask' } } } });

@@ -1,3 +1,4 @@
+import { toolNormalizationSource } from './fixtures.v1.testkit';
 import { describe, expect, it } from 'vitest';
 
 import { canonicalizeToolNameV2, normalizeToolCallV2, normalizeToolResultV2 } from './index';
@@ -14,7 +15,7 @@ function isStringArray(value: unknown): value is string[] {
 }
 
 describe('tool normalization fixtures (v1): tool results', () => {
-  it('normalizes tool-result events into objects with V2 metadata (using tool-call mappings when available)', () => {
+  it('normalizes tool-result events into objects with V3 metadata (using tool-call mappings when available)', () => {
     const fixtures = loadFixtureV1();
     const callIdToTool = new Map<string, { canonicalToolName: string; rawToolName: string }>();
 
@@ -26,8 +27,7 @@ describe('tool normalization fixtures (v1): tool results', () => {
         if (!callId) continue;
         const toolName = String(payload.name ?? '');
         const normalized = normalizeToolCallV2({
-          protocol: asToolNormalizationProtocol(event.protocol),
-          provider: String(event.provider ?? 'unknown'),
+          source: toolNormalizationSource(asToolNormalizationProtocol(event.protocol), String(event.provider ?? 'unknown')),
           toolName,
           rawInput: payload.input,
           callId,
@@ -57,8 +57,7 @@ describe('tool normalization fixtures (v1): tool results', () => {
         const rawOutput = payload.output;
 
         const normalized = normalizeToolResultV2({
-          protocol: asToolNormalizationProtocol(event.protocol),
-          provider: String(event.provider ?? 'unknown'),
+          source: toolNormalizationSource(asToolNormalizationProtocol(event.protocol), String(event.provider ?? 'unknown')),
           rawToolName,
           canonicalToolName,
           rawOutput,
@@ -67,9 +66,8 @@ describe('tool normalization fixtures (v1): tool results', () => {
         const outRecord = asRecord(normalized);
         expect(outRecord).toBeTruthy();
         expect(asRecord(outRecord?._happier)).toMatchObject({
-          v: 2,
-          protocol: event.protocol,
-          provider: event.provider,
+          v: 3,
+          ...toolNormalizationSource(event.protocol, event.provider),
         });
 
         if (canonicalToolName === 'Bash') {
@@ -172,8 +170,7 @@ describe('tool normalization fixtures (v1): tool results', () => {
       const callPayload = asRecord(call.payload) ?? {};
       const callId = String(callPayload.callId ?? '');
       const callNorm = normalizeToolCallV2({
-        protocol: 'acp',
-        provider: 'auggie',
+        source: toolNormalizationSource('acp', 'auggie'),
         toolName: String(callPayload.name ?? ''),
         rawInput: callPayload.input,
         callId,
@@ -183,8 +180,7 @@ describe('tool normalization fixtures (v1): tool results', () => {
       const result = pickResultByCallId(callId);
       const resultPayload = asRecord(result.payload) ?? {};
       const normalized = normalizeToolResultV2({
-        protocol: 'acp',
-        provider: 'auggie',
+        source: toolNormalizationSource('acp', 'auggie'),
         rawToolName: 'fetch',
         canonicalToolName: callNorm.canonicalToolName,
         rawOutput: resultPayload.output,
@@ -197,8 +193,7 @@ describe('tool normalization fixtures (v1): tool results', () => {
       const callPayload = asRecord(call.payload) ?? {};
       const callId = String(callPayload.callId ?? '');
       const callNorm = normalizeToolCallV2({
-        protocol: 'acp',
-        provider: 'auggie',
+        source: toolNormalizationSource('acp', 'auggie'),
         toolName: String(callPayload.name ?? ''),
         rawInput: callPayload.input,
         callId,
@@ -208,8 +203,7 @@ describe('tool normalization fixtures (v1): tool results', () => {
       const result = pickResultByCallId(callId);
       const resultPayload = asRecord(result.payload) ?? {};
       const normalized = normalizeToolResultV2({
-        protocol: 'acp',
-        provider: 'auggie',
+        source: toolNormalizationSource('acp', 'auggie'),
         rawToolName: 'fetch',
         canonicalToolName: callNorm.canonicalToolName,
         rawOutput: resultPayload.output,

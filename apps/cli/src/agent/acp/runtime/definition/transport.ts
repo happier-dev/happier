@@ -1,4 +1,4 @@
-import type { AgentAcpRuntimeDefinition } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentAcpRuntimeDefinition, AgentAcpToolNameResolver } from '@happier-dev/plugin-sdk/agents/runtime';
 import { parseMcpToolWireNameV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
 import { DefaultTransport, type TransportHandler } from '@/agent/transport';
 import { normalizePermissionOptionKind, pickPermissionOptionId } from '@/agent/acp/permissions/permissionMapping';
@@ -82,10 +82,15 @@ function normalizedLowerSet(values: readonly string[] | undefined): ReadonlySet<
   return new Set(normalizeStringList(values).map((value) => value.toLowerCase()));
 }
 
-function normalizeResolvedToolName(value: unknown): string | null {
-  return typeof value === 'string' && value.trim().length > 0
-    ? value.trim()
-    : null;
+export function normalizeResolvedToolName(
+  value: ReturnType<AgentAcpToolNameResolver>,
+  semanticToolName: string,
+  nativeToolName?: string,
+): NonNullable<ReturnType<AgentAcpToolNameResolver>> | null {
+  if (typeof value === 'object' && value !== null) return value;
+  const name = typeof value === 'string' ? value.trim() : '';
+  if (!name || (name === nativeToolName && name !== semanticToolName)) return null;
+  return name;
 }
 
 function matchesTextRule(text: string, rule: Readonly<{
@@ -146,17 +151,17 @@ function resolveCallbackToolName(params: Readonly<{
   toolCallId: string;
   input: Record<string, unknown>;
   context: ToolNameContext;
-}>): string | null {
+}>): ReturnType<typeof normalizeResolvedToolName> {
   const callback = params.definition.callbacks?.toolNameResolver;
   if (!callback) {
     return null;
   }
   return normalizeResolvedToolName(callback({
-    toolName: params.toolName,
+    toolName: params.context.nativeToolName ?? params.toolName,
     toolCallId: params.toolCallId,
     input: params.input,
     context: params.context,
-  }));
+  }), params.toolName, params.context.nativeToolName);
 }
 
 function resolveHintInputToolName(params: Readonly<{

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { DefaultTransport } from '@/agent/transport';
+import { createAcpTransportHandlerFromDefinition } from '../runtime/definition/transport';
 import type { AgentMessage } from '@/agent/core';
 import { normalizeToolCallV2 } from '@/agent/tools/normalization';
 import {
@@ -10,8 +11,29 @@ import {
   markToolCallWaitingForPermission,
 } from '../sessionUpdateHandlers';
 import { createLegacyHandlerContextFixture } from './legacyToolRuntimeFixture';
+import { resolveCodeBuddyAcpToolName } from '../../../../../../packages/plugins/codebuddy/src/agent/runtime/factory';
 
 describe('legacy ACP session tool handlers', () => {
+  it('uses the plugin-resolved input and tool identity together', () => {
+    const emitted: AgentMessage[] = [];
+    const transport = createAcpTransportHandlerFromDefinition({ backendId: 'fixture', callbacks: {
+      toolNameResolver: ({ toolName, input }) => toolName === 'other'
+        ? { toolName: 'Bash', input: { command: input.params } }
+        : null,
+    } });
+    const ctx = createLegacyHandlerContextFixture({ transport, emit: message => emitted.push(message) });
+    handleToolCall({ sessionUpdate: 'tool_call', toolCallId: 'projected-call', kind: 'other',
+      title: 'Native wrapper', rawInput: { params: 'echo projected' } }, ctx);
+    expect(emitted.find(message => message.type === 'tool-call')).toMatchObject({
+      toolName: 'Bash', args: { command: 'echo projected' },
+    });
+    handleToolCallUpdate({ sessionUpdate: 'tool_call_update', toolCallId: 'projected-call', kind: 'other',
+      rawInput: { params: 'echo changed' } }, ctx);
+    expect(emitted.filter(message => message.type === 'tool-call').at(-1)).toMatchObject({
+      toolName: 'Bash', args: { command: 'echo changed' },
+    });
+  });
+
   it('routes create/update/terminal observations through one stable lifecycle identity', () => {
     const emitted: any[] = [];
     const ctx = createLegacyHandlerContextFixture({ emit: (message) => emitted.push(message) });
@@ -37,11 +59,14 @@ describe('legacy ACP session tool handlers', () => {
     'does not promote a user-owned deferred wrapper title when the ACP title is %s',
     (title) => {
       const emitted: AgentMessage[] = [];
-      const ctx = createLegacyHandlerContextFixture({ emit: (message) => emitted.push(message) });
+      const ctx = createLegacyHandlerContextFixture({ emit: (message) => emitted.push(message),
+        transport: createAcpTransportHandlerFromDefinition({ backendId: 'fixture',
+          callbacks: { toolNameResolver: resolveCodeBuddyAcpToolName } }),
+      });
       const rawInput = {
         toolName: 'Bash',
         params: { command: 'echo user-owned-data' },
-        _acp: { title: 'DeferExecuteTool' },
+        _acp: { kind: 'other', title: 'DeferExecuteTool' },
       };
 
       handleToolCallUpdate({
@@ -56,8 +81,7 @@ describe('legacy ACP session tool handlers', () => {
       const toolCall = emitted.find((message) => message.type === 'tool-call');
       if (toolCall?.type !== 'tool-call') throw new Error('expected tool-call');
       const normalized = normalizeToolCallV2({
-        protocol: 'acp',
-        provider: 'codebuddy',
+        source: { protocol: 'acp', agent: { pluginId: 'happier.agent.codebuddy', localId: 'codebuddy' } },
         toolName: toolCall.toolName,
         rawInput: toolCall.args,
       });

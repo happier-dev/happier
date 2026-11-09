@@ -22,7 +22,15 @@ function createAuggieAcpOptions(configuration: AgentSessionConfigurationSnapshot
         pluginRoot: skills?.pluginRoot,
       }),
     },
-    definition: AUGGIE_ACP_RUNTIME_DEFINITION,
+    definition: { ...AUGGIE_ACP_RUNTIME_DEFINITION,
+      toolNameResolver: ({ toolName, input }) => {
+        const name = toolName.trim().toLowerCase();
+        const acp = input._acp;
+        return (name === 'unknown tool' || name === 'unknown' || name === 'other')
+          && acp && typeof acp === 'object' && 'title' in acp && acp.title === 'Workspace Indexing Permission'
+          ? 'WorkspaceIndexingPermission' : null;
+      },
+    },
   };
 }
 

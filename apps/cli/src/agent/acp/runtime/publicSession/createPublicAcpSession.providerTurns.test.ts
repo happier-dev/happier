@@ -111,6 +111,23 @@ async function withPublicContinuation(run: (fixture: {
   });
 }
 
+it('uses the awaitable plugin invocation for a native permission request', async () => {
+  await withPublicContinuation(async ({ runtime, host, events, requestInteraction }) => {
+    const sink = host.beginContinuation({ id: 'task', turnId: '1' });
+    expect(sink).not.toBeNull();
+    await expect(runtime.requestExtension('test/permission', { toolCallId: '1:projected' }))
+      .resolves.toEqual({ outcome: { outcome: 'selected', optionId: 'allow' } });
+    expect(requestInteraction).toHaveBeenCalledWith(expect.objectContaining({
+      subject: { kind: 'tool', name: 'Read', input: { file_path: 'projected.txt' } },
+    }), expect.anything());
+    expect(events).toContainEqual(expect.objectContaining({ kind: 'tool-call', toolName: 'Read',
+      input: expect.objectContaining({ file_path: 'projected.txt' }) }));
+    await sink!.finish({ kind: 'completed' });
+  }, { resolveToolName: async request => request.toolCallId === '1:projected'
+    ? { toolName: 'Read', input: { file_path: 'projected.txt' } }
+    : request.toolName });
+});
+
 it('does not overwrite a provider turn admitted while a foreground prompt is being projected', async () => {
   await withPublicContinuation(async ({ runtime, host, events }) => {
     const pending = runtime.send({ inputIds: ['racing-input'], input: { text: 'Racing foreground' },

@@ -12,6 +12,7 @@
  */
 
 import type { AgentMessage } from '../core';
+import type { AgentAcpToolNameResolver } from '@happier-dev/plugin-sdk/agents/runtime';
 
 /**
  * Tool name pattern for extraction from toolCallId
@@ -37,6 +38,8 @@ export interface StderrContext {
  * Context for tool name detection heuristics
  */
 export interface ToolNameContext {
+  /** Original transport identity for the plugin codec before semantic inference or caching. */
+  nativeToolName?: string;
   /** Whether the recent prompt contained change_title instruction */
   recentPromptHadChangeTitle: boolean;
   /** Number of tool calls since last prompt */
@@ -172,7 +175,7 @@ export interface TransportHandler {
     toolCallId: string,
     input: Record<string, unknown>,
     context: ToolNameContext
-  ): string;
+  ): NonNullable<ReturnType<AgentAcpToolNameResolver>>;
 
   /**
    * Optional provider hook for debug logging terminal tool update payloads.

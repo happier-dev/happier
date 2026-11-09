@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type { ToolNormalizationProtocol } from '@happier-dev/protocol';
+import type { ToolNormalizationSourceV3 } from '@happier-dev/protocol';
 
 export type ToolTraceEventV1 = {
   v: 1;
@@ -23,9 +23,12 @@ export function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-export function asToolNormalizationProtocol(protocol: string): ToolNormalizationProtocol {
-  if (protocol === 'codex' || protocol === 'claude') return protocol;
-  return 'acp';
+export function asToolNormalizationProtocol(protocol: string): ToolNormalizationSourceV3['protocol'] {
+  return protocol === 'acp' ? 'acp' : 'native';
+}
+
+export function toolNormalizationSource(protocol: string, provider: string): ToolNormalizationSourceV3 {
+  return { protocol: asToolNormalizationProtocol(protocol), agent: { pluginId: `happier.agent.${provider}`, localId: provider } };
 }
 
 export function loadFixtureV1(): ToolTraceFixturesV1 {

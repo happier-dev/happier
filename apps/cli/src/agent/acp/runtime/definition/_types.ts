@@ -122,14 +122,7 @@ export type HostAcpPermissionOptionSelection = Readonly<{
   approved?: 'allow_once' | 'allow_always';
 }>;
 
-export type HostAcpToolNameResolver = (
-  request: Readonly<{
-    toolName: string;
-    toolCallId: string;
-    input: Readonly<Record<string, unknown>>;
-    context: Readonly<{ toolCallCountSincePrompt: number }>;
-  }>,
-) => string | null | undefined;
+export type HostAcpToolNameResolver = import('@happier-dev/plugin-sdk/agents/runtime').AgentAcpToolNameResolver;
 
 export type HostAcpTier2PermissionDecisionResult = Readonly<{
   kind: 'allow' | 'deny' | 'defer';

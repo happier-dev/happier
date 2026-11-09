@@ -1,7 +1,6 @@
-import { extractDeferredToolExecutionCall } from './deferredToolExecutionCanonicalization';
 import { withUnrepresentedRaw } from './rawRetention';
 import { projectHappierToolInputForObservation } from '../happierTools/resultObservation';
-import type { ToolHappierMetaV2, ToolNormalizationProtocol } from '@happier-dev/protocol';
+import type { ToolHappierMetaV3, ToolNormalizationSourceV3 } from '@happier-dev/protocol';
 import { isChangeTitleToolNameAlias, isShellToolNameAlias } from '@happier-dev/protocol/tools/v2/aliases';
 import { normalizeBashInput, normalizeBashResult } from './families/execute';
 import { normalizeReadInput, normalizeReadResult } from './families/read';
@@ -39,7 +38,7 @@ function asRecord(value: unknown): UnknownRecord | null {
     return value as UnknownRecord;
 }
 
-function mergeHappierMeta(input: unknown, meta: ToolHappierMetaV2): UnknownRecord {
+function mergeHappierMeta(input: unknown, meta: ToolHappierMetaV3): UnknownRecord {
     const record = asRecord(input) ?? {};
     const currentHappier = asRecord(record._happier) ?? {};
     const legacyHappy = asRecord((record as any)._happy) ?? {};
@@ -83,7 +82,7 @@ function withCommonErrorMessage(normalized: UnknownRecord): UnknownRecord {
 }
 
 export function canonicalizeToolNameV2(opts: {
-    protocol: ToolNormalizationProtocol;
+    protocol: ToolNormalizationSourceV3['protocol'];
     toolName: string;
     toolInput?: unknown;
     callId?: string;
@@ -93,10 +92,6 @@ export function canonicalizeToolNameV2(opts: {
     const shellBridgeCanonical = isShellToolNameAlias(name)
         ? resolveCanonicalToolNameFromHappierToolsShellBridge(opts.toolInput) : null;
     if (shellBridgeCanonical) return shellBridgeCanonical;
-    const deferredCall = extractDeferredToolExecutionCall({ ...opts, rawInput: opts.toolInput });
-    if (deferredCall) {
-        return canonicalizeToolNameV2({ ...opts, toolName: deferredCall.toolName, toolInput: deferredCall.params });
-    }
     const record = asRecord(opts.toolInput) ?? {};
     const titleCandidate =
         typeof (record as any).title === 'string'
@@ -124,18 +119,6 @@ export function canonicalizeToolNameV2(opts: {
         }
         return null;
     })();
-
-    // Provider prompts that are represented as permission requests ("Unknown tool" etc.).
-    // Auggie emits a workspace indexing prompt with toolName="Unknown tool". Normalize it so the UI can render it.
-    if (lower === 'unknown tool') {
-        const title =
-            typeof (record as any).title === 'string'
-                ? String((record as any).title)
-                : typeof (record as any)?.toolCall?.title === 'string'
-                    ? String((record as any).toolCall.title)
-                    : null;
-        if (title === 'Workspace Indexing Permission') return 'WorkspaceIndexingPermission';
-    }
 
     // Some providers (notably Codex ACP) may emit tool events with toolName="unknown" but with enough
     // shape to infer the canonical tool. Prefer conservative inference to avoid silently dropping
@@ -295,10 +278,6 @@ export function canonicalizeToolNameV2(opts: {
     if (lower === 'todowrite') return 'TodoWrite';
     if (lower === 'todoread') return 'TodoRead';
 
-    // Provider special-cases.
-    if (name === 'CodexPatch' || name === 'GeminiPatch') return 'Patch';
-    if (name === 'CodexDiff' || name === 'GeminiDiff') return 'Diff';
-    if (name === 'GeminiReasoning' || name === 'CodexReasoning' || lower === 'think') return 'Reasoning';
     if (lower === 'exit_plan_mode') return 'ExitPlanMode';
     if (lower === 'askuserquestion' || lower === 'ask_user_question') return 'AskUserQuestion';
     if (isChangeTitleToolNameAlias(lower)) return 'change_title';
@@ -306,293 +285,153 @@ export function canonicalizeToolNameV2(opts: {
 }
 
 export function normalizeToolCallInputV2(opts: {
-    protocol: ToolNormalizationProtocol;
-    provider: string;
+    source: ToolNormalizationSourceV3;
     toolName: string;
     canonicalToolName: string;
     rawInput: unknown;
 }): unknown {
-    const deferredCall = extractDeferredToolExecutionCall(opts);
-    const effectiveToolName = deferredCall?.toolName ?? opts.toolName;
-    const unwrappedInput = deferredCall?.params ?? opts.rawInput;
-    const effectiveRawInput = (isShellToolNameAlias(effectiveToolName)
-        ? extractCanonicalInputFromHappierToolsShellBridge(unwrappedInput) : null) ?? unwrappedInput;
+    const meta: ToolHappierMetaV3 = {
+        v: 3,
+        ...opts.source,
+        rawToolName: opts.toolName,
+        canonicalToolName: opts.canonicalToolName,
+    };
+    const effectiveRawInput = (isShellToolNameAlias(opts.toolName)
+        ? extractCanonicalInputFromHappierToolsShellBridge(opts.rawInput) : null) ?? opts.rawInput;
 
     if (opts.canonicalToolName.startsWith('mcp__')) {
         const normalized = normalizeMcpInput(opts.canonicalToolName, effectiveRawInput);
-        const meta: ToolHappierMetaV2 = {
-            v: 2,
-            protocol: opts.protocol,
-            provider: opts.provider,
-            rawToolName: opts.toolName,
-            canonicalToolName: opts.canonicalToolName,
-        };
         const withHappier = mergeHappierMeta(normalized, meta);
         return withUnrepresentedRaw(withHappier, opts.rawInput);
     }
 
     if (opts.canonicalToolName === 'Bash') {
         const normalized = normalizeBashInput(effectiveRawInput);
-        const meta: ToolHappierMetaV2 = {
-            v: 2,
-            protocol: opts.protocol,
-            provider: opts.provider,
-            rawToolName: opts.toolName,
-            canonicalToolName: opts.canonicalToolName,
-        };
         const withHappier = mergeHappierMeta(normalized, meta);
         return withUnrepresentedRaw(withHappier, opts.rawInput);
     }
 
     if (opts.canonicalToolName === 'Read') {
         const normalized = normalizeReadInput(effectiveRawInput);
-        const meta: ToolHappierMetaV2 = {
-            v: 2,
-            protocol: opts.protocol,
-            provider: opts.provider,
-            rawToolName: opts.toolName,
-            canonicalToolName: opts.canonicalToolName,
-        };
         const withHappier = mergeHappierMeta(normalized, meta);
         return withUnrepresentedRaw(withHappier, opts.rawInput);
     }
 
     if (opts.canonicalToolName === 'Delete') {
         const normalized = normalizeDeleteInput(effectiveRawInput);
-        const meta: ToolHappierMetaV2 = {
-            v: 2,
-            protocol: opts.protocol,
-            provider: opts.provider,
-            rawToolName: opts.toolName,
-            canonicalToolName: opts.canonicalToolName,
-        };
         const withHappier = mergeHappierMeta(normalized, meta);
         return withUnrepresentedRaw(withHappier, opts.rawInput);
     }
 
     if (opts.canonicalToolName === 'TodoWrite') {
         const normalized = normalizeTodoWriteInput(effectiveRawInput);
-        const meta: ToolHappierMetaV2 = {
-            v: 2,
-            protocol: opts.protocol,
-            provider: opts.provider,
-            rawToolName: opts.toolName,
-            canonicalToolName: opts.canonicalToolName,
-        };
         const withHappier = mergeHappierMeta(normalized, meta);
         return withUnrepresentedRaw(withHappier, opts.rawInput);
     }
 
     if (opts.canonicalToolName === 'TodoRead') {
         const normalized = normalizeTodoReadInput(effectiveRawInput);
-        const meta: ToolHappierMetaV2 = {
-            v: 2,
-            protocol: opts.protocol,
-            provider: opts.provider,
-            rawToolName: opts.toolName,
-            canonicalToolName: opts.canonicalToolName,
-        };
         const withHappier = mergeHappierMeta(normalized, meta);
         return withUnrepresentedRaw(withHappier, opts.rawInput);
     }
 
     if (opts.canonicalToolName === 'SubAgent' || opts.canonicalToolName === 'Task') {
-        const normalized = normalizeTaskInput(effectiveToolName, effectiveRawInput);
-        const meta: ToolHappierMetaV2 = {
-            v: 2,
-            protocol: opts.protocol,
-            provider: opts.provider,
-            rawToolName: opts.toolName,
-            canonicalToolName: opts.canonicalToolName,
-        };
+        const normalized = normalizeTaskInput(opts.toolName, effectiveRawInput);
         const withHappier = mergeHappierMeta(normalized, meta);
         return withUnrepresentedRaw(withHappier, opts.rawInput);
     }
 
     if (opts.canonicalToolName === 'Write') {
         const normalized = normalizeWriteInput(effectiveRawInput);
-        const meta: ToolHappierMetaV2 = {
-            v: 2,
-            protocol: opts.protocol,
-            provider: opts.provider,
-            rawToolName: opts.toolName,
-            canonicalToolName: opts.canonicalToolName,
-        };
         const withHappier = mergeHappierMeta(normalized, meta);
         return withUnrepresentedRaw(withHappier, opts.rawInput);
     }
 
     if (opts.canonicalToolName === 'Edit') {
         const normalized = normalizeEditInput(effectiveRawInput);
-        const meta: ToolHappierMetaV2 = {
-            v: 2,
-            protocol: opts.protocol,
-            provider: opts.provider,
-            rawToolName: opts.toolName,
-            canonicalToolName: opts.canonicalToolName,
-        };
         const withHappier = mergeHappierMeta(normalized, meta);
         return withUnrepresentedRaw(withHappier, opts.rawInput);
     }
 
     if (opts.canonicalToolName === 'MultiEdit') {
         const normalized = normalizeMultiEditInput(effectiveRawInput);
-        const meta: ToolHappierMetaV2 = {
-            v: 2,
-            protocol: opts.protocol,
-            provider: opts.provider,
-            rawToolName: opts.toolName,
-            canonicalToolName: opts.canonicalToolName,
-        };
         const withHappier = mergeHappierMeta(normalized, meta);
         return withUnrepresentedRaw(withHappier, opts.rawInput);
     }
 
     if (opts.canonicalToolName === 'Diff') {
         const normalized = normalizeDiffInput(effectiveRawInput);
-        const meta: ToolHappierMetaV2 = {
-            v: 2,
-            protocol: opts.protocol,
-            provider: opts.provider,
-            rawToolName: opts.toolName,
-            canonicalToolName: opts.canonicalToolName,
-        };
         const withHappier = mergeHappierMeta(normalized, meta);
         return withUnrepresentedRaw(withHappier, opts.rawInput);
     }
 
     if (opts.canonicalToolName === 'Patch') {
         const normalized = normalizePatchInput(effectiveRawInput);
-        const meta: ToolHappierMetaV2 = {
-            v: 2,
-            protocol: opts.protocol,
-            provider: opts.provider,
-            rawToolName: opts.toolName,
-            canonicalToolName: opts.canonicalToolName,
-        };
         const withHappier = mergeHappierMeta(normalized, meta);
         return withUnrepresentedRaw(withHappier, opts.rawInput);
     }
 
     if (opts.canonicalToolName === 'Reasoning') {
         const normalized = normalizeReasoningInput(effectiveRawInput);
-        const meta: ToolHappierMetaV2 = {
-            v: 2,
-            protocol: opts.protocol,
-            provider: opts.provider,
-            rawToolName: opts.toolName,
-            canonicalToolName: opts.canonicalToolName,
-        };
         const withHappier = mergeHappierMeta(normalized, meta);
         return withUnrepresentedRaw(withHappier, opts.rawInput);
     }
 
     if (opts.canonicalToolName === 'Glob') {
         const normalized = normalizeGlobInput(effectiveRawInput);
-        const meta: ToolHappierMetaV2 = {
-            v: 2,
-            protocol: opts.protocol,
-            provider: opts.provider,
-            rawToolName: opts.toolName,
-            canonicalToolName: opts.canonicalToolName,
-        };
         const withHappier = mergeHappierMeta(normalized, meta);
         return withUnrepresentedRaw(withHappier, opts.rawInput);
     }
 
     if (opts.canonicalToolName === 'CodeSearch') {
         const normalized = normalizeCodeSearchInput(effectiveRawInput);
-        const meta: ToolHappierMetaV2 = {
-            v: 2,
-            protocol: opts.protocol,
-            provider: opts.provider,
-            rawToolName: opts.toolName,
-            canonicalToolName: opts.canonicalToolName,
-        };
         const withHappier = mergeHappierMeta(normalized, meta);
         return withUnrepresentedRaw(withHappier, opts.rawInput);
     }
 
     if (opts.canonicalToolName === 'Grep') {
         const normalized = normalizeGrepInput(effectiveRawInput);
-        const meta: ToolHappierMetaV2 = {
-            v: 2,
-            protocol: opts.protocol,
-            provider: opts.provider,
-            rawToolName: opts.toolName,
-            canonicalToolName: opts.canonicalToolName,
-        };
         const withHappier = mergeHappierMeta(normalized, meta);
         return withUnrepresentedRaw(withHappier, opts.rawInput);
     }
 
     if (opts.canonicalToolName === 'LS') {
         const normalized = normalizeLsInput(effectiveRawInput);
-        const meta: ToolHappierMetaV2 = {
-            v: 2,
-            protocol: opts.protocol,
-            provider: opts.provider,
-            rawToolName: opts.toolName,
-            canonicalToolName: opts.canonicalToolName,
-        };
         const withHappier = mergeHappierMeta(normalized, meta);
         return withUnrepresentedRaw(withHappier, opts.rawInput);
     }
 
     if (opts.canonicalToolName === 'WebFetch') {
         const normalized = normalizeWebFetchInput(effectiveRawInput);
-        const meta: ToolHappierMetaV2 = {
-            v: 2,
-            protocol: opts.protocol,
-            provider: opts.provider,
-            rawToolName: opts.toolName,
-            canonicalToolName: opts.canonicalToolName,
-        };
         const withHappier = mergeHappierMeta(normalized, meta);
         return withUnrepresentedRaw(withHappier, opts.rawInput);
     }
 
     if (opts.canonicalToolName === 'WebSearch') {
         const normalized = normalizeWebSearchInput(effectiveRawInput);
-        const meta: ToolHappierMetaV2 = {
-            v: 2,
-            protocol: opts.protocol,
-            provider: opts.provider,
-            rawToolName: opts.toolName,
-            canonicalToolName: opts.canonicalToolName,
-        };
         const withHappier = mergeHappierMeta(normalized, meta);
         return withUnrepresentedRaw(withHappier, opts.rawInput);
     }
 
-    const meta: ToolHappierMetaV2 = {
-        v: 2,
-        protocol: opts.protocol,
-        provider: opts.provider,
-        rawToolName: opts.toolName,
-        canonicalToolName: opts.canonicalToolName,
-    };
     const record = asRecord(effectiveRawInput) ?? {};
     const withHappier = mergeHappierMeta(record, meta);
     return withUnrepresentedRaw(withHappier, opts.rawInput);
 }
 
 export function normalizeToolCallV2(opts: {
-    protocol: ToolNormalizationProtocol;
-    provider: string;
+    source: ToolNormalizationSourceV3;
     toolName: string;
     rawInput: unknown;
     callId?: string;
 }): { canonicalToolName: string; input: unknown } {
     const canonicalToolName = canonicalizeToolNameV2({
-        protocol: opts.protocol,
+        protocol: opts.source.protocol,
         toolName: opts.toolName,
         toolInput: opts.rawInput,
         callId: opts.callId,
     });
     const input = normalizeToolCallInputV2({
-        protocol: opts.protocol,
-        provider: opts.provider,
+        source: opts.source,
         toolName: opts.toolName,
         canonicalToolName,
         rawInput: opts.rawInput,
@@ -601,22 +440,20 @@ export function normalizeToolCallV2(opts: {
     return { canonicalToolName, input: observed === input ? input : normalizeToolCallInputV2({
         ...opts,
         canonicalToolName,
-        // The projected semantic input has no shell command or deferred wrapper to retain.
+        // The projected semantic input has no shell command to retain.
         rawInput: observed,
     }) };
 }
 
 export function normalizeToolResultV2(opts: {
-    protocol: ToolNormalizationProtocol;
-    provider: string;
+    source: ToolNormalizationSourceV3;
     rawToolName: string;
     canonicalToolName: string;
     rawOutput: unknown;
 }): unknown {
-    const meta: ToolHappierMetaV2 = {
-        v: 2,
-        protocol: opts.protocol,
-        provider: opts.provider,
+    const meta: ToolHappierMetaV3 = {
+        v: 3,
+        ...opts.source,
         rawToolName: opts.rawToolName,
         canonicalToolName: opts.canonicalToolName,
     };

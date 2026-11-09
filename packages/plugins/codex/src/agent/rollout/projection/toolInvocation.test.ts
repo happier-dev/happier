@@ -6,6 +6,11 @@ import {
 } from './toolInvocation.js';
 
 describe('codex terminal-mode rollout tool mapping', () => {
+    it.each([['CodexPatch', 'Patch'], ['CodexDiff', 'Diff'], ['CodexReasoning', 'Reasoning']])(
+        'projects the native %s alias before shared normalization', (name, canonicalToolName) => {
+            expect(canonicalizeCodexRolloutToolName(name)).toEqual({ canonicalToolName, visibility: 'default' });
+        },
+    );
     it('retains the native code-mode script as a visible tool without interpreting its code', () => {
         const code = 'const result = await tools.exec_command({cmd:"pwd"}); text(result);';
         expect(canonicalizeCodexRolloutToolName('exec')).toEqual({ canonicalToolName: 'exec', visibility: 'default' });

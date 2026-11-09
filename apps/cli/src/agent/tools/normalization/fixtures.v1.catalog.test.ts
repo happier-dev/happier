@@ -1,3 +1,6 @@
+import { canonicalizeCodexRolloutToolName } from '../../../../../../packages/plugins/codex/src/agent/rollout/projection/toolInvocation';
+import { buildGeminiAcpToolNameResolver } from '../../../../../../packages/plugins/gemini/src/agent/acp/toolNames';
+import { toolNormalizationSource } from './fixtures.v1.testkit';
 import { describe, expect, it } from 'vitest';
 
 import { normalizeToolCallV2, normalizeToolResultV2 } from './index';
@@ -25,8 +28,7 @@ describe('tool normalization fixtures (v1): catalog coverage', () => {
     expect(exec).toBeTruthy();
     const execPayload = asRecord(exec?.payload) ?? {};
     const execNorm = normalizeToolCallV2({
-      protocol: 'acp',
-      provider: 'opencode',
+      source: toolNormalizationSource('acp', 'opencode'),
       toolName: String(execPayload.name ?? ''),
       rawInput: execPayload.input,
       callId: typeof execPayload.callId === 'string' ? execPayload.callId : undefined,
@@ -37,8 +39,7 @@ describe('tool normalization fixtures (v1): catalog coverage', () => {
     expect(codexBash).toBeTruthy();
     const codexBashPayload = asRecord(codexBash?.payload) ?? {};
     const codexBashNorm = normalizeToolCallV2({
-      protocol: 'codex',
-      provider: 'codex',
+      source: toolNormalizationSource('codex', 'codex'),
       toolName: String(codexBashPayload.name ?? ''),
       rawInput: codexBashPayload.input,
       callId: typeof codexBashPayload.callId === 'string' ? codexBashPayload.callId : undefined,
@@ -50,9 +51,8 @@ describe('tool normalization fixtures (v1): catalog coverage', () => {
     expect(codexDiff).toBeTruthy();
     const codexDiffPayload = asRecord(codexDiff?.payload) ?? {};
     const codexDiffNorm = normalizeToolCallV2({
-      protocol: 'codex',
-      provider: 'codex',
-      toolName: String(codexDiffPayload.name ?? ''),
+      source: toolNormalizationSource('codex', 'codex'),
+      toolName: canonicalizeCodexRolloutToolName(String(codexDiffPayload.name ?? '')).canonicalToolName,
       rawInput: codexDiffPayload.input,
       callId: typeof codexDiffPayload.callId === 'string' ? codexDiffPayload.callId : undefined,
     });
@@ -63,9 +63,8 @@ describe('tool normalization fixtures (v1): catalog coverage', () => {
     expect(codexPatch).toBeTruthy();
     const codexPatchPayload = asRecord(codexPatch?.payload) ?? {};
     const codexPatchNorm = normalizeToolCallV2({
-      protocol: 'codex',
-      provider: 'codex',
-      toolName: String(codexPatchPayload.name ?? ''),
+      source: toolNormalizationSource('codex', 'codex'),
+      toolName: canonicalizeCodexRolloutToolName(String(codexPatchPayload.name ?? '')).canonicalToolName,
       rawInput: codexPatchPayload.input,
       callId: typeof codexPatchPayload.callId === 'string' ? codexPatchPayload.callId : undefined,
     });
@@ -76,9 +75,8 @@ describe('tool normalization fixtures (v1): catalog coverage', () => {
     expect(reasoning).toBeTruthy();
     const reasoningPayload = asRecord(reasoning?.payload) ?? {};
     const reasoningNorm = normalizeToolCallV2({
-      protocol: 'acp',
-      provider: 'gemini',
-      toolName: String(reasoningPayload.name ?? ''),
+      source: toolNormalizationSource('acp', 'gemini'),
+      toolName: String(buildGeminiAcpToolNameResolver({})({ toolName: String(reasoningPayload.name ?? ''), toolCallId: 'reasoning', input: {}, context: { toolCallCountSincePrompt: 0 } })),
       rawInput: reasoningPayload.input,
       callId: typeof reasoningPayload.callId === 'string' ? reasoningPayload.callId : undefined,
     });
@@ -93,8 +91,7 @@ describe('tool normalization fixtures (v1): catalog coverage', () => {
       expect(event).toBeTruthy();
       const payload = asRecord(event?.payload) ?? {};
       return normalizeToolCallV2({
-        protocol: 'acp',
-        provider: String(event?.provider ?? 'unknown'),
+        source: toolNormalizationSource('acp', String(event?.provider ?? 'unknown')),
         toolName: String(payload.name ?? ''),
         rawInput: payload.input,
         callId: typeof payload.callId === 'string' ? payload.callId : undefined,
@@ -134,8 +131,7 @@ describe('tool normalization fixtures (v1): catalog coverage', () => {
     expect(call).toBeTruthy();
     const callPayload = asRecord(call?.payload) ?? {};
     const callNorm = normalizeToolCallV2({
-      protocol: 'codex',
-      provider: 'codex',
+      source: toolNormalizationSource('codex', 'codex'),
       toolName: String(callPayload.name ?? ''),
       rawInput: callPayload.input,
       callId: typeof callPayload.callId === 'string' ? callPayload.callId : undefined,
@@ -148,8 +144,7 @@ describe('tool normalization fixtures (v1): catalog coverage', () => {
     expect(result).toBeTruthy();
     const resultPayload = asRecord(result?.payload) ?? {};
     const resultNorm = normalizeToolResultV2({
-      protocol: 'codex',
-      provider: 'codex',
+      source: toolNormalizationSource('codex', 'codex'),
       rawToolName: String(callPayload.name ?? ''),
       canonicalToolName: callNorm.canonicalToolName,
       rawOutput: resultPayload.output,
@@ -160,8 +155,7 @@ describe('tool normalization fixtures (v1): catalog coverage', () => {
 
   it('promotes Happier shell-bridge tool calls to the underlying built-in or MCP tool', () => {
     const bridgeChangeTitle = normalizeToolCallV2({
-      protocol: 'acp',
-      provider: 'pi',
+      source: toolNormalizationSource('acp', 'pi'),
       toolName: 'execute',
       callId: 'run_shell_command-1',
       rawInput: {
@@ -185,8 +179,7 @@ describe('tool normalization fixtures (v1): catalog coverage', () => {
     expect(asRecord(bridgeChangeTitle.input)).toMatchObject({ title: 'Pi Tools Proof 2026-03-06' });
 
     const changeTitleResult = normalizeToolResultV2({
-      protocol: 'acp',
-      provider: 'pi',
+      source: toolNormalizationSource('acp', 'pi'),
       rawToolName: 'execute',
       canonicalToolName: 'change_title',
       rawOutput: { stdout: 'Successfully changed chat title to: "Pi Tools Proof 2026-03-06"', exit_code: 0 },
@@ -207,8 +200,7 @@ describe('tool normalization fixtures (v1): catalog coverage', () => {
     const toolsCallText = JSON.stringify(toolsCallEnvelope);
 
     const toolsCallJsonStdout = normalizeToolResultV2({
-      protocol: 'acp',
-      provider: 'pi',
+      source: toolNormalizationSource('acp', 'pi'),
       rawToolName: 'execute',
       canonicalToolName: 'change_title',
       rawOutput: { stdout: toolsCallText, exit_code: 0 },
@@ -216,8 +208,7 @@ describe('tool normalization fixtures (v1): catalog coverage', () => {
     expect(asRecord(toolsCallJsonStdout)).toMatchObject({ title: 'Pi Tools Proof 2026-03-06' });
 
     const toolsCallJsonContent = normalizeToolResultV2({
-      protocol: 'acp',
-      provider: 'pi',
+      source: toolNormalizationSource('acp', 'pi'),
       rawToolName: 'execute',
       canonicalToolName: 'change_title',
       rawOutput: { content: [{ type: 'text', text: toolsCallText }], isError: false },
@@ -225,8 +216,7 @@ describe('tool normalization fixtures (v1): catalog coverage', () => {
     expect(asRecord(toolsCallJsonContent)).toMatchObject({ title: 'Pi Tools Proof 2026-03-06' });
 
     const bridgeCustomMcp = normalizeToolCallV2({
-      protocol: 'acp',
-      provider: 'auggie',
+      source: toolNormalizationSource('acp', 'auggie'),
       toolName: 'execute',
       callId: 'run_shell_command-2',
       rawInput: {
@@ -250,8 +240,7 @@ describe('tool normalization fixtures (v1): catalog coverage', () => {
     expect(asRecord(bridgeCustomMcp.input)?._mcp).toBeTruthy();
 
     const customMcpResult = normalizeToolResultV2({
-      protocol: 'acp',
-      provider: 'auggie',
+      source: toolNormalizationSource('acp', 'auggie'),
       rawToolName: 'execute',
       canonicalToolName: 'mcp__qa_marker_stdio_20260306__get_marker',
       rawOutput: { stdout: '{"renamed":true,"marker":"qa-marker-stdio-20260306"}', exit_code: 0 },

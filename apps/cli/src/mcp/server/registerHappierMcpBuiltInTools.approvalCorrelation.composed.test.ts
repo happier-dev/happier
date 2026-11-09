@@ -78,7 +78,7 @@ describe('MCP approval origin to stored transcript review', () => {
       expect(open.origin?.toolCallId).toBe(correlated ? 'exec-owned-call' : undefined);
       expect(open.origin?.mcpRequestId).not.toBe('exec-owned-call');
       expect(open.actionArgs).toEqual({ sessionId: 'session-owned', title: 'Owned title' });
-      const normalized = normalizeToolCallV2({ protocol: 'codex', provider: 'codex', toolName: 'mcp__happier__action_execute', rawInput, callId: 'exec-owned-call' });
+      const normalized = normalizeToolCallV2({ source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } }, toolName: 'mcp__happier__action_execute', rawInput, callId: 'exec-owned-call' });
       const tool = { id: 'exec-owned-call', name: normalized.canonicalToolName, input: normalized.input,
         state: 'completed', createdAt: 1, startedAt: 1, completedAt: 2, description: null } as const;
       for (const approval of [open, ApprovalRequestV2Schema.parse({ ...open, status: 'rejected', updatedAtMs: open.updatedAtMs + 1,
@@ -98,7 +98,7 @@ describe('MCP approval origin to stored transcript review', () => {
           expect(match('exec-other-call')).toBe(false);
           expect(match(open.origin!.mcpRequestId!)).toBe(false);
         }
-        const otherInput = normalizeToolCallV2({ protocol: 'codex', provider: 'codex', toolName: 'mcp__happier__action_execute',
+        const otherInput = normalizeToolCallV2({ source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } }, toolName: 'mcp__happier__action_execute',
           rawInput: { ...rawInput, input: { ...rawInput.input, title: 'Another title' } }, callId: 'exec-other-call' });
         expect(doesApprovalMatchToolCall({ request: selected[0]!, sessionId: 'session-owned', messageId: 'message-owned',
           tool: { ...tool, id: 'exec-other-call', input: otherInput.input }, normalizedToolName: 'MCP' })).toBe(false);
@@ -107,13 +107,13 @@ describe('MCP approval origin to stored transcript review', () => {
             tool: { ...tool, input: otherInput.input }, normalizedToolName: 'MCP' })).toBe(true);
         }
         if (!correlated) {
-          const wrongSessionInput = normalizeToolCallV2({ protocol: 'codex', provider: 'codex', toolName: 'mcp__happier__action_execute',
+          const wrongSessionInput = normalizeToolCallV2({ source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } }, toolName: 'mcp__happier__action_execute',
             rawInput: { ...rawInput, input: { ...rawInput.input, sessionId: 'other-session' } }, callId: 'exec-owned-call' });
           expect(doesApprovalMatchToolCall({ request: selected[0]!, sessionId: 'session-owned', messageId: 'message-owned',
             tool: { ...tool, input: wrongSessionInput.input }, normalizedToolName: 'MCP' })).toBe(false);
           expect(selectMatchingToolApprovalRequests({ requests: selected, sessionId: 'session-owned', messageId: 'message-owned',
             tool: { ...tool, input: wrongSessionInput.input }, normalizedToolName: 'MCP' })).toEqual([]);
-          const wrongActionInput = normalizeToolCallV2({ protocol: 'codex', provider: 'codex', toolName: 'mcp__happier__action_execute',
+          const wrongActionInput = normalizeToolCallV2({ source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } }, toolName: 'mcp__happier__action_execute',
             rawInput: { ...rawInput, actionId: 'session.message.send' }, callId: 'exec-owned-call' });
           expect(doesApprovalMatchToolCall({ request: selected[0]!, sessionId: 'session-owned', messageId: 'message-owned',
             tool: { ...tool, input: wrongActionInput.input }, normalizedToolName: 'MCP' })).toBe(false);

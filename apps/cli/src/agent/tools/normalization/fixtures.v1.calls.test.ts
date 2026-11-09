@@ -1,3 +1,4 @@
+import { toolNormalizationSource } from './fixtures.v1.testkit';
 import { describe, expect, it } from 'vitest';
 
 import { normalizeToolCallV2 } from './index';
@@ -12,8 +13,7 @@ import {
 function normalizeFirstCallEvent(event: ToolTraceEventV1) {
   const payload = asRecord(event.payload) ?? {};
   return normalizeToolCallV2({
-    protocol: asToolNormalizationProtocol(event.protocol),
-    provider: String(event.provider ?? 'unknown'),
+    source: toolNormalizationSource(asToolNormalizationProtocol(event.protocol), String(event.provider ?? 'unknown')),
     toolName: String(payload.name ?? ''),
     rawInput: payload.input,
     callId:
@@ -26,7 +26,7 @@ function normalizeFirstCallEvent(event: ToolTraceEventV1) {
 }
 
 describe('tool normalization fixtures (v1): tool calls + permissions', () => {
-  it('normalizes tool-call events into canonical tool names + V2 metadata', () => {
+  it('normalizes tool-call events into canonical tool names + V3 metadata', () => {
     const fixtures = loadFixtureV1();
     expect(fixtures.v).toBe(1);
 
@@ -40,8 +40,7 @@ describe('tool normalization fixtures (v1): tool calls + permissions', () => {
         expect(toolName.length).toBeGreaterThan(0);
 
         const normalized = normalizeToolCallV2({
-          protocol: asToolNormalizationProtocol(event.protocol),
-          provider: String(event.provider ?? 'unknown'),
+          source: toolNormalizationSource(asToolNormalizationProtocol(event.protocol), String(event.provider ?? 'unknown')),
           toolName,
           rawInput: payload.input,
           callId,
@@ -53,9 +52,8 @@ describe('tool normalization fixtures (v1): tool calls + permissions', () => {
         const inputRecord = asRecord(normalized.input);
         expect(inputRecord).toBeTruthy();
         expect(asRecord(inputRecord?._happier)).toMatchObject({
-          v: 2,
-          protocol: event.protocol,
-          provider: event.provider,
+          v: 3,
+          ...toolNormalizationSource(event.protocol, event.provider),
           rawToolName: toolName,
           canonicalToolName: normalized.canonicalToolName,
         });
@@ -187,8 +185,7 @@ describe('tool normalization fixtures (v1): tool calls + permissions', () => {
         const callId = typeof payload.permissionId === 'string' ? payload.permissionId : undefined;
 
         const normalized = normalizeToolCallV2({
-          protocol: asToolNormalizationProtocol(event.protocol),
-          provider: String(event.provider ?? 'unknown'),
+          source: toolNormalizationSource(asToolNormalizationProtocol(event.protocol), String(event.provider ?? 'unknown')),
           toolName,
           rawInput,
           callId,
@@ -200,21 +197,4 @@ describe('tool normalization fixtures (v1): tool calls + permissions', () => {
     }
   });
 
-  it('canonicalizes Auggie workspace indexing permission prompts for consistent rendering', () => {
-    const fixtures = loadFixtureV1();
-    const event = firstFixtureEvent(fixtures, 'acp/auggie/permission-request/Unknown tool');
-    expect(event).toBeTruthy();
-
-    const payload = asRecord(event?.payload) ?? {};
-    const rawInput = asRecord(payload.options)?.toolCall ?? asRecord(payload.options)?.input ?? payload.options ?? {};
-    const normalized = normalizeToolCallV2({
-      protocol: 'acp',
-      provider: String(event?.provider ?? 'unknown'),
-      toolName: String(payload.toolName ?? ''),
-      rawInput,
-      callId: typeof payload.permissionId === 'string' ? payload.permissionId : undefined,
-    });
-
-    expect(normalized.canonicalToolName).toBe('WorkspaceIndexingPermission');
-  });
 });

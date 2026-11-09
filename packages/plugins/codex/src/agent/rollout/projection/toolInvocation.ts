@@ -58,6 +58,11 @@ export function canonicalizeCodexRolloutToolName(name: string): {
         case 'shell_command':
         case 'exec_command':
             return { canonicalToolName: 'Bash', visibility: 'default' };
+        case 'CodexDiff':
+            return { canonicalToolName: 'Diff', visibility: 'default' };
+        case 'CodexReasoning':
+            return { canonicalToolName: 'Reasoning', visibility: 'default' };
+        case 'CodexPatch':
         case 'apply_patch':
             return { canonicalToolName: 'Patch', visibility: 'default' };
         case 'context7__get-library-docs':

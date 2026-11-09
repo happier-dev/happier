@@ -397,6 +397,8 @@ export interface AcpBackendOptions {
     context: Readonly<{ toolCallCountSincePrompt: number }>,
   ) => Promise<SessionUpdate | null>;
 
+  resolveToolNameAwaitable?: Parameters<typeof createAcpClientHandlers>[0]['resolveToolNameAwaitable'];
+
   /** Host-owned raw `session/prompt` transform immediately before ACP dispatch. */
   transformPromptRequest?: (
     request: PromptRequest,
@@ -1100,6 +1102,7 @@ export class AcpBackend implements CatalogAcpBackend {
       transport: this.transport,
       emit: (message) => this.emit(message),
       permissionHandler: this.options.permissionHandler,
+      resolveToolNameAwaitable: this.options.resolveToolNameAwaitable,
       createHandlerContext: () => this.createHandlerContext(),
       getToolNameContext: () => ({
         recentPromptHadChangeTitle: this.recentPromptHadChangeTitle,

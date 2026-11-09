@@ -77,7 +77,7 @@ export class LegacyAcpToolRuntime {
         const extractedOutput = extractToolOutput(parsedInput as SessionUpdate);
         const knownBefore = this.readCallInTurn(parsedInput.toolCallId, turnId);
         const waiting = knownBefore ? this.permissionWaiting.has(knownBefore.localId) : false;
-        const update = parseRawAcpToolUpdate({
+        let update = parseRawAcpToolUpdate({
             ...parsedInput,
             ...(Object.prototype.hasOwnProperty.call(parsedInput, 'rawInput') || extractedInput === undefined
                 || (knownBefore?.rawInput !== undefined && parsedInput.input === undefined)
@@ -93,7 +93,7 @@ export class LegacyAcpToolRuntime {
             ? update.rawInput
             : known?.rawInput;
         const title = typeof update.title === 'string' ? update.title : known?.title;
-        const inferenceInput = buildAcpToolNameResolverInput(rawInput, title);
+        const inferenceInput = buildAcpToolNameResolverInput(rawInput, title, update.kind ?? known?.kind);
         const knownSemanticName = known?.toolName && !isGenericToolName(known.toolName)
             ? known.toolName
             : null;
@@ -103,15 +103,18 @@ export class LegacyAcpToolRuntime {
                 : this.options.transport.extractToolNameFromId?.(update.toolCallId)
                     ?? inferGenericToolNameFromInput(rawInput)
                     ?? 'other');
-        const resolvedName = this.options.transport.determineToolName?.(
+        const resolved = this.options.transport.determineToolName?.(
             baseName,
             update.toolCallId,
             inferenceInput,
             {
+                nativeToolName: typeof update.kind === 'string' ? update.kind : known?.kind ?? baseName,
                 recentPromptHadChangeTitle: false,
                 toolCallCountSincePrompt: this.activeCalls().length + (known ? 0 : 1),
             },
         ) ?? baseName;
+        const resolvedName = typeof resolved === 'string' ? resolved : resolved.toolName;
+        if (typeof resolved !== 'string') update = { ...update, rawInput: resolved.input };
         const semanticName = isGenericToolName(resolvedName)
             && !isGenericToolName(baseName)
             ? baseName

@@ -106,6 +106,7 @@ export interface CreateAcpBackendOptions {
   projectSetModelResponseAwaitable?: AcpBackendOptions['projectSetModelResponseAwaitable'];
 
   prepareToolUpdate?: AcpBackendOptions['prepareToolUpdate'];
+  resolveToolNameAwaitable?: AcpBackendOptions['resolveToolNameAwaitable'];
 
   transformPromptRequest?: AcpBackendOptions['transformPromptRequest'];
 
@@ -187,6 +188,7 @@ export function createAcpBackend(options: CreateAcpBackendOptions): AcpBackend {
       ? { projectSetModelResponseAwaitable: options.projectSetModelResponseAwaitable }
       : {}),
     ...(options.prepareToolUpdate ? { prepareToolUpdate: options.prepareToolUpdate } : {}),
+    ...(options.resolveToolNameAwaitable ? { resolveToolNameAwaitable: options.resolveToolNameAwaitable } : {}),
     ...(options.transformPromptRequest
       ? { transformPromptRequest: options.transformPromptRequest }
       : {}),

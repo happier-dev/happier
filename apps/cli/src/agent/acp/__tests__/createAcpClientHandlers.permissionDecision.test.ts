@@ -13,6 +13,36 @@ function createHandlerContext(): HandlerContext {
 }
 
 describe('createAcpClientHandlers permission pre-prompt decisions', () => {
+  it.each([false, true])('passes the plugin-resolved invocation to policy and transcript (awaitable=%s)', async (awaitable) => {
+    const callbacks = {
+      toolNameResolver: () => ({ toolName: 'Bash', input: { command: 'echo projected' } }),
+    };
+    const transport = createAcpTransportHandlerFromDefinition({ backendId: 'fixture', ...(awaitable ? {} : { callbacks }) });
+    const emitted: unknown[] = [];
+    const handlerContext = createLegacyHandlerContextFixture({ transport, emit: message => emitted.push(message) });
+    let observed: unknown;
+    const client = createAcpClientHandlers({
+      onSessionUpdate: () => undefined, transport, emit: () => undefined,
+      ...(awaitable ? { resolveToolNameAwaitable: async () => callbacks.toolNameResolver() } : {}),
+      permissionHandler: { handleToolCall: async (_id, toolName, input) => {
+        observed = { toolName, input }; return { decision: 'denied' };
+      } },
+      createHandlerContext: () => handlerContext,
+      getToolNameContext: () => ({ recentPromptHadChangeTitle: false, toolCallCountSincePrompt: 0 }),
+      getActiveSessionId: () => 'session-1',
+      capturePermissionRequest: () => ({ scope: 'turn', isCurrent: () => true, cancel: async () => undefined }),
+      emitPermissionResponse: async () => undefined, clearTrackedToolCall: () => undefined,
+      incrementToolCallCountSincePrompt: () => undefined, toolCalls: handlerContext.toolCalls,
+      lastSelectedPermissionOptionIdByToolCallId: new Map(),
+    });
+    await client.requestPermission({ sessionId: 'session-1', toolCall: {
+      toolCallId: 'call', kind: 'other', title: 'Native wrapper', rawInput: { params: { command: 'echo projected' } },
+    }, options: [{ optionId: 'deny', kind: 'reject_once', name: 'Deny' }] });
+    expect(observed).toEqual({ toolName: 'Bash', input: { command: 'echo projected' } });
+    expect(emitted).toContainEqual(expect.objectContaining({ type: 'tool-call', toolName: 'Bash',
+      args: expect.objectContaining({ command: 'echo projected' }) }));
+  });
+
   it('returns a cancelled response when the provider cannot establish permission ownership', async () => {
     const handlerContext = createLegacyHandlerContextFixture();
     const effects: string[] = [];
@@ -33,6 +63,36 @@ describe('createAcpClientHandlers permission pre-prompt decisions', () => {
       toolCallId: 'call', kind: 'other', title: 'Read', rawInput: {},
     }, options: [{ optionId: 'allow', kind: 'allow_once', name: 'Allow' }] })).resolves.toEqual({ outcome: { outcome: 'cancelled' } });
     expect(effects).toEqual([]);
+  });
+
+  it.each([
+    { awaitable: false, passthrough: false },
+    { awaitable: true, passthrough: false },
+    { awaitable: true, passthrough: true },
+  ])('retains permission risk inference with native codec identity ($awaitable/$passthrough)', async ({ awaitable, passthrough }) => {
+    let nativeName: string | undefined;
+    const resolve = (request: { toolName: string }) => { nativeName = request.toolName; return passthrough ? request.toolName : null; };
+    const transport = createAcpTransportHandlerFromDefinition({ backendId: 'fixture',
+      ...(awaitable ? {} : { callbacks: { toolNameResolver: resolve } }) });
+    const handlerContext = createLegacyHandlerContextFixture({ transport });
+    let policyName: string | undefined;
+    const client = createAcpClientHandlers({
+      onSessionUpdate: () => undefined, transport, emit: () => undefined,
+      ...(awaitable ? { resolveToolNameAwaitable: async (request: { toolName: string }) => resolve(request) } : {}),
+      permissionHandler: { handleToolCall: async (_id, name) => { policyName = name; return { decision: 'denied' }; } },
+      createHandlerContext: () => handlerContext,
+      getToolNameContext: () => ({ recentPromptHadChangeTitle: false, toolCallCountSincePrompt: 0 }),
+      getActiveSessionId: () => 'session-1',
+      capturePermissionRequest: () => ({ scope: 'turn', isCurrent: () => true, cancel: async () => undefined }),
+      emitPermissionResponse: async () => undefined, clearTrackedToolCall: () => undefined,
+      incrementToolCallCountSincePrompt: () => undefined, toolCalls: handlerContext.toolCalls,
+      lastSelectedPermissionOptionIdByToolCallId: new Map(),
+    });
+    await client.requestPermission({ sessionId: 'session-1', toolCall: {
+      toolCallId: 'call', kind: 'read', title: 'Bash', rawInput: { command: 'pwd' },
+    }, options: [{ optionId: 'deny', kind: 'reject_once', name: 'Deny' }] });
+    expect(nativeName).toBe('read');
+    expect(policyName).toBe('Bash');
   });
 
   it('cancels an unresolvable permission identity before consulting policy', async () => {
@@ -78,7 +138,7 @@ describe('createAcpClientHandlers permission pre-prompt decisions', () => {
     await client.requestPermission({ sessionId: 'session-1', toolCall: {
       toolCallId: 'call', kind: 'other', title: 'mcp__docs__read_file', rawInput,
     }, options: [{ optionId: 'deny', kind: 'reject_once', name: 'Deny' }] });
-    expect(observed).toEqual({ path: 'README.md', _acp: { title: 'mcp__docs__read_file' } });
+    expect(observed).toEqual({ path: 'README.md', _acp: { title: 'mcp__docs__read_file', kind: 'other' } });
     expect(rawInput).toEqual({ path: 'README.md', _acp: { title: 'mcp__docs__other_tool' } });
   });
 
@@ -228,59 +288,6 @@ describe('createAcpClientHandlers permission pre-prompt decisions', () => {
     expect(emitted).not.toContainEqual(expect.objectContaining({ type: 'permission-request' }));
   });
 
-  it('awaits async pre-prompt permission decisions before emitting user prompts', async () => {
-    const emitted: unknown[] = [];
-    const emitPermissionResponse = vi.fn(async () => undefined);
-    const fallbackHandleToolCall = vi.fn(async () => ({ decision: 'denied' as const }));
-    const permissionHandler = {
-      resolvePrePromptDecision: vi.fn(async () => ({ decision: 'approved' as const, rationale: 'plugin approved' })),
-      handleToolCall: fallbackHandleToolCall,
-    } as unknown as AcpPermissionHandler;
-    const handlerContext = createHandlerContext();
-    const client = createAcpClientHandlers({
-      onSessionUpdate: () => undefined,
-      transport: new DefaultTransport('test'),
-      emit: (message) => {
-        emitted.push(message);
-      },
-      permissionHandler,
-      createHandlerContext: () => handlerContext,
-      getToolNameContext: () => ({
-        recentPromptHadChangeTitle: false,
-        toolCallCountSincePrompt: 0,
-      }),
-      getActiveSessionId: () => 'session-1',
-      capturePermissionRequest: () => ({ scope: 'turn', isCurrent: () => true, cancel: vi.fn(async () => undefined) }),
-      emitPermissionResponse,
-      clearTrackedToolCall: vi.fn(),
-      incrementToolCallCountSincePrompt: vi.fn(),
-      toolCalls: handlerContext.toolCalls,
-      lastSelectedPermissionOptionIdByToolCallId: new Map(),
-    });
-
-    await expect(client.requestPermission({
-      toolCall: {
-        toolCallId: 'tool-1',
-        kind: 'read',
-        toolName: 'read',
-        rawInput: { path: 'README.md' },
-      },
-      options: [
-        { optionId: 'allow-once', kind: 'allow_once', name: 'Allow' },
-        { optionId: 'reject-once', kind: 'reject_once', name: 'Reject' },
-      ],
-    } as never)).resolves.toEqual({
-      outcome: {
-        outcome: 'selected',
-        optionId: 'allow-once',
-      },
-    });
-
-    expect(emitted).not.toContainEqual(expect.objectContaining({ type: 'permission-request' }));
-    expect(fallbackHandleToolCall).not.toHaveBeenCalled();
-    expect(emitPermissionResponse).toHaveBeenCalledWith('tool-1', true);
-  });
-
   it('does not count a permission observation as a second distinct tool call', async () => {
     const handlerContext = createHandlerContext();
     handlerContext.toolCalls.handleRawUpdate({
@@ -316,40 +323,5 @@ describe('createAcpClientHandlers permission pre-prompt decisions', () => {
     expect(incrementToolCallCountSincePrompt).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ['async pre-prompt rejection', {
-      resolvePrePromptDecision: async () => { throw new Error('resolver failed'); },
-      handleToolCall: async () => ({ decision: 'approved' as const }),
-    }],
-    ['synchronous immediate-decision throw', {
-      getImmediateDecision: () => { throw new Error('immediate failed'); },
-      handleToolCall: async () => ({ decision: 'approved' as const }),
-    }],
-  ] as const)('cancels and terminalizes when %s fails', async (_label, permissionHandler) => {
-    const order: string[] = [];
-    const handlerContext = createHandlerContext();
-    const client = createAcpClientHandlers({
-      onSessionUpdate: () => undefined,
-      transport: new DefaultTransport('test'),
-      emit: () => undefined,
-      permissionHandler,
-      createHandlerContext: () => handlerContext,
-      getToolNameContext: () => ({ recentPromptHadChangeTitle: false, toolCallCountSincePrompt: 0 }),
-      getActiveSessionId: () => 'session-1',
-      capturePermissionRequest: () => ({ scope: 'turn', isCurrent: () => true, cancel: async () => { order.push('cancel'); } }),
-      emitPermissionResponse: async () => { order.push('response'); },
-      clearTrackedToolCall: () => { order.push('terminalize'); },
-      incrementToolCallCountSincePrompt: vi.fn(),
-      toolCalls: handlerContext.toolCalls,
-      lastSelectedPermissionOptionIdByToolCallId: new Map(),
-    });
 
-    await expect(client.requestPermission({
-      sessionId: 'session-1',
-      toolCall: { toolCallId: 'tool-failure', kind: 'read' },
-      options: [{ optionId: 'allow-once', kind: 'allow_once', name: 'Allow' }],
-    } as never)).resolves.toEqual({ outcome: { outcome: 'cancelled' } });
-
-    expect(order).toEqual(['cancel', 'response']);
-  });
 });

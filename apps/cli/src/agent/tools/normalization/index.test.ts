@@ -1,6 +1,30 @@
+import { toolNormalizationSource } from './fixtures.v1.testkit';
 import { describe, expect, it } from 'vitest';
 
 import { canonicalizeToolNameV2, normalizeToolCallV2, normalizeToolResultV2 } from './index';
+import { resolveCodeBuddyAcpToolName } from '../../../../../../packages/plugins/codebuddy/src/agent/runtime/factory';
+import { buildAcpToolNameResolverInput } from '../../acp/toolCalls/toolNameResolverInput';
+import { buildTurnChangeSetDiffInput } from '../diff/buildTurnChangeSetDiffInput';
+import { prepareAcpTranscriptDispatch } from '@/api/session/outbound/transcriptDispatch';
+import { readTurnChangeToolMetadata } from '@happier-dev/protocol/sessions/messages/canonicalTurnDiffTool';
+
+it('preserves zero-file Diff correlation metadata through transcript dispatch', () => {
+  const source = toolNormalizationSource('native', 'selected-agent');
+  const input = buildTurnChangeSetDiffInput({ source, rawToolName: 'RepositoryCheckpointDiff',
+    turnChangeSet: { sessionId: 'session', turnId: 'turn', provider: 'scm:git',
+      seqRange: { startSeqInclusive: 1, endSeqInclusive: 1 }, status: 'completed', derivedAt: 1, files: [] },
+  });
+  const { normalizedBody } = prepareAcpTranscriptDispatch({ source, provider: 'selected-agent',
+    body: { type: 'tool-call', name: 'Diff', callId: 'diff', id: 'message', input },
+    toolCallCanonicalNameByProviderAndId: new Map(), permissionToolCallRawInputByProviderAndId: new Map(),
+    toolCallInputByProviderAndId: new Map(),
+  });
+  if (normalizedBody.type !== 'tool-call') throw new Error('Expected a normalized tool call');
+  expect(readTurnChangeToolMetadata(normalizedBody.input)).toMatchObject({
+    provider: 'scm:git', sessionId: 'session', turnId: 'turn',
+  });
+  expect(normalizedBody.input).toMatchObject({ files: [], _happier: { v: 3, ...source } });
+});
 
 describe('normalizeToolResultV2 content envelopes', () => {
   it.each([
@@ -10,8 +34,7 @@ describe('normalizeToolResultV2 content envelopes', () => {
     ['WebSearch', { results: [{ snippet: 'direct\nnested' }] }],
   ])('decodes the shared envelope through %s family dispatch', (canonicalToolName, expected) => {
     expect(normalizeToolResultV2({
-      protocol: 'acp',
-      provider: 'example-provider',
+      source: toolNormalizationSource('acp', 'example-provider'),
       rawToolName: canonicalToolName,
       canonicalToolName,
       rawOutput: [{ text: 'direct' }, { content: { text: 'nested' } }],
@@ -98,8 +121,7 @@ describe('canonicalizeToolNameV2', () => {
 describe('normalizeToolCallV2', () => {
   it('keeps edit entries non-empty when file path is provided at the tool-call level', () => {
     const normalized = normalizeToolCallV2({
-      protocol: 'acp',
-      provider: 'example-provider',
+      source: toolNormalizationSource('acp', 'example-provider'),
       toolName: 'edit',
       callId: 'tool-1',
       rawInput: {
@@ -119,8 +141,8 @@ describe('normalizeToolCallV2', () => {
         },
       ],
       _happier: expect.objectContaining({
-        protocol: 'acp',
-        provider: 'example-provider',
+        v: 3,
+        ...toolNormalizationSource('acp', 'example-provider'),
         rawToolName: 'edit',
         canonicalToolName: 'MultiEdit',
       }),
@@ -128,112 +150,39 @@ describe('normalizeToolCallV2', () => {
   });
 });
 
-describe('normalizeToolCallV2 (deferred tool execution wrapper)', () => {
-  const deferredCall = (toolName: string, params: Record<string, unknown>) => ({
-    toolName,
-    params,
-    locations: [],
-    description: 'DeferExecuteTool',
-    _acp: { kind: 'other', title: 'DeferExecuteTool', rawInput: { toolName, params } },
+describe('generic tool input preservation', () => {
+  it('replaces historical provenance with admitted source while preserving loose metadata', () => {
+    const source = toolNormalizationSource('acp', 'fixture');
+    const normalized = normalizeToolCallV2({ source, toolName: 'custom', rawInput: {
+      _happier: { v: 2, protocol: 'claude', provider: 'old-agent', sessionMode: 'review', nativeAdjunct: true },
+    } });
+    expect(normalized.input).toMatchObject({ _happier: { v: 3, ...source, provider: 'old-agent', sessionMode: 'review', nativeAdjunct: true } });
+    expect(normalized.input).toHaveProperty('_happier.rawToolName', 'custom');
   });
 
-  it('normalizes a deferred Happier MCP call as the inner tool with its params as input', () => {
-    const normalized = normalizeToolCallV2({
-      protocol: 'acp',
-      provider: 'codebuddy',
-      toolName: 'other',
-      rawInput: deferredCall('mcp__happier__change_title', { title: 'Renamed' }),
-    });
-
-    expect(normalized.canonicalToolName).toBe('change_title');
-    expect(normalized.input).toMatchObject({
-      title: 'Renamed',
-      _happier: expect.objectContaining({ rawToolName: 'other', canonicalToolName: 'change_title' }),
-    });
-  });
-
-  it('normalizes a deferred custom MCP call as that MCP tool', () => {
-    const normalized = normalizeToolCallV2({
-      protocol: 'acp',
-      provider: 'codebuddy',
-      toolName: 'other',
-      rawInput: deferredCall('mcp__github__search_issues', { query: 'is:open' }),
-    });
-
-    expect(normalized.canonicalToolName).toBe('mcp__github__search_issues');
-    expect(normalized.input).toMatchObject({ query: 'is:open' });
-  });
-
-  it('keeps the generic identity while the inner tool name has not streamed yet', () => {
-    const normalized = normalizeToolCallV2({
-      protocol: 'acp',
-      provider: 'codebuddy',
-      toolName: 'other',
-      rawInput: { ...deferredCall('', {}), params: undefined },
-    });
-
+  it.each(['acp', 'native'])('leaves native wrappers to plugin codecs for %s observations', protocol => {
+    const rawInput = { toolName: 'Bash', params: { command: 'pwd' }, _acp: { kind: 'other', title: 'DeferExecuteTool' } };
+    const normalized = normalizeToolCallV2({ source: toolNormalizationSource(protocol, 'fixture'), toolName: 'other', rawInput });
     expect(normalized.canonicalToolName).toBe('other');
-  });
-
-  it('preserves ordinary MCP arguments that resemble a deferred wrapper', () => {
-    const rawInput = {
-      title: 'DeferExecuteTool',
-      toolName: 'Bash',
-      params: { command: 'echo hello' },
-      _acp: { kind: 'other', title: 'mcp__fixture__save_record' },
-    };
-    const normalized = normalizeToolCallV2({
-      protocol: 'acp',
-      provider: 'codebuddy',
-      toolName: 'mcp__fixture__save_record',
-      rawInput,
-    });
-
-    expect(normalized.canonicalToolName).toBe('mcp__fixture__save_record');
     expect(normalized.input).toMatchObject(rawInput);
   });
+});
 
-  it('preserves non-ACP tool identity and arguments even with wrapper-shaped data', () => {
-    const rawInput = deferredCall('mcp__happier__change_title', { title: 'Renamed' });
-    const normalized = normalizeToolCallV2({
-      protocol: 'codex',
-      provider: 'codex',
-      toolName: 'mcp__fixture__save_record',
-      rawInput,
-    });
-
-    expect(normalized.canonicalToolName).toBe('mcp__fixture__save_record');
-    expect(normalized.input).toMatchObject(rawInput);
-  });
-
-  it('uses the extracted arguments for canonical shell tools too', () => {
-    const normalized = normalizeToolCallV2({
-      protocol: 'acp',
-      provider: 'codebuddy',
-      toolName: 'other',
-      rawInput: deferredCall('Bash', { command: 'echo hello' }),
-    });
-
-    expect(normalized.canonicalToolName).toBe('Bash');
-    expect(normalized.input).toMatchObject({ command: 'echo hello' });
-  });
-
-  it('normalizes a deferred shell bridge using the existing inner tool and argument extraction', () => {
-    const command = `node apps/cli/src/index.ts tools call --source happier --tool change_title --args-json '{"title":"QA"}' --json`;
-    const normalized = normalizeToolCallV2({
-      protocol: 'acp', provider: 'codebuddy', toolName: 'other',
-      rawInput: deferredCall('Bash', { command }),
-    });
-    expect(normalized.canonicalToolName).toBe('change_title');
-    expect(normalized.input).toMatchObject({ title: 'QA', _happier: { rawToolName: 'other' } });
-  });
-
-  it('retains the inner task operation while preserving outer provenance', () => {
-    const normalized = normalizeToolCallV2({
-      protocol: 'acp', provider: 'codebuddy', toolName: 'other',
-      rawInput: deferredCall('TaskList', {}),
-    });
-    expect(normalized.canonicalToolName).toBe('SubAgent');
-    expect(normalized.input).toMatchObject({ operation: 'list', _happier: { rawToolName: 'other' } });
+describe('native plugin codec followed by generic normalization', () => {
+  it.each([
+    { toolName: 'TaskList', params: {}, canonical: 'SubAgent', input: { operation: 'list' } },
+    { toolName: 'Bash', params: { command: `happier tools call --source happier --tool change_title --args-json '{"title":"QA"}' --json` },
+      canonical: 'change_title', input: { title: 'QA' } },
+    { toolName: 'mcp__github__search_issues', params: { query: 'is:open' },
+      canonical: 'mcp__github__search_issues', input: { query: 'is:open' } },
+  ])('preserves the inner $toolName semantics', ({ toolName, params, canonical, input }) => {
+    const resolved = resolveCodeBuddyAcpToolName({ toolName: 'other', toolCallId: 'deferred',
+      input: buildAcpToolNameResolverInput({ toolName, params }, 'DeferExecuteTool', 'other'),
+      context: { toolCallCountSincePrompt: 0 } });
+    if (!resolved || typeof resolved === 'string') throw new Error('Expected a decoded native invocation');
+    const normalized = normalizeToolCallV2({ source: toolNormalizationSource('acp', 'codebuddy'),
+      toolName: resolved.toolName, rawInput: resolved.input });
+    expect(normalized.canonicalToolName).toBe(canonical);
+    expect(normalized.input).toMatchObject(input);
   });
 });

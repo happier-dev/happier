@@ -1,16 +1,18 @@
+import { toolNormalizationSource } from './fixtures.v1.testkit';
 import { describe, expect, it } from 'vitest';
 
 import { normalizeToolCallV2, normalizeToolResultV2 } from './index';
 import { normalizeCodexSessionMessageBody } from '@/api/session/sessionOutboundMessageNormalization';
 
 const result = (canonicalToolName: string, rawOutput: unknown) => normalizeToolResultV2({
-  protocol: 'codex', provider: 'codex', rawToolName: canonicalToolName, canonicalToolName, rawOutput,
+  source: toolNormalizationSource('codex', 'codex'), rawToolName: canonicalToolName, canonicalToolName, rawOutput,
 });
 
 describe('normalized tool raw retention', () => {
   it('stores command output once through the outbound message owner', () => {
     const output = 'command output\n'.repeat(300);
     const normalized = normalizeCodexSessionMessageBody({
+      source: toolNormalizationSource('codex', 'codex'),
       body: { type: 'tool-call-result', callId: 'shell', output: { stdout: output, exit_code: 0 } },
       toolCallCanonicalNameByProviderAndId: new Map([['codex:shell', { rawToolName: 'Bash', canonicalToolName: 'Bash' }]]),
       debug: () => undefined,
@@ -19,6 +21,7 @@ describe('normalized tool raw retention', () => {
     expect(normalized.output).not.toHaveProperty('_raw');
     expect(JSON.stringify(normalized.output).split('command output').length - 1).toBe(300);
     expect(normalizeCodexSessionMessageBody({
+      source: toolNormalizationSource('codex', 'codex'),
       body: normalized,
       toolCallCanonicalNameByProviderAndId: new Map([['codex:shell', { rawToolName: 'Bash', canonicalToolName: 'Bash' }]]),
       debug: () => undefined,
@@ -27,7 +30,7 @@ describe('normalized tool raw retention', () => {
 
   it('omits redundant input while preserving unknown-tool fields and non-string facts', () => {
     const input = { queryText: 'unique query', metadata: { enabled: false, attempts: 0, values: [null, true, 4] } };
-    const normalized = normalizeToolCallV2({ protocol: 'codex', provider: 'codex', toolName: 'custom_tool', rawInput: input });
+    const normalized = normalizeToolCallV2({ source: toolNormalizationSource('codex', 'codex'), toolName: 'custom_tool', rawInput: input });
     expect(normalized.input).toMatchObject(input);
     expect(normalized.input).not.toHaveProperty('_raw');
     expect(result('custom_tool', { output: 'report', metadata: input.metadata })).toMatchObject({ output: 'report', metadata: input.metadata });
@@ -58,12 +61,12 @@ describe('normalized tool raw retention', () => {
     expect(result('Bash', 42)).toMatchObject({ stdout: '42', _raw: 42 });
     expect(result('custom_tool', [false, 0, { detail: 'unique' }])).toMatchObject({ value: [false, 0, { detail: 'unique' }] });
     expect(result('custom_tool', [false, 0, { detail: 'unique' }])).not.toHaveProperty('_raw');
-    expect(normalizeToolCallV2({ protocol: 'codex', provider: 'codex', toolName: 'custom_tool', rawInput: 42 }).input).toMatchObject({ _raw: 42 });
+    expect(normalizeToolCallV2({ source: toolNormalizationSource('codex', 'codex'), toolName: 'custom_tool', rawInput: 42 }).input).toMatchObject({ _raw: 42 });
   });
 
   it('keeps existing raw bounds for unique data and canonical edit output for renderers', () => {
     const input = 'unique input'.repeat(300);
-    const normalized = normalizeToolCallV2({ protocol: 'codex', provider: 'codex', toolName: 'custom_tool', rawInput: input });
+    const normalized = normalizeToolCallV2({ source: toolNormalizationSource('codex', 'codex'), toolName: 'custom_tool', rawInput: input });
     expect(normalized.input).toMatchObject({ _raw: input.slice(0, 2_000) + '…(truncated 1600 chars)' });
     const diff = '--- a/example\n+++ b/example\n@@ -1 +1 @@\n-before\n+after';
     expect(result('Edit', { output: diff, applied: true })).toMatchObject({ output: diff, applied: true });

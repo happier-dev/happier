@@ -1,9 +1,23 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
-import type { AgentAcpRuntimeOptions, AgentRuntimeContext, AgentRuntimeFactory, AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentAcpRuntimeOptions, AgentAcpToolNameResolver, AgentRuntimeContext, AgentRuntimeFactory, AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agents/runtime';
 import { CODEBUDDY_ACP_RUNTIME_DECLARATION } from '../acp/runtimeDeclaration.js';
 import { CODEBUDDY_TERMINAL_SURFACE } from '../terminal/contribution.js';
 import { prepareCodeBuddyConnectedAccount } from './connectedAccounts.js';
 export { codeBuddyExternalSessionsContribution } from '../externalSessions/contribution.js';
+
+// CodeBuddy Code 2.162 invokes lazily discovered tools through this native ACP wrapper.
+export const resolveCodeBuddyAcpToolName: AgentAcpToolNameResolver = ({ toolName, input }) => {
+  const nativeName = toolName.trim().toLowerCase();
+  if (nativeName !== 'other' && nativeName !== 'unknown' && nativeName !== 'unknown tool' && nativeName !== 'deferexecutetool') return null;
+  const acp = input._acp;
+  if (!acp || typeof acp !== 'object' || Array.isArray(acp) || !('kind' in acp) || acp.kind !== 'other'
+    || !('title' in acp) || typeof acp.title !== 'string' || acp.title.trim().toLowerCase() !== 'deferexecutetool') return null;
+  const name = typeof input.toolName === 'string' ? input.toolName.trim() : '';
+  if (!name) return null;
+  const params = input.params;
+  return { toolName: name, input: params && typeof params === 'object' && !Array.isArray(params)
+    ? params as Readonly<Record<string, unknown>> : {} };
+};
 
 // ACP handles can be frozen and expose live getters. Clone descriptors rather
 // than snapshotting their values or mutating the original dispose property.
@@ -17,7 +31,8 @@ async function prepare(request: Pick<AgentSessionOpenRequest, 'configuration' | 
   const account = await prepareCodeBuddyConnectedAccount(request, context);
   const { transport, definition } = CODEBUDDY_ACP_RUNTIME_DECLARATION;
   const options: AgentAcpRuntimeOptions = { transport: { ...transport, args: [...transport.args, ...(account?.args ?? [])], ...(account ? { env: account.env } : {}) },
-    definition: { ...definition, ...(account ? { models: account.models } : {}) } };
+    definition: { ...definition, toolNameResolver: resolveCodeBuddyAcpToolName,
+      ...(account ? { models: account.models } : {}) } };
   return { options, dispose: () => account?.dispose() };
 }
 

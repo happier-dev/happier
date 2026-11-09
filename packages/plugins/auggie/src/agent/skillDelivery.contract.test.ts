@@ -20,6 +20,7 @@ let observer: ReturnType<typeof createAgentLaunchObserver>;
 let host: PluginTestkit;
 let agentRuntime: AgentRuntime;
 let observedRequest: AgentSessionOpenRequest | AgentExecutionRunOpenRequest;
+let observedOptions: AgentAcpRuntimeOptions;
 beforeAll(async () => {
   home = await mkdtemp(join(tmpdir(), 'happier-auggie-skill-home-'));
   for (const root of ['.augment', '.agents', '.claude']) {
@@ -42,6 +43,7 @@ afterAll(async () => {
 
 function recordOpen(request: AgentSessionOpenRequest | AgentExecutionRunOpenRequest, options: AgentAcpRuntimeOptions) {
   observedRequest = request;
+  observedOptions = options;
   if (options.transport.kind !== 'stdio') throw new Error('Expected Auggie stdio transport.');
   const boundaries = observer.boundaries as AgentLaunchObserverBoundaries;
   const env: Record<string, string | undefined> = { HOME: home, ...request.launchEnvironment?.values };
@@ -95,6 +97,16 @@ runAgentSkillDeliveryContract({
 });
 
 describe('Auggie detached Run skills declaration', () => {
+  it('projects native workspace indexing through the plugin codec', async () => {
+    await openSession({ kind: 'create', cwd: home, profile: { pluginId: PLUGIN_MANIFEST.id, localId: 'auggie' } });
+    const resolve = observedOptions.definition?.toolNameResolver;
+    expect(resolve?.({ toolName: 'Unknown tool', toolCallId: 'indexing',
+      input: { _acp: { title: 'Workspace Indexing Permission' } }, context: { toolCallCountSincePrompt: 0 } }))
+      .toBe('WorkspaceIndexingPermission');
+    expect(resolve?.({ toolName: 'Read', toolCallId: 'read',
+      input: { title: 'Workspace Indexing Permission' }, context: { toolCallCountSincePrompt: 0 } })).toBeNull();
+  });
+
   it('K10 delivers skills through the actual registered Run leaf', async () => {
     const openRun = agentRuntime.sessions?.executionRunContextV1?.open;
     if (!openRun) throw new Error('Auggie detached Run facet is missing.');

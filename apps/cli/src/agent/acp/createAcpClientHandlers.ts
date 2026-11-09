@@ -9,6 +9,7 @@ import type {
 } from '@agentclientprotocol/sdk';
 
 import type { AgentMessage } from '../core';
+import type { AgentAcpToolNameResolver } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { ToolNameContext, TransportHandler } from '../transport';
 import { logger } from '@/ui/logger';
 import {
@@ -17,18 +18,18 @@ import {
   type HandlerContext,
 } from './sessionUpdateHandlers';
 import type { AcpPermissionHandler } from './permissions/acpPermissionHandler';
-import { pickPermissionOutcome } from './permissions/permissionMapping';
+import { createAcpNativePermissionChoices, pickPermissionOutcome } from './permissions/permissionMapping';
 import type { AcpClientConnectionHandlers } from './connection/types';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import type { LegacyAcpToolRuntime } from './toolCalls/legacy/runtime';
 import { buildAcpToolNameResolverInput } from './toolCalls/toolNameResolverInput';
+import { normalizeResolvedToolName } from './runtime/definition/transport';
 import { isWorkflowInteractionCapacityError } from '@/agent/permissions/interactionPersistenceError';
 import {
   extractPermissionInputWithFallback,
   extractPermissionToolNameHint,
   refinePermissionToolNameWithInput,
   resolvePermissionToolName,
-  shouldReplaceCachedPermissionToolName,
   type PermissionRequestLike,
 } from './permissions/permissionRequest';
 
@@ -61,6 +62,9 @@ export function createAcpClientHandlers(params: Readonly<{
   transport: TransportHandler;
   emit: (message: AgentMessage) => void;
   permissionHandler?: AcpPermissionHandler;
+  resolveToolNameAwaitable?: (
+    request: Parameters<AgentAcpToolNameResolver>[0],
+  ) => Promise<ReturnType<AgentAcpToolNameResolver>>;
   createHandlerContext: () => HandlerContext;
   getToolNameContext: () => ToolNameContext;
   getActiveSessionId: () => string | null;
@@ -137,6 +141,9 @@ export function createAcpClientHandlers(params: Readonly<{
         ?? readNonBlankOpaqueIdentifier(toolCall?.id)
         ?? randomUUID();
       const permissionId = toolCallId;
+      const nativeChoices = options.length > 0
+        ? createAcpNativePermissionChoices(randomUUID(), request.options)
+        : undefined;
       const requestSessionId =
         typeof (extendedParams as { sessionId?: unknown }).sessionId === 'string'
           ? String((extendedParams as { sessionId?: string }).sessionId)
@@ -169,11 +176,11 @@ export function createAcpClientHandlers(params: Readonly<{
         : undefined;
 
       let toolNameHint = extractPermissionToolNameHint(extendedParams as PermissionRequestLike);
-      const input = extractPermissionInputWithFallback(
+      let input = extractPermissionInputWithFallback(
         extendedParams as PermissionRequestLike,
         fallbackInput,
       );
-      const inferenceInput = buildAcpToolNameResolverInput(input, toolCall?.title);
+      const inferenceInput = buildAcpToolNameResolverInput(input, toolCall?.title, toolCall?.kind);
       toolNameHint = refinePermissionToolNameWithInput(toolNameHint, input);
       let toolName = resolvePermissionToolName({
         toolNameHint,
@@ -187,11 +194,17 @@ export function createAcpClientHandlers(params: Readonly<{
       }
 
       try {
-        toolName = params.transport.determineToolName?.(toolName, toolCallId, inferenceInput, tracksForeground ? params.getToolNameContext() : { recentPromptHadChangeTitle: false, toolCallCountSincePrompt: 0 }) ?? toolName;
-
-        if (knownCall && shouldReplaceCachedPermissionToolName(knownCall.toolName, toolName)) {
-          toolName = params.transport.determineToolName?.(toolName, toolCallId, inferenceInput, tracksForeground ? params.getToolNameContext() : { recentPromptHadChangeTitle: false, toolCallCountSincePrompt: 0 }) ?? toolName;
-        }
+        const nativeToolName = toolCall?.toolName ?? toolCall?.kind ?? extendedParams.kind ?? toolName;
+        const context = { ...(tracksForeground ? params.getToolNameContext()
+          : { recentPromptHadChangeTitle: false, toolCallCountSincePrompt: 0 }), nativeToolName };
+        const projection = await params.resolveToolNameAwaitable?.({
+          toolName: nativeToolName, toolCallId, input: inferenceInput, context,
+        });
+        const projectedInvocation = normalizeResolvedToolName(projection, toolName, nativeToolName);
+        const resolved = projectedInvocation
+          ?? params.transport.determineToolName?.(toolName, toolCallId, inferenceInput, context) ?? toolName;
+        toolName = typeof resolved === 'string' ? resolved : resolved.toolName;
+        if (typeof resolved !== 'string') input = { ...resolved.input };
       } catch (error) {
         logger.debug('[AcpBackend] Cannot resolve permission tool identity:', error);
         if (!permissionRequest.isCurrent()) return withdraw();
@@ -225,21 +238,23 @@ export function createAcpClientHandlers(params: Readonly<{
       }, null, 2));
 
       if (!params.permissionHandler) {
-        const outcome = pickPermissionOutcome(options, 'denied');
+        const rejectOnce = request.options.find((option) => option.kind === 'reject_once');
         params.lastSelectedPermissionOptionIdByToolCallId.delete(toolCallId);
         await cancelOwnedPrompt();
-        return { outcome };
+        return { outcome: rejectOnce
+          ? { outcome: 'selected', optionId: rejectOnce.optionId }
+          : { outcome: 'cancelled' } };
       }
 
       let prePromptDecision: Awaited<ReturnType<NonNullable<AcpPermissionHandler['resolvePrePromptDecision']>>> = null;
       let immediateDecision: Awaited<ReturnType<AcpPermissionHandler['handleToolCall']>> | null = null;
       try {
-        prePromptDecision = await (params.permissionHandler.resolvePrePromptDecision?.(
+        prePromptDecision = nativeChoices ? null : await (params.permissionHandler.resolvePrePromptDecision?.(
           toolCallId,
           toolName,
           input,
         ) ?? Promise.resolve(null));
-        immediateDecision = prePromptDecision ?? params.permissionHandler.getImmediateDecision?.(
+        immediateDecision = nativeChoices ? null : prePromptDecision ?? params.permissionHandler.getImmediateDecision?.(
           toolCallId,
           toolName,
           input,
@@ -278,7 +293,9 @@ export function createAcpClientHandlers(params: Readonly<{
 
       if (params.permissionHandler) {
         try {
-          const result = prePromptDecision ?? await params.permissionHandler.handleToolCall(toolCallId, toolName, input);
+          const result = prePromptDecision ?? await params.permissionHandler.handleToolCall(
+            toolCallId, toolName, input, nativeChoices ? { nativeChoices } : undefined,
+          );
           if (!permissionRequest.isCurrent()) return withdraw();
           const isApproved =
             result.decision === 'approved'
@@ -286,12 +303,15 @@ export function createAcpClientHandlers(params: Readonly<{
             || result.decision === 'approved_execpolicy_amendment';
 
           const resolvedDecision = String(result.decision);
-          const overrideOptionId = params.transport.pickPermissionOptionId?.(
+          const overrideOptionId = nativeChoices ? undefined : params.transport.pickPermissionOptionId?.(
             options,
             resolvedDecision,
             { toolCallId, toolName, input },
           );
           const outcome = (() => {
+            if (nativeChoices) return result.nativeChoice
+              ? { outcome: 'selected' as const, optionId: result.nativeChoice.choiceId }
+              : { outcome: 'cancelled' as const };
             if (overrideOptionId === null) return { outcome: 'cancelled' as const };
             if (typeof overrideOptionId === 'string' && overrideOptionId.trim().length > 0) {
               if (options.some((opt) => opt.optionId === overrideOptionId)) {

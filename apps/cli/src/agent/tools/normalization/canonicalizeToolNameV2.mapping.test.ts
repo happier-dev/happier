@@ -7,6 +7,13 @@ function canonicalize(toolName: string, toolInput?: unknown, callId?: string): s
 }
 
 describe('canonicalizeToolNameV2 mappings', () => {
+  // Approved 01F: native aliases belong to plugin codecs, never shared semantic inference.
+  it.each(['CodexPatch', 'CodexDiff', 'CodexReasoning', 'GeminiPatch', 'GeminiDiff', 'GeminiReasoning', 'think'])(
+    'leaves the native alias %s to its plugin', toolName => expect(canonicalize(toolName)).toBe(toolName),
+  );
+  it('does not interpret a native workspace-indexing title', () => {
+    expect(canonicalize('Unknown tool', { title: 'Workspace Indexing Permission' })).toBe('Unknown tool');
+  });
   it.each([
     'execute',
     'bash',

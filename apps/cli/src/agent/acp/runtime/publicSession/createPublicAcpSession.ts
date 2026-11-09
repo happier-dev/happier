@@ -219,7 +219,7 @@ export type PublicAcpAwaitableAdapter = Readonly<{
   >>>;
   resolveToolName?: (
     input: Parameters<NonNullable<AgentAcpRuntimeDefinition['toolNameResolver']>>[0],
-  ) => Promise<string | null>;
+  ) => Promise<ReturnType<NonNullable<AgentAcpRuntimeDefinition['toolNameResolver']>>>;
   sanitizeToolUpdate?: (
     update: Readonly<Record<string, unknown>>,
   ) => Promise<Readonly<Record<string, unknown>>>;
@@ -617,6 +617,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
   options: AgentAcpRuntimeOptions,
   dependencies: PublicAcpComposerDependencies,
   awaitableAdapter: PublicAcpAwaitableAdapter,
+  finiteExecutionRun = false,
 ): Promise<PublicAcpSessionRuntime | PublicAcpConversationRuntime> {
   const executionRunRequest = 'runId' in request ? request : null;
   if (request.configuration?.workspaceWrites === 'deny') {
@@ -1183,6 +1184,10 @@ async function createPublicAcpConversationFromAwaitableAdapter(
               outcome.kind === 'failed' ? outcome.error : undefined,
             ),
           });
+        } else if (finiteExecutionRun && outcome?.kind === 'completed'
+          && (outcome.stopReason === 'max_tokens' || outcome.stopReason === 'max_turn_requests')) {
+          publish({ kind: 'turn-failed', turnId: turn.turnId,
+            diagnostic: { ...diagnostic('acp_turn_failed'), details: { stopReason: outcome.stopReason } } });
         } else {
           if (current.providerCheckpoint !== null && !current.providerCheckpointAmbiguous) {
             publish({
@@ -1625,6 +1630,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
           ),
         }
       : {}),
+    ...(awaitableAdapter.resolveToolName ? { resolveToolNameAwaitable: awaitableAdapter.resolveToolName } : {}),
     ...(toolUpdatePolicy || awaitableAdapter.sanitizeToolUpdate || awaitableAdapter.resolveToolName || options.definition?.sessionUpdates
       ? {
           prepareToolUpdate: async (
@@ -1653,6 +1659,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
                 ? sanitized.rawInput
                 : undefined,
               typeof sanitized.title === 'string' ? sanitized.title : undefined,
+              sanitized.kind,
             );
             const resolved = await awaitableAdapter.resolveToolName({
               toolName,
@@ -1660,7 +1667,10 @@ async function createPublicAcpConversationFromAwaitableAdapter(
               input,
               context,
             });
-            return resolved ? { ...sanitized, kind: resolved } : sanitized;
+            return resolved ? { ...sanitized,
+              kind: typeof resolved === 'string' ? resolved : resolved.toolName,
+              ...(typeof resolved === 'string' ? {} : { rawInput: resolved.input }),
+            } : sanitized;
           },
         }
       : {}),
@@ -1713,6 +1723,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
   const catalogs = createPublicAcpSessionCatalogs({
     backend, models: dependencies.models, modes: dependencies.modes,
     modelConfigOptionId: options.definition?.modelConfigOptionId,
+    projectAvailableModels: options.definition?.models?.projectAvailableModels,
     publish,
   });
 
@@ -2643,7 +2654,9 @@ export async function createPublicAcpExecutionRun(
   return await createExecutionRunHostBackendFromConversationRuntime({
     request,
     async openConversation() {
-      return await createPublicAcpExecutionRunConversation(request, options, dependencies);
+      return await createPublicAcpConversationFromAwaitableAdapter(
+        request, options, dependencies, Object.freeze({}), true,
+      ) as PublicAcpConversationRuntime;
     },
     readCheckpointId(event) {
       return event.kind === 'provider-session-id' ? event.providerSessionId : null;

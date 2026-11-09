@@ -18,7 +18,13 @@ export function buildGeminiAcpToolNameResolver(
   const keys = Object.keys(request.mcpServers ?? {});
   const named = keys.flatMap(server => Object.keys(request.mcpToolPolicy?.[server]?.tools ?? {})
     .map(tool => ({ native: geminiMcpFunctionName(server, tool), canonical: `mcp__${server}__${tool}` })));
-  return ({ toolCallId }) => {
+  return ({ toolName, toolCallId }) => {
+    switch (toolName) {
+      case 'GeminiPatch': return 'Patch';
+      case 'GeminiDiff': return 'Diff';
+      case 'GeminiReasoning': return 'Reasoning';
+    }
+    if (toolName.toLowerCase() === 'think') return 'Reasoning';
     const encodedName = /^(.+)__(?:\1_\d+_\d+|synth_.+_\d+_\d+)$/.exec(toolCallId)?.[1];
     const matching = named.filter(({ native }) => encodedName ? encodedName === native : toolCallId.startsWith(`${native}__`));
     const longest = Math.max(0, ...matching.map(({ native }) => native.length));
@@ -59,7 +65,7 @@ export const GEMINI_TOOL_NAME_INFERENCE = Object.freeze({
       inputFields: ['memory', 'content'],
     },
     {
-      name: 'think',
+      name: 'Reasoning',
       patterns: ['think'],
       inputFields: ['thought', 'thinking'],
     },
