@@ -87,7 +87,7 @@ export function prepareDeploymentTemplateAdditionV1(input: DeploymentTemplateIns
         return [service(name), rewritten];
     }));
     const data = template.data ? { ...template.data, service: service(template.data.service),
-        ...(template.data.variables ? { variables: Object.fromEntries(Object.entries(template.data.variables).map(([key, value]) => [key, variable(value)])) } : {}),
+        ...(template.data.variables ? { variables: Object.fromEntries(Object.entries(template.data.variables).map(([key, value]) => [key, value === undefined ? value : variable(value)])) } : {}),
         ...(template.data.logicalBackup ? { logicalBackup: { ...template.data.logicalBackup,
             ...(template.data.logicalBackup.database ? { database: variable(template.data.logicalBackup.database) } : {}),
             ...(template.data.logicalBackup.username ? { username: variable(template.data.logicalBackup.username) } : {}),
