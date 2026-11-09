@@ -2,6 +2,7 @@ import { writeFile } from 'node:fs/promises';
 
 const WRAPPER_CREATED = '2026-11-06T20:00:00.0000000Z';
 const SERVER_CREATED = '2026-11-06T20:00:01.0000000Z';
+const LEGACY_TEST_PLATFORM = 'darwin';
 
 export const TEST_SERVER_INSTANCE_ID = 'instance-1';
 
@@ -41,12 +42,13 @@ export function createWindowsOwnershipBoundary({
 
 /** A healthy server from before startup identity, with stable process identities. */
 export const legacyServerOwnershipBoundary = Object.freeze({
+  platform: LEGACY_TEST_PLATFORM,
   fetchReadyIdentityImpl: async () => ({ status: 'legacy' }),
   runCaptureImpl: async () => WRAPPER_CREATED,
 });
 
 export function expectedLegacyVerifiedInstances({ listenerPid, wrapperPid }) {
-  const prefix = process.platform === 'win32' ? 'win32-cim' : `${process.platform}-ps`;
+  const prefix = `${LEGACY_TEST_PLATFORM}-ps`;
   return {
     serverPid: { pid: listenerPid, fingerprint: `${prefix}:${WRAPPER_CREATED}` },
     serverWrapperPid: { pid: wrapperPid, fingerprint: `${prefix}:${WRAPPER_CREATED}` },

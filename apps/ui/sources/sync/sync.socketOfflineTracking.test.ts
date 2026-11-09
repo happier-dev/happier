@@ -1,7 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { readReactNativeMmkvStubValues } from '@/dev/testkit/mocks/mmkv';
-
 type FetchChanges = typeof import('./api/session/apiChanges').fetchChanges;
 type FetchCurrentChangesCursor = typeof import('./api/session/apiChanges').fetchCurrentChangesCursor;
 type MachineDirectSessionTranscriptPage = typeof import('@/sync/ops/machineDirectSessions').machineDirectSessionTranscriptPage;
@@ -125,6 +123,7 @@ import { WEB_SYNC_INSTANCE_ID_SESSION_KEY } from '@/sync/runtime/webSyncClientId
 import { syncReliabilityTelemetry } from '@/sync/runtime/syncReliabilityTelemetry';
 import { loadSyncTuning } from '@/sync/runtime/syncTuning';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
+import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 
 class MemoryWebStorage implements Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> {
   readonly values = new Map<string, string>();
@@ -161,8 +160,25 @@ function emptySessionOrganizationSnapshotResponse(): Response {
   );
 }
 
+function fetchRequestUrl(input: RequestInfo | URL): URL {
+  const value = input instanceof Request ? input.url : String(input);
+  return new URL(value, 'http://localhost');
+}
+
+function isSessionOrganizationSnapshotRequest(url: string | URL): boolean {
+  return fetchRequestUrl(url).pathname === '/v2/session-organization';
+}
+
+function isSessionAppearancePresentationsRequest(url: string | URL): boolean {
+  return fetchRequestUrl(url).pathname === '/v2/session-organization/appearance-presentations';
+}
+
+function emptySessionAppearancePresentationsResponse(): Response {
+  return Response.json({ presentations: [] });
+}
+
 function stubSnapshotRefreshFetch(): ReturnType<typeof vi.fn> {
-  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url: string =
       typeof input === 'string'
         ? input
@@ -171,10 +187,17 @@ function stubSnapshotRefreshFetch(): ReturnType<typeof vi.fn> {
           : 'url' in input
             ? String(input.url)
             : input.toString();
-    if (url.includes('/v2/session-organization')) {
+    if (isSessionAppearancePresentationsRequest(url)) {
+      return emptySessionAppearancePresentationsResponse();
+    }
+    if (isSessionOrganizationSnapshotRequest(url)) {
       return emptySessionOrganizationSnapshotResponse();
     }
+    if (url.includes('/v1/features')) return Response.json({ features: {}, capabilities: {} });
     if (url.includes('/v1/account/encryption')) return Response.json({ mode: 'e2ee', updatedAt: 0 });
+    if (url.includes('/v2/account/settings') && init?.method === 'POST') {
+      return Response.json({ success: true, version: 1 });
+    }
     if (url.includes('/v2/account/settings')) return Response.json({ content: null, version: 0 });
     if (url.includes('/v1/kv')) return Response.json({ items: [] });
     if (url.includes('/v2/sessions')) {
@@ -284,6 +307,7 @@ describe('sync socket offline tracking', () => {
     (sync as any).directSessionHasMoreOlderBySessionId.clear();
     (sync as any).safeCursorLagState = null;
     syncReliabilityTelemetry.reset();
+    resetServerFeaturesClientForTests();
     fetchChangesMock.mockReset();
     fetchChangesMock.mockResolvedValue({
       status: 'ok' as const,
@@ -350,6 +374,7 @@ describe('sync socket offline tracking', () => {
           nextCursor: requiredOnly ? null : 'account-next', hasNext: !requiredOnly, includedActive: !requiredOnly,
         });
       }
+      if (isSessionAppearancePresentationsRequest(url)) return emptySessionAppearancePresentationsResponse();
       if (url.pathname === '/v2/session-organization') return emptySessionOrganizationSnapshotResponse();
       return Response.json({});
     }));
@@ -440,6 +465,7 @@ describe('sync socket offline tracking', () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(input instanceof Request ? input.url : String(input));
       requestedPaths.push(url.pathname);
+      if (isSessionAppearancePresentationsRequest(url)) return emptySessionAppearancePresentationsResponse();
       if (url.pathname === '/v2/session-organization') {
         await organizationReady;
         return Response.json({ snapshot: { ...organization, version: 2, pins: [{ sessionId: 'fresh-pin', sortKey: 'a', pinnedAt: 1 }] } });
@@ -817,7 +843,10 @@ describe('sync socket offline tracking', () => {
           : 'url' in input
             ? String(input.url)
             : input.toString();
-      if (url.includes('/v2/session-organization')) {
+      if (isSessionAppearancePresentationsRequest(url)) {
+        return emptySessionAppearancePresentationsResponse();
+      }
+      if (isSessionOrganizationSnapshotRequest(url)) {
         return emptySessionOrganizationSnapshotResponse();
       }
       if (url.includes('/v2/sessions')) {
@@ -874,7 +903,10 @@ describe('sync socket offline tracking', () => {
           : 'url' in input
             ? String(input.url)
             : input.toString();
-      if (url.includes('/v2/session-organization')) {
+      if (isSessionAppearancePresentationsRequest(url)) {
+        return emptySessionAppearancePresentationsResponse();
+      }
+      if (isSessionOrganizationSnapshotRequest(url)) {
         return emptySessionOrganizationSnapshotResponse();
       }
       if (url.includes('/v2/sessions')) {
@@ -1065,7 +1097,10 @@ describe('sync socket offline tracking', () => {
           : 'url' in input
             ? String(input.url)
             : input.toString();
-      if (url.includes('/v2/session-organization')) {
+      if (isSessionAppearancePresentationsRequest(url)) {
+        return emptySessionAppearancePresentationsResponse();
+      }
+      if (isSessionOrganizationSnapshotRequest(url)) {
         const organizationUrl = new URL(url, 'http://localhost');
         const includeAllTagAssignments = organizationUrl.searchParams.get('includeAllTagAssignments') === 'true';
         return new Response(
@@ -1210,6 +1245,12 @@ describe('sync socket offline tracking', () => {
           headers: { 'Content-Type': 'application/json' },
         });
       }
+      if (url.includes('/v1/features')) {
+        return Response.json({ features: {}, capabilities: {} });
+      }
+      if (url.includes('/v1/kv')) {
+        return Response.json({ items: [] });
+      }
       if (url.includes('/v2/account/settings') && (init?.method ?? 'GET') === 'GET') {
         return new Response(
           JSON.stringify({
@@ -1240,7 +1281,10 @@ describe('sync socket offline tracking', () => {
           { status: 200, headers: { 'Content-Type': 'application/json' } },
         );
       }
-      if (url.includes('/v2/session-organization')) {
+      if (isSessionAppearancePresentationsRequest(url)) {
+        return emptySessionAppearancePresentationsResponse();
+      }
+      if (isSessionOrganizationSnapshotRequest(url)) {
         return new Response(
           JSON.stringify({
             snapshot: {
@@ -1332,14 +1376,14 @@ describe('sync socket offline tracking', () => {
           : 'url' in input
             ? String(input.url)
             : input.toString();
-      if (url.includes('/v2/session-organization')) {
+      if (isSessionAppearancePresentationsRequest(url)) {
+        return emptySessionAppearancePresentationsResponse();
+      }
+      if (isSessionOrganizationSnapshotRequest(url)) {
         return new Response(JSON.stringify({ error: 'temporarily unavailable' }), {
           status: 503,
           headers: { 'Content-Type': 'application/json' },
         });
-      }
-      if (url.includes('/v2/session-organization')) {
-        return emptySessionOrganizationSnapshotResponse();
       }
       if (url.includes('/v2/sessions')) {
         return new Response(
@@ -1464,7 +1508,10 @@ describe('sync socket offline tracking', () => {
             : 'url' in input
               ? String(input.url)
               : input.toString();
-      if (url.includes('/v2/session-organization')) {
+      if (isSessionAppearancePresentationsRequest(url)) {
+        return emptySessionAppearancePresentationsResponse();
+      }
+      if (isSessionOrganizationSnapshotRequest(url)) {
         return emptySessionOrganizationSnapshotResponse();
       }
       if (url.includes('/v2/sessions')) {
@@ -1502,6 +1549,11 @@ describe('sync socket offline tracking', () => {
   }, 60_000);
 
   it.each(['cursor-gone', 'missing'] as const)('captures a fresh snapshot-base cursor before %s snapshot repair', async (basis) => {
+    const sessionStorage = new MemoryWebStorage();
+    const localStorage = new MemoryWebStorage();
+    sessionStorage.setItem(WEB_SYNC_INSTANCE_ID_SESSION_KEY, 'tab-a');
+    vi.stubGlobal('sessionStorage', sessionStorage);
+    vi.stubGlobal('localStorage', localStorage);
     upsertAndActivateServer({ serverUrl: 'http://localhost:53288', scope: 'tab' });
     if (basis === 'missing') (sync as any).changesCursor = null;
     if (basis === 'cursor-gone') {
@@ -1528,8 +1580,8 @@ describe('sync socket offline tracking', () => {
     await (sync as any).resumeSync('socket-reconnect');
 
     expect(fetchCurrentChangesCursorMock).toHaveBeenCalledTimes(1);
-    expect(readReactNativeMmkvStubValues()).toContain('12');
-    expect(readReactNativeMmkvStubValues()).not.toContain('9');
+    const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
+    expect(loadChangesCursor({ serverScope: activeServerId, accountId: 'test', instanceId: 'tab-a' })).toBe('12');
   }, 60_000);
 
   it('persists snapshot-base cursor fetch failure telemetry when cursor-gone repair cannot capture /v2/cursor', async () => {
@@ -1628,6 +1680,7 @@ describe('sync socket offline tracking', () => {
     storage.setState((state) => ({ ...state, profile: { ...(state.profile ?? {}), id: 'test-account' } as any }), true);
     saveProfile({ ...profileDefaults, id: 'test-account' });
     (sync as any).credentials = { token: 'hdr.eyJzdWIiOiJ0ZXN0In0.sig', secret: 'secret' };
+    (sync as any).serverID = 'test';
     (sync as any).encryption = {
       decryptEncryptionKey: async () => null,
       initializeSessions: async () => {},

@@ -199,6 +199,7 @@ test('shutdown during startup reaches the proof and the identity capture through
   const scenario = createStartupScenario(stackBaseDir, { signal: controller.signal });
   let captureCancelled = false;
   scenario.dependencies.ownershipBoundary = {
+    platform: 'win32',
     runCaptureImpl: (_command, _args, { signal }) => new Promise((_resolve, reject) => {
       signal.addEventListener('abort', () => {
         captureCancelled = true;

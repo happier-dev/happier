@@ -10,6 +10,7 @@ import type { AccountMachineInventoryRow } from '@/api/machine/fetchAccountMachi
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
 
 const boundary = vi.hoisted(() => ({ spawn: vi.fn(), resolve: vi.fn(), io: vi.fn() }));
 // HTTP, local daemon control, and Socket.IO are the actual process/network boundaries.
@@ -42,6 +43,12 @@ describe('createSpawnedSession exact remote routing', () => {
   let persistedMetadata: Record<string, unknown>;
   beforeEach(async () => {
     vi.clearAllMocks();
+    resetServerFeaturesClientForTests();
+    vi.stubGlobal('fetch', vi.fn(async (input: Parameters<typeof fetch>[0]) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      expect(url.pathname).toBe('/v1/features');
+      return Response.json({ features: {}, capabilities: {} });
+    }));
     calls = [];
     disconnectNextSpawn = false;
     boundary.spawn.mockResolvedValue({ success: true, sessionId: 'local-session' });
@@ -101,6 +108,8 @@ describe('createSpawnedSession exact remote routing', () => {
   });
 
   afterEach(async () => {
+    resetServerFeaturesClientForTests();
+    vi.unstubAllGlobals();
     restoreHttp?.();
     await relay?.close();
   });
