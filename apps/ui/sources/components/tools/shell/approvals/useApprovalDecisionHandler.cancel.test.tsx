@@ -99,8 +99,9 @@ describe('built-in approval decisions through the canonical owner', () => {
         } finally { await hook.unmount(); }
     });
     beforeEach(async () => { standardCleanup(); await harness.reset(); });
-    it.each(['pending', 'declined', 'declined_lost_response', 'pending_lost_response'] as const)('reconciles a failed private draft decline against its %s original', async disposition => {
-        const pending = disposition.startsWith('pending');
+    it.each(['pending', 'declined', 'declined_lost_response', 'pending_lost_response', 'publication_pending'] as const)('reconciles a failed draft decline against its %s original', async disposition => {
+        const privateDraft = disposition !== 'publication_pending';
+        const pending = disposition.startsWith('pending') || !privateDraft;
         const lostResponse = disposition.endsWith('lost_response');
         const serverId = await harness.addHome({ name: 'Draft Home', serverUrl: 'https://draft-decline.test',
             serverIdentityId: 'srv_draft_decline', accountId: 'bob', currentAccount: true });
@@ -110,7 +111,7 @@ describe('built-in approval decisions through the canonical owner', () => {
             replyTarget: { kind: 'message', messageId: 'question' } };
         const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
             createdBy: { surface: 'agent', sessionId: 'source' }, requestedSurface: 'agent',
-            actionId: 'discussion.reply', actionArgs, discussionDraftReview: true, summary: 'Review the answer',
+            actionId: 'discussion.reply', actionArgs, ...(privateDraft ? { discussionDraftReview: true } : {}), summary: 'Review the answer',
             executionOriginV1: buildApprovalExecutionOriginV1({ actionId: 'discussion.reply', input: actionArgs,
                 targetSessionId: null, context: { surface: 'agent', authority: 'account_automation', serverId,
                     serverIdentityId: 'srv_draft_decline', runtimeAccountId: 'bob', actionCaller: { kind: 'host' },
@@ -149,7 +150,6 @@ describe('built-in approval decisions through the canonical owner', () => {
                 expect(onExecution).not.toHaveBeenCalled();
                 expect(ApprovalRequestV2Schema.parse(JSON.parse(harness.artifacts(serverId).readPlainBody(artifact.id) ?? 'null')).status).toBe('open');
             }
-            expect(harness.requestsFor(reviewPath)).toHaveLength(2);
             if (pending) {
                 const { useInlineApprovalDecision, ApprovalInlineDecisionBar } = await import('@/components/approvals/ApprovalInlineDecision');
                 const { Modal } = await import('@/modal');
@@ -174,7 +174,11 @@ describe('built-in approval decisions through the canonical owner', () => {
                         } finally { await screen.unmount(); }
                     }
                     harness.answer(serverId, `POST ${reviewPath}`, { body: { v: 1, ok: true, progress: {
-                        v: 1, mode: 'return', disposition: 'released', acceptedTurnId: 'turn', outcome: { kind: 'declined' },
+                        v: 1, mode: 'return', disposition: 'released', acceptedTurnId: 'turn',
+                        ...(privateDraft ? { outcome: { kind: 'declined' } } : {
+                            outcome: { kind: 'answer', result: { sessionId: 'source', messageId: 'answer' } },
+                            returnPublication: { kind: 'failed', failure: { code: 'approval_rejected', phase: 'action_admission', retryable: false } },
+                        }),
                         discussion: { discussionId: 'discussion', messageId: 'question', throughSeq: 1, participantSessionId: 'source' },
                     } } });
                     await act(async () => { await inline.getCurrent().answer('reject'); });

@@ -600,9 +600,8 @@ describe('Discussion participant publication policy', () => {
       serverId: 'deciding-device-profile', runtimeAccountId: 'alice' };
     expect(await h.executor.execute('approval.request.decide', { artifactId: 'private-draft', decision }, person))
       .toMatchObject({ ok: false, errorCode: 'server_unreachable' });
-    expect(h.stored()?.status).toBe(policy === 'drafts_for_approval' ? 'open' : terminal);
-    expect(observedStatuses).toEqual([policy === 'drafts_for_approval' ? 'open' : terminal]);
-    const captured = h.stored();
+    expect(h.stored()?.status).toBe('open');
+    expect(observedStatuses).toEqual(['open']);
     expect(settlements).toEqual([{ context: expect.objectContaining({ authority: 'present_user' }),
       sessionId: 'receiver', requestLocalId: 'original-input', serverId: 'srv_home',
       reviewDecision: policy === 'drafts_for_approval'
@@ -612,7 +611,6 @@ describe('Discussion participant publication policy', () => {
     expect(h.publications).toEqual([]);
     expect(await h.executor.execute('approval.request.decide', { artifactId: 'private-draft', decision }, person))
       .toMatchObject({ ok: true, result: { status: terminal } });
-    if (policy !== 'drafts_for_approval') expect(h.stored()).toEqual(captured);
     expect(h.stored()?.status).toBe(terminal);
     expect(settlements).toHaveLength(2);
     expect(settlements[1]).toEqual(settlements[0]);

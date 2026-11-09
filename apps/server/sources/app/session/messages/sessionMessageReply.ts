@@ -9,7 +9,7 @@ import { parseStoredSessionTurnTranscriptAnchors } from '@/app/session/turns/par
 import { resolveEffectiveSessionAccessForSessionsInTx, resolveSessionAccessForOperation, type EffectiveSessionAccess } from '@/app/session/access/sessionAccess';
 import type { SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
 import { backgroundDeliveryAuthentication } from '@/app/session/access/sessionAccessAuthentication';
-import { resolveDiscussionContextInTx, discussionContextStorageAdapter } from '@/app/discussions/access';
+import { resolveDiscussionContextInTx, discussionContextStorageAdapter, resolveDiscussionAudienceInTx } from '@/app/discussions/access';
 import { mayInjectResourceContextInTx } from '@/app/session/access/sessionContextInjection';
 import { DiscussionMessageAddressingV1Schema, type DiscussionAddressingV1 } from '@happier-dev/protocol/discussions/participants';
 import type { DiscussionMessageRefV1 } from '@happier-dev/protocol/discussions/messageRefs';
@@ -604,7 +604,11 @@ export async function mutateSessionMessageReplyForAccountInTx(tx: Tx, params: Re
         || params.authentication.externalActionExecutionAuthorized && !params.authentication.approvalDecisionAdmission)) {
         return { v: 1, ok: false, error: 'forbidden' };
     }
-    await acquireSessionAccountCursorLocksInTx(tx, [params.sessionId]);
+    // Publication failure (or clearing one on decline) also invalidates the
+    // Discussion's readers, who need not have access to the participant Session.
+    const discussionAccountIds = params.kind === 'discussion_review' || params.kind === 'discussion_publication'
+        ? await resolveDiscussionAudienceInTx(tx, params.discussionId) : [];
+    await acquireSessionAccountCursorLocksInTx(tx, [params.sessionId], discussionAccountIds);
     if (!await canRead(tx, params.accountId, params.sessionId, params.authentication)) return { v: 1, ok: false, error: 'unavailable' };
     const original = await readOriginal(tx, params.sessionId, params.localId);
     if (!original?.progress) return { v: 1, ok: false, error: 'unavailable' };

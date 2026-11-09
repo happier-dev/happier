@@ -6793,10 +6793,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           return { ok: false, errorCode: 'approval_not_open', error: 'approval_not_open' };
         }
 
-        if (existing.v === 2 && existing.discussionDraftReview === true && settleDiscussionReview) {
-          // A private decline settles the original without publishing anything.
-          // Keep its review open until that idempotent settlement is confirmed,
-          // so a refused or lost reply remains recoverable at the origin card.
+        if (settleDiscussionReview) {
+          // Keep the review open until its original's idempotent settlement is
+          // confirmed, so either decline path stays recoverable at the card.
           const settlementFailure = await settleDiscussionReview();
           if (settlementFailure) return settlementFailure;
           settleDiscussionReview = undefined;
@@ -6815,16 +6814,13 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             const updated = await deps.approvalsUpdate({ artifactId, request: nextFailed, serverId: effectiveServerId, context: ctx });
             const updateFailure = readActionFailureEnvelope(updated);
             if (updateFailure) return updateFailure;
-            const settlementFailure = await settleDiscussionReview?.();
-            return settlementFailure ?? buildApprovalDecisionResult(nextFailed);
+            return buildApprovalDecisionResult(nextFailed);
           }
           const nextCanceled: ApprovalRequest = { ...settleApprovalRequestReplayInputs(existing), status: 'canceled',
             updatedAtMs: Math.max(now, existing.updatedAtMs) };
           const updated = await deps.approvalsUpdate({ artifactId, request: nextCanceled, serverId: effectiveServerId, context: ctx });
           const updateFailure = readActionFailureEnvelope(updated);
           if (updateFailure) return updateFailure;
-          const settlementFailure = await settleDiscussionReview?.();
-          if (settlementFailure) return settlementFailure;
           // Blocking waiters observe the persisted canceled Artifact through their
           // existing cancellation branch; no approval/rejection authority is minted.
           return buildApprovalDecisionResult(nextCanceled);
@@ -6852,8 +6848,6 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const updated = await deps.approvalsUpdate({ artifactId, request: nextRejected, serverId: effectiveServerId, context: ctx });
           const updateFailure = readActionFailureEnvelope(updated);
           if (updateFailure) return updateFailure;
-          const settlementFailure = await settleDiscussionReview?.();
-          if (settlementFailure) return settlementFailure;
           if (isBlockingApprovalRequest(nextRejected)) {
             await resolveBlockingDecisionIfClaimed({
               artifactId,
