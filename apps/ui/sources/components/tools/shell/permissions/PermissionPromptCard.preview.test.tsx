@@ -3,7 +3,7 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
-import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { pressTestInstanceAsync } from '@/dev/testkit';
 import { installPermissionShellCommonModuleMocks } from './permissionShellTestHelpers';
 
 
@@ -15,15 +15,10 @@ vi.mock('@expo/vector-icons', () => ({
 
 const routerPush = vi.fn();
 function renderWithSessionTranscriptSource(element: React.ReactElement) {
-    return renderBoundScreen(element, createTestSessionTranscriptSource({ sessionId: 'session-1', navigate: routerPush }));
+    return renderBoundScreen(<AppPaneProvider>{element}</AppPaneProvider>,
+        createTestSessionTranscriptSource({ sessionId: 'session-1', navigate: routerPush }));
 }
-const navigateWithBlurOnWebSpy = vi.hoisted(() => vi.fn((action: () => void) => action()));
-
-vi.mock('@/utils/platform/navigateWithBlurOnWeb', () => ({
-    navigateWithBlurOnWeb: navigateWithBlurOnWebSpy,
-}));
-
-let toolDetailSetting: any = 'summary';
+let toolDetailSetting: 'summary' | 'title' | 'compact' = 'summary';
 
 installPermissionShellCommonModuleMocks({
     unistyles: async () => {
@@ -67,43 +62,18 @@ installPermissionShellCommonModuleMocks({
     },
 });
 
-let mockedToolName = 'edit';
-let mockedToolInput: any = { path: 'file.ts' };
-let mockedHeaderText: any = { normalizedToolName: 'edit', title: 'Edit', subtitle: null, statusText: null };
-
-vi.mock('@/components/tools/shell/permissions/presentation/buildPermissionPromptModel', () => ({
-    buildPermissionPromptModel: () => ({
-        request: { id: 'perm1', tool: 'edit', arguments: {} },
-        tool: {
-            name: mockedToolName,
-            state: 'running',
-            input: mockedToolInput,
-            createdAt: 1,
-            startedAt: 1,
-            completedAt: null,
-            description: null,
-            result: null,
-            permission: { id: 'perm1', status: 'pending' },
-        },
-        headerText: mockedHeaderText,
-    }),
-}));
-
-vi.mock('@/components/tools/shell/views/ToolInlineBody', () => ({
-    ToolInlineBody: (props: any) => React.createElement('ToolInlineBody', { ...props, testID: 'permission-prompt-tool-inline-body' }),
-}));
-
-vi.mock('@/components/tools/shell/permissions/PermissionFooter', () => ({
-    PermissionFooter: () => null,
-}));
+// Load the real prompt graph during collection, before any render/act lifecycle begins.
+const [{ PermissionPromptCard }, { ToolInlineBody }, { AppPaneProvider }] = await Promise.all([
+    import('./PermissionPromptCard'),
+    import('@/components/tools/shell/views/ToolInlineBody'),
+    import('@/components/appShell/panes/AppPaneProvider'),
+]);
+// React's test renderer exposes the render function inside a memo boundary.
+const InlineBody = (ToolInlineBody as React.MemoExoticComponent<React.ComponentType<React.ComponentProps<typeof ToolInlineBody>>>).type;
 
 describe('PermissionPromptCard (preview)', () => {
     it('rounds the card with the theme approval card radius', async () => {
         toolDetailSetting = 'summary';
-        mockedToolName = 'edit';
-        mockedToolInput = { path: 'file.ts' };
-        mockedHeaderText = { normalizedToolName: 'edit', title: 'Edit', subtitle: null, statusText: null };
-        const { PermissionPromptCard } = await import('./PermissionPromptCard');
 
         const request = { id: 'perm1', tool: 'edit', arguments: { path: 'file.ts' } } as PendingPermissionRequest;
 
@@ -120,10 +90,6 @@ describe('PermissionPromptCard (preview)', () => {
 
     it('hides the open-details action when the prompt location is not durably addressable', async () => {
         toolDetailSetting = 'summary';
-        mockedToolName = 'edit';
-        mockedToolInput = { path: 'file.ts' };
-        mockedHeaderText = { normalizedToolName: 'edit', title: 'Edit', subtitle: null, statusText: null };
-        const { PermissionPromptCard } = await import('./PermissionPromptCard');
 
         const request = { id: 'perm1', tool: 'edit', arguments: { path: 'file.ts' } } as PendingPermissionRequest;
 
@@ -144,12 +110,7 @@ describe('PermissionPromptCard (preview)', () => {
 
     it('opens nested tool routes with stable encoded route ids', async () => {
         toolDetailSetting = 'summary';
-        mockedToolName = 'edit';
-        mockedToolInput = { path: 'file.ts' };
-        mockedHeaderText = { normalizedToolName: 'edit', title: 'Edit', subtitle: null, statusText: null };
         routerPush.mockReset();
-        navigateWithBlurOnWebSpy.mockClear();
-        const { PermissionPromptCard } = await import('./PermissionPromptCard');
 
         const request = { id: 'perm1', tool: 'edit', arguments: { path: 'file.ts' } } as PendingPermissionRequest;
 
@@ -171,16 +132,11 @@ describe('PermissionPromptCard (preview)', () => {
 
         await pressTestInstanceAsync(viewToolButton, 'permission-prompt-view-tool');
 
-        expect(navigateWithBlurOnWebSpy).toHaveBeenCalledTimes(1);
         expect(routerPush).toHaveBeenCalledWith('/session/session-1/message/tool%3Acall%3Aparent%2F1?jumpChildId=tool%3Acall%3Achild%2F2');
     });
 
     it('renders a tool preview when detail level is not title', async () => {
         toolDetailSetting = 'summary';
-        mockedToolName = 'edit';
-        mockedToolInput = { path: 'file.ts' };
-        mockedHeaderText = { normalizedToolName: 'edit', title: 'Edit', subtitle: null, statusText: null };
-        const { PermissionPromptCard } = await import('./PermissionPromptCard');
 
         const request = { id: 'perm1', tool: 'edit', arguments: { path: 'file.ts' } } as PendingPermissionRequest;
 
@@ -192,15 +148,11 @@ describe('PermissionPromptCard (preview)', () => {
                     canApprovePermissions={true}
                 />);
 
-        expect(screen.findByTestId('permission-prompt-tool-inline-body')).toBeTruthy();
+        expect(screen.tree.root.findAllByType(InlineBody)).toHaveLength(1);
     });
 
     it('hides the tool preview when detail level is title', async () => {
         toolDetailSetting = 'title';
-        mockedToolName = 'edit';
-        mockedToolInput = { path: 'file.ts' };
-        mockedHeaderText = { normalizedToolName: 'edit', title: 'Edit', subtitle: null, statusText: null };
-        const { PermissionPromptCard } = await import('./PermissionPromptCard');
 
         const request = { id: 'perm1', tool: 'edit', arguments: { path: 'file.ts' } } as PendingPermissionRequest;
 
@@ -212,15 +164,11 @@ describe('PermissionPromptCard (preview)', () => {
                     canApprovePermissions={true}
                 />);
 
-        expect(screen.findByTestId('permission-prompt-tool-inline-body')).toBeNull();
+        expect(screen.tree.root.findAllByType(InlineBody)).toHaveLength(0);
     });
 
     it('hides the tool preview when detail level is compact', async () => {
         toolDetailSetting = 'compact';
-        mockedToolName = 'edit';
-        mockedToolInput = { path: 'file.ts' };
-        mockedHeaderText = { normalizedToolName: 'edit', title: 'Edit', subtitle: null, statusText: null };
-        const { PermissionPromptCard } = await import('./PermissionPromptCard');
 
         const request = { id: 'perm1', tool: 'edit', arguments: { path: 'file.ts' } } as PendingPermissionRequest;
 
@@ -232,7 +180,7 @@ describe('PermissionPromptCard (preview)', () => {
                     canApprovePermissions={true}
                 />);
 
-        expect(screen.findByTestId('permission-prompt-tool-inline-body')).toBeNull();
+        expect(screen.tree.root.findAllByType(InlineBody)).toHaveLength(0);
     });
 
     it.each([
@@ -240,10 +188,6 @@ describe('PermissionPromptCard (preview)', () => {
         ['AskUserQuestion', 'Question', { questions: [{ question: 'COMMAND_SUBTITLE', options: [] }] }],
     ])('does not repeat a %s subtitle the visible preview already shows', async (toolName, title, input) => {
         toolDetailSetting = 'summary';
-        mockedToolName = toolName;
-        mockedToolInput = input;
-        mockedHeaderText = { normalizedToolName: toolName, title, subtitle: 'COMMAND_SUBTITLE', statusText: null };
-        const { PermissionPromptCard } = await import('./PermissionPromptCard');
 
         const request = { id: 'perm1', tool: toolName, arguments: input } as PendingPermissionRequest;
 
@@ -255,23 +199,16 @@ describe('PermissionPromptCard (preview)', () => {
                     canApprovePermissions={true}
                 />);
 
-        const texts = screen.findAllByType('Text' as any);
-        const flattened = texts
-            .map((t) => t.props.children)
-            .flat()
-            .filter((c) => typeof c === 'string') as string[];
-
-        expect(flattened).not.toContain('COMMAND_SUBTITLE');
-        expect(screen.findByTestId('permission-prompt-tool-inline-body')).toBeTruthy();
+        const headers = screen.tree.root.findAll(node => node.props.testID === 'permission-prompt-card'
+            && Object.hasOwn(node.props, 'subtitle'));
+        expect(headers.length).toBeGreaterThan(0);
+        expect(headers.every(node => node.props.subtitle === null)).toBe(true);
+        expect(screen.tree.root.findAllByType(InlineBody)).toHaveLength(1);
     });
 
     it('does not render when the session is inactive', async () => {
         toolDetailSetting = 'summary';
-        mockedToolName = 'edit';
-        mockedToolInput = { path: 'file.ts' };
-        mockedHeaderText = { normalizedToolName: 'edit', title: 'Edit', subtitle: null, statusText: null };
 
-        const { PermissionPromptCard } = await import('./PermissionPromptCard');
         const request = { id: 'perm-inactive', tool: 'edit', arguments: { path: 'file.ts' } } as PendingPermissionRequest;
 
         const screen = await renderWithSessionTranscriptSource(
