@@ -810,6 +810,16 @@ export const DeploymentTransitionInputV1Schema = lazyZodSchema(() => z.strictObj
 })));
 export type DeploymentTransitionInputV1 = z.infer<typeof DeploymentTransitionInputV1Schema>;
 
+/** Native receipt intents retain this identity across distinct HTTP envelopes. */
+export function readDeploymentEnvironmentOperationRequestIdV1(input: Readonly<{
+  serverId: string; environmentId: string; requestKey?: string;
+}>): string | undefined {
+  return input.requestKey === undefined ? undefined
+    : computeCanonicalDomainSeparatedDigest('happier-deployment-operation-request-v1', [
+      input.serverId, input.environmentId, input.requestKey,
+    ]);
+}
+
 /** The signer and Home derive the same body binding; the proof itself is never part of its digest. */
 export function computeDeploymentTransitionRequestDigestV1(input: Omit<DeploymentTransitionInputV1, 'proof'>): string {
   return computeCanonicalDomainSeparatedDigest('happier-deployment-transition-v1', [createCanonicalJsonSigningInput(input)]);

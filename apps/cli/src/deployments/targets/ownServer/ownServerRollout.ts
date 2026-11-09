@@ -43,6 +43,14 @@ export async function executeOwnServerRollout(host: OwnServerDeploymentTargetHos
     const result = (): OwnServerDeploymentResult => ({ ok: true, environmentId: receipt.deployment.environmentId,
         revision: initial.environment.environment.revision, deploymentId: receipt.deployment.id,
         deploymentRevision: receipt.deployment.revision, state: receipt.deployment.state });
+    const finishChild = async (outcome: OwnServerDeploymentResult): Promise<OwnServerDeploymentResult> => {
+        // The cancel route cannot observe a running child. Once that finite
+        // child returns, this controller can confirm no later stage will start.
+        // A lost child outcome still cannot establish that boundary.
+        if (receipt.deployment.state === 'outcome_unknown' && receipt.deployment.cancelRequestedAtMs !== undefined
+            && (outcome.ok ? outcome.state !== 'outcome_unknown' : outcome.errorCode !== 'outcome_unknown')) return write('cancelled');
+        return result();
+    };
     const current = () => receipt.deployment.state === 'running';
     const write = (state: 'running' | 'succeeded' | 'running_unverified' | 'failed' | 'cancelled' | 'outcome_unknown',
         content = receipt.content) => host.writeTransition({ environmentId: receipt.deployment.environmentId,
@@ -188,7 +196,7 @@ export async function executeOwnServerRollout(host: OwnServerDeploymentTargetHos
     try {
         if (admitted.selected) for (const target of admitted.link.members) {
             const observed = await dispatch(target, 'observe', admitted.selected.deployment.id);
-            if (!current()) return result();
+            if (!current()) return finishChild(observed);
             if (!observed.ok && observed.errorCode === 'outcome_unknown') return await write('outcome_unknown');
             if (!observed.ok && observed.errorCode === 'rollback_image_unavailable' && receipt.content.onFailure === 'rollbackAll') {
                 return rejectBeforeEffects('rollback_image_unavailable');
@@ -204,7 +212,7 @@ export async function executeOwnServerRollout(host: OwnServerDeploymentTargetHos
             const buildOperationId = receipt.deployment.actionOperationId;
             const built = await host.dispatchBuild(request, receipt.deployment);
             await read();
-            if (!current()) return result();
+            if (!current()) return finishChild(built);
             const complete = isOwnServerBuildReceiptComplete(receipt.content)
                 && receipt.deployment.actionOperationId === buildOperationId && receipt.deployment.revision > beforeBuildRevision;
             const validation = !built.ok ? readDeploymentOutputValidation(built) : undefined;
@@ -217,7 +225,7 @@ export async function executeOwnServerRollout(host: OwnServerDeploymentTargetHos
         for (const target of initial.link.members) {
             attempted.push(target);
             const executed = await dispatch(target, 'activate', receipt.deployment.id);
-            if (!current()) return result();
+            if (!current()) return finishChild(executed);
             const row = member(target.machineId);
             if (!executed.ok && executed.errorCode === 'outcome_unknown' || row?.activation === 'outcome_unknown') return await write('outcome_unknown');
             if (!executed.ok || row?.activation !== 'succeeded' || row.health === 'unhealthy' || row.health === 'unknown') {
@@ -235,15 +243,15 @@ export async function executeOwnServerRollout(host: OwnServerDeploymentTargetHos
                         if (migrationRan || recovery.link.members.length > 1
                             || initial.environment.content.ownServer?.autoRestorePreviousRelease !== false) {
                             for (const currentMember of recovery.link.members) {
-                                await dispatch(currentMember, 'restore', recovery.selected.deployment.id);
-                                if (!current()) return result();
+                                const restored = await dispatch(currentMember, 'restore', recovery.selected.deployment.id);
+                                if (!current()) return finishChild(restored);
                             }
                         }
                     }
                     else for (const currentMember of attempted) {
                         const cleaned = await dispatch(currentMember, 'cleanup', receipt.deployment.id);
                         if (!cleaned.ok) cleanupFailure ??= cleaned;
-                        if (!current()) return result();
+                        if (!current()) return finishChild(cleaned);
                     }
                 }
                 const settled = await write('failed');

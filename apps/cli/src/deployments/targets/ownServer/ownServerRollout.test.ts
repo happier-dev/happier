@@ -50,6 +50,12 @@ it.each([
     { autoRestore: false, members: 2, baseline: true, failure: 'machine_unavailable', restores: 2, state: 'failed' },
     { autoRestore: true, members: 1, baseline: true, failure: 'outcome_unknown', restores: 0, state: 'outcome_unknown' },
     { autoRestore: true, members: 1, baseline: true, failure: 'cancelled', restores: 0, state: 'cancelled' },
+    { autoRestore: true, members: 1, baseline: true, serverCancellation: 'initial', failure: 'outcome_unknown', restores: 0, state: 'outcome_unknown' },
+    { autoRestore: true, members: 1, baseline: true, serverCancellation: 'observe', failure: 'action_forbidden', restores: 0, state: 'cancelled' },
+    { autoRestore: true, members: 1, baseline: true, serverCancellation: 'build', failure: 'action_forbidden', restores: 0, state: 'cancelled' },
+    { autoRestore: true, members: 2, baseline: true, serverCancellation: 'activate', failure: 'action_forbidden', restores: 0, state: 'cancelled' },
+    { autoRestore: true, members: 1, baseline: true, serverCancellation: 'activate', failure: 'outcome_unknown', restores: 0, state: 'outcome_unknown' },
+    { autoRestore: true, members: 1, baseline: true, serverCancellation: 'activate', childUnknownAck: true, failure: 'outcome_unknown', restores: 0, state: 'outcome_unknown' },
     { autoRestore: false, members: 1, baseline: false, failure: 'machine_unavailable', restores: 0, state: 'failed' },
     { autoRestore: false, members: 1, baseline: false, failure: 'quota_exceeded', restores: 0, state: 'failed' },
     { autoRestore: false, members: 1, baseline: false, failure: 'deployment_image_unavailable', cleanupFailure: 'deployment_generation_required', restores: 0, state: 'failed' },
@@ -60,7 +66,7 @@ it.each([
     { autoRestore: false, members: 1, baseline: true, migrationPolicy: 'rollbackCodeOnly', failure: 'machine_unavailable', restores: 1, state: 'failed' },
     { autoRestore: true, members: 2, baseline: true, migrationPolicy: 'ask', failure: 'machine_unavailable', restores: 0, state: 'failed' },
     { autoRestore: true, members: 2, baseline: true, restoreBackupId: 'recorded-backup', failure: 'backup_required', restores: 0, state: 'failed' },
-] as const)('honors automatic restore=$autoRestore for $members member(s) after $failure (baseline=$baseline, placement=$advancePlacement, bindings=$editBindings, retry=$retryAfterEnvironmentEdit, migration=$migrationPolicy)', async scenario => {
+] as const)('honors automatic restore=$autoRestore for $members member(s) after $failure (baseline=$baseline, server=$serverCancellation, unknownAck=$childUnknownAck, placement=$advancePlacement, bindings=$editBindings, retry=$retryAfterEnvironmentEdit, migration=$migrationPolicy)', async scenario => {
     const { autoRestore, members, baseline, failure, restores, state } = scenario;
     const advancePlacement = 'advancePlacement' in scenario && scenario.advancePlacement;
     const editBindings = 'editBindings' in scenario && scenario.editBindings;
@@ -78,6 +84,7 @@ it.each([
     if (!baseline) delete link.activeDeploymentId;
     const receipt = createDeploymentReceiptDetailV1();
     receipt.deployment = { ...receipt.deployment, id: 'candidate', state: 'queued', targetLinkId: link.id,
+        ...('serverCancellation' in scenario ? { revision: 4 } : {}),
         acceptedExecution: { v: 1,
             controller: { machineId: environment.environment.controllerMachineId, installationId: link.members[0].installationId },
             builder: { machineId: link.machines[0], installationId: link.members[0].installationId } } };
@@ -87,12 +94,27 @@ it.each([
             targetLinkId: link.id, targetLinkRevision: link.revision, sourceIntent: receipt.content.sourceIntent,
             manifestFingerprint: 'manifest', configInputDigests: [], physicalProjectName: 'project',
             toolVersion: '2.40.1', services: ['app'], profiles: [], bindings: [], images: receipt.content.images, ownServer: environment.content.ownServer,
+            ...('serverCancellation' in scenario && scenario.serverCancellation === 'build' ? { buildServices: ['app'] } : {}),
             members: link.members.map(({ machineId, installationId }) => ({ machineId, installationId })) }) } };
     const uniform = structuredClone(receipt);
     uniform.deployment = { ...uniform.deployment, id: 'uniform', state: 'succeeded' };
+    if ('serverCancellation' in scenario && scenario.serverCancellation === 'initial') {
+        receipt.deployment = { ...receipt.deployment, state: 'outcome_unknown', revision: 6, cancelRequestedAtMs: 1794181907621 };
+    }
     const controller = new AbortController();
     const phases: string[] = [];
     const runningVersions = new Map(link.machines.map(machineId => [machineId, 'uniform']));
+    const cancelledChild = () => {
+        // K7's cancel route accepts running revision 5 and returns revision 6
+        // while the finite child is active. Its later read can be refused.
+        expect(receipt.deployment.revision).toBe(5);
+        receipt.deployment = { ...receipt.deployment, state: 'outcome_unknown',
+            revision: 6, cancelRequestedAtMs: 1794181907621 };
+        if ('childUnknownAck' in scenario) return readDeploymentChildResult({ ok: true,
+            environmentId: environment.environment.id, revision: environment.environment.revision,
+            deploymentId: receipt.deployment.id, deploymentRevision: receipt.deployment.revision, state: 'outcome_unknown' });
+        return { ok: false as const, errorCode: failure, error: failure };
+    };
     let environmentReads = 0;
     const host: OwnServerDeploymentTargetHostInput = {
         credentials: { token: 'home-boundary', encryption: null }, serverId: 'home', serverHttpBaseUrl: 'https://home.test', machineId: 'machine-a',
@@ -112,9 +134,13 @@ it.each([
                 deploymentId: receipt.deployment.id, deploymentRevision: receipt.deployment.revision, state: input.state };
         },
         runtime: { async acquire() { throw new Error('Controller must not acquire remote native custody'); } },
+        async dispatchBuild() { return cancelledChild(); },
         // Only Home storage and the remote native response are substituted.
         async dispatchMember({ machineId, installationId, phase, selectedDeploymentId }) {
             phases.push(phase);
+            if ('serverCancellation' in scenario && phase === scenario.serverCancellation) {
+                return cancelledChild();
+            }
             if (phase === 'observe' && 'thrownFailure' in scenario) {
                 if (scenario.thrownFailure === 'rpc') throw new RpcError('private-native-error-sentinel', scenario.failure);
                 if (scenario.thrownFailure === 'rpc-carrier') throw { rpcErrorCode: scenario.failure };
@@ -186,13 +212,26 @@ it.each([
         : 'restoreBackupId' in scenario || retryAfterEnvironmentEdit
         ? { ok: false, errorCode: failure } : { ok: true, state });
     expect(JSON.stringify(outcome)).not.toContain('private-native-error-sentinel');
+    if ('serverCancellation' in scenario) {
+        expect(receipt.deployment.state).toBe(state);
+        expect(phases.filter(phase => phase === 'activate')).toHaveLength(scenario.serverCancellation === 'activate' ? 1 : 0);
+        expect(receipt.content.machineResults).toEqual([]);
+        expect(link.activeDeploymentId).toBe('uniform');
+        if (scenario.serverCancellation === 'initial') {
+            expect(phases).toEqual([]);
+            expect(receipt.deployment.revision).toBe(6);
+        }
+    }
     expect(phases.filter(phase => phase === 'restore')).toHaveLength(restores);
     expect(phases.filter(phase => phase === 'cleanup')).toHaveLength(baseline ? 0 : 1);
     expect(link.activeDeploymentId).toBe(baseline ? 'uniform' : undefined);
     expect(receipt.deployment.state).toBe(state);
-    expect(receipt.content.failure).toMatchObject({ code: failure });
-    expect(JSON.stringify(receipt.content.failure)).not.toContain('private-native-error-sentinel');
-    expect(receipt.content.ownServer?.rollbackTarget).toEqual(baseline
+    if ('serverCancellation' in scenario) expect(receipt.content.failure).toBeUndefined();
+    else {
+        expect(receipt.content.failure).toMatchObject({ code: failure });
+        expect(JSON.stringify(receipt.content.failure)).not.toContain('private-native-error-sentinel');
+    }
+    expect(receipt.content.ownServer?.rollbackTarget).toEqual('serverCancellation' in scenario && scenario.serverCancellation === 'initial' ? undefined : baseline
         ? { deploymentId: uniform.deployment.id, revision: { kind: 'repository', sha: 'a'.repeat(40) } } : null);
     if (editBindings) expect([...runningVersions.values()]).toEqual(link.machines.map(() => 'uniform'));
 });

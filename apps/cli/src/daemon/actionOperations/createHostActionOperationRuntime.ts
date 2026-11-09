@@ -19,7 +19,7 @@ import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessi
 import { isDeepStrictEqual } from 'node:util';
 import { readDeploymentArchiveOperationIdentityForHost } from '@/deployments/targets/ownServer/archiveFilesystemAdmission';
 import type { ManagedNativeOperationSettlement, ManagedMachineOperationSettlementContext } from '@/machines/managed/managedIntentReconciler';
-import { DeploymentActionInputSchemasV1, DeploymentReceiptResultV1Schema, DeploymentDeployInputV1Schema,
+import { DeploymentActionInputSchemasV1, DeploymentReceiptResultV1Schema, DeploymentDeployInputV1Schema, readDeploymentEnvironmentOperationRequestIdV1,
   type DeploymentDeployInputV1, type DeploymentDeployIntentInputV1,
   type DeploymentPendingAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { isDeploymentChildEffectActionIdV1, isDeploymentDomainChildActionIdV1 } from '@happier-dev/protocol';
@@ -72,10 +72,8 @@ function readDeploymentOperationRequestId(actionId: string, input: unknown): str
   }
   if (!isDeploymentChildEffectActionIdV1(actionId) && actionId !== 'deployments.teardown') return undefined;
   const parsed = DeploymentActionInputSchemasV1[actionId].safeParse(input);
-  if (!parsed.success || !('requestKey' in parsed.data) || parsed.data.requestKey === undefined) return undefined;
-  return computeCanonicalDomainSeparatedDigest('happier-deployment-operation-request-v1', [
-    parsed.data.serverId, parsed.data.environmentId, parsed.data.requestKey,
-  ]);
+  if (!parsed.success || !('requestKey' in parsed.data)) return undefined;
+  return readDeploymentEnvironmentOperationRequestIdV1(parsed.data);
 }
 
 function readRequestId(actionId: string, input: unknown): string | undefined {

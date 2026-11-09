@@ -1,4 +1,4 @@
-import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, DeploymentEnvironmentGetResultV1Schema, DeploymentCancelTransitionInputV1Schema, DeploymentEnvironmentCreatePreviewV1Schema, DeploymentTargetLinkInputV1Schema, type DeploymentActionInputV1, type DeploymentActionOutputV1, type DeploymentEnvironmentCreateInputV1, type DeploymentEnvironmentCreateIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, readDeploymentEnvironmentOperationRequestIdV1, DeploymentEnvironmentGetResultV1Schema, DeploymentCancelTransitionInputV1Schema, DeploymentEnvironmentCreatePreviewV1Schema, DeploymentTargetLinkInputV1Schema, type DeploymentActionInputV1, type DeploymentActionOutputV1, type DeploymentEnvironmentCreateInputV1, type DeploymentEnvironmentCreateIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DEPLOYMENT_CANCEL_ACTION_ID_V1, DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1, isDeploymentMachineTransportActionIdV1, isDeploymentPromoteActionIdV1, isDeploymentReadActionIdV1, isDeploymentTargetLinkActionIdV1, type DeploymentTransportActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import { type ActionExecutorContext, type ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
@@ -14,7 +14,7 @@ import { requestHomeDomain } from '@/sync/api/home/homeServerActionTransport';
 import { homeDomainFailureCode } from '@/sync/api/home/homeDomainActions';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
-import { projectUiAccountRequesterInvocation } from '@/sync/ops/actions/accountActionTransport';
+import { projectExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { randomUUID } from '@/platform/randomUUID';
 import { getActionOperation, listActionOperations } from '@/sync/ops/actionOperations';
 import { prepareUiDeploymentTargetLink } from './prepareUiDeploymentTargetLink';
@@ -34,7 +34,7 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
         // The receiving Machine consumes the original requester and completed
         // review through the same private Account carrier as other UI Actions.
         const needsInvocation = context.surface !== undefined && context.surface !== 'plugin';
-        const invocation = needsInvocation ? projectUiAccountRequesterInvocation({ actionId, context, account,
+        const invocation = needsInvocation ? projectExternalActionRequesterInvocationV1({ actionId, context, account,
             target: context.externalActionTarget?.kind === 'machine' ? context.externalActionTarget : { kind: 'machine', machineId },
         }) : null;
         if (needsInvocation && !invocation) return failure('admission_unavailable');
@@ -50,10 +50,12 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
         // runner; never resubmit the effect or infer success from Environment absence.
         try {
             const transport = { serverId: account.serverId, accountId: account.accountId, machineId, signal: context.signal };
+            const retainedRequestId = ('environmentId' in input && 'requestKey' in input
+                ? readDeploymentEnvironmentOperationRequestIdV1(input) : undefined) ?? requestId;
             const matches = (operation: import('@happier-dev/protocol/actions/operations/v1').ActionOperationSnapshotV1) =>
-                operation.actionId === actionId && operation.requestId === requestId
+                operation.actionId === actionId && operation.requestId === retainedRequestId
                 && operation.scope.accountId === account.accountId && operation.scope.machineId === machineId;
-            const page = await listActionOperations({ ...transport, request: { requestIdentity: { actionId, requestId } } });
+            const page = await listActionOperations({ ...transport, request: { requestIdentity: { actionId, requestId: retainedRequestId } } });
             const retained = page.items.find(matches);
             if (!retained) return result;
             const read = await getActionOperation({ ...transport, operationId: retained.operationId, waitForTerminal: true });

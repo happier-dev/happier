@@ -36,6 +36,7 @@ import { buildSessionMetadataEnvelopeCreateFields } from '@/session/metadata/bui
 import { buildCommittedLaunchMetadata } from '@/agent/runtime/createSessionMetadata';
 import { createCurrentSessionProjectionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { computeDaemonSpawnRequestKey, createSpawnRequestCoalescer } from '@/daemon/spawn/spawnRequestCoalescer';
+import { readDeploymentEnvironmentOperationRequestIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentChildRpcV1Schema, DeploymentDeployInputV1Schema, projectDeploymentChildRoutingV1, type DeploymentTeardownInputV1 } from '@happier-dev/protocol';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
@@ -107,6 +108,11 @@ describe('finite host operation custody', () => {
         return { ok: true, result: { ok: true, state: 'succeeded' } };
       } });
     expect(await invoke()).toMatchObject({ ok: true });
+    const requestId = readDeploymentEnvironmentOperationRequestIdV1(input)!;
+    const retained = await runtime.handlers.listV2({ requestIdentity: { actionId: 'deployments.teardown', requestId } });
+    expect(retained.items).toMatchObject([{ actionId: 'deployments.teardown', requestId, state: 'succeeded' }]);
+    expect(await runtime.handlers.getV2({ operationId: retained.items[0]!.operationId, waitForTerminal: true }))
+      .toMatchObject({ kind: 'found', operation: { state: 'succeeded' } });
     expect(await invoke({ ...input, contentHeaderVersion: 8, contentBodyVersion: 8 })).toMatchObject({ ok: true });
     expect(effects).toBe(1);
     expect(await invoke({ ...input, contentArtifactId: 'another-receipt' }))

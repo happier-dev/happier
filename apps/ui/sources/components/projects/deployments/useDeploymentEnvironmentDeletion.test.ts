@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
 import { ACTION_OPERATION_RPC_METHODS_V2, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 const operationRpc = vi.hoisted(() => vi.fn());
 // Daemon RPC is the observation transport boundary; all Action and outcome logic stays real.
@@ -259,10 +260,16 @@ describe('Environment deletion client over the Action owner', () => {
         const f = await setup();
         const machineId = f.detail.environment.controllerMachineId!;
         let requestId: string | undefined;
+        let operationRequestId: string | undefined;
         let effects = 0;
         await answerExternalActionAccountForHome(homes, f.serverId, { actionId: 'deployments.teardown',
             machineId, installationId: 'installation-controller', tokenEpoch: 0,
-            requesterInvocation: 'required', execute: (_input, context) => {
+            requesterInvocation: 'required', execute: (raw, context) => {
+                const input = DeploymentTeardownActionInputV1Schema.parse(raw);
+                // The live host retains the Environment intent, not this HTTP envelope id.
+                operationRequestId = computeCanonicalDomainSeparatedDigest('happier-deployment-operation-request-v1', [
+                    input.serverId, input.environmentId, input.requestKey,
+                ]);
                 requestId = context.requestId; effects++;
                 throw new TypeError('net::ERR_NETWORK_CHANGED');
             } });
@@ -270,11 +277,12 @@ describe('Environment deletion client over the Action owner', () => {
         operationRpc.mockImplementation(async (params: { method: string; payload: unknown }) => {
             calls.push(params.method);
             const retained: ActionOperationSnapshotV1 = { version: 1, operationId: 'retained-teardown', revision: 1,
-                actionId: 'deployments.teardown', requestId: settlement === 'unrelated' ? 'another-click' : requestId,
+                actionId: 'deployments.teardown', requestId: settlement === 'unrelated' ? 'another-click' : operationRequestId,
                 state: 'running', scope: { accountId: 'owner', machineId }, title: 'Stop and remove',
                 createdAt: 1, startedAt: 2, cancellation: 'supported' };
             if (params.method === ACTION_OPERATION_RPC_METHODS_V2.list) {
-                expect(params.payload).toEqual({ requestIdentity: { actionId: 'deployments.teardown', requestId } });
+                expect(requestId).not.toBe(operationRequestId);
+                expect(params.payload).toEqual({ requestIdentity: { actionId: 'deployments.teardown', requestId: operationRequestId } });
                 return { items: [retained], nextCursor: null };
             }
             expect(params.payload).toEqual({ operationId: retained.operationId, waitForTerminal: true });

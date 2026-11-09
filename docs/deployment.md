@@ -47,8 +47,10 @@ explicit `detachKeepRunning` uses Account storage. Native admission explains uns
 cause, a reason and a remedy.
 
 In 0.3 development, a lost teardown HTTP response follows the existing controller
-Action operation selected by the original request identity. The terminal operation
-result decides success or failure; Environment absence alone does not prove the
+Action operation selected by the native Environment intent identity (Home,
+Environment and `requestKey`), derived by the shared Protocol owner rather than the
+HTTP envelope's request id. The terminal operation result decides success or
+failure; Environment absence alone does not prove the
 requested cleanup completed. Failed observation retains the unknown outcome.
 This recovery neither repeats teardown nor adds a polling timer. A removal refused
 because a deploy is running offers History and the receipt's existing Stop Action,
@@ -354,10 +356,11 @@ Only the reader's explicit access-denied result is presented as denied.
 
 Development Environment content owns its name. Writers project `content.name`
 into the private Artifact `header.title` in the same content write, including
-template application and edits after a rename. Lists and Services read that
-header without opening bodies; the detail page reads the canonical content.
-Retained placeholder titles are corrected at the next content write, with no
-startup scan or backfill and no reader fallback.
+template application and edits after a rename. Deployment collections open the
+visible page's Environment content in one deduplicated Account Artifact batch.
+Their titles and the detail page use the same canonical `content.name`, so legacy
+placeholder headers display correctly without a migration or backfill. Services
+header consumers retain the writer's title projection.
 
 The development-source read controller projects receipt-derived chip facts through
 `acquireReceiptChip`, borrowing its existing exact receipt lease. The chip retains
@@ -646,6 +649,11 @@ older response without this field is unknown, not a client-derived permission.
 The existing `deployments.cancel` Action takes the exact receipt revision and
 retains mutation admission. It stops future deploy stages; a Machine Service's
 desired-stop control is a different operation and is not a deploy-cancel alias.
+In development, the cancel request records `outcome_unknown` while a finite
+child is active. The captured own-server controller settles `cancelled` after
+that child returns a known outcome and before any later stage starts. An uncertain child
+outcome remains `outcome_unknown`; cancellation does not assert container removal
+or change the last uniform deployment.
 
 In development, the next native preparation or admission reconciles an unfinished
 receipt on its captured controller installation for the same requester. The
@@ -2253,13 +2261,14 @@ while the server enforces the existing mode, envelope, authority and exact
 Artifact-reference revision contract. There is no second credential or backup
 status record at this storage boundary.
 
-The Project deployment read controller keeps collection and history reads
-header-only. The Environment list includes each row's latest receipt attempt
+The Project deployment read controller opens Environment collection content and
+visible history receipt content through the existing Account Artifact reader.
+The Environment list includes each row's latest receipt attempt
 (id and state), which is distinct from the serving receipt selected by the
-runtime link's `activeDeploymentId`. History titles are opened through the same
-batched Account Artifact-header reader as Environment titles, with exact
-Artifact identity, version and kind checks; opening a selected receipt alone
-loads its body.
+runtime link's `activeDeploymentId`. Collection receipt summaries retain a
+separate header-only batch; they do not open retained receipt or TargetLink
+bodies. Environment and receipt reads enforce exact Artifact identity, version
+and kind checks through their canonical content projections.
 
 Current 0.3 development source also admits an Account-wide collection when
 neither ProjectSource nor Machine is selected. `useDeploymentInventory` shares
