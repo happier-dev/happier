@@ -106,8 +106,11 @@ describe('Session pull-request link projection', () => {
         const ordinaryAutomation = { ...binding('binding-ordinary', 0, 'session-unlinked', 9),
             target: { kind: 'automation', automationId: 'automation-ordinary', policy: { resultDelivery: 'finalResult' } },
         } satisfies ConversationBindingV1;
+        const discussion = { ...binding('binding-discussion', 0, 'session-unlinked', 9),
+            target: { kind: 'discussion', discussionId: 'discussion-1', policy: { deliveryMode: 'repliesOnly' } },
+        } satisfies ConversationBindingV1;
         const bindings = [binding('binding-z', 4, 'session-2', 2), binding('binding-duplicate', 3, 'session-1', 2), historical,
-            binding('binding-a', 1, 'session-1', 1), deleting, ordinaryAutomation];
+            binding('binding-a', 1, 'session-1', 1), deleting, ordinaryAutomation, discussion];
         expect(resolveSessionPullRequestLinksV1(bindings, nativeProvider)).toEqual([
             { sessionId: 'session-1', pullRequestLinks: [{ provider: 'github', repository: 'acme/widgets', number: 1, url: 'https://github.com/acme/widgets/pull/1' }, { provider: 'github', repository: 'acme/widgets', number: 2, url: 'https://github.com/acme/widgets/pull/2' }] },
             { sessionId: 'session-2', pullRequestLinks: [{ provider: 'github', repository: 'acme/widgets', number: 2, url: 'https://github.com/acme/widgets/pull/2' }] },

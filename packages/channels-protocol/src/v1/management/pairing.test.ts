@@ -67,7 +67,7 @@ describe('Channels V1 pairing cancellation management contract', () => {
             generationId: 'generation-1',
             proposalId: 'proposal-1',
             connectionId: 'connection-1',
-            expectedConnectionRevision: 7,
+
             finalizeIdempotencyKey: 'finalize-1',
         } as const;
         const created = {
@@ -75,7 +75,7 @@ describe('Channels V1 pairing cancellation management contract', () => {
             generationId: 'generation-1',
             challengeId: 'challenge-1',
             expiresAt: 1_700_000_000_000,
-            attemptsRemaining: 5,
+
             destinationLabel: 'Example destination',
             manualToken: '12ABCD34',
             deepLinkUrl: null,
@@ -149,7 +149,6 @@ describe('Channels V1 pairing cancellation management contract', () => {
                 'generationId',
                 'proposalId',
                 'connectionId',
-                'expectedConnectionRevision',
                 'finalizeIdempotencyKey',
             ],
         });
@@ -235,10 +234,10 @@ describe('Channels V1 pairing cancellation management contract', () => {
             challenges: [{
                 challengeId: 'challenge-1',
                 connectionId: 'connection-1',
-                expectedConnectionRevision: 7,
+
                 pairingRequestId: 'pairing-request-1',
                 expiresAt: 1_700_000_600_000,
-                attemptsRemaining: 5,
+
                 destinationLabel: 'Example destination',
                 manualToken: '12ABCD34',
                 deepLinkUrl: 'https://example.test/pair?token=12ABCD34',
@@ -247,7 +246,7 @@ describe('Channels V1 pairing cancellation management contract', () => {
                 challengeId: 'challenge-1',
                 proposalId: 'proposal-1',
                 connectionId: 'connection-1',
-                expectedConnectionRevision: 7,
+
                 expiresAt: 1_700_000_600_000,
                 endpointLabel: 'Ada',
                 proofEndpoint: { kind: 'direct', audience: 'direct', id: 'chat-1', label: 'Ada' },

@@ -1,4 +1,4 @@
-import { access, cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, cp, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -98,130 +98,17 @@ async function emitPackageDeclarations(declarationDirectory: string): Promise<vo
     ]);
 }
 
-async function installPublicSdkPublicBoundaryStub(consumerRoot: string): Promise<void> {
-    const sdkRoot = join(consumerRoot, 'node_modules', '@happier-dev', 'plugin-sdk');
-    await mkdir(sdkRoot, { recursive: true });
-    await Promise.all([
-        writeFile(join(sdkRoot, 'package.json'), `${JSON.stringify({
-            name: '@happier-dev/plugin-sdk',
-            private: true,
-            type: 'module',
-            exports: {
-                '.': {
-                    types: './index.d.ts',
-                    default: './index.js',
-                },
-                './protocol': {
-                    types: './protocol.d.ts',
-                    default: './protocol.js',
-                },
-                './contributions': {
-                    types: './contributions.d.ts',
-                    default: './contributions.js',
-                },
-                './manifest': {
-                    types: './manifest.d.ts',
-                    default: './manifest.js',
-                },
-            },
-        }, null, 2)}\n`, 'utf8'),
-        writeFile(join(sdkRoot, 'protocol.js'), 'export {};\n', 'utf8'),
-        writeFile(join(sdkRoot, 'index.js'), 'export {};\n', 'utf8'),
-        // The emitted invocation helper uses only these public context keys.
-        // Runtime caller admission is exercised separately through the SDK testkit.
-        writeFile(join(sdkRoot, 'index.d.ts'), `
-export interface PluginInvocationContext {
-    readonly surface: string;
-    readonly caller?: Readonly<{ kind: string; pluginId?: string }>;
-}
-`, 'utf8'),
-        writeFile(join(sdkRoot, 'contributions.js'), 'export {};\n', 'utf8'),
-        // This is the declared external SDK boundary, deliberately limited to
-        // the public type names Channels emits. Using the workspace SDK here
-        // would allow its own private Protocol dependency to hide a leak.
-        writeFile(join(sdkRoot, 'protocol.d.ts'), `
-export type ProtocolJsonValue =
-    | null
-    | boolean
-    | number
-    | string
-    | readonly ProtocolJsonValue[]
-    | { readonly [key: string]: ProtocolJsonValue };
-export type PluginJsonSchema = Readonly<Record<string, ProtocolJsonValue>>;
-export type ProtocolValidationIssue = Readonly<{
-    path: readonly (string | number)[];
-    code: string;
-}>;
-export class ProtocolValidationError extends Error {
-    readonly issues: readonly ProtocolValidationIssue[];
-}
-export interface ProtocolComposableSchema<TInput = ProtocolJsonValue, TOutput = TInput> {
-    readonly jsonSchema: PluginJsonSchema;
-    parse(value: unknown): TOutput;
-    safeParse(value: unknown):
-        | Readonly<{ success: true; data: TOutput }>
-        | Readonly<{ success: false; error: ProtocolValidationError }>;
-    optional(): ProtocolComposableSchema<TInput | undefined, TOutput | undefined>;
-    nullable(): ProtocolComposableSchema<TInput | null, TOutput | null>;
-}
-`, 'utf8'),
-        writeFile(join(sdkRoot, 'contributions.d.ts'), `
-export type ContributionPointAuthorDefinition<TProtocols extends readonly unknown[]> = Readonly<{
-    readonly protocols: readonly unknown[];
-    readonly __protocols?: TProtocols;
-}>;
-export interface ContributionProtocol<
-    TOperations = unknown,
-    TSurfaces = unknown,
-    TDescriptorSchema = unknown,
-    TProtocolId extends string = string,
-    TProtocolVersion extends number = number,
-> {
-    readonly id: TProtocolId;
-    readonly version: TProtocolVersion;
-    readonly operations: TOperations;
-    readonly surfaces: TSurfaces;
-    readonly descriptor?: TDescriptorSchema;
-}
-export type PluginTargetedContributionSelectionV1 = Readonly<{
-    target: Readonly<{
-        pluginId: string;
-        immutableGenerationId: string;
-    }>;
-    point: Readonly<{
-        pointId: string;
-        protocol: Readonly<{
-            id: string;
-            version: number;
-        }>;
-    }>;
-    contributor: Readonly<{
-        pluginId: string;
-        contributionId: string;
-        immutableGenerationId: string;
-    }>;
-}>;
-export type ContributionActionSurface = 'cli' | 'mcp' | 'agent' | 'ui' | 'plugin' | 'voice';
-export type ContributionActionDangerLevel =
-    | 'safe'
-    | 'writesLocal'
-    | 'writesRemote'
-    | 'externalSideEffect'
-    | 'destructive';
-export type ContributionSurfacePresentation = 'content' | 'fill';
-`, 'utf8'),
-        // `/testing/v1` deliberately exposes the canonical parsed manifest
-        // alongside its selected Channels contribution. It is a public SDK
-        // peer entrypoint, not a route back to private Protocol types.
-        writeFile(join(sdkRoot, 'manifest.js'), 'export {};\n', 'utf8'),
-        writeFile(join(sdkRoot, 'manifest.d.ts'), `
-export type ParsedPluginManifest = Readonly<Record<string, unknown>>;
-export type PluginContributionIdentity = {
-    pluginId: string;
-    localId: string;
-};
-`, 'utf8'),
-    ]);
+async function installPublicSdkBoundary(consumerRoot: string): Promise<void> {
+    const scopeRoot = join(consumerRoot, 'node_modules', '@happier-dev');
+    await mkdir(scopeRoot, { recursive: true });
+    // Resolve the real SDK's emitted public subpaths, never shadow them with
+    // handwritten declarations. Channels stays physically isolated, so its
+    // own imports cannot resolve the SDK's private workspace dependencies.
+    await symlink(
+        join(repositoryRoot, 'packages', 'plugin-sdk'),
+        join(scopeRoot, 'plugin-sdk'),
+        process.platform === 'win32' ? 'junction' : 'dir',
+    );
 }
 
 async function installPackedChannelsProtocol(
@@ -248,7 +135,7 @@ async function installIsolatedConsumer(
     await mkdir(join(consumerRoot, 'src'), { recursive: true });
     await Promise.all([
         installPackedChannelsProtocol(consumerRoot, declarationDirectory),
-        installPublicSdkPublicBoundaryStub(consumerRoot),
+        installPublicSdkBoundary(consumerRoot),
         writeFile(join(consumerRoot, 'package.json'), `${JSON.stringify({
             name: 'channels-protocol-declaration-closure-consumer',
             private: true,
@@ -274,6 +161,10 @@ import type {
     ConversationJsonValueV1,
     ConversationProviderSetupResultV1,
 } from '@happier-dev/channels-protocol/v1';
+import type { ContributionAdmittedEntry, TargetedContributionPointRef } from '@happier-dev/plugin-sdk/contributions';
+
+type AdmittedCompletion = ContributionAdmittedEntry<{}, {}>;
+type CompletionPoint = TargetedContributionPointRef<AdmittedCompletion>;
 
 type RootContributionPoint = typeof import('@happier-dev/channels-protocol')
     .ConversationProvidersContributionPointV1;
@@ -304,22 +195,25 @@ export type ChannelsProtocolExternalConsumerProof = readonly [
     V1ProviderContributionAssertion,
     V1ProviderContributionCheck,
     V1ProviderContributionConformance,
+    CompletionPoint,
 ];
 `, 'utf8'),
     ]);
 }
 
 describe('Channels SDK schema closure', () => {
-    it('models only the direct composable protocol and contribution boundaries for isolated consumers', async () => {
+    it('consumes the emitted public SDK protocol boundary for isolated consumers', async () => {
         const consumerRoot = await mkdtemp(join(tmpdir(), 'happier-channels-protocol-sdk-boundary-'));
         try {
-            await installPublicSdkPublicBoundaryStub(consumerRoot);
+            await installPublicSdkBoundary(consumerRoot);
             const declaration = await readFile(join(
                 consumerRoot,
                 'node_modules',
                 '@happier-dev',
                 'plugin-sdk',
-                'protocol.d.ts',
+                'dist',
+                'protocol',
+                'protocolFacade.d.ts',
             ), 'utf8');
 
             expect(declaration).toContain('export interface ProtocolComposableSchema<');

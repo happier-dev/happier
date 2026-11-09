@@ -75,9 +75,10 @@ describe('Channels V1 public management barrel', () => {
             connectionRetest: management.ConversationConnectionRetestManagementActionDeclarationV1,
             connectionUpdate: management.ConversationConnectionUpdateManagementActionDeclarationV1,
             connectionDelete: management.ConversationConnectionDeleteManagementActionDeclarationV1,
-            connectionAbandon: management.ConversationConnectionAbandonManagementActionDeclarationV1,
-            streamBaselineAccept: management.ConversationStreamBaselineAcceptManagementActionDeclarationV1,
+            streamNoticeDismiss: management.ConversationStreamNoticeDismissManagementActionDeclarationV1,
             connectionPairingCreate: management.ConversationPairingCreateManagementActionDeclarationV1,
+            connectionPairingRead: { inputSchema: management.ConversationPairingReadInputV1JsonSchema,
+                resultSchema: management.ConversationPairingReadResultV1JsonSchema },
             connectionPairingFinalize: management.ConversationPairingFinalizeManagementActionDeclarationV1,
             connectionPairingCancel: management.ConversationPairingCancelManagementActionDeclarationV1,
             bindingResolve: management.ConversationBindingResolveManagementActionDeclarationV1,
@@ -86,7 +87,7 @@ describe('Channels V1 public management barrel', () => {
             bindingUpdate: management.ConversationBindingUpdateManagementActionDeclarationV1,
             bindingSetEnabled: management.ConversationBindingSetEnabledManagementActionDeclarationV1,
             bindingDelete: management.ConversationBindingDeleteManagementActionDeclarationV1,
-            sessionProjectionBaselineAccept: management.ConversationSessionProjectionBaselineAcceptManagementActionDeclarationV1,
+            sessionProjectionNoticeDismiss: management.ConversationSessionProjectionNoticeDismissManagementActionDeclarationV1,
             ingressRetry: management.ConversationIngressRetryManagementActionDeclarationV1,
             deliveryResolve: management.ConversationDeliveryResolveManagementActionDeclarationV1,
             connectionPollRetry: management.ConversationConnectionPollRetryManagementActionDeclarationV1,
@@ -178,7 +179,6 @@ describe('Channels V1 management currentness witnesses', () => {
         const epochProperties = [...found.keys()].filter((name) => name.endsWith('uthorityEpoch'));
         expect(epochProperties).toEqual(expect.arrayContaining([
             'authorityEpoch',
-            'expectedAuthorityEpoch',
         ]));
         for (const name of epochProperties) {
             expect({ [name]: [...(found.get(name) ?? [])] })

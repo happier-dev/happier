@@ -1,10 +1,17 @@
 import { describe, expect, it } from 'vitest';
 
+import { ConversationEndpointIdentityV1Schema } from './resolution.js';
 import * as provider from './index.js';
 
 describe('Channels V1 provider barrel', () => {
+    it('loads endpoint resolution before provider descriptors without an initialization cycle', () => {
+        const endpoint = { kind: 'direct', audience: 'direct', id: 'mailbox' };
+        expect(ConversationEndpointIdentityV1Schema.parse(endpoint)).toEqual(endpoint);
+    });
+
     it('publishes the one complete operation vocabulary without relative-only composition parsers', () => {
         expect(Object.keys(provider).sort()).toEqual([
+            'CONVERSATION_PROVIDERS_CONTRIBUTION_POINT_REF_V1',
             'ConversationAttachmentFetchInputV1JsonSchema',
             'ConversationAttachmentFetchInputV1Schema',
             'ConversationAttachmentFetchResultV1JsonSchema',
@@ -87,6 +94,7 @@ describe('Channels V1 provider barrel', () => {
             'compareCanonicalConversationResolutionCandidatesV1',
             'createConversationAttachmentIdV1',
             'encodeConversationAttachmentBytesV1',
+            'formatConversationPullRequestUrlV1',
             'getConversationAttachmentIdRepresentationsV1',
             'hasCanonicalConversationResolutionCandidateOrderV1',
             'hasCurrentConversationProviderConnectionV1',

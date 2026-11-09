@@ -34,6 +34,25 @@ function hasFinalizingDeleteDisabledBranch(schema: unknown): boolean {
 }
 
 describe('Channels V1 binding targets', () => {
+    it('retains PR watch policy on the canonical Session binding and rejects authority outside that policy', () => {
+        const target = { kind: 'session', sessionId: 'session-1',
+            pullRequestLink: { repository: 'acme/widgets', number: 12 },
+            policy: { deliveryMode: 'repliesOnly', permissionCeiling: 'read-only', approvals: { kind: 'off' }, newSession: { kind: 'off' } },
+            pullRequestWatch: { policy: { mode: 'notify', archiveAfterMerge: false } },
+        };
+        expect(ConversationBindingTargetV1Schema.parse(target)).toEqual(target);
+        for (const stopWhenMerged of [true, false]) {
+            const retained = { ...target, pullRequestWatch: { policy: { ...target.pullRequestWatch.policy, stopWhenMerged } } };
+            expect(createProtocolStoredReadSchema(ConversationBindingTargetV1Schema).parse(retained)).toEqual(target);
+            expect(ConversationBindingTargetV1Schema.safeParse(retained).success).toBe(false);
+        }
+        expect(ConversationBindingTargetV1Schema.safeParse({ ...target, pullRequestWatch: {
+            policy: { ...target.pullRequestWatch.policy, mode: 'autofix' },
+        } }).success).toBe(false);
+        expect(ConversationBindingTargetV1Schema.safeParse({ ...target, pullRequestWatch: {
+            ...target.pullRequestWatch, permissionGrant: 'all',
+        } }).success).toBe(false);
+    });
     it('preserves opaque retained recipe data while refusing host attestation at author admission', () => {
         const target = {
             kind: 'session', sessionId: 'session-1', policy: {

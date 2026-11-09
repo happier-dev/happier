@@ -340,6 +340,15 @@ Author recipes must not contain the host-only `attestedContext` field. `/new`
 rotates a single-sender routed child with the current verified sender and command
 message identity only when the existing Session confirms attested birth facts.
 Started conversations and multi-participant audiences remain unattested.
+In current 0.3 development source, `/new` rejoins the Session owner's deterministic
+creation key and uses an idempotent initial prompt. The binding's old target and
+current row CAS select the linked Session; there is no binding-scoped claim row.
+The same transaction records the retargeted input-authority stamp on its existing
+ingress obligation. Prompt replay keeps that stored stamp and ceiling, including
+historical already-retargeted stamps; it never substitutes today's policy epoch.
+Concurrent commands may create an unlinked Session. The losing command keeps the
+current binding, admits no prompt to its unlinked Session, and returns a visible
+control response rather than a silent superseded result.
 Unmatched routes produce a content-free `routeNotMatched`
 record. Disabling the router stops child admission, projection and new outward
 effects through the shared live parent-policy reader; it does not undo provider
@@ -402,8 +411,17 @@ shape as `pairing-v1`: challenge handoff or proposal id, immutable proved
 principal, exact proof location, state and expiry. The current Account must
 own the connection; absent, expired or superseded challenges are
 `unavailable`, and a retired generation is `restarted`. This safe read needs
-no confirmation. Create and finalize retain their existing confirmations,
-and finalize still creates a paused binding for owner review before enablement.
+no confirmation. Create, cancel and finalize skip the plugin's own confirmation
+for a present user in the UI. Agent/automation approval and explicit Action
+settings remain host policy. Finalize enables a binding only when both the
+destination and authenticated proof location are private. Shared destinations
+or shared proof locations remain paused for owner review before enablement.
+
+Binding updates use the same canonical present-user policy: the person's own
+UI Create/Save/Enable click confirms the change in place. Agent/MCP and automated
+UI updates retain ordinary default Ask for widening and narrowing alike. Trusted
+plugin calls follow host policy, and explicit Ask remains effective.
+No contextual confirmation hook or second domain approval owner is required.
 
 The Action and watched UI Resource share the pairing manager's projection;
 neither creates another store or proof flow. Requester failure accounting
@@ -579,6 +597,13 @@ addressing, freshness, command, target, and permission policy. Providers do
 not infer addressing from text and do not supply `pluginId`, Account,
 binding, Session, or permission authority.
 
+In current 0.3 development source, a socket observer also sends the
+`authorityEpoch` from its held core connection snapshot with each observation.
+Core admission compares that captured generation; an old worker cannot adopt a
+replacement connection's authority. Request-scoped poll and webhook ingress may
+omit it. This authority-bearing input requires matching development core and
+provider source, not an older reader that silently drops the field.
+
 Development-source sender-specific readiness reports may supply
 `senderEligibility: { endpoint, principalId }` beside a `providerReadiness`
 transport fact. The principal is an unverified diagnostic candidate. The core
@@ -614,6 +639,13 @@ count, generic ingress/delivery text ceiling, chunk-count ceiling, five-attempt
 delivery budget, or debounce upper policy limit. Enumerators exhaust paged
 Collection queries. Collection request, encoded-row and transport envelopes,
 safe-integer representation, and verified provider-native bounds still apply.
+In current 0.3 development source, opaque checkpoint tokens have no separate
+48 KiB policy cap across poll inputs, batches or checkpoint-only results.
+The enclosing Action and Collection envelopes remain authoritative. Collection
+storage measures the complete plain or encrypted envelope and returns its
+existing typed `collection_quota_incompatible` refusal when it cannot fit;
+the committed checkpoint remains unchanged and native revision identities are
+never truncated to fit a local quota.
 Channels core owns native message splitting at each provider's declared
 `outboundTextLimit`, preserving grapheme boundaries and complete custody text.
 It does not multiply a native message size into a whole-answer limit. Providers
@@ -629,7 +661,7 @@ splitting if their retained `outboundTextLimit` is absent. Creating a connection
 or successfully transferring it runs setup and retains the current bound;
 Retest re-observes readiness only and does not refresh this setup fact.
 
-Known-no-effect delivery failures retain `retryDue` custody and attention,
+Known-no-effect delivery failures retain `retryDue` custody without owner attention,
 with growing exponential backoff; a positive provider `retryAfterMs` takes
 precedence, while a zero wait uses the growing fallback rather than hot retry.
 In current 0.3 development source, an unavailable Account/currentness read before
@@ -744,17 +776,19 @@ validation and connection/binding authority checks still apply. The existing
 full `expectedExecutionOrigin` contract is unchanged.
 
 Connection management `revision` is the logical configuration revision.
-Bindings, pairing, Test, Retry, transfer and recovery guard that subject, so
-poll/readiness bookkeeping does not invalidate an approved action or an open
-setup form. Configuration edits and changes to history-gap or pending-stop
-custody advance it, including observation-age edits that keep `authorityEpoch`
-unchanged. Storage CAS and captured poll/stop invocation witnesses still use
-physical Collection revisions. The V8→V9 Collection migration seeds each retained
+Owner edits and transfer guard that subject; Retry and Retest take only the
+connection ID and use the current saved connection. Poll/readiness bookkeeping
+does not advance the logical revision. Configuration edits and changes to
+history-gap recovery advance it, including observation-age edits that keep
+`authorityEpoch` unchanged. Storage CAS still uses the latest exact physical
+Collection revision. The V8→V9 Collection migration seeds each retained
 connection from its source row revision; fresh connections start at 1. This is
 0.3 development behavior and requires the updated host and plugin to be loaded.
 
 An actual placement, transport, credential or config replacement still uses
-the canonical transfer Action and its checkpoint/predecessor-stop recovery.
+the canonical transfer Action and generation-carrying checkpoint fence, without
+waiting for predecessor stop proof. Deletion uses `finalizingDelete` only for
+resumable relation cleanup and honest settlement of attempted sends.
 Generic durable webhook endpoints keep exact materialization targets and
 their existing endpoint-convergence recovery; following a current provider does
 not automatically repair an endpoint after reinstall. Retained V7 connection,

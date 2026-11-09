@@ -9,17 +9,6 @@ import {
 } from './delivery.js';
 
 describe('Channels V1 provider delivery results', () => {
-    it('retains closed content-free refusal and uncertainty codes without requiring them from older providers', () => {
-        for (const result of [
-            { kind: 'notDelivered', retry: 'never', code: 'senderUntrusted' },
-            { kind: 'outcomeUnknown', code: 'sentCopyUnconfirmed' },
-        ]) {
-            expect(ConversationDeliveryResultV1Schema.parse(result)).toEqual(result);
-            expect(ConversationDeliveryResultV1Schema.safeParse({ ...result, code: 'private@example.com' }).success).toBe(false);
-            const { code: _code, ...olderResult } = result;
-            expect(ConversationDeliveryResultV1Schema.parse(olderResult)).toEqual(olderResult);
-        }
-    });
     it('admits a new thread with principal recipients and preserves 120KB HTML plus created endpoint evidence', () => {
         const endpoint = { kind: 'direct', audience: 'direct', id: 'mailbox' } as const;
         const content = { text: 'Brief', html: '<p>' + 'a'.repeat(120 * 1024) + '</p>' };
@@ -28,7 +17,7 @@ describe('Channels V1 provider delivery results', () => {
             providerConfigVersion: 1, providerConfig: {}, credentialRef: null,
             endpoint, content, deliveryKey: 'start-1',
             newThread: { recipients: ['owner@example.com'], subject: 'Brief' },
-            mentionPolicy: 'suppress', linkPreviewPolicy: 'suppress',
+             linkPreviewPolicy: 'suppress',
         } as const;
         expect(ConversationDeliveryInputV1Schema.parse(delivery)).toEqual(delivery);
         expect(ConversationDeliveryInputV1Schema.safeParse({
@@ -56,7 +45,7 @@ describe('Channels V1 provider delivery results', () => {
             content: { text: 'A bounded reply' },
             deliveryKey: 'binding-1:reply-1',
             replyContext: { replyToMessageId: 'message-1' },
-            mentionPolicy: 'suppress',
+
             linkPreviewPolicy: 'suppress',
         } as const;
         const reconciliation = {
@@ -108,7 +97,6 @@ describe('Channels V1 provider delivery results', () => {
             kind: 'partial',
             providerMessageIds: ['message-1'],
             failedChunk: 1,
-            retrySafe: false,
         } as const;
 
         expect(ConversationDeliveryResultV1Schema.parse(partial)).toEqual(partial);

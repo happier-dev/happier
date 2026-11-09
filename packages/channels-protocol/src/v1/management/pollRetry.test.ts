@@ -6,19 +6,25 @@ import {
     ConversationConnectionPollRetryResultV1Schema,
 } from './pollRetry.js';
 import { CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1 } from './index.js';
+import { ConversationConnectionRetestInputV1Schema } from './retest.js';
 
 describe('Channels V1 connection poll retry management contract', () => {
-    it('accepts only the exact guarded connection retry CAS and projects it as a closed schema', () => {
+    it('retests the current saved connection with only its identity', () => {
+        const input = { connectionId: 'connection-1' };
+        expect(ConversationConnectionRetestInputV1Schema.parse(input)).toEqual(input);
+        expect(ConversationConnectionRetestInputV1Schema.safeParse({ ...input, expectedRevision: 7 }).success).toBe(false);
+        expect(ConversationConnectionRetestInputV1Schema.safeParse({ ...input, authorityEpoch: 3 }).success).toBe(false);
+    });
+
+    it('retries the current connection without a stale list version witness', () => {
         const input = {
             connectionId: 'connection-1',
-            expectedRevision: 7,
-            authorityEpoch: 3,
         } as const;
         const result = {
             kind: 'retryScheduled',
             connectionId: input.connectionId,
             revision: 8,
-            authorityEpoch: input.authorityEpoch,
+            authorityEpoch: 3,
         } as const;
 
         expect(ConversationConnectionPollRetryInputV1Schema.parse(input)).toEqual(input);
@@ -48,7 +54,7 @@ describe('Channels V1 connection poll retry management contract', () => {
         expect(ConversationConnectionPollRetryInputV1Schema.jsonSchema).toMatchObject({
             type: 'object',
             additionalProperties: false,
-            required: ['connectionId', 'expectedRevision', 'authorityEpoch'],
+            required: ['connectionId'],
         });
         expect(ConversationConnectionPollRetryResultV1Schema.jsonSchema).toMatchObject({
             type: 'object',

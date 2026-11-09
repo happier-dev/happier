@@ -19,6 +19,7 @@ const reconciliationSnapshot = {
 } as const;
 
 describe('Channels V1 provider connection snapshots', () => {
+
     it('keeps caller-filtered connection maps structural and leaves key-to-child admission to reconciliation', () => {
         const snapshot = {
             'connection-1': reconciliationSnapshot,

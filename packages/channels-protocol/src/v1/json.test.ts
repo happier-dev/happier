@@ -33,7 +33,7 @@ describe('Channels V1 JSON-object leaf', () => {
         expect(schema.jsonSchema.properties?.recipe).not.toHaveProperty('propertyNames');
     });
 
-    it('uses the feature-owned serialized UTF-8 ceiling for provider configuration and checkpoints', () => {
+    it('bounds provider configuration while checkpoints use their enclosing storage owner', () => {
         const schema = defineProtocolObject({
             providerConfig: ConversationProviderConfigV1ProtocolSchema,
             checkpoint: ConversationCheckpointV1ProtocolSchema,
@@ -61,7 +61,8 @@ describe('Channels V1 JSON-object leaf', () => {
             nestedAsciiOverLimit,
             nestedMultibyteOverLimit,
         ]) {
-            expect(schema.safeParse({ providerConfig: value, checkpoint: value }).success).toBe(false);
+            expect(schema.safeParse({ providerConfig: value, checkpoint: null }).success).toBe(false);
+            expect(schema.parse({ providerConfig: null, checkpoint: value })).toEqual({ providerConfig: null, checkpoint: value });
         }
         for (const value of [undefined, Number.NaN, Number.POSITIVE_INFINITY, 1n, new Date(0)]) {
             expect(schema.safeParse({ providerConfig: value, checkpoint: null }).success).toBe(false);

@@ -4,6 +4,7 @@ import {
     ConversationPollInputV1Schema,
     ConversationPollResultV1Schema,
 } from './observations.js';
+import { MAX_CONVERSATION_PROVIDER_DIAGNOSTIC_UTF8_BYTES } from '../bounds.js';
 
 describe('Channels V1 provider observations', () => {
     it('owns one poll input/output boundary rather than a provider checkpoint writer', () => {
@@ -22,6 +23,7 @@ describe('Channels V1 provider observations', () => {
             kind: 'checkpointOnly',
             checkpointAfterBatch: { cursor: 'after' },
             retryHint: { retryAfterMs: 500 },
+            notice: 'The retained history window is unproven; polling continues.',
         } as const;
 
         expect(ConversationPollInputV1Schema.parse(input)).toEqual(input);
@@ -34,6 +36,9 @@ describe('Channels V1 provider observations', () => {
             ...replayInput.bindings[0], excludedMessageIds: [''],
         }] }).success).toBe(false);
         expect(ConversationPollResultV1Schema.parse(result)).toEqual(result);
+        expect(ConversationPollResultV1Schema.safeParse({
+            ...result, notice: 'a'.repeat(MAX_CONVERSATION_PROVIDER_DIAGNOSTIC_UTF8_BYTES + 1),
+        }).success).toBe(false);
         expect(ConversationPollInputV1Schema.safeParse({
             ...input,
             limit: 101,
@@ -85,6 +90,7 @@ describe('Channels V1 provider observations', () => {
                 },
             }],
             checkpointAfterBatch: { cursor: 'after' },
+            notice: 'The provider clock changed; polling continues.',
         } as const;
 
         expect(ConversationPollResultV1Schema.parse(result)).toEqual(result);

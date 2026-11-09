@@ -39,6 +39,26 @@ const observation = {
 } as const;
 
 describe('Channels V1 normalized ingress', () => {
+    it('admits optional closed current-head fix resolution on the existing PR observation', () => {
+        const pullRequestUpdate = { head: { sha: 'head-1', ref: 'feature' },
+            event: { kind: 'comment', id: 'comment-1', revision: 'revision-1', occurredAt: 1,
+                author: { principalId: 'user-42', kind: 'person' }, body: 'Feedback' } };
+        const previous = { ...observation, pullRequestUpdate };
+        expect(ConversationObservationV1Schema.parse(previous)).toEqual(previous);
+        const fixResolution = { headRevision: 'head-1', resolved: true, incomplete: false };
+        const nativeEndpoint = { kind: 'githubPullRequest', audience: 'shared', id: 'pr-1',
+            pullRequest: { repository: 'acme/widgets', number: 1 },
+            pullRequestState: { state: 'open', observedAt: 1, fixResolution } };
+        const current = { ...previous, endpoint: nativeEndpoint };
+        expect(ConversationObservationV1Schema.parse(current)).toEqual(current);
+        for (const invalid of [{ ...fixResolution, headRevision: '' }, { ...fixResolution, resolved: 'yes' },
+            { ...fixResolution, classifier: 'untrusted' }]) {
+            expect(ConversationObservationV1Schema.safeParse({ ...current,
+                endpoint: { ...nativeEndpoint, pullRequestState: { ...nativeEndpoint.pullRequestState, fixResolution: invalid } } }).success).toBe(false);
+        }
+        expect(ConversationObservationV1Schema.safeParse({ ...current,
+            pullRequestUpdate: { ...pullRequestUpdate, fixResolution } }).success).toBe(false);
+    });
     it('declares an optional safe attachment-fetch provider operation', () => {
         expect(ConversationProvidersContributionProtocolV1.operations).toHaveProperty('attachmentFetch');
     });
