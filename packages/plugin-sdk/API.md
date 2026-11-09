@@ -1259,6 +1259,7 @@
 | `./agents/runtime` | `TerminalPromptInput` | type | daemon |
 | `./agents/runtime` | `TerminalSpecialKey` | type | daemon |
 | `./agents/runtime` | `TimestampedAgentValue` | type | daemon |
+| `./agents/runtime` | `ToolNormalizationSourceV3` | type | daemon |
 | `./agents/runtime` | `TranscriptRawAgentEventV1` | type | daemon |
 | `./agents/runtime` | `UsageAccountingMetadata` | type | daemon |
 | `./agents/runtime` | `UsageModelCostEstimate` | type | daemon |
@@ -1429,6 +1430,7 @@
 | `./connected-accounts` | `ConnectedAccountAuthenticationRuntime` | type | any |
 | `./connected-accounts` | `ConnectedAccountBindingEvent` | type | daemon |
 | `./connected-accounts` | `ConnectedAccountBindingSummary` | type | any |
+| `./connected-accounts` | `ConnectedAccountCompletionObservation` | type | any |
 | `./connected-accounts` | `ConnectedAccountCredentialStore` | type | any |
 | `./connected-accounts` | `ConnectedAccountDeviceBeginResult` | type | any |
 | `./connected-accounts` | `ConnectedAccountDevicePollResult` | type | any |
@@ -1473,9 +1475,9 @@
 | `./connected-accounts` | `ConnectedServiceQuotaRecoveryCreditV1` | type | any |
 | `./connected-accounts` | `ConnectedServiceQuotaRecoveryCreditsV1` | type | any |
 | `./connected-accounts` | `CredentialRequirementOptions` | type | any |
+| `./connected-accounts` | `DeviceGrantStepInput` | type | any |
 | `./connected-accounts` | `HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_JSON_ENV` | value | daemon |
 | `./connected-accounts` | `HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON_ENV` | value | daemon |
-| `./connected-accounts` | `OAuthBearerLeaseV1` | type | any |
 | `./connected-accounts` | `OauthAuthEntry` | type | any |
 | `./connected-accounts` | `OauthCredentialRecord` | type | any |
 | `./connected-accounts` | `OauthCredentialRecordWithExpiry` | type | any |
@@ -1489,10 +1491,10 @@
 | `./connected-accounts` | `PluginConnectedAccountRegistrationApi` | type | daemon |
 | `./connected-accounts` | `ProviderAccountSubscriptionV1` | type | any |
 | `./connected-accounts` | `ProviderAccountUsageQuotaScopeV1` | type | any |
+| `./connected-accounts` | `ProviderAccountUsageSnapshotV1` | type | any |
 | `./connected-accounts` | `ProviderLimitCategory` | type | any |
 | `./connected-accounts` | `ProviderLimitEvidenceClassification` | type | any |
 | `./connected-accounts` | `ProviderLimitEvidenceConfidence` | type | any |
-| `./connected-accounts` | `ProviderLimitEvidenceContext` | type | any |
 | `./connected-accounts` | `ProviderLimitEvidenceProvenance` | type | any |
 | `./connected-accounts` | `ProviderResetTextEvidenceParser` | type | any |
 | `./connected-accounts` | `ProviderResetTiming` | type | any |
@@ -1503,7 +1505,11 @@
 | `./connected-accounts` | `QualifiedConnectedAccountServiceRef` | type | any |
 | `./connected-accounts` | `QuotaFetchError` | value | daemon |
 | `./connected-accounts` | `QuotaFetchErrorCode` | type | any |
+| `./connected-accounts` | `RequestAuthCredentialContextV1` | type | any |
+| `./connected-accounts` | `RequestAuthFactsV1` | type | any |
 | `./connected-accounts` | `RequestAuthFailureOutcomeV1` | type | any |
+| `./connected-accounts` | `RequestAuthHeaderMapV1` | type | any |
+| `./connected-accounts` | `RequestAuthHeadersV1` | type | any |
 | `./connected-accounts` | `TokenCredentialRecord` | type | any |
 | `./connected-accounts` | `UnsupportedAccountUsage` | type | any |
 | `./connected-accounts` | `addSafeEpochMilliseconds` | value | any |
@@ -1521,6 +1527,7 @@
 | `./connected-accounts` | `parseProviderResetAt` | value | any |
 | `./connected-accounts` | `parseProviderTimestampMs` | value | any |
 | `./connected-accounts` | `parseRetryAfterHeader` | value | any |
+| `./connected-accounts` | `requestDeviceGrantStep` | value | any |
 | `./connected-accounts` | `requireOauthCredentialRecordWithExpiry` | value | daemon |
 | `./connected-accounts` | `requireTokenCredentialRecord` | value | daemon |
 | `./connected-accounts` | `resolveConnectedServiceQuotaMeterLabel` | value | any |
@@ -1797,6 +1804,7 @@
 | `./machine-provisioners` | `MachineProvisionerDestroyResultV1Schema` | value | any |
 | `./machine-provisioners` | `MachineProvisionerDimensionOptionV1` | type | any |
 | `./machine-provisioners` | `MachineProvisionerDimensionV1` | type | any |
+| `./machine-provisioners` | `MachineProvisionerGuestHomeV1` | type | any |
 | `./machine-provisioners` | `MachineProvisionerNativeCauseV1` | type | any |
 | `./machine-provisioners` | `MachineProvisionerNativeCauseV1Schema` | value | any |
 | `./machine-provisioners` | `MachineProvisionerNativeCredentialApplyInputV1` | type | any |
@@ -2053,6 +2061,8 @@
 | `./protocol` | `FileDownloadResultV1` | type | any |
 | `./protocol` | `FileDownloadResultV1ProtocolSchema` | value | any |
 | `./protocol` | `INTERNAL_TASK_SOURCE_V1` | value | any |
+| `./protocol` | `LaunchProfileCheckoutPreferenceV1` | type | any |
+| `./protocol` | `LaunchProfilePlacementPreferenceV1` | type | any |
 | `./protocol` | `MAX_TRIAGE_COLLISION_SCOPE_UTF8_BYTES_V1` | value | any |
 | `./protocol` | `MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1` | value | any |
 | `./protocol` | `OpenedDeploymentArtifactV1` | type | any |
@@ -2081,7 +2091,9 @@
 | `./protocol` | `ProtocolEnvVarRequirementV1Schema` | value | any |
 | `./protocol` | `ProtocolJsonValue` | type | any |
 | `./protocol` | `ProtocolJsonValueOptions` | type | any |
+| `./protocol` | `ProtocolLaunchProfileCheckoutPreferenceV1Schema` | value | any |
 | `./protocol` | `ProtocolLaunchProfileIdV2Schema` | value | any |
+| `./protocol` | `ProtocolLaunchProfilePlacementPreferenceV1Schema` | value | any |
 | `./protocol` | `ProtocolLocalServiceLauncherSnapshotV1Schema` | value | any |
 | `./protocol` | `ProtocolNoticeArtifactV1` | type | any |
 | `./protocol` | `ProtocolNumberOptions` | type | any |
@@ -2115,6 +2127,7 @@
 | `./protocol` | `ServiceHealthNoticeMachineV1` | type | any |
 | `./protocol` | `ServiceHealthNoticePageV1` | type | any |
 | `./protocol` | `ServiceHealthNoticeSourceV1` | type | any |
+| `./protocol` | `SessionDirectoryIntentV1` | type | any |
 | `./protocol` | `TRANSCRIPT_ANNOTATION_ATTACHMENT_IDENTITY_V1` | value | any |
 | `./protocol` | `TRIAGE_COMPOSITE_IDENTIFIER_PATTERN_V1` | value | any |
 | `./protocol` | `TRIAGE_SINGLE_LINE_STRING_PATTERN_V1` | value | any |
@@ -2155,6 +2168,7 @@
 | `./protocol` | `readDeploymentTargetLinkArtifactV1` | value | any |
 | `./protocol` | `readDiscussionMessagePartsV1` | value | any |
 | `./protocol` | `readOwnedNoticeArtifactV1` | value | any |
+| `./protocol` | `resolveLaunchProfilePlacementDirectoryIntentV1` | value | any |
 | `./providers` | `AgentProviderRequirementsV1` | type | any |
 | `./providers` | `BundledProviderCatalogParserId` | type | any |
 | `./providers` | `BundledProviderWireProtocol` | type | any |
@@ -2704,6 +2718,8 @@
 | `./sessions` | `MentionRefV1Schema` | value | any |
 | `./sessions` | `NATIVE_TOOL_APPROVAL_ONCE_REQUEST_SOURCE` | value | daemon |
 | `./sessions` | `NATIVE_TOOL_APPROVAL_REQUEST_SOURCE` | value | daemon |
+| `./sessions` | `NativePermissionChoiceAnswerV1` | type | daemon |
+| `./sessions` | `NativePermissionChoicesV1` | type | daemon |
 | `./sessions` | `PluginSessionInputAttachmentsV1ProtocolSchema` | value | any |
 | `./sessions` | `ProjectKeyV1` | type | daemon |
 | `./sessions` | `ProjectKeyV1Schema` | value | daemon |
@@ -2790,6 +2806,8 @@
 | `./sessions` | `SpecialCommandType` | type | any |
 | `./sessions` | `StructuredImageInputV1` | type | daemon |
 | `./sessions` | `StructuredInputMentionSourcesV1` | type | daemon |
+| `./sessions` | `StructuredQuestionAnswerDetailsV1` | type | daemon |
+| `./sessions` | `StructuredQuestionAnswerDetailsV1Schema` | value | daemon |
 | `./sessions` | `StructuredQuestionAnswersV1` | type | daemon |
 | `./sessions` | `StructuredQuestionAnswersV1Schema` | value | daemon |
 | `./sessions` | `VendorPluginMentionV1` | type | daemon |
@@ -3594,6 +3612,7 @@
 | `./voice/client` | `describeActionInputFieldForVoice` | value | client |
 | `./voice/client` | `isVoiceSdkSafeActionSpec` | value | client |
 | `./voice/client` | `listVoiceSdkSafeToolActionSpecs` | value | client |
+| `./voice/client` | `normalizeVoiceFailureCode` | value | client |
 | `./voice/speech` | `SpeechProviderRuntime` | type | daemon |
 | `./voice/speech` | `VoiceProviderCatalogItem` | type | daemon |
 | `./voice/speech` | `VoiceSpeechCatalogDeclaration` | type | daemon |
