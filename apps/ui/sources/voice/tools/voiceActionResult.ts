@@ -6,6 +6,7 @@ import { SessionMessageReplyMutationResultV1Schema } from '@happier-dev/protocol
 import type { AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import type { SessionSpawnNewActionResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { resolveSessionSpawnNewResultFailureMessage } from '@/sync/ops/actions/sessionSpawnFailurePresentation';
+import type { VoiceSpawnAlternative } from './actionImpl/sessionSpawnAlternative';
 
 export function jsonOk(payload?: Record<string, unknown>): string {
   return JSON.stringify({ ok: true, ...(payload ?? {}) });
@@ -55,6 +56,7 @@ export function serializeVoiceActionExecuteResult(
     executedPayload?: Record<string, unknown>;
     canonicalResult?: boolean;
     agentTarget?: AgentExecutionTargetV1;
+    alternativeAgent?: VoiceSpawnAlternative;
   }>,
 ): string {
   if (!result.ok) {
@@ -77,8 +79,11 @@ export function serializeVoiceActionExecuteResult(
     // The Action owner validated this settlement; presentation adds the bound
     // Agent without changing the domain result or inferring a startup cause.
     const failure = result.result as Extract<SessionSpawnNewActionResultV1, { type: 'error' }>;
+    const alternative = options.alternativeAgent;
     const context = { agentTarget: options.agentTarget,
-      errorMessage: `${options.agentTarget.identity.localId}: ${resolveSessionSpawnNewResultFailureMessage(failure)}` };
+      ...(alternative ? { alternativeAgent: alternative } : {}),
+      errorMessage: `${options.agentTarget.identity.localId}: ${resolveSessionSpawnNewResultFailureMessage(failure)}${
+        alternative ? ` ${alternative.label} is ready on this Machine. Would you like to use ${alternative.label} instead?` : ''}` };
     return options.canonicalResult ? JSON.stringify({ ...result, ...context }) : jsonOk({ ...domainResult, ...context });
   }
   if (domainResult.ok === false && domainResult.status === 'partial') {

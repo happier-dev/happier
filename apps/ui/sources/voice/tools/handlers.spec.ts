@@ -1440,13 +1440,21 @@ describe('voice tool handlers', () => {
     ['s1', 'named', 'codex'], ['', 'named', 'codex'], ['s1', 'discovered', 'codex'], ['', 'discovered', 'codex'],
     ['', 'named', 'configured-default'], ['', 'discovered', 'configured-default'],
     ['', 'named', 'remembered-default'], ['', 'discovered', 'remembered-default'],
+    ['', 'named', 'signed-out-default'], ['', 'discovered', 'signed-out-default'],
   ] as const)('creates and opens a Session on the configured Voice Machine and admits its Voice follow-up (%s, %s, %s)', async (sourceSessionId, entry, agentChoice) => {
     state.settings.voice.canApproveRequests = false;
     const configuredDefault = agentChoice === 'configured-default';
     const selectedAgentTarget = configuredDefault
       ? { kind: 'agent' as const, identity: { pluginId: 'happier.agent.custom-acp', localId: 'custom-acp' }, definitionId: 'qa-c-exact-args' }
-      : { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
+      : agentChoice === 'signed-out-default'
+        ? { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } }
+        : { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
     const rememberedDefault = agentChoice === 'remembered-default';
+    const signedOutDefault = agentChoice === 'signed-out-default';
+    if (signedOutDefault) {
+      const { rememberLastUsedBackendSelection } = await import('@/sync/domains/state/newSessionTargetUiState');
+      rememberLastUsedBackendSelection(storage.getState().settingsScope, { lastUsedBackendTarget: null, lastUsedAgent: 'claude' });
+    }
     if (configuredDefault || rememberedDefault) {
       const { AcpBackendDefinitionV1Schema } = await import('@happier-dev/protocol/acp/catalog/settingsV1');
       const definition = AcpBackendDefinitionV1Schema.parse({ id: 'qa-c-exact-args', name: 'qa-c-exact-args', title: 'Configured default',
@@ -1491,7 +1499,7 @@ describe('voice tool handlers', () => {
       creationKey: 'manual:voice-v2-contract',
       executionTarget,
       directory: { kind: 'path', path: '/tmp/s1' },
-      ...(!configuredDefault && !rememberedDefault ? { agentTarget: selectedAgentTarget } : {}),
+      ...(!configuredDefault && !rememberedDefault && !signedOutDefault ? { agentTarget: selectedAgentTarget } : {}),
       initialInput: {
         text: 'Inspect this project.',
       },
@@ -1534,7 +1542,7 @@ describe('voice tool handlers', () => {
 
     const { getActionSpec} = await import('@happier-dev/protocol/actions/actionSpecs');
     const parsedSpawnInput = getActionSpec('session.spawn_new').inputSchema.safeParse(spawnInput);
-    expect(parsedSpawnInput.success, JSON.stringify(parsedSpawnInput)).toBe(!configuredDefault && !rememberedDefault);
+    expect(parsedSpawnInput.success, JSON.stringify(parsedSpawnInput)).toBe(!configuredDefault && !rememberedDefault && !signedOutDefault);
     if (configuredDefault) {
       // RUN100: the catalog supplied the right default; the model nested its
       // definition inside identity. Never silently repair an explicit operand.
@@ -1654,6 +1662,32 @@ describe('voice tool handlers', () => {
     const refused = JSON.parse(await followupTools[followup.t]!(followup.args, { effectId: 'voice-maple-refused' }));
     expect(refused).toMatchObject({ ok: true, status: 'rejected', code: 'session_input_unauthorized' });
     expect(delivered).toHaveLength(1);
+    if (signedOutDefault) {
+      const { resolveServerCredentialAccountScope, captureServerCredentialAccountScopeLifetime } = await import('@/sync/domains/scope/serverCredentialAccountScope');
+      const { serverAccountScopedResourceKey } = await import('@/sync/domains/scope/serverAccountScope');
+      const { machineAgentInventoryStore } = await import('@/agents/machineAgents/machineAgentInventoryStore');
+      const scope = await resolveServerCredentialAccountScope(homeA);
+      if (scope.kind !== 'bound') throw new Error('Expected Account scope');
+      const lifetime = captureServerCredentialAccountScopeLifetime(scope);
+      const key = serverAccountScopedResourceKey(lifetime.scope, 'machine-agents', 'm1');
+      const inventory = createReadyMachineAgentInventoryFixture([{ agentId: 'claude', title: 'Claude' }, { agentId: 'codex', title: 'Codex' }]);
+      const items = Object.values(inventory.capabilities.results).map(result => result.data);
+      const { SessionSpawnNewResultV1Schema } = await import('@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1');
+      spawnSettlement = SessionSpawnNewResultV1Schema.parse({ type: 'error', code: 'spawn_failed', retryable: false,
+        launchError: { kind: 'launch_error', code: 'agent_startup_failed', message: 'Agent startup failed',
+          failureCause: { phase: 'client_start', failureReason: 'unclassified_provider_error',
+            providerErrorMessage: 'Claude is signed out on the selected machine' } } });
+      machineAgentInventoryStore.publish(key, { status: 'ready', lastCheckedAt: 1,
+        items: items.map(item => item.agentId === 'claude' ? { ...item, signIn: { ...item.signIn, status: 'signedOut' } } : item) });
+      const failed = JSON.parse(await invokeCreate('voice-signed-out-failure', { ...spawnInput, creationKey: 'manual:voice-signed-out' }));
+      expect(failed).toMatchObject({ agentTarget: selectedAgentTarget,
+        alternativeAgent: { label: 'Codex', agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } },
+        errorMessage: expect.stringContaining('Codex') });
+      // Retained facts do not promise runnable alternatives after presence loss.
+      machineAgentInventoryStore.publish(key, { status: 'offline', items, lastCheckedAt: 1 });
+      const stale = JSON.parse(await invokeCreate('voice-signed-out-stale', { ...spawnInput, creationKey: 'manual:voice-signed-out-stale' }));
+      expect(stale).not.toHaveProperty('alternativeAgent');
+    }
     if (rememberedDefault) {
       // A daemon startup refusal must retain its cause and name the selected Agent.
       const { SessionSpawnNewResultV1Schema } = await import('@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1');

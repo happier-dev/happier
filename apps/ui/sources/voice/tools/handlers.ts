@@ -42,6 +42,7 @@ import {
 import { jsonError, jsonOk, serializeVoiceActionExecuteResult } from './voiceActionResult';
 import { executeSpokenAction, type SpokenActionTurnOrigin } from './executeSpokenAction';
 import { bindVoiceSessionSpawnInput } from './actionImpl/bindSessionSpawnInput';
+import { resolveVoiceSpawnAlternative } from './actionImpl/sessionSpawnAlternative';
 import type { VoiceHostTextPlayback } from '@happier-dev/plugin-sdk/voice/client';
 
 export { serializeVoiceActionExecuteResult } from './voiceActionResult';
@@ -401,11 +402,13 @@ export function createVoiceToolHandlers(
       Reflect.deleteProperty(actionInput, 'includeLastMessagePreview');
     }
     let spawnAgentTarget: AgentExecutionTargetV1 | undefined;
+    let spawnSelection: Extract<Awaited<ReturnType<typeof bindVoiceSessionSpawnInput>>, { ok: true }> | undefined;
     if (actionId === 'session.spawn_new') {
       const bound = await bindVoiceSessionSpawnInput(actionInput, actionExecute, ctx?.signal);
       if (!bound.ok) return serializeVoiceActionExecuteResult(actionId, bound, { canonicalResult });
       actionInput = bound.input;
       spawnAgentTarget = bound.input.agentTarget;
+      spawnSelection = bound;
     }
     let res: Awaited<ReturnType<typeof actionExecute>>;
     try {
@@ -446,7 +449,13 @@ export function createVoiceToolHandlers(
         }).then(requireActionSuccess), { tag: 'VoiceTools.openCreatedSession' });
       }
     }
-    const resultOptions = { canonicalResult, agentTarget: spawnAgentTarget };
+    const spawnFailure = actionId === 'session.spawn_new' && res.ok
+      ? res.result as SessionSpawnNewActionResultV1 : null;
+    const alternativeAgent = spawnFailure?.type === 'error' && spawnFailure.code === 'spawn_failed'
+      && spawnSelection?.inventory && spawnSelection.accountLifetime
+      ? resolveVoiceSpawnAlternative({ inventory: spawnSelection.inventory, selectedTarget: spawnSelection.input.agentTarget,
+        lifetime: spawnSelection.accountLifetime, machineId: spawnSelection.input.executionTarget.machineId }) : undefined;
+    const resultOptions = { canonicalResult, agentTarget: spawnAgentTarget, alternativeAgent };
     if (canonicalResult) return serializeVoiceActionExecuteResult(actionId, res, resultOptions);
     if (res.ok && actionId === 'session.list') {
       const awareness = parseSessionAwarenessListResultV1(res.result);

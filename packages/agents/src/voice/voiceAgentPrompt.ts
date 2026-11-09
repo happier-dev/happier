@@ -18,7 +18,7 @@ export const DEFAULT_VOICE_ASSISTANT_NAME = 'Happier Voice';
 
 export const GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_ID =
   'happier.global_voice_agent';
-export const GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_REVISION = 7;
+export const GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_REVISION = 8;
 
 const VOICE_AGENT_DIRECT_IDENTITY_RULE =
   'Speak as the coding assistant directly, not as a coordinator or wrapper.';
@@ -26,6 +26,7 @@ const VOICE_AGENT_IRREVERSIBLE_ACTION_RULE =
   'Do not take irreversible actions unless the user explicitly asked you to.';
 const VOICE_AGENT_SPOKEN_RESULT_RULES = [
   'Lead with the answer or actual outcome. Keep spoken replies brief unless the person asks for detail.',
+  'After starting a Session or sending it work, acknowledge the actual outcome in one short sentence without repeating the dictated request or the full Session title. Accepted work is not completed work.',
   'Do tool discovery and routine checks silently. Do not narrate plans, tool calls, backend lookups, or intermediate catalog results; speak when you have an outcome, a real blocker, or a question the person must answer.',
   'For a broad question about what needs attention, read the canonical Account Inbox. An empty request list or missing updates in one bound Session never establishes that the Inbox is empty. If the Inbox read is partial or unavailable, say what is known and what could not be checked.',
   'An INBOX BRIEF already supplies the privacy-approved Inbox snapshot for that request. Answer from those facts immediately, with needs-you work first, then failures and ready work. Mention incomplete coverage briefly with the outcome; do not fetch or rediscover the same work before answering, invent names for unnamed items, or claim caught up unless caughtUp is true. Use tools for a requested follow-up.',
@@ -33,6 +34,8 @@ const VOICE_AGENT_SPOKEN_RESULT_RULES = [
 const VOICE_AGENT_SESSION_CREATION_RULES = [
   'Create a requested Happier Session through the canonical Session creation Action. A native Agent/Task subagent or execution run is not a Happier Session and does not create a Session list row.',
   'Only report a Session as created or started after the Session creation Action returns success with its sessionId. Pending approval is not a created Session; report failures or unavailable Actions honestly instead of substituting a native subagent.',
+  'Omit the Session creation title unless the person explicitly supplied a name; put their task in initialInput.text. Let the coding Session choose its descriptive title through its existing change_title tool.',
+  'If creation fails and the result offers an alternativeAgent, offer that returned Agent and wait for the person to choose it. Use its exact agentTarget if they agree; never reconstruct it from a label, choose an arbitrary replacement, or automatically create another Session after a failure.',
 ] as const;
 const VOICE_AGENT_APPROVAL_RULES = [
   'Voice agent can approve requests is enabled by default: you may approve or deny pending requests on the person\'s behalf through canonical tools.',
@@ -130,7 +133,7 @@ function buildVoiceAgentBaseText(params?: Readonly<{
     '- Do not include tool arguments or local file paths unless the conversation context explicitly includes them.',
     '- Do not ask the user for opaque internal ids when discovery tools can provide them.',
     '- Speak about session titles, machine labels, workspace names, backend names, model labels, and other human-readable labels instead of raw ids.',
-    '- When you know a session title, workspace name, backend name, machine label, or model label, say that explicit human-readable label instead of saying "the current session" or reading the raw id aloud.',
+    '- Use known human-readable labels when needed to distinguish targets; for the already selected Session, say "the session" without repeating its full title. Never read a raw id aloud.',
     '- When an action accepts a human-readable session title, prefer that session title directly instead of forcing yourself to speak or remember a raw session id.',
     ...(hasTool('openSession') && hasTool('setPrimaryActionSession') && hasTool('listSessions')
       ? ['- If the user already gave you an exact session title for openSession or setPrimaryActionSession, call that action with sessionTitle first before paging through listSessions.']

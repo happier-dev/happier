@@ -2673,6 +2673,11 @@ Catalog order does not select a configured Agent: an exact saved target takes
 precedence, followed by the remembered Agent and the available built-in default.
 A Voice creation failure names the bound Agent and carries the existing typed,
 redacted startup cause; it does not copy raw process stderr into the conversation.
+If that default fails during startup, Voice can offer a different enabled Agent
+that the same Account's Machine inventory already knows is ready. The shared
+preference owner selects the offer; it neither changes the saved default nor
+launches a replacement without the person's choice. Stale or unknown readiness
+does not establish a runnable alternative.
 
 In development source, ordinary `session.spawn_new` accepts optional
 `machineSetupPlanInput` with Home, Machine, sources and exclusions only; removal,

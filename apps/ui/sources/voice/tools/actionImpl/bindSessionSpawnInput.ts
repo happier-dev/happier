@@ -4,16 +4,23 @@ import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionE
 import { actionInputValidationFailure } from '@happier-dev/protocol/actions/executor/actionInputValidation';
 
 import type { FrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { captureServerCredentialAccountScopeLifetime, resolveServerCredentialAccountScope } from '@/sync/domains/scope/serverCredentialAccountScope';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
 /** Bind the inventory owner's exact default; never reconstruct an identity from its key. */
 export async function bindVoiceSessionSpawnInput(
   input: unknown,
   execute: FrontDoorActionExecute,
   signal?: AbortSignal,
-): Promise<Readonly<{ ok: true; input: SessionSpawnNewActionInputV2 }> | ActionExecuteFailure> {
+): Promise<Readonly<{ ok: true; input: SessionSpawnNewActionInputV2;
+  inventory?: AgentsBackendsListOutput; accountLifetime?: ServerAccountScopeLifetime;
+}> | ActionExecuteFailure> {
   const parsed = SessionSpawnNewActionVoiceInputV2Schema.safeParse(input);
   if (!parsed.success) return actionInputValidationFailure(parsed.error);
   if (parsed.data.agentTarget !== undefined) return { ok: true, input: { ...parsed.data, agentTarget: parsed.data.agentTarget } };
+
+  const scope = await resolveServerCredentialAccountScope(parsed.data.executionTarget.serverId);
+  const accountLifetime = scope.kind === 'bound' ? captureServerCredentialAccountScopeLifetime(scope) : undefined;
 
   const listed = await execute('agents.backends.list', { machineId: parsed.data.executionTarget.machineId }, {
     surface: 'voice', serverId: parsed.data.executionTarget.serverId, ...(signal ? { signal } : {}),
@@ -23,5 +30,6 @@ export async function bindVoiceSessionSpawnInput(
   const inventory = listed.result as AgentsBackendsListOutput;
   const agentTarget = inventory.items.find(item => item.enabled && item.targetKey === inventory.defaultTargetKey)?.agentTarget;
   if (!agentTarget) return { ok: false, errorCode: 'unknown_agent', error: 'unknown_agent' };
-  return { ok: true, input: { ...parsed.data, agentTarget } };
+  return { ok: true, input: { ...parsed.data, agentTarget }, inventory,
+    ...(accountLifetime ? { accountLifetime } : {}) };
 }
