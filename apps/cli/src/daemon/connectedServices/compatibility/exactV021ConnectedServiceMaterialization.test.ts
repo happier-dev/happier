@@ -66,6 +66,7 @@ describe('exact v0.2.1 Connected Service one-shot materialization', () => {
       });
 
       const owner = createExactV021ConnectedServiceMaterializationOwner({
+        agentId: 'codex',
         registry: runtime.registry,
         purposeBindings: Object.freeze([Object.freeze({
           purpose,
@@ -259,6 +260,18 @@ describe('exact v0.2.1 Connected Service one-shot materialization', () => {
         providerEmail: null,
       },
     });
+
+    const owner = createExactV021ConnectedServiceMaterializationOwner({
+      agentId: 'gemini',
+      registry: {},
+      purposeBindings: [],
+      recordsByServiceId: new Map([['gemini', gemini]]),
+    });
+    expect(owner.projectionOnly).toBe(true);
+    expect(createExactV021ConnectedServiceMaterializationOwner({
+      agentId: 'pi', registry: {}, purposeBindings: [],
+      recordsByServiceId: new Map([['gemini', gemini]]),
+    }).projectionOnly).toBe(false);
 
     const materialized = await materializeExactV021AgentLaunchProjection({
       agentId: 'gemini',

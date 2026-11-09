@@ -256,6 +256,7 @@ export async function materializeExactV021ConnectedServiceCredential(input: Read
  * refresh, request-auth, watch, or runtime-registration capability.
  */
 export function createExactV021ConnectedServiceMaterializationOwner(input: Readonly<{
+  agentId: CatalogAgentId;
   registry: Pick<
     ResolvedExecutablePluginRuntimeRegistry,
     'connectedAccountRuntimeInvoker' | 'resolveConnectedAccountRuntime'
@@ -265,7 +266,9 @@ export function createExactV021ConnectedServiceMaterializationOwner(input: Reado
     ConnectedServiceId,
     ConnectedServiceCredentialRecordV1
   >;
-}>): Pick<StablePluginConnectedAccountsOwner, 'getBinding' | 'materialize'> {
+}>): Pick<StablePluginConnectedAccountsOwner, 'getBinding' | 'materialize'> & Readonly<{
+  projectionOnly: boolean;
+}> {
   const accountByPurposeKey = new Map(
     input.purposeBindings.flatMap((binding) => (
       binding.target.kind === 'account'
@@ -302,6 +305,8 @@ export function createExactV021ConnectedServiceMaterializationOwner(input: Reado
   };
 
   return Object.freeze({
+    projectionOnly: [...input.recordsByServiceId.values()].some((record) =>
+      isExactV021GeminiOauthLaunchProjection({ agentId: input.agentId, record })),
     async getBinding(params) {
       params.signal.throwIfAborted();
       const account = resolveAccount(params.purpose, params.serviceRefs);

@@ -17,6 +17,7 @@ import {
   readSessionPreparationFailureCode,
   readSessionRuntimeIssueCode,
   readSessionStartupFailurePreview,
+  type AgentStartupFailureDetails,
   type SessionRuntimeIssueV1,
 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import {
@@ -64,6 +65,14 @@ const CODEX_APP_SERVER_CONTEXT_WINDOW_EXHAUSTED_MESSAGE_MARKERS = [
   'context window',
 ] as const;
 const CODEX_APP_SERVER_TURN_FAILURE_MESSAGE = 'Codex app-server turn failed.';
+const STARTUP_AUTHENTICATION_FAILURES = {
+  refresh_bridge_unavailable: { source: 'dependency_failure', preview: 'Agent authentication is unavailable on this machine. Reconnect the machine or update Happier.' },
+  provider_account_identity_unavailable: { source: 'auth_error', preview: 'The selected account could not be identified. Sign in again or reconnect the account.' },
+  experimental_api_unavailable: { source: 'dependency_failure', preview: 'This Agent version cannot sign in with the selected account. Update the Agent on this machine.' },
+  workspace_incompatible: { source: 'auth_error', preview: 'The selected account does not match this workspace. Sign in with the required account.' },
+  credential_family_mismatch: { source: 'auth_error', preview: 'The selected account does not support this sign-in method. Sign in again with a supported account.' },
+  live_hot_auth_failed: { source: 'auth_error', preview: 'The Agent could not sign in with the selected account. Sign in again or reconnect the account.' },
+} as const satisfies Record<AgentStartupFailureDetails['reason'], { source: SessionRuntimeIssueV1['source']; preview: string }>;
 const CODEX_APP_SERVER_TOOL_RESTRICTION_FAILURE_CODES = [
   'codex_tool_restriction_unsupported_runtime',
   'codex_tool_restriction_unsupported_model',
@@ -238,6 +247,8 @@ function readRetainedFailureCause(error: unknown): CodexFailureCause | null {
 }
 
 function readRedactedProviderErrorMessage(error: unknown, nativeStartup = false, nativeProviderMessage?: string | null): string | undefined {
+  const startupDetails = readAgentStartupFailureDetails(error);
+  if (startupDetails) return STARTUP_AUTHENTICATION_FAILURES[startupDetails.reason].preview;
   // Native host PluginErrors already carry their owner's failure message.
   // Retain it under the same redaction and preview budget as native output.
   let message = nativeProviderMessage;
@@ -262,7 +273,12 @@ export function readCodexAppServerFailureCause(
   if (error instanceof CodexAppServerTurnFailure && error.details?.failureCause)
     return error.details.failureCause;
   const retained = readRetainedFailureCause(error);
-  if (retained) return retained;
+  if (retained) {
+    const startupDetails = readAgentStartupFailureDetails(error);
+    return startupDetails
+      ? { ...retained, providerErrorMessage: STARTUP_AUTHENTICATION_FAILURES[startupDetails.reason].preview }
+      : retained;
+  }
   const diagnostic = readCodexAppServerTurnFailureDiagnostic(error);
   const rejection =
     readCodexAppServerStartRejection(error) ??
@@ -309,6 +325,8 @@ export function readCodexAppServerRuntimeIssueSource(
     readRecord(error)?.runtimeIssueV1,
   );
   if (projected) return projected.source;
+  const startupDetails = readAgentStartupFailureDetails(error);
+  if (startupDetails) return STARTUP_AUTHENTICATION_FAILURES[startupDetails.reason].source;
   if (
     ProviderBrokerAdmissionFailureCodeV1Schema.safeParse(
       readRecord(error)?.code,

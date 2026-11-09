@@ -23,7 +23,7 @@ import { presentProviderCliRefusal } from '@/providers/lifecycle/presentProvider
 import { classifyProviderLimitEvidence, parseProviderResetAt } from '@/daemon/connectedServices/quotas/normalization';
 import { classifyProviderOutputFailure } from '@/agent/runtime/classifyProviderOutputFailure';
 import { AgentRuntimeDiagnosticDataV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
-import { SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH, SessionRuntimeFailureCauseV1Schema, readAgentStartupFailureDetails, readSessionStartupFailurePreview, type AgentStartupFailureDetails } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH, SessionRuntimeFailureCauseV1Schema, readAgentStartupFailureDetails, readSessionStartupFailurePreview } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import axios from 'axios';
 import { HttpStatusError } from '@/api/client/httpStatusError';
@@ -70,15 +70,6 @@ const causeSourceMap = {
   permission_blocked: 'permission_blocked',
   unknown: 'unknown',
 } as const satisfies Record<PrimarySessionRuntimeIssueCause, SessionRuntimeIssueSourceV1>;
-
-const startupAuthenticationFailures = {
-  refresh_bridge_unavailable: { source: 'dependency_failure', preview: 'Agent authentication is unavailable on this machine. Reconnect the machine or update Happier.' },
-  provider_account_identity_unavailable: { source: 'auth_error', preview: 'The selected account could not be identified. Sign in again or reconnect the account.' },
-  experimental_api_unavailable: { source: 'dependency_failure', preview: 'This Agent version cannot sign in with the selected account. Update the Agent on this machine.' },
-  workspace_incompatible: { source: 'auth_error', preview: 'The selected account does not match this workspace. Sign in with the required account.' },
-  credential_family_mismatch: { source: 'auth_error', preview: 'The selected account does not support this sign-in method. Sign in again with a supported account.' },
-  live_hot_auth_failed: { source: 'auth_error', preview: 'The Agent could not sign in with the selected account. Sign in again or reconnect the account.' },
-} as const satisfies Record<AgentStartupFailureDetails['reason'], { source: SessionRuntimeIssueSourceV1; preview: string }>;
 
 /** File diagnostics retain closed preparation facts before public issue classification.
  * Never copy messages, stacks, references, arbitrary codes or accessor values. */
@@ -599,11 +590,6 @@ export function classifyPrimarySessionRuntimeIssue(
   const providerFailure = providerCode?.success ? createProviderErrorV1(providerCode.data) : null;
   const startupFailureCode = !teamCredentialDenial && input.cause === 'session_error'
     && errorCode.kind === 'string' ? readAgentStartupFailureCode(errorCode.value) : null;
-  const startupDetails = startupFailureCode === 'codex_refresh_free_auth_unsupported'
-    ? readAgentStartupFailureDetails(input.error) ?? readAgentStartupFailureDetails({
-      code: startupFailureCode, reason: failureCause.success ? failureCause.data.reason : undefined,
-    }) : null;
-  const startupAuthenticationFailure = startupDetails ? startupAuthenticationFailures[startupDetails.reason] : null;
   const sessionPreparationFailureCode = !teamCredentialDenial && input.cause === 'session_error'
     && errorCode.kind === 'string' ? brokerStartupCode
       ?? (brokerCode?.success ? null : readSessionPreparationFailureCode(errorCode.value)) : null;
@@ -641,8 +627,6 @@ export function classifyPrimarySessionRuntimeIssue(
     ? 'dependency_failure' as const
     : teamCredentialDenial || brokerStartupCode
     ? 'team_credential' as const
-    : startupAuthenticationFailure
-    ? startupAuthenticationFailure.source
     : runtimeAuthSource
     ? runtimeAuthSource
     : declaredSource
@@ -667,8 +651,7 @@ export function classifyPrimarySessionRuntimeIssue(
     : metadataPrivacyUpgradeRequired ? 'metadata_privacy_upgrade_required'
     : promptPreparationCode ?? startupFailureCode ?? sessionPreparationFailureCode ?? providerFailure?.code ?? (temporaryThrottle ? 'provider_temporary_throttle'
       : source === 'agent_session_error' ? typedDiagnostic?.code ?? source : source);
-  const nativeAuthAgentId = startupAuthenticationFailure ? null
-    : readSessionRuntimeIssueNativeAuthAgentId({ code, source, ...(agentId ? { agentId } : {}) });
+  const nativeAuthAgentId = readSessionRuntimeIssueNativeAuthAgentId({ code, source, ...(agentId ? { agentId } : {}) });
   const nativeAuthAgentTitle = nativeAuthAgentId ? resolveAgentDisplayTitle(nativeAuthAgentId) : null;
   const nativeAuthPreview = nativeAuthAgentId
     ? nativeAuthAgentTitle ? `Sign in to ${nativeAuthAgentTitle} or choose a ${nativeAuthAgentTitle} account.`
@@ -692,7 +675,6 @@ export function classifyPrimarySessionRuntimeIssue(
         ? 'Session state could not be confirmed. Check the Home connection, then retry the Session.' : null)
       ?? (homeHttpFailure ? 'Session startup could not reach a ready Home. Check the Home connection, then retry the Session.' : null)
       ?? (promptPreparationCode ? 'Prompt context could not be prepared. Check the selected documents and Home connection, then retry the Session.' : null)
-      ?? startupAuthenticationFailure?.preview
       ?? (sessionPreparationFailureCode === 'agent_cli_not_runnable'
         ? readSessionStartupFailurePreview(sessionPreparationFailureCode, agentId ? resolveAgentDisplayTitle(agentId) : null) : null)
       ?? (startupFailureCode ? nativeFailurePreview

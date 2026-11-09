@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { createJsonRpcApplicationError } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 import { sanitizeSessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { SessionSpawnLaunchErrorV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnLaunchErrorV1';
@@ -10,6 +11,7 @@ import {
   isCodexAppServerTemporaryRecoverableTurnFailureError,
   readCodexAppServerTurnFailureDiagnostic,
   readCodexAppServerFailureCause,
+  readCodexAppServerRuntimeIssueSource,
 } from './failure.js';
 
 describe('createCodexAppServerTurnFailure', () => {
@@ -662,5 +664,23 @@ describe('createCodexAppServerTurnFailure', () => {
     expect(formatCodexAppServerErrorForUi(failure)).toBe(
       'Error: Codex app-server turn failed.',
     );
+  });
+});
+
+describe('Codex startup authentication projection', () => {
+  it.each([
+    ['workspace_incompatible', 'auth_error', 'workspace'],
+    ['refresh_bridge_unavailable', 'dependency_failure', 'machine'],
+    ['experimental_api_unavailable', 'dependency_failure', 'version'],
+  ] as const)('produces public source and safe recovery facts for %s before host consumption', (reason, source, preview) => {
+    const failure = createCodexAppServerTurnFailure({
+      value: new PluginError({ code: 'codex_refresh_free_auth_unsupported',
+        message: 'PRIVATE_NATIVE_AUTH_PAYLOAD', details: { reason } }),
+      phase: 'client_start',
+    });
+    expect(readCodexAppServerRuntimeIssueSource(failure)).toBe(source);
+    expect(failure.details).toMatchObject({ source,
+      failureCause: { reason, providerErrorMessage: expect.stringContaining(preview) } });
+    expect(JSON.stringify(failure.details)).not.toContain('PRIVATE_NATIVE_AUTH_PAYLOAD');
   });
 });

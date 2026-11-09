@@ -18,7 +18,6 @@ const STRONG_AUTH_ERROR_PATTERNS = [
   /\b(?:oauth|access|refresh|authentication)\s+token(?:\s+(?:has|was|is))?\s+(?:invalid|invalidated|expired|revoked|rejected|missing)\b/u,
   /\b(?:invalid|invalidated|expired|revoked|rejected|missing)\s+(?:(?:oauth|access|refresh|authentication)\s+)?token\b/u,
   /\btoken\s+(?:is\s+)?(?:invalid|invalidated|expired|revoked|rejected|missing)\b/u,
-  /\b(?:openai|anthropic|codex|gemini|google)_(?:api|access)_key\b/u,
 ] as const;
 
 const EXPLICIT_PROVIDER_STATUS_PATTERNS = [

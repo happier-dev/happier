@@ -93,11 +93,14 @@ describe('classifyPrimarySessionRuntimeIssue', () => {
     expect(issue.sanitizedPreview).toContain('machine owner');
     expect(JSON.stringify(issue)).not.toContain('PRIVATE_');
   });
-  it('keeps the closed startup auth recovery through a retained failure diagnostic', () => {
+  it('keeps plugin-projected startup auth recovery through a retained failure diagnostic', () => {
     const input = { cause: 'session_error' as const, provider: 'codex', occurredAt: 100 };
     const original = classifyPrimarySessionRuntimeIssue({ ...input, error: new PluginError({
       code: 'codex_refresh_free_auth_unsupported', retryable: false,
-      details: { reason: 'workspace_incompatible', failureCause: { phase: 'authentication', failureReason: 'unknown', reason: 'workspace_incompatible' } },
+      details: { source: 'auth_error', reason: 'workspace_incompatible', failureCause: {
+        phase: 'authentication', failureReason: 'unknown', reason: 'workspace_incompatible',
+        providerErrorMessage: 'The selected account does not match this workspace. Sign in with the required account.',
+      } },
     }) });
     expect(original.failureCause).toMatchObject({ reason: 'workspace_incompatible' });
     const retained = classifyPrimarySessionRuntimeIssue({ ...input, error: {
