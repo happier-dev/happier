@@ -6,12 +6,12 @@ export function buildClaudePermissionChoices(input: Readonly<{
     requestId: string; toolName: string; toolInput: unknown; allowSessionPersistence?: boolean;
     sessionRuleApplication?: 'native' | 'host';
 }>): NativePermissionChoicesV1 {
-    const choices: NativePermissionChoicesV1['choices'][number][] = [{
+    const { toolName } = input;
+    const exitPlan = toolName === 'ExitPlanMode' || toolName === 'exit_plan_mode';
+    const choices: NativePermissionChoicesV1['choices'][number][] = exitPlan ? [] : [{
         id: 'allow', label: 'Allow once', decision: 'approved', scope: 'once',
         response: { approved: true, decision: 'approved' },
     }];
-    const { toolName } = input;
-    const exitPlan = toolName === 'ExitPlanMode' || toolName === 'exit_plan_mode';
     if (exitPlan && input.allowSessionPersistence !== false) {
         for (const mode of ['default', 'acceptEdits', 'bypassPermissions'] as const) {
             choices.push({ id: `approve:${mode}`, label: `Approve plan (${mode})`, decision: 'approved', scope: 'session',

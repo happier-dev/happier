@@ -84,10 +84,9 @@ function resolveAllowUpdatedPermissions(
     if (Array.isArray(result.updatedPermissions) && result.updatedPermissions.length > 0) {
         return result.updatedPermissions;
     }
-    // An approved ExitPlanMode must clear Happier plan mode and apply the follow-up permission
-    // mode (plan -> default) via hook `updatedPermissions` rather than TUI keystrokes. When the
-    // host did not supply an explicit follow-up mode, default is the canonical post-plan mode.
-    if (isExitPlanModeToolName(toolName)) {
+    // Historical responses did not carry the follow-up mode. Native selections
+    // carry their complete setMode effect in the producer-owned offer above.
+    if (!result.nativeChoice && isExitPlanModeToolName(toolName)) {
         return [{ type: 'setMode', mode: 'default' }];
     }
     return undefined;

@@ -11,6 +11,7 @@ import { createSessionClientExecutionRunService } from '@/api/session/client/exe
 import { createPluginSessionHandleCapabilitiesFactory } from '@/session/services/pluginSessionHandleCapabilities';
 import { applyPermissionModeIntentSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
 import { createPluginInteractionsService } from '@/plugins/runtime/invocation/services/interactions';
+import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import type {
     HostSessionApprovalRequest,
     HostSessionConfirmationRequest,
@@ -115,6 +116,40 @@ const questionsRequest: HostSessionQuestionsRequest = {
 };
 
 describe('native Agent current-session interactions', () => {
+    it('applies only the durable ExitPlan mode offered through the real Claude producer and permission ingress', async () => {
+        // Test-only composition of the real plugin producer with its host; no new runtime dependency.
+        const { createClaudeNativeAgentSdkContext } = await import('../../../../../../../packages/plugins/claude/src/agent/runtime/nativeServices');
+        const { createClaudePermissionHookHandler } = await import('../../../../../../../packages/plugins/claude/src/agent/runtime/shared/permissionHookHandler');
+        const fixture = createFixture({ interactionDeadlineMs: undefined,
+            applyPermissionModeIntent: async permissionMode => {
+                fixture.session.updateMetadata(metadata => metadata
+                    ? applyPermissionModeIntentSessionMetadata(metadata, { permissionMode, updatedAt: 42 }) : metadata);
+            },
+        });
+        fixture.session.__setMetadata(createTestMetadata({ permissionMode: 'plan' }));
+        const context = {
+            services: { logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }, exec: {},
+                interactions: fixture.public },
+            session: { services: { toolExecution: {
+                before: async (request: { input: Record<string, unknown> }) => ({ status: 'continue' as const, input: request.input }),
+            } } },
+        } as unknown as AgentSessionRuntimeContext;
+        const handler = createClaudePermissionHookHandler(createClaudeNativeAgentSdkContext(context));
+        const pending = handler({ hook_event_name: 'PermissionRequest', tool_name: 'ExitPlanMode',
+            tool_use_id: 'plan-native', tool_input: { plan: 'Apply the reviewed change' } });
+        const { id, request } = await fixture.publishedRequest();
+        const implicit = request.nativeChoices?.choices.filter(choice => choice.response.approved && choice.scope === 'once');
+        const selected = request.nativeChoices?.choices.find(choice => choice.id === 'approve:default');
+        expect(selected).toMatchObject({ scope: 'session', response: { mode: 'default',
+            updatedPermissions: [{ type: 'setMode', mode: 'default', destination: 'session' }] } });
+        await fixture.respond({ id, nativeChoice: { requirementId: 'plan-native', choiceId: 'approve:default' } }, 'permission');
+        const response = await pending;
+        expect(response.hookSpecificOutput?.decision).toMatchObject({ behavior: 'allow',
+            updatedPermissions: [{ type: 'setMode', mode: 'default', destination: 'session' }] });
+        expect(fixture.session.__getMetadata()).toMatchObject({ permissionMode: 'default' });
+        expect(implicit).toEqual([]);
+    });
+
     it('requires an offered native selection even inside a reviewed parent operation', async () => {
         const fixture = createFixture({ interactionDeadlineMs: undefined });
         const interactions = createPluginInteractionsService({
