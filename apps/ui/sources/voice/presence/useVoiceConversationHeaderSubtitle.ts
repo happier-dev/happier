@@ -36,7 +36,8 @@ export function useVoiceConversationHeaderSubtitle(metadata: unknown, address?: 
     });
     return areSessionAddressesEqual(binding?.conversationSessionAddress, address) ? binding?.adapterId ?? null : null;
   }, [accountScope, address?.serverId, address?.sessionId, isVoiceCarrier, metadata]);
-  const providerId = React.useSyncExternalStore(subscribeConversationProvider, readProviderId, readProviderId);
+  const providerId = React.useSyncExternalStore(isVoiceCarrier ? subscribeConversationProvider : subscribeNoop,
+    readProviderId, readProviderId);
   if (!isVoiceCarrier) return undefined;
   const entry = providerId ? voiceProviderRegistry.get(providerId) : null;
   const where = t('voiceMoments.globalVoice');
@@ -47,4 +48,8 @@ function subscribeConversationProvider(listener: () => void): () => void {
   const unsubscribeBinding = voiceSessionBindingStore.subscribe(listener);
   const unsubscribeEnded = subscribeToVoiceSessionEndedAttempt(listener);
   return () => { unsubscribeBinding(); unsubscribeEnded(); };
+}
+
+function subscribeNoop(): () => void {
+  return () => {};
 }
