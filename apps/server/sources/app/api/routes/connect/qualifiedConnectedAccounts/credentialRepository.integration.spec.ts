@@ -1,8 +1,8 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { buildConnectedServicesAccountChangeV1 } from '@happier-dev/protocol/changes';
-
 import { QualifiedConnectedAccountListResponseV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import { AccountProfileSchema } from '@happier-dev/protocol';
+
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { buildAccountConnectedServicesProjection } from '@/app/api/routes/account/connectedServicesProjection';
@@ -74,6 +74,118 @@ describe("qualified Connected Account credential repository", () => {
         await db.machine.deleteMany();
         await db.serviceAccountToken.deleteMany();
         await db.account.deleteMany();
+    });
+
+    it('projects known V4 credential kinds through the writer, list and account profile decoder', async () => {
+        harness.resetEnv({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional',
+            HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: 'plain',
+            HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_CREDENTIALS_AT_REST: 'none' });
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const claude = { pluginId: 'happier.agent.claude', localId: 'claude-subscription' };
+        for (const kind of ['oauth', 'token'] as const) {
+            const created = await mutateQualifiedConnectedServiceCredential({ accountId: owner.id,
+                ref: { service: claude, accountId: kind }, authenticationModeId: kind === 'token' ? 'setup-token' : 'oauth',
+                expectedCredentialRevision: null,
+                content: { t: 'plain', v: { v: 1, values: { token: 'synthetic-credential' } } }, metadata });
+            expect(created.status).toBe('written');
+        }
+        const accounts = await listQualifiedConnectedAccounts({ accountId: owner.id, service: claude });
+        expect(QualifiedConnectedAccountListResponseV4Schema.parse({ service: claude, accounts }).accounts)
+            .toEqual(expect.arrayContaining(['oauth', 'token'].map(kind => expect.objectContaining({
+                ref: { service: claude, accountId: kind }, kind,
+            }))));
+        const held = await inTx(tx => buildAccountConnectedServicesProjection({ tx, accountId: owner.id,
+            includeGroups: true, env: process.env }));
+        expect(AccountProfileSchema.parse({ id: owner.id, ...held }).connectedAccountsV4).toEqual(accounts);
+    });
+
+    it('projects the producer auth failure into account status and clears it when connected', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const ref = { service, accountId: 'status-reason' };
+        const created = await mutateQualifiedConnectedServiceCredential({ accountId: owner.id, ref,
+            authenticationModeId: 'oauth', expectedCredentialRevision: null,
+            content: { t: 'plain', v: { accessToken: 'synthetic-token' } }, metadata });
+        if (created.status !== 'written') throw new Error('Expected credential creation');
+        const basis = { accountId: owner.id, ref, expectedCredentialRevision: created.credentialRevision,
+            expectedConfigurationRevision: null };
+        for (const lastRefreshFailureKind of ['invalid_grant', 'invalid_client', 'provider_401', 'provider_403', 'missing_refresh_token'] as const) {
+            expect(await mutateQualifiedConnectedServiceCredentialHealth({ ...basis,
+                health: { v: 1, status: 'needs_reauth', reconnectRequired: true, lastRefreshFailureKind,
+                    lastRefreshFailureAt: 3_000, lastRefreshSuccessAt: 1_000, providerHttpStatus: 401,
+                    lastRefreshAttemptAt: 2_000, providerErrorCode: 'not-public-provider-detail' } }))
+                .toMatchObject({ status: 'written' });
+            const accounts = await listQualifiedConnectedAccounts({ accountId: owner.id, service });
+            expect(QualifiedConnectedAccountListResponseV4Schema.parse({ service, accounts }).accounts[0])
+                .toHaveProperty('statusReason', lastRefreshFailureKind);
+            expect(accounts[0]).toMatchObject({ lastRefreshFailureAt: 3_000, lastRefreshSuccessAt: 1_000, providerHttpStatus: 401 });
+            for (const field of ['content', 'health', 'reconnectRequired', 'lastRefreshAttemptAt', 'providerErrorCode']) {
+                expect(accounts[0]).not.toHaveProperty(field);
+            }
+            expect(JSON.stringify(accounts)).not.toContain('synthetic-token');
+            const held = await inTx(tx => buildAccountConnectedServicesProjection({ tx, accountId: owner.id, includeGroups: true }));
+            expect(held.connectedAccountsV4).toEqual(accounts);
+            expect(AccountProfileSchema.parse({ id: owner.id, ...held }).connectedAccountsV4).toEqual(accounts);
+        }
+        const other = await db.account.create({ data: { encryptionMode: 'plain' } });
+        expect(await listQualifiedConnectedAccounts({ accountId: other.id, service })).toEqual([]);
+        const otherHeld = await inTx(tx => buildAccountConnectedServicesProjection({ tx, accountId: other.id, includeGroups: true }));
+        expect(AccountProfileSchema.parse({ id: other.id, ...otherHeld }).connectedAccountsV4).toEqual([]);
+        for (const status of ['needs_reauth', 'connected'] as const) {
+            expect(await mutateQualifiedConnectedServiceCredentialHealth({ ...basis,
+                health: { v: 1, status, reconnectRequired: status === 'needs_reauth',
+                    ...(status === 'connected' ? { lastRefreshFailureKind: 'invalid_grant' as const } : {}) } }))
+                .toMatchObject({ status: 'written' });
+            const accounts = await listQualifiedConnectedAccounts({ accountId: owner.id, service });
+            expect(accounts[0]).not.toHaveProperty('statusReason');
+            for (const field of ['lastRefreshFailureAt', 'lastRefreshSuccessAt', 'providerHttpStatus']) {
+                expect(accounts[0]).not.toHaveProperty(field);
+            }
+        }
+    });
+
+    it('projects sign-in provenance and refresh freshness without letting a refresh rewrite the sign-in', async () => {
+        harness.resetEnv({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional',
+            HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: 'plain',
+            HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_CREDENTIALS_AT_REST: 'none' });
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const ref = { service, accountId: 'provenance' };
+        const authenticationProvenance = { authenticatedAt: 1_000, machine: { serverId: 'home-a', machineId: 'machine-a' } };
+        const created = await mutateQualifiedConnectedServiceCredential({ accountId: owner.id, ref,
+            authenticationModeId: 'oauth', expectedCredentialRevision: null,
+            content: { t: 'plain', v: { v: 1, values: { accessToken: 'private-test-token' } } },
+            metadata: { ...metadata, authenticationProvenance } });
+        expect(created.status).toBe('written');
+        if (created.status !== 'written') throw new Error('Expected credential creation');
+        expect(await mutateQualifiedConnectedServiceCredentialHealth({ accountId: owner.id, ref,
+            expectedCredentialRevision: created.credentialRevision, expectedConfigurationRevision: null,
+            health: { v: 1, status: 'connected', reconnectRequired: false, lastRefreshSuccessAt: 2_000 } })).toMatchObject({ status: 'written' });
+        const listed = await listQualifiedConnectedAccounts({ accountId: owner.id, service });
+        expect(listed).toMatchObject([{ authenticationProvenance, lastRefreshSuccessAt: 2_000,
+            credentialRevision: created.credentialRevision }]);
+        const held = await inTx(tx => buildAccountConnectedServicesProjection({ tx, accountId: owner.id, includeGroups: true, env: process.env }));
+        expect(held.connectedAccountsV4).toEqual(listed);
+        expect(JSON.stringify(held)).not.toContain('private-test-token');
+
+        const now = new Date(3_000);
+        expect(await acquireQualifiedConnectedServiceRefreshLease({ accountId: owner.id, ref, ownerId: 'refresher',
+            expectedCredentialRevision: created.credentialRevision, ttlMs: 10_000, now })).toMatchObject({ acquired: true });
+        const refreshed = await mutateQualifiedConnectedServiceCredential({ accountId: owner.id, ref,
+            authenticationModeId: 'oauth', expectedCredentialRevision: created.credentialRevision,
+            expectedConfigurationRevision: null, refreshLeaseOwnerId: 'refresher', now,
+            content: { t: 'plain', v: { v: 1, values: { accessToken: 'refreshed-private-token' } } },
+            metadata: { ...metadata, authenticationProvenance: { authenticatedAt: 3_000,
+                machine: { serverId: 'other-home', machineId: 'refresher' } } } });
+        expect(refreshed.status).toBe('written');
+        expect(await listQualifiedConnectedAccounts({ accountId: owner.id, service }))
+            .toMatchObject([{ authenticationProvenance, lastRefreshSuccessAt: 2_000 }]);
+        const imported = await mutateQualifiedConnectedServiceCredential({ accountId: owner.id,
+            ref: { service, accountId: 'unknown-import' }, authenticationModeId: 'native-import', expectedCredentialRevision: null,
+            content: { t: 'plain', v: { v: 1, values: { accessToken: 'imported-token' } } }, metadata });
+        expect(imported.status).toBe('written');
+        const importedProfile = (await listQualifiedConnectedAccounts({ accountId: owner.id, service }))
+            .find(row => row.ref.accountId === 'unknown-import');
+        expect(importedProfile).not.toHaveProperty('authenticationProvenance');
+        expect(importedProfile).not.toHaveProperty('lastRefreshSuccessAt');
     });
 
     it("reviews retained managed resources for ordinary removal while emergency revoke remains unconditional", async () => {
@@ -2174,50 +2286,6 @@ describe("qualified Connected Account credential repository", () => {
             where: { accountId: account.id },
         })).resolves.toBe(0);
     });
-    it('projects the producer auth failure into account status and clears it when connected', async () => {
-        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
-        const ref = { service, accountId: 'status-reason' };
-        const created = await mutateQualifiedConnectedServiceCredential({ accountId: owner.id, ref,
-            authenticationModeId: 'oauth', expectedCredentialRevision: null,
-            content: { t: 'plain', v: { accessToken: 'synthetic-token' } }, metadata });
-        if (created.status !== 'written') throw new Error('Expected credential creation');
-        const basis = { accountId: owner.id, ref, expectedCredentialRevision: created.credentialRevision,
-            expectedConfigurationRevision: null };
-        for (const lastRefreshFailureKind of ['invalid_grant', 'invalid_client', 'provider_401', 'provider_403', 'missing_refresh_token'] as const) {
-            expect(await mutateQualifiedConnectedServiceCredentialHealth({ ...basis,
-                health: { v: 1, status: 'needs_reauth', reconnectRequired: true, lastRefreshFailureKind,
-                    lastRefreshFailureAt: 3_000, lastRefreshSuccessAt: 1_000, providerHttpStatus: 401,
-                    lastRefreshAttemptAt: 2_000, providerErrorCode: 'not-public-provider-detail' } }))
-                .toMatchObject({ status: 'written' });
-            const accounts = await listQualifiedConnectedAccounts({ accountId: owner.id, service });
-            expect(QualifiedConnectedAccountListResponseV4Schema.parse({ service, accounts }).accounts[0])
-                .toHaveProperty('statusReason', lastRefreshFailureKind);
-            expect(accounts[0]).toMatchObject({ lastRefreshFailureAt: 3_000, lastRefreshSuccessAt: 1_000, providerHttpStatus: 401 });
-            for (const field of ['content', 'health', 'reconnectRequired', 'lastRefreshAttemptAt', 'providerErrorCode']) {
-                expect(accounts[0]).not.toHaveProperty(field);
-            }
-            expect(JSON.stringify(accounts)).not.toContain('synthetic-token');
-            const held = await inTx(tx => buildAccountConnectedServicesProjection({ tx, accountId: owner.id, includeGroups: true }));
-            expect(held.connectedAccountsV4).toEqual(accounts);
-            expect(AccountProfileSchema.parse({ id: owner.id, ...held }).connectedAccountsV4).toEqual(accounts);
-        }
-        const other = await db.account.create({ data: { encryptionMode: 'plain' } });
-        expect(await listQualifiedConnectedAccounts({ accountId: other.id, service })).toEqual([]);
-        const otherHeld = await inTx(tx => buildAccountConnectedServicesProjection({ tx, accountId: other.id, includeGroups: true }));
-        expect(AccountProfileSchema.parse({ id: other.id, ...otherHeld }).connectedAccountsV4).toEqual([]);
-        for (const status of ['needs_reauth', 'connected'] as const) {
-            expect(await mutateQualifiedConnectedServiceCredentialHealth({ ...basis,
-                health: { v: 1, status, reconnectRequired: status === 'needs_reauth',
-                    ...(status === 'connected' ? { lastRefreshFailureKind: 'invalid_grant' as const } : {}) } }))
-                .toMatchObject({ status: 'written' });
-            const accounts = await listQualifiedConnectedAccounts({ accountId: owner.id, service });
-            expect(accounts[0]).not.toHaveProperty('statusReason');
-            for (const field of ['lastRefreshFailureAt', 'lastRefreshSuccessAt', 'providerHttpStatus']) {
-                expect(accounts[0]).not.toHaveProperty(field);
-            }
-        }
-    });
-
     it("creates a credential after an Account retains 500 existing credentials", async () => {
         const inventorySize = 501;
         const account = await db.account.create({

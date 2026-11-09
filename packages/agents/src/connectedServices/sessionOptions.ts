@@ -1,5 +1,8 @@
 import { isConnectedServiceCredentialHealthStatusUsable, normalizeConnectedServiceCredentialHealthStatus } from '@happier-dev/protocol/connect/connected-service-schemas';
 import type { ConnectedServiceCredentialHealthStatusV1 } from '@happier-dev/protocol';
+import type { ConnectedServiceQuotaLimitSelectionV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { ConnectedServiceCredentialKind } from '@happier-dev/protocol/connect/connectedServiceCredentialKind';
 
 import type { AgentCore, ConnectedServiceId, ConnectedServiceKind } from '../types.js';
 
@@ -23,15 +26,45 @@ type ConnectedServiceV2ProfileProjection = Readonly<{
 
 export type ConnectedServicesProfileOptionsByServiceId = Readonly<Record<string, ConnectedServicesProfileOption[]>>;
 
+/** Applies the Agent's declared kinds once for every account inventory consumer. */
+export function applyProjectedCredentialKindRestrictions(params: Readonly<{
+  optionsByServiceId: Readonly<Record<string, ReadonlyArray<ConnectedServicesProfileOption>>>;
+  connectedAccounts: ReadonlyArray<Readonly<{
+    service: { pluginId: string; localId: string };
+    credentialKinds?: ReadonlyArray<ConnectedServiceCredentialKind>;
+  }>>;
+}>): ConnectedServicesProfileOptionsByServiceId {
+  // Any purpose can use an account: combine kinds and let an unrestricted purpose admit all kinds.
+  const kindsByService = new Map<string, Set<ConnectedServiceCredentialKind> | null>();
+  for (const declaration of params.connectedAccounts) {
+    const key = buildQualifiedPluginContributionKey(declaration.service);
+    if (!declaration.credentialKinds?.length) {
+      kindsByService.set(key, null);
+    } else if (kindsByService.get(key) !== null) {
+      const kinds = kindsByService.get(key) ?? new Set<ConnectedServiceCredentialKind>();
+      for (const kind of declaration.credentialKinds) kinds.add(kind);
+      kindsByService.set(key, kinds);
+    }
+  }
+  return Object.fromEntries(Object.entries(params.optionsByServiceId).map(([key, options]) => {
+    const allowed = kindsByService.get(key);
+    return [key, options.map(option => allowed && (!option.kind || !allowed.has(option.kind))
+      ? { ...option, status: 'unsupported_kind' as const }
+      : option)];
+  }));
+}
+
 export type ConnectedServicesAccountGroupOption = Readonly<{
   groupId: string;
   label: string;
   activeProfileId: string | null;
   /** Enabled member profile ids (deduped) — drives pool-adoption suggestions. */
   memberProfileIds?: ReadonlyArray<string>;
+  quotaLimitSelection?: ConnectedServiceQuotaLimitSelectionV1;
   generation?: number;
   enabledMemberCount: number;
-  autoSwitch: boolean;
+  /** Null means the legacy Account profile projection carries no authoritative policy. */
+  autoSwitch: boolean | null;
   status: 'ready' | 'exhausted' | 'needs_members';
 }>;
 
@@ -248,10 +281,6 @@ function readString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-function readBoolean(value: unknown): boolean {
-  return value === true;
-}
-
 function readNumber(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
@@ -287,13 +316,6 @@ function readGroupMemberProfileIds(rawGroup: Record<string, unknown>): ReadonlyA
     })
     .filter(Boolean);
   return Array.from(new Set(memberIds));
-}
-
-function readGroupAutoSwitch(rawGroup: Record<string, unknown>): boolean {
-  if (typeof rawGroup.autoSwitch === 'boolean') return rawGroup.autoSwitch;
-  const policy = rawGroup.policy;
-  if (!policy || typeof policy !== 'object' || Array.isArray(policy)) return false;
-  return readBoolean((policy as { autoSwitch?: unknown }).autoSwitch);
 }
 
 function readGroupStatus(rawGroup: Record<string, unknown>): ConnectedServicesAccountGroupOption['status'] {
@@ -341,7 +363,7 @@ export function buildConnectedServiceAccountGroupOptionsByServiceId(params: Read
         ...(memberProfileIds.length > 0 ? { memberProfileIds } : {}),
         ...(generation === null ? {} : { generation }),
         enabledMemberCount,
-        autoSwitch: readGroupAutoSwitch(group),
+        autoSwitch: null,
         status: enabledMemberCount <= 0
           ? 'needs_members'
           : readGroupStatus(group),

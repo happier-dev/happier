@@ -24,12 +24,15 @@ it('projects the qualified Account pool label into choices without changing its 
     const service = { pluginId: 'acme.review', localId: 'reviewer-service' };
     const group = QualifiedConnectedAccountGroupV4Schema.parse({ v: 1, ref: { service, groupId: 'primary' },
         displayName: 'Definition name', incarnation: 'primary:1', generation: 2, runtimeStateRevision: 3,
-        policy: {}, activeConnectedAccountId: null, state: {}, createdAt: 0, updatedAt: 0, members: [] });
+        policy: { quotaLimitSelection: { mode: 'selected', providerLimitIds: ['weekly'] } }, activeConnectedAccountId: null, state: {}, createdAt: 0, updatedAt: 0, members: [] });
     const input = { groups: [group], supportedServiceIds: [NOVEL_SERVICE_KEY],
         labelsByKey: { [connectedEntitySubjectKeyV1({ kind: 'group', ...group.ref })]: 'Personal name' } };
     expect(buildQualifiedConnectedAccountGroupOptionsByServiceId(input)[NOVEL_SERVICE_KEY]?.[0]?.label).toBe('Personal name');
     expect(buildQualifiedConnectedAccountGroupOptionsByServiceId({ ...input, labelsByKey: {} })[NOVEL_SERVICE_KEY]?.[0]?.label).toBe('Definition name');
     expect(group.displayName).toBe('Definition name');
+    expect(buildQualifiedConnectedAccountGroupOptionsByServiceId(input)[NOVEL_SERVICE_KEY]?.[0]).toMatchObject({
+        quotaLimitSelection: group.policy.quotaLimitSelection,
+    });
 });
 
 describe('buildQualifiedConnectedAccountProfileOptionsByServiceId privacy', () => {
@@ -122,12 +125,27 @@ function profileOption(params: Readonly<{
 }
 
 describe('applyProjectedCredentialKindRestrictions', () => {
+    it('offers the credential kinds of every purpose using the same service regardless of declaration order', () => {
+        const declarations = [
+            ...CLAUDE_SUBSCRIPTION_TOKEN_ONLY_PURPOSE,
+            { ...CLAUDE_SUBSCRIPTION_TOKEN_ONLY_PURPOSE[0], purpose: 'oauth', credentialKinds: ['oauth'] as const },
+        ];
+        const options = { [CLAUDE_SUBSCRIPTION_SERVICE_KEY]: [
+            profileOption({ profileId: 'max', kind: 'oauth' }),
+            profileOption({ profileId: 'api', kind: 'token' }),
+        ] };
+        for (const connectedAccounts of [declarations, [...declarations].reverse()]) {
+            expect(applyProjectedCredentialKindRestrictions({ optionsByServiceId: options, connectedAccounts })).toEqual(options);
+        }
+    });
+
     it('marks a bundled service option unsupported from its public purpose declaration', () => {
         const restricted = applyProjectedCredentialKindRestrictions({
             optionsByServiceId: {
                 [CLAUDE_SUBSCRIPTION_SERVICE_KEY]: [
                     profileOption({ profileId: 'max', kind: 'oauth' }),
                     profileOption({ profileId: 'api', kind: 'token' }),
+                    profileOption({ profileId: 'unclassified', kind: null }),
                 ],
             },
             connectedAccounts: CLAUDE_SUBSCRIPTION_TOKEN_ONLY_PURPOSE,
@@ -136,6 +154,7 @@ describe('applyProjectedCredentialKindRestrictions', () => {
         expect(restricted[CLAUDE_SUBSCRIPTION_SERVICE_KEY]).toEqual([
             expect.objectContaining({ profileId: 'max', status: 'unsupported_kind', kind: 'oauth' }),
             expect.objectContaining({ profileId: 'api', status: 'connected', kind: 'token' }),
+            expect.objectContaining({ profileId: 'unclassified', status: 'unsupported_kind', kind: null }),
         ]);
     });
 
@@ -179,6 +198,7 @@ describe('applyProjectedCredentialKindRestrictions', () => {
         const options = {
             [CLAUDE_SUBSCRIPTION_SERVICE_KEY]: [
                 profileOption({ profileId: 'max', kind: 'oauth' }),
+                profileOption({ profileId: 'unclassified', kind: null }),
             ],
         } as const;
 
@@ -186,6 +206,11 @@ describe('applyProjectedCredentialKindRestrictions', () => {
             optionsByServiceId: options,
             connectedAccounts: [],
         })).toEqual(options);
+        const unrestricted = { service: CLAUDE_SUBSCRIPTION_TOKEN_ONLY_PURPOSE[0].service };
+        for (const connectedAccounts of [[...CLAUDE_SUBSCRIPTION_TOKEN_ONLY_PURPOSE, unrestricted],
+            [unrestricted, ...CLAUDE_SUBSCRIPTION_TOKEN_ONLY_PURPOSE]]) {
+            expect(applyProjectedCredentialKindRestrictions({ optionsByServiceId: options, connectedAccounts })).toEqual(options);
+        }
     });
 });
 

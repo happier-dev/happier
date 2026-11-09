@@ -1,6 +1,7 @@
 import type { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { AccountProfileResponseSchema } from '@happier-dev/protocol/account/profile';
-import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { buildQualifiedPluginContributionKey, qualifyPluginContributionReferenceV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 import { buildBackendTargetKeyV2, convertBackendTargetRefV2ToV1, parseBackendTargetKeyV2, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { isLegacyConfiguredAcpFlavorCarrier } from '@happier-dev/protocol/backends/targets/compat/customAcp';
 import type { AccountProfile, ActionExecutorContext, ActionExecutorDeps, BackendTargetRefV2 } from '@happier-dev/protocol';
@@ -867,7 +868,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
     },
     spawnConnectedServicesList: async (args, context) => {
       const normalizedAgentId = normalizeStringValue((args as { agentId?: unknown }).agentId);
-      const [{ connectedServiceProfileKey }, { resolveSpawnConnectedServicesDefaults }, { readActiveConnectedAccountCatalog }, { fetchAccountProfile }, { resolveCatalogAgentConnectedAccountServiceIds }] = await Promise.all([import("@happier-dev/agents"), import("@/session/services/spawnConnectedServicesDefaults"), import("@/settings/connectedAccounts/hydrateConnectedAccountCatalog"), import("@/api/accountProfile"), import("@/agent/catalog/registry")]);
+      const [{ connectedServiceProfileKey, applyProjectedCredentialKindRestrictions }, { resolveSpawnConnectedServicesDefaults }, { readActiveConnectedAccountCatalog }, { fetchAccountProfile }, { resolveCatalogAgentConnectedAccountServiceIds }] = await Promise.all([import("@happier-dev/agents"), import("@/session/services/spawnConnectedServicesDefaults"), import("@/settings/connectedAccounts/hydrateConnectedAccountCatalog"), import("@/api/accountProfile"), import("@/agent/catalog/registry")]);
       const supportedServiceIds = resolveCatalogAgentConnectedAccountServiceIds(normalizedAgentId);
       if (supportedServiceIds.length === 0) {
         return { ...(normalizedAgentId ? { agentId: normalizedAgentId } : {}), supportedServiceIds: [], items: [] };
@@ -936,7 +937,12 @@ export function createCliActionInventoryDeps(params: Readonly<{
         (byServiceId[serviceId] ??= []).push(account);
         return byServiceId;
       }, {});
-      const normalizedProfileOptionsByServiceId = Object.fromEntries(
+      const declaration = readCurrentContributionRegistry().agentDefinitionsById.get(agentId);
+      const connectedAccounts = (declaration?.richDefinition?.definition.connectedAccounts ?? []).map(purpose => ({
+        ...purpose,
+        service: qualifyPluginContributionReferenceV1(purpose.service, declaration!.identity.pluginId),
+      }));
+      const normalizedProfileOptionsByServiceId = applyProjectedCredentialKindRestrictions({ connectedAccounts, optionsByServiceId: Object.fromEntries(
         Object.entries(profileOptionsByServiceId).map(([serviceId, accounts]) => [
           serviceId,
           (accounts ?? []).map((account) => ({
@@ -953,7 +959,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
               ?? account.ref.accountId,
           })),
         ]),
-      );
+      ) });
       const groupOptionsByServiceId = Object.fromEntries(
         supportedServiceIds.map((serviceId) => [
           serviceId,

@@ -490,6 +490,23 @@ describe('defaultActionExecutor canonical agent inventory corridor', () => {
     expect(misbound).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
   });
 
+  it('keeps token-only bundled eligibility when listing without a machine projection', async () => {
+    const service = { pluginId: 'happier.agent.claude', localId: 'anthropic' };
+    const serviceKey = `${service.pluginId}/${service.localId}`;
+    homes.answer(serverId, '/v1/account/profile', { body: { id: 'account-a', connectedAccountsV4:
+      (['oauth', 'token', 'unknown'] as const).map(kind => ({ ref: { service, accountId: kind }, kind: kind === 'unknown' ? null : kind,
+        status: 'connected', authenticationModeId: kind === 'unknown' ? 'oauth' : kind, configurationReady: false, configurationRevision: null,
+        revisionSemantics: 'revisioned', credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', scopes: [] })),
+    } });
+    expect(await createDefaultActionExecutor().execute('sessions.spawn.connected_services.list',
+      { agentId: 'ohMyPi' }, { surface: 'ui', serverId })).toMatchObject({ ok: true, result: {
+        profileOptionsByServiceId: { [serviceKey]: [
+          { profileId: 'oauth', status: 'unsupported_kind' }, { profileId: 'token', status: 'connected' },
+          { profileId: 'unknown', status: 'unsupported_kind' },
+        ] }, items: [{ value: `${serviceKey}:profile:token` }],
+      } });
+  });
+
   it('does not offer bundled connected accounts when the machine declares no purposes', async () => {
     const described = describeAgent('codex');
     described.projection.agentsById.codex = {

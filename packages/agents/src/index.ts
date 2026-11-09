@@ -88,6 +88,7 @@ export {
 } from './connectedServices/usageProviderOwnership.js';
 export {
   buildConnectedServiceAccountGroupOptionsByServiceId,
+  applyProjectedCredentialKindRestrictions,
   buildConnectedServiceProfileOptionsByServiceId,
   connectedServiceProfileKey,
   isConnectedServiceProfileOptionSelectable,

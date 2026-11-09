@@ -19,6 +19,87 @@ import { ScmDiffSummaryModelCatalogObservationV1Schema } from '@happier-dev/prot
 afterEach(() => { vi.restoreAllMocks(); resetActiveAccountSettingsSnapshotForTests(); });
 
 describe('direct CLI and Action inventory purpose authority', () => {
+  it('offers only declared credential kinds for Oh My Pi while retaining typed unavailable accounts', async () => {
+    const credentials = { token: 'credential-kind-inventory', encryption: null };
+    const service = { pluginId: 'happier.agent.claude', localId: 'anthropic' };
+    const serviceKey = `${service.pluginId}/${service.localId}`;
+    // Raw V4 shape from the recorded inventory: older producers publish null kind.
+    const profile = { id: 'credential-kind-owner', connectedAccountsV4: [
+      ...(['oauth', 'token', 'unknown'] as const).map(kind => ({ ref: { service, accountId: kind }, kind: kind === 'unknown' ? null : kind,
+        status: 'connected', authenticationModeId: kind === 'unknown' ? 'oauth' : kind, configurationReady: false, configurationRevision: null,
+        revisionSemantics: 'revisioned', credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', scopes: [] })),
+    ] };
+    setActiveAccountSettingsSnapshot({ source: 'network', scopeKey: resolveAccountSettingsScopeKey(credentials),
+      settings: accountSettingsParse({}), rawSettings: {}, settingsVersion: 7, loadedAtMs: Date.now(), settingsSecretsReadKeys: [] });
+    // Only Home HTTP is substituted; inventory, declarations and Action result normalization stay real.
+    vi.spyOn(axios, 'get').mockImplementation(async input => {
+      const path = new URL(String(input)).pathname;
+      if (path.endsWith('/currentness')) return { status: 200, data: { mode: 'plain', version: 1,
+        signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+      if (path === '/v1/account/profile') return { status: 200, data: profile };
+      if (path.endsWith('/connected-metadata/presentation')) return { status: 200, data: {
+        status: 'present', revision: 1, content: { t: 'plain', v: { v: 1, entries: [] } } } };
+      throw new Error(`Unexpected credential-kind inventory request: ${path}`);
+    });
+    await runWithServerHttpBaseUrl('https://credential-kind-inventory.example.test', async () => {
+      const executor = createActionExecutor(createCliActionDeps({ token: credentials.token, credentials,
+        sessionId: 'credential-kind-session', mode: 'plain', ctx: null }));
+      const available = await executor.execute('sessions.spawn.connected_services.list',
+        { agentId: 'ohMyPi', includeDefaults: false }, { surface: 'cli' });
+      expect(available).toMatchObject({ ok: true, result: {
+        profileOptionsByServiceId: { [serviceKey]: [
+          { profileId: 'oauth', status: 'unsupported_kind' }, { profileId: 'token', status: 'connected' },
+          { profileId: 'unknown', status: 'unsupported_kind' },
+        ] }, items: [{ value: `${serviceKey}:profile:token` }],
+      } });
+      const all = await executor.execute('sessions.spawn.connected_services.list',
+        { agentId: 'ohMyPi', includeDefaults: false, includeUnavailable: true }, { surface: 'cli' });
+      expect(all).toMatchObject({ ok: true, result: { items: [
+        { value: `${serviceKey}:profile:oauth` }, { value: `${serviceKey}:profile:token` },
+        { value: `${serviceKey}:profile:unknown` },
+      ] } });
+    });
+  });
+
+  it.each([true, false])('lists the authoritative V4 pool autoSwitch=%s without a separate policy read', async autoSwitch => {
+    const credentials = { token: 'pool-policy-inventory', encryption: null };
+    const home = 'https://pool-policy-inventory.example.test';
+    const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
+    const serviceKey = `${service.pluginId}/${service.localId}`;
+    const profile = AccountProfileSchema.parse({ id: 'pool-policy-owner', connectedAccountGroupsV4: [{
+      v: 1, ref: { service, groupId: 'work' }, displayName: 'Work', incarnation: 'work:1',
+      generation: 2, runtimeStateRevision: 3, policy: { autoSwitch }, activeConnectedAccountId: 'primary',
+      state: {}, createdAt: 0, updatedAt: 0, members: [
+        { v: 1, connectedAccountId: 'primary', priority: 0, enabled: true, state: {}, createdAt: 0, updatedAt: 0 },
+        { v: 1, connectedAccountId: 'disabled', priority: 1, enabled: false, state: {}, createdAt: 0, updatedAt: 0 },
+      ],
+    }] });
+    setActiveAccountSettingsSnapshot({ source: 'network', scopeKey: resolveAccountSettingsScopeKey(credentials),
+      settings: accountSettingsParse({}), rawSettings: {}, settingsVersion: 7, loadedAtMs: Date.now(), settingsSecretsReadKeys: [] });
+    const paths: string[] = [];
+    // Only HTTP is substituted: the Action handler, profile parser and option projection stay real.
+    vi.spyOn(axios, 'get').mockImplementation(async input => {
+      const path = new URL(String(input)).pathname;
+      paths.push(path);
+      if (path.endsWith('/currentness')) return { status: 200, data: { mode: 'plain', version: 1,
+        signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+      if (path === '/v1/account/profile') return { status: 200, data: profile };
+      if (path.endsWith('/connected-accounts/purposes')) return { status: 200, data: {
+        status: 'present', revision: 1, content: { t: 'plain', v: { key: 'purposes', value: { v: 1, bindings: [] } } } } };
+      if (path.endsWith('/connected-metadata/presentation')) return { status: 200, data: {
+        status: 'present', revision: 1, content: { t: 'plain', v: { v: 1, entries: [] } } } };
+      if (path === '/v2/account/settings') return { status: 200, data: { version: 7, content: { t: 'plain', v: {} } } };
+      throw new Error(`Unexpected pool inventory request: ${path}`);
+    });
+    const result = await runWithServerHttpBaseUrl(home, () => createActionExecutor(createCliActionDeps({
+      token: credentials.token, credentials, sessionId: 'pool-policy-session', mode: 'plain', ctx: null,
+    })).execute('sessions.spawn.connected_services.list', { agentId: 'codex' }, { surface: 'cli' }));
+    expect(result).toMatchObject({ ok: true, result: { groupOptionsByServiceId: { [serviceKey]: [{
+      groupId: 'work', autoSwitch, memberProfileIds: ['primary'], enabledMemberCount: 1,
+    }] } } });
+    expect(paths.filter(path => path.startsWith('/v3/connect/') || path === '/v4/connect/qualified/groups')).toEqual([]);
+  });
+
   it.each(['daemon', 'captured'] as const)('reobserves current purpose authority on every %s inventory demand after the Home recovers', async custody => {
     const credentials = { token: 'recovering-purpose-consumer', encryption: null };
     const home = 'https://recovering-purpose-consumer.example.test';
@@ -33,6 +114,7 @@ describe('direct CLI and Action inventory purpose authority', () => {
       snapshot, serverHttpBaseUrl: home, isCurrent: async () => true }) : undefined;
     let reachable = false;
     let hasBinding = true;
+    let purposeReads = 0;
     // Only Home HTTP is replaced; Account publication, recovery, catalog parsing,
     // default interpretation and Action failure normalization remain real.
     vi.spyOn(axios, 'get').mockImplementation(async input => {
@@ -40,11 +122,11 @@ describe('direct CLI and Action inventory purpose authority', () => {
       if (path.endsWith('/currentness')) return { status: 200, data: { mode: 'plain', version: 1,
         signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
       if (path === '/v1/account/profile') return { status: 200, data: AccountProfileSchema.parse({ id: 'recovering-purpose-account' }) };
-      if (path.endsWith('/connected-accounts/purposes')) return reachable
+      if (path.endsWith('/connected-accounts/purposes')) { purposeReads += 1; return reachable
         ? { status: 200, data: { status: 'present', revision: hasBinding ? 4 : 5, content: { t: 'plain', v: {
           key: 'purposes', value: { v: 1, bindings: hasBinding ? [{ purpose: declaration.purpose,
             target: { kind: 'group', service, groupId: 'recovered-group' } }] : [] },
-        } } } } : { status: 503, data: { error: 'unreachable' } };
+        } } } } : { status: 503, data: { error: 'unreachable' } }; }
       if (path === '/v2/account/settings') return { status: 200, data: { version: 7, content: { t: 'plain', v: {} } } };
       throw new Error(`Unexpected Home request: ${path}`);
     });
@@ -55,9 +137,17 @@ describe('direct CLI and Action inventory purpose authority', () => {
       const executor = createActionExecutor(deps);
       expect(await executor.execute('sessions.spawn.connected_services.list', { agentId: 'codex' }, { surface: 'cli' }))
         .toMatchObject({ ok: false, errorCode: 'connected_services_default_unavailable',
-          error: 'connected_account_purpose_catalog_unavailable' });
+          error: 'connected_account_purpose_catalog_unavailable', details: {
+            v: 1, source: 'account_default', reason: 'connected_account_purpose_catalog_unavailable',
+            phase: 'purpose_binding',
+          } });
       expect((operationContext?.readSnapshot() ?? getActiveAccountSettingsSnapshot())?.connectedPurposeCatalog)
         .toMatchObject({ status: 'unavailable', reason: 'unreachable' });
+      const beforeExplicitDiscovery = purposeReads;
+      expect(await executor.execute('sessions.spawn.connected_services.list',
+        { agentId: 'codex', includeDefaults: false }, { surface: 'cli' }))
+        .toMatchObject({ ok: true, result: { supportedServiceIds: [`${service.pluginId}/${service.localId}`] } });
+      expect(purposeReads).toBe(beforeExplicitDiscovery);
       reachable = true;
       expect(await executor.execute('sessions.spawn.connected_services.list', { agentId: 'codex' }, { surface: 'cli' }))
         .toMatchObject({ ok: true, result: { defaultBindings: { v: 2, bindingsByServiceId: {

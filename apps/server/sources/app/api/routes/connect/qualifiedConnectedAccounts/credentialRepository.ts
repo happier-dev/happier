@@ -1971,7 +1971,7 @@ async function listQualifiedConnectedAccountEntriesByFilterInTx(
                 credentialRevision: metadata.credentialRevision,
                 configurationReady: row.configurationRevision !== null,
                 configurationRevision: row.configurationRevision,
-                kind: metadata.kind,
+                kind: metadata.kind ?? legacyMode?.credentialKind ?? null,
                 expiresAt: qualifiedConnectedAccountListTimestamp(row.expiresAt),
                 lastUsedAt: qualifiedConnectedAccountListTimestamp(row.lastUsedAt),
                 ...(metadata.health?.lastRefreshSuccessAt !== undefined

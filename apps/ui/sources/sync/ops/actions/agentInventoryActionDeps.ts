@@ -1,18 +1,21 @@
 import { BackendTargetKeyV2InputSchema, buildBackendTargetKeyV2, parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { resolveActionBackendTargetSelection } from '@happier-dev/protocol/actions/resolveActionBackendTargetSelection';
 import type { BackendTargetRefV1 } from '@happier-dev/protocol/backends/targets/backendTargetRef';
-import type { AgentExecutionTargetV1, BackendTargetRefV2, PluginProjectionV2 } from '@happier-dev/protocol';
+import type { AgentExecutionTargetV1} from '@happier-dev/protocol/agents/executionTargetV1';
+import type { BackendTargetRefV2} from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { AgentInventoryProbeInput } from '@happier-dev/protocol/actions/actionSpecs';
-import { AgentModelsProbeObservationSchema, AgentSessionModesProbeObservationSchema, AgentConfigOptionsProbeObservationSchema, projectProbedConfigOptionDefinitions } from '@happier-dev/protocol/capabilities';
+import { AgentModelsProbeObservationSchema, projectProbedConfigOptionDefinitions } from '@happier-dev/protocol/capabilities';
 import type { ConnectedServicesProfileOption } from '@happier-dev/agents';
 
-import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
-import type { MachineCapabilitiesInvokeResult } from '@/sync/ops/capabilities';
+import { isBundledAgentId } from '@/agents/catalog/catalog';
+import { BUNDLED_CANONICAL_AGENT_DECLARATIONS } from '@/agents/registry/generatedBundledPluginEntries';
+import { qualifyPluginContributionReferenceV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { probeAgentInventory, type AgentInventoryProbeTarget } from './agentInventoryProbe';
-import { createFrontDoorActionExecute } from './frontDoorRuntimeActionExecutor';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { loadDaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import { DAEMON_AGENT_CATALOG_SECTIONS } from '@/agents/backendCatalog/agentCatalogSections';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { projectConnectedPresentationLabelsV1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 import {
@@ -21,7 +24,6 @@ import {
     buildQualifiedConnectedAccountProfileOptionsByServiceId,
     resolveProjectedConnectedAccountServiceKeys,
 } from '@/sync/domains/connectedServices/qualifiedConnectedAccountServiceOptions';
-import { resolveQualifiedConnectedAccountServiceKey } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 
 /**
  * The app client's `sessions.spawn.*` / `agents.*` inventory Action
@@ -59,6 +61,7 @@ export async function resolveSessionSpawnAgentInventorySelectionForActions(args:
         ...(serverId ? { serverId } : {}),
         signal: args.signal,
         accountLifetime: args.accountLifetime,
+        sections: DAEMON_AGENT_CATALOG_SECTIONS,
     }))?.pluginProjectionV2;
     if (!projection) return null;
     const entry = findProjectedAgentByIdentity(projection, args.agentTarget.identity);
@@ -113,49 +116,7 @@ export function resolveAgentInventoryProbeTarget(args: Readonly<{
     };
 }
 
-/** Existing inventory Actions are the only public preflight transport front door. */
-export async function invokeAgentInventoryProbeAction(params: Readonly<{
-    agentId: string;
-    machineId: string;
-    serverId?: string | null;
-    backendTarget?: BackendTargetRefV1 | BackendTargetRefV2 | null;
-    capabilityParams: Readonly<Record<string, unknown>>;
-    bypassCache?: boolean;
-    transportTimeoutMs?: number;
-    signal?: AbortSignal;
-}>, method: 'probeModels' | 'probeModes' | 'probeConfigOptions'): Promise<MachineCapabilitiesInvokeResult> {
-    try {
-        const target = params.backendTarget ? readBackendTargetRefV2(params.backendTarget) : null;
-        const configured = target?.configuredBackendId || target?.sourceKind === 'configured';
-        const result = await createFrontDoorActionExecute()(method === 'probeModels' ? 'agents.models.list'
-            : method === 'probeModes' ? 'agents.session_modes.list' : 'agents.config_options.list', {
-            ...(!configured ? { agentId: params.agentId } : {}),
-            ...(target ? { backendTargetKey: resolveBackendTargetKeyV2(target) } : {}),
-            machineId: params.machineId,
-            probe: { ...params.capabilityParams, ...(params.bypassCache ? { bypassCache: true } : {}),
-                ...(params.transportTimeoutMs ? { transportTimeoutMs: params.transportTimeoutMs } : {}) },
-        }, { surface: 'ui', ...(params.serverId ? { serverId: params.serverId } : {}), signal: params.signal });
-        params.signal?.throwIfAborted();
-        if (!result.ok) {
-            const details = result.details && typeof result.details === 'object' && !Array.isArray(result.details)
-                ? result.details as Record<string, unknown> : null;
-            return { supported: false,
-                errorCode: result.errorCode,
-                reason: result.errorCode === 'action_outcome_unknown' ? 'outcomeUnknown'
-                    : details?.reason === 'not-supported' ? 'not-supported' : 'error',
-                ...(details?.requestDisposition === 'outcomeUnknown' || details?.requestDisposition === 'notSent'
-                    ? { requestDisposition: details.requestDisposition } : {}) };
-        }
-        if (!result.result || typeof result.result !== 'object' || Array.isArray(result.result)) return { supported: false, reason: 'error' };
-        const observation = (method === 'probeModels' ? AgentModelsProbeObservationSchema
-            : method === 'probeModes' ? AgentSessionModesProbeObservationSchema : AgentConfigOptionsProbeObservationSchema)
-            .safeParse((result.result as Record<string, unknown>).probeObservation);
-        return observation.success ? { supported: true, response: { ok: true, result: observation.data } } : { supported: false, reason: 'error' };
-    } catch (error) {
-        if (params.signal?.aborted) throw error;
-        return { supported: false, reason: 'error' };
-    }
-}
+export { invokeAgentInventoryProbeAction } from './invokeAgentInventoryProbeAction';
 
 function readProbeSource(result: Record<string, unknown>): 'static' | 'dynamic' | 'unavailable' | null {
     const source = result.source;
@@ -351,6 +312,7 @@ export async function listSpawnConnectedServicesForActions(args: SpawnConnectedS
                 serverId: account.serverId,
                 accountLifetime: account.accountLifetime,
                 signal: args.signal,
+                sections: DAEMON_AGENT_CATALOG_SECTIONS,
             }))?.pluginProjectionV2;
             if (projection) {
                 projectedAgent = agentId ? projection.agentsById[agentId]
@@ -359,16 +321,12 @@ export async function listSpawnConnectedServicesForActions(args: SpawnConnectedS
             }
         }
         if (!agentId) return { ok: false, errorCode: 'unknown_agent', errorMessage: 'unknown_agent' };
-        const agentCore = isBundledAgentId(agentId) ? getAgentCore(agentId) : null;
-        const projectedConnectedAccounts = projectedAgent?.connectedAccounts ?? [];
-        const supportedServiceIds = projectedAgent
-            ? resolveProjectedConnectedAccountServiceKeys(projectedConnectedAccounts)
-            : agentCore
-            ? (agentCore.connectedServices?.supportedServiceIds ?? [])
-                .map((serviceId) => resolveQualifiedConnectedAccountServiceKey(serviceId))
-                .filter((serviceKey): serviceKey is string => Boolean(serviceKey))
-                .filter((serviceKey, index, all) => all.indexOf(serviceKey) === index)
-            : [];
+        const bundled = isBundledAgentId(agentId) ? BUNDLED_CANONICAL_AGENT_DECLARATIONS[agentId] : null;
+        const projectedConnectedAccounts = projectedAgent?.connectedAccounts
+            ?? (bundled?.connectedAccounts ?? []).map(purpose => ({ ...purpose,
+                service: qualifyPluginContributionReferenceV1(purpose.service, bundled!.identity.pluginId),
+            }));
+        const supportedServiceIds = resolveProjectedConnectedAccountServiceKeys(projectedConnectedAccounts);
 
         if (supportedServiceIds.length === 0) {
             return { agentId, supportedServiceIds: [], items: [] };
