@@ -76,6 +76,7 @@ const providerState = vi.hoisted(() => ({
     sessionDisplaySource: null as object | null,
     machine: null as object | null,
     voiceSettings: null as unknown,
+    authority: null as object | null,
 }));
 
 vi.mock('expo-router', async () => {
@@ -139,6 +140,7 @@ vi.mock('@/sync/domains/state/storage', async () => {
     // the real hook graph here cycles through dictation back to this provider.
     return createStorageModuleStub({
         useActiveServerAccountScope: () => null,
+        useActiveServerAccountScopeLifetime: () => providerState.authority as never,
         useProfile: () => null,
         useSetting: (key: string) => key === 'secrets' ? [] : providerState.voiceSettings as never,
     });
@@ -150,11 +152,13 @@ import {
 } from './currentUiContextModel';
 import {
     CurrentUiContextProvider,
+    CurrentUiContextWorkspaceBoundary,
     type CurrentUiContextReader,
     useCurrentUiContextMountPublisher,
     useOptionalCurrentUiContextReader,
     usePublishCurrentUiContext,
 } from './CurrentUiContextProvider';
+import { useCurrentUiContextLocalCommands } from './CurrentUiContextCommands';
 import { createCurrentUiContextVoiceToolPort } from './currentUiContextVoiceToolPort';
 import { CurrentRouteLocationProvider } from '@/components/appShell/workspace/currentRouteLocation';
 
@@ -980,6 +984,51 @@ describe('CurrentUiContextProvider', () => {
         expect(tornDown).toBeInstanceOf(AbortSignal);
         await hook.unmount();
         expect(tornDown?.aborted).toBe(true);
+    });
+
+    // TL-C (READY156, 390): PR63's detail hosted in Session Details acquired the record, yet area=workspace withheld it.
+    it('keeps a surface hosted in the focused Details workspace current, entity and commands alike', async () => {
+        const hook = await renderHook(() => ({ publisher: useCurrentUiContextMountPublisher(), reader: useOptionalCurrentUiContextReader() }), {
+            wrapper: (props: React.PropsWithChildren) => React.createElement(CurrentUiContextTestProvider, null,
+                React.createElement(CurrentUiContextWorkspaceBoundary, null, props.children)),
+        });
+        const reader = requireCurrentUiContextReader(hook.getCurrent().reader);
+        const publication = hook.getCurrent().publisher!.createMount();
+        await act(async () => {
+            expect(publication.publish({ entity: { kind: 'pull-request', label: 'PR 63' }, commands: [{
+                title: 'Refresh', command: { kind: 'executeAction', action: { pluginId: 'triage', localId: 'refresh' } },
+            }] })).toBe(true);
+        });
+        providerState.focusedDetailsWorkspace = true;
+        await hook.rerender();
+        const snapshot = reader.readCurrentUiContext()!;
+        expect(snapshot.navigation.area).toBe('workspace');
+        expect(snapshot.entity?.label).toBe('PR 63');
+        expect(snapshot.commands.map(command => command.title)).toEqual(['Refresh']);
+        expect(reader.resolveCurrentUiCommand(snapshot.commands[0]!.id)).not.toBeNull();
+        await hook.unmount();
+    });
+
+    it('withholds the page host controls beneath the focused Details workspace', async () => {
+        providerState.authority = { scope: { serverId: 'home', accountId: 'account' }, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+        const pageControls = [{ key: 'send', title: 'Send draft', invoke: () => true }];
+        try {
+            const hook = await renderHook(() => {
+                useCurrentUiContextLocalCommands(pageControls);
+                return { publisher: useCurrentUiContextMountPublisher(), reader: useOptionalCurrentUiContextReader() };
+            }, { wrapper: (props: React.PropsWithChildren) => React.createElement(CurrentUiContextTestProvider, null,
+                React.createElement(CurrentUiContextWorkspaceBoundary, null, props.children)) });
+            const reader = requireCurrentUiContextReader(hook.getCurrent().reader);
+            const publication = hook.getCurrent().publisher!.createMount();
+            await act(async () => {
+                publication.publish({ commands: [{ title: 'Refresh', command: { kind: 'hostLocal', invoke: () => true } }] });
+            });
+            expect(reader.readCurrentUiContext()!.commands.map(command => command.title)).toEqual(['Refresh', 'Send draft']);
+            providerState.focusedDetailsWorkspace = true;
+            await hook.rerender();
+            expect(reader.readCurrentUiContext()!.commands.map(command => command.title)).toEqual(['Refresh']);
+            await hook.unmount();
+        } finally { providerState.authority = null; }
     });
 
     it('resolves only commands advertised by the current composed snapshot', async () => {

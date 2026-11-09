@@ -50,7 +50,8 @@ import {
     type CurrentUiContextMountProjection,
 } from './currentUiContextModel';
 
-type CurrentUiContextMountOwner = object;
+/** `workspaceHosted`: this mount is content of the Details workspace, so it stays current while that workspace is. */
+type CurrentUiContextMountOwner = Readonly<{ workspaceHosted?: true }>;
 
 /**
  * The semantic command records remain private to the sole current mount
@@ -105,7 +106,7 @@ export type CurrentUiContextMountPublication = Readonly<{
  * and never exposes semantic command payloads to consumers.
  */
 export type CurrentUiContextMountPublisher = Readonly<{
-    createMount: () => CurrentUiContextMountPublication;
+    createMount: (options?: Readonly<{ workspaceHosted?: true }>) => CurrentUiContextMountPublication;
 }>;
 
 /**
@@ -250,7 +251,13 @@ function currentMountProjection(record: CurrentUiContextMountRecord | null, area
         const ids = new Set(foreground.map(entry => entry.id));
         return { commands: record.projection.commands.filter(entry => ids.has(entry.id)) };
     }
-    if (area === 'modal' || area === 'workspace') return null;
+    if (area === 'modal') return null;
+    if (area === 'workspace') {
+        // The focused workspace's own content is current; the page behind it and that page's host controls are not.
+        return record.owner.workspaceHosted === true
+            ? { ...record.projection, commands: record.projection.commands.slice(0, record.enrichment.commands?.length ?? 0) }
+            : null;
+    }
     if (record.semanticCommands.every(entry => entry.foreground === undefined)) return record.projection;
     const backgroundIds = new Set(record.semanticCommands.filter(entry => entry.foreground === undefined).map(entry => entry.id));
     return { ...record.projection, commands: record.projection.commands.filter(entry => backgroundIds.has(entry.id)) };
@@ -460,8 +467,8 @@ function CurrentUiContextProviderContent(props: Readonly<{ children: React.React
         },
     }), [readCurrentUiContext]);
 
-    const createMount = React.useCallback<CurrentUiContextMountPublisher['createMount']>(() => {
-        const owner = Object.freeze({});
+    const createMount = React.useCallback<CurrentUiContextMountPublisher['createMount']>((options) => {
+        const owner: CurrentUiContextMountOwner = Object.freeze(options?.workspaceHosted ? { workspaceHosted: true } : {});
         let disposed = false;
         const canUseProvider = (): boolean => !disposed && providerCurrentRef.current;
         const acquire = (): boolean => {
@@ -595,6 +602,18 @@ function CurrentUiContextProviderContent(props: Readonly<{ children: React.React
             {props.children}
         </CurrentUiContextBridge>
     );
+}
+
+/**
+ * Everything mounted inside the Details workspace publishes as that workspace's content: whichever surface or
+ * screen a tab hosts, on any form factor, without knowing where it was opened.
+ */
+export function CurrentUiContextWorkspaceBoundary(props: Readonly<{ children: React.ReactNode }>): React.ReactElement {
+    const publisher = React.useContext(CurrentUiContextMountPublisherContext);
+    const workspacePublisher = React.useMemo<CurrentUiContextMountPublisher | null>(() => publisher && Object.freeze({
+        createMount: options => publisher.createMount({ ...options, workspaceHosted: true }),
+    }), [publisher]);
+    return <CurrentUiContextMountPublisherContext.Provider value={workspacePublisher}>{props.children}</CurrentUiContextMountPublisherContext.Provider>;
 }
 
 /** Optional outside AppShell so legacy previews omit the unavailable host method. */

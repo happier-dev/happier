@@ -43,6 +43,7 @@ import { DetailsTabGroupPanel, type DetailsTabGroupPanelProps } from './DetailsT
 import type { DetailsTabPresentation } from './DetailsTabStrip';
 import { runGuardedTabNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { detailsTabNavigationKey } from './detailsTabLifetime';
+import { CurrentUiContextWorkspaceBoundary } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
 
 const stylesheet = StyleSheet.create((theme) => ({
     root: {
@@ -447,6 +448,7 @@ export const DetailsSplitWorkspace = React.memo((props: DetailsSplitWorkspacePro
     return (
         // Pane-states lab 0: states in a details tab take the details step; a phone host keeps its own.
         <SurfaceStateSizeProvider size={phone || enclosingStateSize === 'phone' ? 'phone' : 'details'}>
+        <CurrentUiContextWorkspaceBoundary>
         <View testID={props.testIds?.root} style={[styles.root, { backgroundColor }]}>
             <ModalPaneBoundaryView
                 ref={detailsModalBoundary.setUnderlayFocusRef}
@@ -512,6 +514,7 @@ export const DetailsSplitWorkspace = React.memo((props: DetailsSplitWorkspacePro
                 </ModalPaneBoundaryView>
             ) : null}
         </View>
+        </CurrentUiContextWorkspaceBoundary>
         </SurfaceStateSizeProvider>
     );
 });
