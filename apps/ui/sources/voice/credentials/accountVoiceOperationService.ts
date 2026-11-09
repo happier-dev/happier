@@ -158,6 +158,7 @@ type AccountOperationCredentialAuthority = Readonly<{
 
 type AccountCredentialAuthorityLease = Readonly<{
   resolution: AccountCredentialAuthorityResolution;
+  isAccountCurrent(): boolean;
   isCurrent(): boolean;
 }>;
 
@@ -282,13 +283,15 @@ function createAccountCredentialAuthorityLease(input: Readonly<{
     input.purpose,
     input.machineId,
   );
+  const isAccountCurrent = () => input.isCurrent()
+    && (accountScopeLifetime === null || accountScopeLifetime.isCurrent());
   return Object.freeze({
     resolution,
+    isAccountCurrent,
     isCurrent: () => {
       if (
         resolution.state !== 'resolved'
-        || !input.isCurrent()
-        || (accountScopeLifetime !== null && !accountScopeLifetime.isCurrent())
+        || !isAccountCurrent()
       ) return false;
       const current = resolveAccountCredentialAuthority(
         input.contribution,
@@ -566,7 +569,7 @@ export function createAccountVoiceOperationService(input: Readonly<{
           if (mutationDispatched && response && httpFailure) {
             rejectedMutation = operationError(httpFailure, responseFailure(response, 'http_status'));
           }
-          if (operationSignal.signal.aborted || !isAuthorityCurrent(operationAuthority)) {
+          if (operationSignal.signal.aborted || !operationAuthority.lease.isAccountCurrent()) {
             throw rejectedMutation ?? operationError('voice_account_operation_cancelled');
           }
           if (!response) throw operationError('credential_unavailable');
@@ -620,7 +623,9 @@ export function createAccountVoiceOperationService(input: Readonly<{
         if (mutationDispatched && httpFailure) {
           rejectedMutation = operationError(httpFailure, responseFailure(response, 'http_status'));
         }
-        if (operationSignal.signal.aborted || !isAuthorityCurrent(operationAuthority)) {
+        // The credential was admitted before dispatch. Re-selection applies to
+        // the next acquisition; this finite response keeps its Account lifetime.
+        if (operationSignal.signal.aborted || !operationAuthority.lease.isAccountCurrent()) {
           await response.body?.cancel().catch(() => undefined);
           throw rejectedMutation ?? operationError('voice_account_operation_cancelled');
         }
@@ -654,7 +659,7 @@ export function createAccountVoiceOperationService(input: Readonly<{
           operation.response.maxBytes,
           operationSignal.signal,
         );
-        if (operationSignal.signal.aborted || !isAuthorityCurrent(operationAuthority)) {
+        if (operationSignal.signal.aborted || !operationAuthority.lease.isAccountCurrent()) {
           throw operationError('voice_account_operation_cancelled');
         }
         const body = projectRecipientOperationResponseBody(
@@ -678,10 +683,10 @@ export function createAccountVoiceOperationService(input: Readonly<{
           || !input.isCurrent()
           || (selectedOperationAuthority !== null
             && selectedOperationAuthority.resolution.state === 'resolved'
-            && !isAuthorityCurrent(selectedOperationAuthority))
+            && !selectedOperationAuthority.lease.isAccountCurrent())
         ) {
-          // Revocation prevents consuming a stale response or publishing its
-          // patch; it cannot undo a mutation already sent to the provider.
+          // Account retirement or cancellation prevents consuming the response;
+          // it cannot undo a mutation already sent to the provider.
           throw operationError(mutationDispatched
             ? 'voice_account_operation_outcome_unknown'
             : 'voice_account_operation_cancelled');

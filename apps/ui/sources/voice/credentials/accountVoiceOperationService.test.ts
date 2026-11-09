@@ -1876,7 +1876,38 @@ describe('account Voice operation service', () => {
     }
   });
 
-  it('withdraws authority when the account credential binding rotates while reading the response', async () => {
+  it.each((['savedSecret', 'connectedAccount'] as const).flatMap(source =>
+    [false, true].map(mutation => ({ source, mutation })),
+  ))('settles an admitted $source response after re-selection and refuses the next acquisition (mutation: $mutation)', async ({ source, mutation }) => {
+    if (source === 'connectedAccount') {
+      const selectedSettings = createSettings('secret-1', 1);
+      accountFixture.state = {
+        ...accountFixture.state,
+        settings: {
+          ...selectedSettings,
+          voiceSettingsV1: {
+            ...selectedSettings.voiceSettingsV1,
+            credentialBindings: [{
+              ...selectedSettings.voiceSettingsV1.credentialBindings[0]!,
+              credentialSource: { kind: 'connectedAccount' },
+            }],
+          },
+          connectedPurposes: {
+            v: 1,
+            bindings: [{
+              purpose: { consumer: contribution, purpose: 'voice.client-auth' },
+              target: {
+                kind: 'account',
+                account: {
+                  service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+                  accountId: 'codex-work',
+                },
+              },
+            }],
+          },
+        },
+      };
+    }
     const fetch = vi.fn(async () => {
       const body = new ReadableStream<Uint8Array>({
         start(controller) {
@@ -1890,16 +1921,45 @@ describe('account Voice operation service', () => {
       });
       return new Response(body, { status: 200, headers: { 'content-type': 'application/json' } });
     });
-    const service = createAccountVoiceOperationService({
+    const declaration = VoiceProviderContributionSchema.parse({
+      ...defaultCredentialDeclaration,
+      credentials: {
+        ...defaultCredentialDeclaration.credentials,
+        hostMediated: {
+          operations: defaultCredentialDeclaration.credentials!.hostMediated!.operations.map(operation => ({
+            ...operation, ...(mutation && operation.id === 'client-auth' ? { effect: 'mutation' as const } : {}),
+          })),
+        },
+      },
+    });
+    if (declaration.kind !== 'conversation') throw new Error('Expected conversation declaration');
+    const service = createQualifiedAccountVoiceOperationService({
       providerId: 'happier.voice.openai/realtime-openai',
-      recipientContract,
+      contribution,
+      declaration,
+      phase: 'prepare',
+      recipientContract: mutation ? normalizeRecipientContractV1({
+        ...recipientContract,
+        operations: recipientContract.operations.map(operation => ({ ...operation, effect: 'mutation' })),
+      }) : recipientContract,
       signal: new AbortController().signal,
       isCurrent: () => true,
       fetch,
       materializeSecret: async () => 'account-secret',
+      executeConnectedAccountOperation: async () => {
+        const response = await fetch();
+        return {
+          status: response.status,
+          finalUrl: 'https://api.openai.com/v1/realtime/client_secrets',
+          headers: { 'content-type': 'application/json' },
+          body: new Uint8Array(await response.arrayBuffer()),
+        };
+      },
     });
 
+    await expect(requestClientAuth(service)).resolves.toMatchObject({ status: 200 });
     await expect(requestClientAuth(service)).rejects.toMatchObject({ code: 'voice_account_operation_cancelled' });
+    expect(fetch).toHaveBeenCalledOnce();
   });
 
   it('keeps a selected SavedSecret operation current when an unrelated Account Settings entry changes', async () => {
