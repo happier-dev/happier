@@ -1,14 +1,9 @@
 import * as React from 'react';
-import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
 
 import { SessionPendingPromptCards } from '@/components/tools/shell/permissions/SessionPendingPromptCards';
 import { AppSessionTranscriptSourceProvider } from '@/components/sessions/transcript/source/appSessionTranscriptSource';
-import { Text } from '@/components/ui/text/Text';
-import { Typography } from '@/constants/Typography';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { useSession, useSessionMessages } from '@/sync/domains/state/storage';
-import { t } from '@/text';
 import { listPendingPermissionRequests, listPendingUserActionRequests } from '@/utils/sessions/sessionUtils';
 
 /**
@@ -17,7 +12,8 @@ import { listPendingPermissionRequests, listPendingUserActionRequests } from '@/
  */
 export function useSessionPendingPrompts(address: SessionAddress) {
     const session = useSession(address.sessionId, address.serverId);
-    const { messages } = useSessionMessages(address.sessionId);
+    // Waiting requests are request rows; streamed text never changes them.
+    const { messages } = useSessionMessages(address.sessionId, { textUpdates: false });
     const prompts = React.useMemo(() => {
         if (!session) return null;
         const permissions = listPendingPermissionRequests(session, messages);
@@ -29,8 +25,8 @@ export function useSessionPendingPrompts(address: SessionAddress) {
 
 /**
  * Needs you, in the Voice section (lab `voice-moments` N1): the conversation's waiting requests as the
- * real request cards, decided by a tap through the session's own approval custody. Voice may read
- * a request aloud; nothing it hears can decide one (VI-04), and the quiet line under the cards says so.
+ * real request cards, through the session's own approval custody. Spoken decisions use the same
+ * owner under VI-04; the cards remain available for a person to decide here.
  *
  * Mounted only while the attempt projection reports Needs you for its exact conversation, so the
  * session's messages are read only while there is something to decide.
@@ -39,36 +35,21 @@ export const VoiceNeedsYouPrompts = React.memo(function VoiceNeedsYouPrompts(pro
     address: SessionAddress;
     testID: string;
 }>) {
-    const styles = stylesheet;
     const { session, prompts } = useSessionPendingPrompts(props.address);
     if (!session || !prompts) return null;
     return (
-        <View style={styles.root}>
-            {/* Voice can be outside a transcript, or beside a different Session's transcript.
-                The exact conversation owns request data, navigation and approval custody. */}
-            <AppSessionTranscriptSourceProvider sessionId={props.address.sessionId} serverId={props.address.serverId}>
-                <SessionPendingPromptCards
-                    testID={props.testID}
-                    sessionId={props.address.sessionId}
-                    serverId={props.address.serverId}
-                    session={session}
-                    permissions={prompts.permissions}
-                    userActions={prompts.userActions}
-                    chrome="card"
-                />
-            </AppSessionTranscriptSourceProvider>
-            <Text style={styles.note}>{t('voiceMoments.needsYouTapToDecide')}</Text>
-        </View>
+        // Voice can sit beside a different Session's transcript. The exact
+        // conversation owns request data, navigation and approval custody.
+        <AppSessionTranscriptSourceProvider sessionId={props.address.sessionId} serverId={props.address.serverId}>
+            <SessionPendingPromptCards
+                testID={props.testID}
+                sessionId={props.address.sessionId}
+                serverId={props.address.serverId}
+                session={session}
+                permissions={prompts.permissions}
+                userActions={prompts.userActions}
+                chrome="card"
+            />
+        </AppSessionTranscriptSourceProvider>
     );
 });
-
-const stylesheet = StyleSheet.create((theme) => ({
-    root: {
-        gap: theme.space.s6,
-    },
-    note: {
-        ...Typography.variant('meta'),
-        color: theme.colors.text.tertiary,
-        paddingHorizontal: theme.space.s2,
-    },
-}));

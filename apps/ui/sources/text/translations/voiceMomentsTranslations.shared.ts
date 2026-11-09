@@ -47,7 +47,8 @@ export type VoiceMomentsTranslation = Readonly<{
     setupClose: string;
     needsYouEnded: string;
     needsYouReview: string;
-    needsYouTapToDecide: string;
+    briefWantsTo: (params: { action: string }) => string;
+    briefRunCommand: (params: { command: string }) => string;
     briefMe: string;
     briefMeA11y: string;
     briefNeedsYou: string;
@@ -118,7 +119,8 @@ export const voiceMomentsTranslationsEnglish = { en: {
         setupClose: 'Close',
         needsYouEnded: 'An approval is still waiting.',
         needsYouReview: 'Review request',
-        needsYouTapToDecide: "Read aloud · tap to decide here",
+        briefWantsTo: ({ action }) => `Wants to ${action}`,
+        briefRunCommand: ({ command }) => `run ${command}`,
         briefMe: 'Brief me',
         briefMeA11y: 'Brief me: Voice reads what needs you, what failed and what’s ready',
         briefNeedsYou: 'Needs you',
