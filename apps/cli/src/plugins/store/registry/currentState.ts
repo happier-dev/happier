@@ -50,6 +50,7 @@ import {
   PluginInstallationAvailabilityProjectionSchema,
 } from './generationStore';
 import type { PluginGenerationCustodyRetirementRemoteDependencies } from './generationCustodyRetirement';
+import { restagePrivatePluginGenerationsForExternalRoot } from './generationRootConversion';
 import {
   createPluginRegistryReconciler,
   type PluginRegistryReconcileSurface,
@@ -773,6 +774,17 @@ export function createPluginRegistryStateStore(params?: Readonly<{
   }
 
   async function initialize(): Promise<PluginStateFileV1> {
+    const commit = await readCurrentCommit();
+    if (commit) {
+      const failures = await restagePrivatePluginGenerationsForExternalRoot({ paths, commit });
+      if (failures.length > 0) {
+        onReconciliationPending?.({
+          operation: 'startup',
+          pendingSurfaces: Object.freeze(['generationRootConversion']),
+          message: projectPluginFailureText(new Error(`Plugin generation code-root conversion: ${failures.join('; ')}`)),
+        });
+      }
+    }
     while (true) {
       const current = await readCurrent();
       const requiresAvailabilityMigration = Object.values(current.revision.plugins).some((installation) => (

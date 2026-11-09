@@ -45,7 +45,7 @@ export class PluginCodeUnreadableError extends Error {
     readonly details = Object.freeze({ requiredFact: 'external_plugin_install_root' as const });
 
     constructor() {
-        super('Installed plugin code is unreadable by this execution user; an external install root is required');
+        super('Plugin code is unavailable to this execution user. On Linux, ask a Machine manager to run separate-user setup from this Machine’s Security page and restart Happier on the Machine, then try again.');
         this.name = 'PluginCodeUnreadableError';
     }
 }

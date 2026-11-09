@@ -137,6 +137,10 @@ export function resolveSessionSpawnNewResultFailureMessage(
 function resolveSessionSpawnNewResultFailureBody(
     result: Exclude<SessionSpawnNewResultV1, Readonly<{ type: 'success' }>>,
 ): string {
+    if (result.type === 'error' && result.code === 'spawn_failed' && result.launchError?.pluginCodeRefusal) {
+        return t(result.launchError.pluginCodeRefusal.remedy.kind === 'ask_machine_manager'
+            ? 'errors.pluginCodeUnreadableAskManager' : 'errors.pluginCodeUnreadableOpenSecurity');
+    }
     if (result.type === 'error' && result.code === 'spawn_failed' && result.launchError?.agentIsolationRefusal?.remedy) {
         return t(result.launchError.agentIsolationRefusal.remedy.kind === 'ask_machine_manager'
             ? 'errors.agentIsolationMemberSetupAskManager' : 'errors.agentIsolationMemberSetupOpenSecurity');
@@ -195,7 +199,7 @@ export function presentSessionSpawnNewAgentIsolationFailure(
     requestId?: string | null,
 ): boolean {
     const remedy = result.type === 'error' && result.code === 'spawn_failed'
-        ? result.launchError?.agentIsolationRefusal?.remedy : undefined;
+        ? result.launchError?.pluginCodeRefusal?.remedy ?? result.launchError?.agentIsolationRefusal?.remedy : undefined;
     if (!remedy) return false;
     const message = resolveSessionSpawnNewResultFailureMessage(result, requestId);
     if (remedy.kind === 'ask_machine_manager') alert(t('common.error'), message);

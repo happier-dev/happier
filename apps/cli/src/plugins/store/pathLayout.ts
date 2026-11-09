@@ -4,7 +4,7 @@ import { resolveManagedToolsRoot } from '@happier-dev/cli-common/agents';
 import { isCanonicalAbsolutePathInsideRoot, resolveCanonicalAbsolutePathComparisonIdentity, resolveHomeDirFromEnvironment } from '@happier-dev/cli-common/path';
 import type { PluginStorePaths } from './paths';
 
-/** Historical code location, retained only to retire its native traversal grants. */
+/** Retained private code source for startup conversion and native grant retirement. */
 export function resolveLegacyPluginGenerationRoot(happyHomeDir: string): string {
   return join(happyHomeDir, 'plugins', 'plugins', 'generations');
 }

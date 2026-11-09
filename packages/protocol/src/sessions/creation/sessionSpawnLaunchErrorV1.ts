@@ -52,6 +52,9 @@ export const SessionSpawnLaunchErrorV1Schema = lazyZodSchema(() => z.strictObjec
   childExit: z.optional(SessionSpawnChildExitV1Schema),
   spawnFailure: z.optional(SpawnFailureV1Schema),
   failureCause: z.optional(SessionRuntimeFailureCauseV1Schema),
+  pluginCodeRefusal: z.optional(z.strictObject({
+    remedy: SessionAgentIsolationRefusalRemedyV1Schema,
+  })),
   agentIsolationRefusal: z.optional(z.strictObject({
     reason: z.union([z.literal('member_setup_required'), MachineAgentIsolationUnavailableStatusV1Schema.shape.code]),
     phase: z.enum(['native_identity_binding', 'native_execution_preparation']),
