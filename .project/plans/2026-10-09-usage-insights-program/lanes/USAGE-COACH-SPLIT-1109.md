@@ -1,11 +1,13 @@
 # USAGE-COACH-SPLIT-1109
 
-**Verdict: IMPLEMENTED; full owner GREEN and entry-loads remain queued in AUTO.**
+**Verdict: IMPLEMENTED; [blocked] full owner GREEN and entry-loads await AUTO capacity.**
+Source commit: `b211af730fae1b9ce2bcb190f395dbd875375b2f`.
 Delivery uses private-index read-tree/commit-tree/CAS under the orchestrator's
 06:46Z instruction that queued checks do not block a commit; this is not DONE.
 Owner approval: 2026-11-09. Evidence: `.project/tmp/usage-coach-split-1109/` (`E`).
 
 ## Mechanism and delta
+
 Protocol `usageWorkEvidence.ts#createUsageSessionFactRecordsV1` derives both payloads
 from one admitted Session projection. `usageSessionFactKinds.ts` owns addresses and
 read scope. Namespace/kind stay `usage` / `work_facts.v1`; local ids are work/coach.
@@ -26,6 +28,7 @@ Usage kind leaf is already in the shared base.
 Compatible concurrent quota/catalog and Voice-doc hunks are retained, not reverted.
 
 ## Every reader and writer traced
+
 - Writer: `usageQueryResource.ts#loadTranscript` derives once; `persistUsageCompactInput`
   seals both through Session key/mode resolution and existing SystemRecord upsert.
 - Usage and How you work: widget demand has `includeCoach:false`; the same Resource
@@ -49,6 +52,7 @@ Compatible concurrent quota/catalog and Voice-doc hunks are retained, not revert
   import-protection classification ignores Usage; no retention policy/schema edit.
 
 ## Validation and limits
+
 - RED: `E/ui-scope-red.log` failed at the owner: initial Usage acquired 3,368 Coach
   records, expected zero. The census test then mounts duplicate Coach consumers and
   asserts exactly one additional scoped cohort read, followed by no Usage reread.
@@ -56,23 +60,26 @@ Compatible concurrent quota/catalog and Voice-doc hunks are retained, not revert
   3,368 Sessions, query counts, actor isolation and real plain/E2EE seal/store/open.
 - Relaunch generic payload regression: 1 passed / 31 skipped; queued before the fix,
   ran after it. `E/relaunch-generic-payload-red.log` is GREEN, not a separate RED.
-- Full deciding checks remain queued: `E/relaunch-auto-protocol.log`,
+- [blocked] Full deciding checks await AUTO admission; Usage orchestrator collects: `E/relaunch-auto-protocol.log`,
   `E/relaunch-auto-ui.log` (owner/cost/native Action), `E/relaunch-auto-server.log`,
   `E/relaunch-auto-entry-loads-final.log`. No 7/7 entry success is inferred.
 - Local queued attempts were stopped after 06:46Z; no local test/typecheck executed.
   AUTO retries report memory-busy/sync problems; existing handles remain in use.
-- PostgreSQL: prior launch failed at `docker info` (`E/server-postgres.log`);
+- [blocked] PostgreSQL needs a Docker-capable disposable test target; prior launch
+  failed at `docker info` (`E/server-postgres.log`);
   no plan/index success claimed. Whole-package typechecks: NOT RUN, as instructed.
 - Export lockfile refresh passed: Already up to date (`E/lockfile-refresh.log`).
   No dependency install, Prisma change, migration draft, browser or UI bundle export.
 
 ## Reload request
-Usage orchestrator: after the controller all-clear, reload matching Protocol/server/
+
+[blocked] Usage orchestrator: after the controller all-clear, reload matching Protocol/server/
 UI/native Account Action host. On the existing QA Account open Usage without Coach,
 then Coach, then How you work; count opaque records/bytes and verify freshness,
 partial history and native history status/read. Only the orchestrator reloads.
 
 ## Exactly what the next Opus security review must read
+
 Read the commit diff plus Protocol `usageSessionFactKinds.ts`, `usageWorkEvidence.ts`
 schemas/builders/currentness, `usageSessionEvidence.ts`, SystemRecord catalog/payload
 schemas; server `sessionSystemRecordService.ts` set reader, `admitV1RecordTarget`,
