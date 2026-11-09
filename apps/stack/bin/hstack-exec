@@ -1435,28 +1435,17 @@ probe_target() {
       case " ${HSTACK_EXEC_PRE_DISPATCH_CAPACITY_TARGETS-} " in
         *" $name "*) printf '%s %s 0 - 1 memory-capacity\n' "$number" "$name"; return ;;
       esac
-      case " ${HSTACK_EXEC_PRE_DISPATCH_BUSY_TARGETS-} " in
-        *" $name "*)
-          # Keep healthy capacity-refused workers as secondary candidates.
-          # Untried workers finish the sweep first; then the same ranking
-          # chooses one existing native queue without another pool sweep.
-          probe_available=busy
-          ;;
-        *)
-          excluded_reason=unreachable
-          for refusal in ${HSTACK_EXEC_PRE_DISPATCH_REFUSALS-}; do
-            case "$refusal" in
-              "$name="*)
-                excluded_reason=${refusal#*=}
-                case "$excluded_reason" in dependencies|sync) excluded_reason=prerequisite ;; ssh) excluded_reason=unreachable ;; esac
-                break ;;
-            esac
-          done ;;
-      esac
-      if [ "$probe_available" != busy ]; then
-        printf '%s %s 0 - 1 %s\n' "$number" "$name" "$excluded_reason"
-        return
-      fi
+      excluded_reason=unreachable
+      for refusal in ${HSTACK_EXEC_PRE_DISPATCH_REFUSALS-}; do
+        case "$refusal" in
+          "$name="*)
+            excluded_reason=${refusal#*=}
+            case "$excluded_reason" in dependencies|sync) excluded_reason=prerequisite ;; ssh) excluded_reason=unreachable ;; esac
+            break ;;
+        esac
+      done
+      printf '%s %s 0 - 1 %s\n' "$number" "$name" "$excluded_reason"
+      return
       ;;
   esac
   command_key=$(printf '%s\n' "$preflight_command" "$policy_requiredTools" "$runtime_build_target" "$runtime_build_components" "$required_bun_version" "$relative_cwd" | cksum | awk '{print $1}')
@@ -1903,16 +1892,6 @@ fi
 IFS=' ' read -r selected_number selected_name _selected_available selected_score selected_cache selected_base_score selected_active selected_capacity selected_class_active _selected_native_preference _selected_queue_pressure _selected_empty_memory <<EOF
 $selected
 EOF
-if [ "$_selected_available" = busy ]; then
-  # This worker is taking its queued attempt. A later sync/transport/state
-  # failure must keep its hard exclusion, not revive the old busy candidacy.
-  remaining_busy_targets=
-  for busy_target in ${HSTACK_EXEC_PRE_DISPATCH_BUSY_TARGETS-}; do
-    [ "$busy_target" = "$selected_name" ] || remaining_busy_targets="$remaining_busy_targets $busy_target"
-  done
-  HSTACK_EXEC_PRE_DISPATCH_BUSY_TARGETS=$remaining_busy_targets
-  export HSTACK_EXEC_PRE_DISPATCH_BUSY_TARGETS
-fi
 if [ "$selected_number" = 0 ]; then
   release_placement_decision
   run_selected_local "$@"
@@ -2190,11 +2169,8 @@ if [ "$heavyweight_admission_required" -eq 1 ] && [ "${policy_selfPublisher-0}" 
   if [ -n "$remote_workspace_lock_argument" ]; then
     heavyweight_admission_prefix="${heavyweight_admission_prefix% --}$remote_workspace_lock_argument --"
   fi
-  if [ -z "$explicit_target_number" ] && [ -z "$runtime_build_target" ]; then
-    if [ "$_selected_available" != busy ]; then
-      heavyweight_admission_prefix="${heavyweight_admission_prefix% --} --no-wait --"
-    fi
-  fi
+  # Placement is final for temporary pressure. The broker retains this request's
+  # arrival until admission; only a physical-capacity refusal can re-place it.
 elif [ -n "$remote_workspace_lock_argument" ]; then
   # Darwin has no Linux memory reservation, but finite readers still retain
   # the same installed-tree/publication resources through their payload.
@@ -2243,7 +2219,7 @@ retry_other_target_before_dispatch() {
   retry_count=${HSTACK_EXEC_PRE_DISPATCH_RETRY_COUNT-0}
   case "$retry_count" in ''|*[!0-9]*) retry_count=0 ;; esac
   retry_count=$((retry_count + 1))
-  if [ "$retry_count" -lt "$target_count" ] || [ -n "${HSTACK_EXEC_PRE_DISPATCH_BUSY_TARGETS-}" ]; then
+  if [ "$retry_count" -lt "$target_count" ]; then
     retry_excluded_targets="${HSTACK_EXEC_PRE_DISPATCH_EXCLUDED_TARGETS-} $selected_name"
     HSTACK_EXEC_PRE_DISPATCH_RETRY_COUNT=$retry_count \
       HSTACK_EXEC_PRE_DISPATCH_EXCLUDED_TARGETS=$retry_excluded_targets \
@@ -2474,7 +2450,7 @@ if [ "$status" -eq 75 ] && [ -n "$admission_error_log" ] \
   handle_selected_dependency_refusal "$@"
 fi
 if [ "$status" -eq 75 ] && [ -n "$admission_error_log" ]; then
-  admission_result=$(grep -Fx -e "HSTACK_ADMISSION_BUSY:$admission_failure_id" -e "HSTACK_ADMISSION_UNAVAILABLE:$admission_failure_id" -e "HSTACK_ADMISSION_DISK:$admission_failure_id" -e "HSTACK_ADMISSION_CAPACITY:$admission_failure_id" "$admission_error_log" | head -n 1)
+  admission_result=$(grep -Fx -e "HSTACK_ADMISSION_UNAVAILABLE:$admission_failure_id" -e "HSTACK_ADMISSION_DISK:$admission_failure_id" -e "HSTACK_ADMISSION_CAPACITY:$admission_failure_id" "$admission_error_log" | head -n 1)
 fi
 if [ "$admission_result" = "HSTACK_ADMISSION_CAPACITY:$admission_failure_id" ]; then
   release_reservation
@@ -2498,14 +2474,6 @@ if [ "$admission_result" = "HSTACK_ADMISSION_DISK:$admission_failure_id" ]; then
   retry_other_target_before_dispatch "$@"
   printf '%s\n' '[preferred-execution] no configured worker has available space on the command write filesystems; inspect dev-targets status' >&2
   exit 1
-fi
-if [ "$admission_result" = "HSTACK_ADMISSION_BUSY:$admission_failure_id" ] && [ -z "$explicit_target_number" ]; then
-  release_reservation
-  release_custody_pipe
-  [ -z "$authoritative_ssh_error_log" ] || rm -f -- "$authoritative_ssh_error_log"
-  HSTACK_EXEC_PRE_DISPATCH_BUSY_TARGETS="${HSTACK_EXEC_PRE_DISPATCH_BUSY_TARGETS-} $selected_name"
-  export HSTACK_EXEC_PRE_DISPATCH_BUSY_TARGETS
-  retry_other_target_before_dispatch "$@"
 fi
 if [ "$admission_result" = "HSTACK_ADMISSION_UNAVAILABLE:$admission_failure_id" ]; then
   release_reservation

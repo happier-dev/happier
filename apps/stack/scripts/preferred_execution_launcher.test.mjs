@@ -31,7 +31,7 @@ const launcher = process.env.HAPPIER_TEST_NATIVE_ADMISSION_LAUNCHER || join(repo
 
 // Bootstrap progress is independent of the admitted command's stdout contract.
 function payloadOutput(stdout) {
-  return stdout.replace(/^pnpm \d+\.\d+\.\d+ ready; root archive integrity verified\r?\n/gm, '');
+  return stdout.replace(/^pnpm \d+\.\d+\.\d+ ready(?:; root archive integrity verified)?\r?\n/gm, '');
 }
 
 // OS boundary: systemd 259 expands command operands by default, including
@@ -945,14 +945,27 @@ esac
     const exited = new Promise(resolve => child.once('close', (code, signal) => resolve({ code, signal })));
     t.after(async () => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM'); await exited; });
     const waitingWorker = fixture.workers.starved;
-    if (typecheck) {
-      await waitForRuntime(() => /HSTACK_(?:[A-Z_]*_)?BUSY|queued on /.test(stderr),
-        () => `public typecheck never reported its placement outcome:\n${stderr}`);
-      assert.match(stderr, /HSTACK_MEMORY_BUSY/, 'abandoned pool attempts expose their native reason');
-    }
     await waitForRuntime(async () => (await waitingWorker.brokerStatus()).waitingCount === 1,
       () => `full busy sweep never retained its native queue position:\n${stderr}`);
     const queued = await waitingWorker.brokerStatus();
+    // Read only owned fixture descendants: no process arguments or environment.
+    const residents = [];
+    async function observeQueuedTree(pid) {
+      const status = await readFile(`/proc/${pid}/status`, 'utf8').catch(() => '');
+      const name = /^Name:\s+(.*)$/m.exec(status)?.[1];
+      if (name === 'node' || name === 'MainThread') residents.push({ pid: Number(pid),
+        rssKiB: Number(/^VmRSS:\s+(\d+)/m.exec(status)?.[1] ?? 0) });
+      const tasks = await readdir(`/proc/${pid}/task`).catch(() => []);
+      const children = new Set();
+      for (const task of tasks) {
+        const values = await readFile(`/proc/${pid}/task/${task}/children`, 'utf8').catch(() => '');
+        for (const value of values.trim().split(/\s+/).filter(Boolean)) children.add(value);
+      }
+      for (const childPid of children) await observeQueuedTree(childPid);
+    }
+    await observeQueuedTree(child.pid);
+    t.diagnostic('queued-worker-node-residents=' + JSON.stringify(residents));
+
     const costs = async () => {
       const trace = await readFile(fixture.invocation.env.FIXTURE_TRACE, 'utf8');
       return {
@@ -962,10 +975,11 @@ esac
         bootstrap: trace.split('\n').filter(line => line.startsWith('ssh:') && line.includes('remote_dependency_bootstrap.mjs')).length,
       };
     };
+    await waitForRuntime(() => stderr.includes('waiting for admission'), () => stderr);
     const initialCosts = await costs();
-    assert.deepEqual(initialCosts.dispatches, ['starved', 'roomy', 'starved'], 'one full capacity sweep, then the best eligible native queue');
-    assert.match(stderr, /HSTACK_MEMORY_BUSY/, 'abandoned pool attempts expose their native reason');
-    assert.equal((stderr.match(/queued on starved for memory, waiting \(Ctrl-C cancels\)/g) ?? []).length, 1,
+    assert.deepEqual(initialCosts.dispatches, ['starved'], 'zero re-placements when the selected host total capacity fits the floor');
+    assert.doesNotMatch(stderr, /HSTACK_ADMISSION_BUSY:/, 'temporary memory shortage retains the original admission request');
+    assert.equal((stderr.match(/waiting for admission/g) ?? []).length, 1,
       'the retained queue must be visible exactly once before any verdict');
     assert.doesNotMatch(stderr, /admitted on /, 'waiting is not admission');
     assert.equal(payloadOutput(stdout), '');
@@ -975,8 +989,9 @@ esac
     const idle = await waitingWorker.brokerStatus();
     // The broker's existing catch-up clock observes external RAM recovery.
     // Those observations must preserve demand without repeating placement.
-    assert.deepEqual({ ...idle, sampleCount: queued.sampleCount }, queued,
-      'idle native demand must retain its queue position across recovery observations');
+    for (const key of ['activeCount', 'waitingCount', 'queuedMemoryKiB', 'queuedCpuCores', 'reservedMemoryKiB', 'reservedCpuCores']) {
+      assert.equal(idle[key], queued[key], `idle demand retains ${key} across physical memory observations`);
+    }
     if (cancel) {
       const neighbor = spawn('/bin/sh', [waitingWorker.launcher, '--heavyweight-admission', '--class=runtime-build',
         '--machine=worker', '--', '/usr/bin/true'], { ...fixture.invocation, stdio: 'ignore' });
@@ -993,7 +1008,7 @@ esac
       assert.deepEqual(await exited, { code: typecheck ? 2 : 0, signal: null }, stderr);
       if (typecheck) assert.match(stdout, /TS2322/, 'the queued public typecheck must produce its compiler verdict');
       else assert.equal(await readFile(join(fixture.config.targets[0].repoDir, 'payload-runs'), 'utf8'), 'once\n');
-      assert.equal((stderr.match(/queued on /g) ?? []).length, 1, 'queue output must not repeat while waiting');
+      assert.equal((stderr.match(/waiting for admission/g) ?? []).length, 1, 'queue output must not repeat while waiting');
       assert.equal((stderr.match(/admitted on starved/g) ?? []).length, 1, 'capacity recovery announces admission once');
       assert.equal((await waitingWorker.brokerStatus()).waitingCount, 0);
       assert.deepEqual(await costs(), initialCosts);
@@ -2467,7 +2482,7 @@ async function installBusyAdmissionTransport(fixture) {
   ].join('\n'));
 }
 
-test('automatic admission reroutes busy workers without an unavailable TTL while pins keep waiting', async (t) => {
+test('automatic admission waits on the selected worker and preserves payload status', async (t) => {
   const fixture = await memoryRoutingFixture(t, { availableKiB: 28000000, roomyLoad: 12 });
   const controller = await isolatedRoutingController(fixture);
   await installBusyAdmissionTransport(fixture);
@@ -2476,39 +2491,37 @@ test('automatic admission reroutes busy workers without an unavailable TTL while
       ...fixture.invocation, env: { ...fixture.invocation.env, PAYLOAD_EXIT: String(payloadExit) }, timeout: 15_000,
     });
     assert.equal(result.status, payloadExit, result.stderr);
-    assert.equal(result.stdout, 'payload:roomy\n');
-    assert.match(result.stderr, /HSTACK_MEMORY_BUSY/,
-      'the waiting person must see the canonical reason for each abandoned preparation');
+    assert.equal(result.stdout, 'payload:starved\n');
+    assert.doesNotMatch(result.stderr, /HSTACK_ADMISSION_BUSY:/);
   }
-  assert.deepEqual((await readFile(fixture.invocation.env.DISPATCHES, 'utf8')).trim().split('\n'), ['starved', 'roomy', 'starved', 'roomy']);
+  assert.deepEqual((await readFile(fixture.invocation.env.DISPATCHES, 'utf8')).trim().split('\n'), ['starved', 'starved']);
   const pinned = spawnSync('/bin/sh', [controller, '--target=starved', '--', 'node', '--test', 'focused.test.mjs'], fixture.invocation);
   assert.equal(pinned.status, 0, pinned.stderr);
   assert.equal(pinned.stdout, 'payload:starved\n');
   assert.match(pinned.stderr, /waiting for heavyweight admission on pinned/);
   const commands = (await readFile(fixture.invocation.env.FIXTURE_TRACE, 'utf8')).split('\n').filter(line => line.includes('remote_execution_custody.sh') && line.includes('--heavyweight-admission'));
-  assert.match(commands[0], /--no-wait/);
+  assert.doesNotMatch(commands[0], /--no-wait/);
   assert.doesNotMatch(commands.at(-1), /--no-wait/);
 });
 
-test('AUTO busy-pool queue selection excludes a worker whose final sync flush fails', async t => {
+test('AUTO queue selection excludes a worker whose final sync flush fails', async t => {
   const fixture = await memoryRoutingFixture(t, { availableKiB: 28000000, roomyLoad: 12 });
   await installBusyAdmissionTransport(fixture);
   await executable(join(fixture.binDir, 'mutagen'), [
     '#!/bin/sh',
     'if [ "$2" = list ]; then printf "%s|Watching|false|true|1|0/0|0/0|true|1|0/0|0/0|active|7|ok|0|0\\n" "$3"; exit 0; fi',
     'if [ "$2" = flush ] && [ "$3" = happier-starved ]; then',
-    '  if [ -f "$FINAL_SYNC_ATTEMPT" ]; then exit 73; fi',
-    '  : > "$FINAL_SYNC_ATTEMPT"',
+    '  exit 73',
     'fi',
     'exit 0', '',
   ].join('\n'));
   const result = spawnSync('/bin/sh', [launcher, '--', 'node', '--test', 'focused.test.mjs'], {
     ...fixture.invocation,
-    env: { ...fixture.invocation.env, BUSY_ATTEMPTS: '2', FINAL_SYNC_ATTEMPT: join(fixture.root, 'first-flush') },
+    env: fixture.invocation.env,
   });
   assert.equal(result.status, 0, 'a formerly busy worker stayed eligible after its sync failure');
   assert.equal(result.stdout, 'payload:roomy\n');
-  assert.deepEqual((await readFile(fixture.invocation.env.DISPATCHES, 'utf8')).trim().split('\n'), ['starved', 'roomy', 'roomy']);
+  assert.deepEqual((await readFile(fixture.invocation.env.DISPATCHES, 'utf8')).trim().split('\n'), ['roomy']);
   assert.match(result.stderr, /selected target sync flush failed: starved/);
   assert.doesNotMatch(result.stderr, /running locally/);
 });
@@ -5267,8 +5280,8 @@ test('AUTO resolves repository-relative cwd on the selected target and retains i
   await installBusyAdmissionTransport(fixture);
   const retried = spawnSync('/bin/sh', [launcher, '--cwd=apps/cli', '--', 'vitest', 'run', 'fixture.test.ts'], invocation);
   assert.equal(retried.status, 0, retried.stderr);
-  assert.equal(retried.stdout, 'payload:roomy\n');
-  assert.match(retried.stderr, /HSTACK_ADMISSION_BUSY:/);
+  assert.equal(retried.stdout, 'payload:starved\n');
+  assert.doesNotMatch(retried.stderr, /HSTACK_ADMISSION_BUSY:/);
   const trace = await readFile(invocation.env.FIXTURE_TRACE, 'utf8');
   assert.ok(trace.includes(`cd -- '${repoRoot}/apps/cli'`), trace);
   const invalid = spawnSync('/bin/sh', [launcher, '--cwd=apps/../../outside', '--', 'probe-command'], invocation);
