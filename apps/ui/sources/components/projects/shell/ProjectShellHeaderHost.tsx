@@ -26,6 +26,7 @@ import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel
 import { resolveWorkspaceRefById, resolveWorkspaceRefByScope, sameWorkspaceProject } from '@/sync/domains/workspaces/workspaceRefs';
 import { t } from '@/text';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
+import { getMachineDisplayNameParts } from '@/utils/sessions/machineDisplayNames';
 
 import { resolveWorkspaceRefDisplayName } from '../resolveWorkspaceRefDisplayName';
 import { useOpenProject } from '../useOpenProject';
@@ -92,6 +93,10 @@ export function useProjectShellCheckout(
     },
     [machines],
   );
+  const selectedMachine = machines.find((candidate) => candidate.id === props.workspaceRef.machineId) ?? null;
+  const machineNameParts = selectedMachine
+    ? getMachineDisplayNameParts(selectedMachine, machines)
+    : { name: props.workspaceRef.machineId, hint: null };
   // Only a branch the checkout reported: a folder name is not a branch (an unread checkout shows its machine).
   const branch = snapshot?.branch.head ?? null;
   const worktrees = snapshot?.repo.worktrees;
@@ -204,6 +209,7 @@ export function useProjectShellCheckout(
   return {
     checkout: {
       machineName: machineName(props.workspaceRef.machineId),
+      machineNameParts,
       machineIcon: 'desktop',
       branch,
       choices,

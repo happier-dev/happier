@@ -1,4 +1,5 @@
 import { t } from '@/text';
+import type { MachineLockedReason } from '@/sync/domains/state/storageTypes';
 import { readMachineName as readPublishedMachineName, resolveMachineDisplayNameParts as resolvePublishedMachineNameParts, type MachineNameMetadata as PublishedMachineNameMetadata } from '@happier-dev/protocol/machines/machineDisplayNames';
 
 /**
@@ -23,6 +24,8 @@ type MachineNameInput = Readonly<{
     metadata?: MachineNameMetadata;
     /** The admitted managed resource's human name, before the generated guest host. */
     managedName?: string | null;
+    /** The Home's mark on a managed Machine; recipients hold it without the managed record behind `managedName`. */
+    managedMachineRef?: Readonly<{ managedId: string }> | null;
     availability?: MachineNameAvailability;
     absence?: MachineAbsence | null;
 }>;
@@ -43,7 +46,13 @@ const LOCKED_REASON_KEYS = {
     content_unreadable: 'machine.lockedReason.unreadable',
     recipient_key_pending: 'machines.destinations.pendingKey',
     recipient_access_refused: 'common.unavailable',
-} as const;
+    // Shared Plain details are not share-safe yet; only the owner's publication fixes it, never a key.
+    content_unpublished: 'machine.lockedReason.unpublished',
+    // Reserved to the owner (custodian); Can manage does not include it.
+    custodian_only: 'machine.lockedReason.custodianOnly',
+    // The owner must update Happier on that machine before shared use works.
+    daemon_upgrade_required: 'machine.lockedReason.upgradeRequired',
+} as const satisfies Record<MachineLockedReason, string>;
 
 /**
  * A machine whose details this device cannot read: sync explicitly projects a locked availability
@@ -113,14 +122,18 @@ export function unnamedMachineName(): string {
 export function getMachineDisplayName(machine: MachineNameInput, inventory?: readonly MachineNameSource[]): string;
 export function getMachineDisplayName(machine: MachineNameInput | null | undefined, inventory?: readonly MachineNameSource[]): string | null;
 export function getMachineDisplayName(machine: MachineNameInput | null | undefined, inventory?: readonly MachineNameSource[]): string | null {
-    if (!machine) return null;
-    const name = machineBaseDisplayName(machine);
+    return machine ? formatMachineDisplayNameParts(getMachineDisplayNameParts(machine, inventory)) : null;
+}
+
+/**
+ * The same name as {@link getMachineDisplayName}, in the two parts a one-line chip needs: it shortens
+ * the name and keeps the telling suffix whole.
+ */
+export function getMachineDisplayNameParts(machine: MachineNameInput, inventory?: readonly MachineNameSource[]): Readonly<{ name: string; hint: string | null }> {
+    const own = { name: machineBaseDisplayName(machine), hint: null };
     // Qualify just this chip through the same resolver that names its picker.
-    if (inventory && machine.id) {
-        const peers = selectMachineDisplayNamePeers(machine, inventory);
-        return resolveMachineDisplayNames(peers).get(machine.id) ?? name;
-    }
-    return name;
+    if (!inventory || !machine.id) return own;
+    return resolveMachineDisplayNameParts(selectMachineDisplayNamePeers(machine, inventory)).get(machine.id) ?? own;
 }
 
 /**
@@ -215,8 +228,9 @@ export function resolveMachineDisplayNameParts(machines: readonly MachineNameSou
     return resolvePublishedMachineNameParts(machines.map(machine => ({
         id: machine.id, name: getMachineDisplayName(machine),
         // A managed Machine's host is its provider's generated instance id, not something a person named:
-        // same-named managed Machines are told apart by the short id instead.
-        host: machine.absence || isMachineLocked(machine) || machine.managedName ? null : machine.metadata?.host,
+        // same-named managed Machines are told apart by the short id instead, for owners and recipients alike.
+        host: machine.absence || isMachineLocked(machine) || machine.managedName || machine.managedMachineRef
+            ? null : machine.metadata?.host,
         // An absent machine's null metadata is final, not hydrating: it is told apart by its short id.
         disambiguate: Boolean(machine.absence) || !isMachineDisplayHydrating(machine),
     })));

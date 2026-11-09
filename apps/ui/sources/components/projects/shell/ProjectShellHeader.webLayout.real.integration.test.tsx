@@ -53,7 +53,7 @@ it.each([510, 606, 1100])(
               look={<View testID="look" style={{ width: 28, height: 28 }} />}
               menuActions={[]}
               checkout={{
-                machineName: 'NLDW4-5-40-40',
+                machineName: 'NLDW4-5-40-40', machineNameParts: { name: 'NLDW4-5-40-40', hint: null },
                 machineIcon: 'desktop',
                 branch: null,
                 choices: [],
@@ -88,6 +88,10 @@ it.each([510, 606, 1100])(
       // Every page tab still inside the band, none drawn past its edge.
       const band = layout.rect('project-shell-header');
       expect(overview.right).toBeLessThanOrEqual(band.right);
+      // The strip ends at the band: a tab past it runs under whatever sits beside the pane (an open details pane).
+      for (const page of named) {
+        expect(layout.rect(`project-shell-header.pages:${page.id}`).right).toBeLessThanOrEqual(band.right);
+      }
     } finally {
       await act(async () => root.unmount());
       host.remove();

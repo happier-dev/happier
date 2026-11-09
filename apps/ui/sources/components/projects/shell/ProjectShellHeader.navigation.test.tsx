@@ -20,6 +20,18 @@ const { resolveProjectPageCatalog } = await import('../detail/projectPageCatalog
 describe('Project header page descriptors', () => {
     afterEach(standardCleanup);
 
+    it('keeps a same-named machine\'s telling suffix whole when the chip shortens', async () => {
+        const pages = resolveProjectPageCatalog({ target: { kind: 'project', workspaceRefId: 'project', serverId: 'home' }, surface: 'projects' });
+        const screen = await renderScreen(<ProjectShellHeader projectName="Project"
+            checkout={{ machineName: 'NLDW3-5-36-33 · 5ac7', machineNameParts: { name: 'NLDW3-5-36-33', hint: '5ac7' },
+                machineIcon: 'desktop', branch: null, choices: [], onSelect: () => {} }}
+            pages={pages.slice(0, 1)} activePage="overview" onSelectPage={() => {}} onNewSession={null} menuActions={[]} />);
+        const texts = screen.root.findAll(node => typeof node.props?.children === 'string').map(node => node.props.children as string);
+        expect(texts).toContain('NLDW3-5-36-33');
+        expect(texts).toContain(' · 5ac7');
+        await screen.unmount();
+    });
+
     it('changes placement from a tab menu without changing selection, and keeps Overview pinned', async () => {
         const pages = resolveProjectPageCatalog({ target: { kind: 'project', workspaceRefId: 'project', serverId: 'home' } });
         const preferences = { orderedIds: ['code', 'overview'], placements: {} };

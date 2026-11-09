@@ -5,6 +5,7 @@ import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 import type { ProjectExecutionChoiceV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
 import type { ProjectMemoryDemandV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectMemoryDemandV1';
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import type { ProjectNativeRefV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
@@ -25,8 +26,7 @@ import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { useManagedWorkerWake } from '@/components/projects/workers/useManagedWorkerWake';
 import { describeManagedCreationProgress } from '@/components/settings/machines/managed/managedCreationProgressPresentation';
 import type { ManagedMachineCreationProgress } from '@/components/settings/machines/managed/managedMachineCreation';
-import { openWorkspaceSyncWorkerCopySetup } from '@/components/workspaces/sync/openWorkspaceSyncAddMachine';
-import { openWorkspaceSyncRelationshipDetails } from '@/components/workspaces/sync/openWorkspaceSyncRelationshipDetails';
+import { resolveMachineDestinationWorkerRefusal, describeMachineDestinationCopySetupAction } from '@/components/sessions/new/components/machineSelection/buildMachineDestinationModel';
 import { readProjectWorkerNoAcceptanceFailureV1, type ProjectWorkerNoAcceptanceFailureDetailsV1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { useServerScopedMachine } from '@/sync/store/hooks';
@@ -37,11 +37,15 @@ import type { ManagedMachineSelectionDraft } from '@/sync/domains/state/newSessi
 import type { ProjectScriptRunChoice } from './useProjectScriptsController';
 import type { ManagedMachineConfigurationContinuation } from '@/components/sessions/new/components/machineSelection/ManagedMachineSelectionOffers';
 
+import { RowStatusLine } from '@/components/ui/status/RowStatusLine';
+
 import {
   presentProjectRun,
+  projectRunStatusTone,
   type ProjectRunPresentation,
 } from './projectScriptPresentation';
 import { RunClock, RunGlyph } from './ProjectRunMarks';
+import { ProjectNativeInvocationDetail } from './ProjectNativeInvocationDetail';
 
 export type ProjectScriptRowProps = Readonly<{
   testID: string;
@@ -51,6 +55,8 @@ export type ProjectScriptRowProps = Readonly<{
   badge: string | null;
   /** What runs, as declared: a native target or a literal command. */
   command: string | null;
+  nativeSource?: ProjectNativeRefV1;
+  accountId?: string | null;
   portable: boolean;
   operation: ActionOperationProjection | null;
   /** Copy for a row that has not run here yet ("Waits for setup", "Not run in this checkout yet"). */
@@ -60,7 +66,7 @@ export type ProjectScriptRowProps = Readonly<{
   /** What the failure says when the script's own environment explains it (plan 24); generic otherwise. */
   failureText?: string | null;
   /** The selected native environment's name: its pending review and preparation say so. */
-  environmentName?: string | null;
+  toolchainName?: string | null;
   compact: boolean;
   /**
    * The Overview widget's row: drawn with the shared widget glance row like its sibling widgets (run
@@ -113,7 +119,7 @@ export const ProjectScriptRow = React.memo(function ProjectScriptRow(
   const source = useServerScopedMachine(props.workspace.serverId, props.workspace.machineId);
   // The actual target, never the operation's custody Machine.
   const targetName = (target ? getMachineSentenceName(target) : null) ?? attachment?.machineId ?? null;
-  const presentation = presentProjectRun(props.operation, targetName, props.idleText, props.environmentName ?? null);
+  const presentation = presentProjectRun(props.operation, targetName, props.idleText, props.toolchainName ?? null);
   const stop = useActionOperationStopControl(props.operation);
   // A Run held for the setup review leaves that decision to the Setup card; the row says what it waits for.
   const waitsForSetup = presentation.live && Boolean(props.operation?.snapshot.setupReview);
@@ -167,9 +173,9 @@ export const ProjectScriptRow = React.memo(function ProjectScriptRow(
   };
   // Desktop page rows open into their output; phone and compact rows open it directly (the host's
   // bottom terminal tab where it has one, otherwise the operation detail).
-  const discloses = !phone && !props.compact;
+  const discloses = (!phone && !props.compact) || Boolean(props.nativeSource && !props.operation);
   // The phone row's press is its disclosure: only the Run control sits right of the status (lab PAGEp).
-  const showsCaret = !phone && (discloses || Boolean(props.operation));
+  const showsCaret = discloses || (!phone && Boolean(props.operation));
   const glyph = props.failureCode ? 'failed' : waitsForSetup ? 'idle' : presentation.glyph;
 
   if (props.glance) {
@@ -205,11 +211,14 @@ export const ProjectScriptRow = React.memo(function ProjectScriptRow(
       }
       subtitle={
         <View>
-          <RowStatus
+          <RowStatusLine
             // Phone rows omit command text but keep their source badge (plan 30 phone composition).
-            command={props.compact || phone ? null : props.command}
+            lead={props.compact || phone ? null : props.command}
             text={statusText}
-            tone={tone}
+            tone={projectRunStatusTone(tone)}
+            // The row's run glyph already carries the state.
+            marked
+            numberOfLines={2}
             testID={`${props.testID}.status`}
           />
           {presentation.tail && !props.compact && !phone ? (
@@ -332,6 +341,9 @@ export const ProjectScriptRow = React.memo(function ProjectScriptRow(
         header(headerProps as Readonly<Record<string, unknown>>)
       }
     >
+      {expanded && props.nativeSource ? <ProjectNativeInvocationDetail
+        workspace={props.workspace} accountId={props.accountId ?? null} source={props.nativeSource}
+        usage="script" testID={`${props.testID}.nativeDetail`} /> : null}
       {outputBody ? <ProjectCommandOutputFrame>{outputBody}</ProjectCommandOutputFrame> : null}
     </ExpandableItem>
     {notices}
@@ -416,12 +428,14 @@ function NoWorkerBanner(
   };
   // The chosen Machine has no copy of this checkout yet (31): setting one up is Sync's own creator
   // and approval. It never retries this Run; the next Run is the user's.
-  const missingCopy = props.refusal.reason === 'worker_copy_missing' ? props.refusal.workerCopy ?? null : null;
+  const eligibility = resolveMachineDestinationWorkerRefusal(props.refusal);
+  const copyAction = eligibility.reason === 'needs_copy' ? eligibility.action : null;
+  const missingCopy = copyAction?.workerCopy;
   const copyTarget = useServerScopedMachine(
     props.workspace.serverId,
     missingCopy?.targetMachineId ?? props.workspace.machineId,
   );
-  if (missingCopy) {
+  if (copyAction && missingCopy) {
     const machine = (copyTarget ? getMachineSentenceName(copyTarget) : null) ?? missingCopy.targetMachineId;
     return (
       <View style={styles.refusal}>
@@ -430,12 +444,8 @@ function NoWorkerBanner(
           tone="neutral"
           title={t('projectWorkers.copyMissing', { machine })}
           action={{
-            label: t('projectWorkers.setUpCopy', { machine }),
+            ...describeMachineDestinationCopySetupAction(copyAction, props.workspace, machine),
             testID: `${props.testID}.setUpCopy`,
-            onPress: () => {
-              openWorkspaceSyncWorkerCopySetup(props.workspace, props.refusal,
-                (summary) => openWorkspaceSyncRelationshipDetails(summary, props.workspace.workspaceId));
-            },
           }}
           secondaryAction={runHere ?? dontRun}
           {...(runHere ? { moreActions: [dontRun] } : {})}
@@ -483,50 +493,6 @@ function RowSource(
             {t('projects.scripts.anyWorker')}
           </Text>
         </View>
-      ) : null}
-    </View>
-  );
-}
-
-function RowStatus(
-  props: Readonly<{
-    command: string | null;
-    text: string;
-    tone: ProjectRunPresentation['tone'];
-    testID: string;
-  }>,
-) {
-  const { theme } = useUnistyles();
-  const color =
-    props.tone === 'danger'
-      ? theme.colors.status.error
-      : props.tone === 'attention'
-        ? theme.colors.state.attention.foreground
-        : theme.colors.text.secondary;
-  // One line: the command gives way (truncates) so the outcome — the part that changes and the part
-  // a failure is read from — stays whole on its line (lab s-scripts: `yarn lint · Exited with code 1 at 10:12`).
-  return (
-    <View testID={props.testID} style={styles.statusLine}>
-      {props.command ? (
-        <Text
-          numberOfLines={1}
-          style={[
-            styles.meta,
-            styles.mono,
-            styles.statusCommand,
-            { color: theme.colors.text.secondary },
-          ]}
-        >
-          {props.command}
-        </Text>
-      ) : null}
-      {props.command && props.text ? (
-        <Text style={[styles.meta, styles.statusOutcome, { color: theme.colors.text.tertiary }]}>{' · '}</Text>
-      ) : null}
-      {props.text ? (
-        <Text numberOfLines={2} style={[styles.meta, props.command ? styles.statusOutcome : styles.statusTextAlone, { color }]}>
-          {props.text}
-        </Text>
       ) : null}
     </View>
   );
@@ -602,6 +568,7 @@ function RunControl(
     <IconButton
       testID={props.testID}
       variant="plain"
+      tone="primary"
       iconName={stopping ? 'stop' : 'play'}
       iconSize={14}
       accessibilityLabel={
@@ -695,11 +662,6 @@ const styles = StyleSheet.create(() => ({
     ...happierPageTextMetrics('rowDescription'),
   },
   mono: { ...Typography.mono() },
-  statusLine: { flexDirection: 'row', alignItems: 'baseline', minWidth: 0 },
-  statusCommand: { flexShrink: 1, minWidth: 0 },
-  // The outcome keeps its natural width (it is short and bounded) but never more than the line.
-  statusOutcome: { flexShrink: 0, maxWidth: '100%' },
-  statusTextAlone: { flexShrink: 1 },
   joined: {
     flexDirection: 'row',
     alignItems: 'center',

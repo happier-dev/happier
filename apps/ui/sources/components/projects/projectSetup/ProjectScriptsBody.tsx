@@ -35,6 +35,7 @@ import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { StatusPill } from '@/components/ui/status/StatusPill';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { CheckoutUnreachableState, useCheckoutReachability } from '@/components/workspaces/reachability/checkoutReachability';
+import { ConstrainedScreenContent } from '@/components/ui/layout/ConstrainedScreenContent';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useLayoutMaxWidth, useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
@@ -208,7 +209,7 @@ export function ProjectScriptsBody({
   let content: React.ReactNode;
   let ownsScroll = false;
   if (waiting && !(read && read.key === key && 'value' in read)) {
-    content = waiting;
+    content = page ? <ConstrainedScreenContent>{waiting}</ConstrainedScreenContent> : waiting;
   } else if (!read || read.key !== key) {
     content = (
       <SurfaceStateCard

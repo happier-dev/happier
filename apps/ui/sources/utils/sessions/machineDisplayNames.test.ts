@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { t } from '@/text';
 
-import { describeMachineLockedReason, getMachineDisplayName, getMachineSentenceName, getSettledMachineDisplayName, getSessionMachineLabel, readMachineName, resolveMachineDisplayNames, resolveSettledMachineDisplayNames } from './machineDisplayNames';
+import { describeMachineLockedReason, getMachineDisplayName, getMachineDisplayNameParts, getMachineSentenceName, getSettledMachineDisplayName, getSessionMachineLabel, readMachineName, resolveMachineDisplayNames, resolveSettledMachineDisplayNames } from './machineDisplayNames';
 
 const m = (id: string, displayName?: string, host?: string) => ({ id, metadata: { displayName, host } });
 
@@ -45,6 +45,19 @@ describe('getMachineDisplayName', () => {
         }, inventory)).toBe(t('machine.lockedMachine'));
         expect(getMachineDisplayName({ id: 'machine-1', metadata: null }, inventory))
             .toBe(t('common.loading'));
+    });
+});
+
+describe('getMachineDisplayNameParts', () => {
+    it('keeps the telling suffix apart from a same-named machine\'s name, so a chip can shorten only the name', () => {
+        const left = { id: 'aaaa1111', metadata: { displayName: 'NLDW3-5-36-33', host: 'NLDW3-5-36-33' } };
+        const right = { id: 'bbbb2222', metadata: { displayName: 'NLDW3-5-36-33', host: 'NLDW3-5-36-33' } };
+        const parts = getMachineDisplayNameParts(left, [left, right]);
+        expect(parts.name).toBe('NLDW3-5-36-33');
+        expect(parts.hint).toBeTruthy();
+        // One owner: the formatted name is exactly these two parts.
+        expect(getMachineDisplayName(left, [left, right])).toBe(`${parts.name} · ${parts.hint}`);
+        expect(getMachineDisplayNameParts(left).hint).toBeNull();
     });
 });
 
@@ -97,6 +110,19 @@ describe('resolveMachineDisplayNames', () => {
         ]);
         expect(names.get('c7911a7d-73f1-4657')).toMatch(/^s0-guest-1101 · c791/);
         expect(names.get('5b02aa10-1111-4000')).toMatch(/^s0-guest-1101 · 5b02/);
+    });
+
+    it('tells a recipient\'s same-named managed machines apart by a short id, from the Home\'s managed reference alone', () => {
+        // A grantee holds no managed record (so no managedName); the Home still marks the row as managed.
+        const shared = (id: string, managedId: string, host: string) => ({
+            ...m(id, 'Lima', host), managedMachineRef: { homeId: 'home-c', managedId },
+        });
+        const names = resolveMachineDisplayNames([
+            shared('ff69a1d2-73f1-4657', 'managed-1', 'lima-happier-1yg6fg39bu23qngcdbf6spjwtkr0q654d69k66pdg61gtnupuq'),
+            shared('0b3c9e11-1111-4000', 'managed-2', 'lima-happier-8z2kq0v7x1m4p9t3r6w5y0b2n8c4d7e1f3g6h9j2k5l8m1'),
+        ]);
+        expect(names.get('ff69a1d2-73f1-4657')).toBe('Lima · ff69');
+        expect(names.get('0b3c9e11-1111-4000')).toBe('Lima · 0b3c');
     });
 
     it('compares names regardless of case and leaves unique names untouched', () => {
@@ -191,6 +217,17 @@ describe('describeMachineLockedReason', () => {
         expect(describeMachineLockedReason(lockedFor('decryption_failed'))).toBe(t('machine.lockedReason.unopenable'));
         expect(describeMachineLockedReason(lockedFor('content_unreadable'))).toBe(t('machine.lockedReason.unreadable'));
         expect(describeMachineLockedReason({ id: 'a-1', metadata: null, availability: { kind: 'locked' } })).toBe(t('machine.lockedReason.unreadable'));
+    });
+
+    it('says what happened to a shared machine and who can fix it, never as a key problem', () => {
+        const keyReasons = [t('machine.lockedReason.missingKey'), t('machine.lockedReason.unopenable'),
+            t('machine.lockedReason.unreadable'), t('machines.destinations.pendingKey')];
+        const reasons = (['content_unpublished', 'custodian_only', 'daemon_upgrade_required'] as const)
+            .map(reason => describeMachineLockedReason(lockedFor(reason)));
+        expect(reasons).toEqual([t('machine.lockedReason.unpublished'), t('machine.lockedReason.custodianOnly'),
+            t('machine.lockedReason.upgradeRequired')]);
+        expect(new Set(reasons).size).toBe(3);
+        for (const reason of reasons) expect(keyReasons).not.toContain(reason);
     });
 
     it('has no reason for a readable machine', () => {

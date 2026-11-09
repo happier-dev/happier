@@ -141,12 +141,16 @@ const renderNoHeader = () => null;
 
 /**
  * What a surface under an unreachable checkout shows in place of its own failure. Announced above:
- * the surface keeps only its header, wordless, no second Retry. Not announced: it names the cause and offers Retry.
+ * no second cause or Retry. A body of its own says in one quiet line what it waits for, so a tab is
+ * never blank; a widget or a section among siblings keeps only its header. Not announced: it names
+ * the cause and offers Retry.
  */
 export function CheckoutUnreachableState(
   props: Readonly<{
     reachability: CheckoutReachability;
     size?: SurfaceStateSize;
+    /** One section among siblings: the line would repeat under each of them, so it stays wordless. */
+    silent?: boolean;
     testID?: string;
   }>,
 ) {
@@ -154,12 +158,19 @@ export function CheckoutUnreachableState(
   // Inside a widget it is the widget's one quiet line; elsewhere the container sizes it.
   const widget = useIsWidgetFrameBody();
   if (reachability.announced) {
-    return (
-      <AnnouncedCheckoutWait
-        machineName={reachability.machineName}
-        testID={props.testID ?? 'checkout-unreachable'}
-      />
-    );
+    const testID = props.testID ?? 'checkout-unreachable';
+    if (!widget && !props.silent) {
+      return (
+        <SurfaceStateCard
+          testID={testID}
+          kind="unavailable"
+          size="line"
+          iconName="wifi-slash"
+          title={t('projects.checkouts.waiting', { machine: reachability.machineName })}
+        />
+      );
+    }
+    return <AnnouncedCheckoutWait machineName={reachability.machineName} testID={testID} />;
   }
   return (
     <SurfaceStateCard
@@ -174,8 +185,8 @@ export function CheckoutUnreachableState(
 }
 
 /**
- * The page's line already names the machine and offers Retry, and there is nothing last-known to
- * show: the surface keeps only its header. No placeholder rows (they read as loading that never
+ * A widget or sibling section waiting on an announced machine, with nothing last-known to show: it
+ * keeps only its header. No placeholder rows (they read as loading that never
  * ends) and no second sentence. In a widget frame the header's meta slot carries the one quiet
  * offline glyph, so the bare heading reads as unavailable, not as unfinished. Assistive technology
  * still hears what it waits for.

@@ -49,7 +49,6 @@ import { useHeaderHeight } from '@/utils/platform/responsive';
 import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
 import { useClaimedStackHeaderActions, useLentHeaderMenuRows, useLentHeaderPrimary } from '@/components/navigation/stackHeaderActions';
-import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import type { PluginRightSidebarLabelledCount } from '@/components/appShell/rightSidebar/rightSidebarPluginCount';
 
 import { useAtmosphereBandBoundary } from '@/components/atmosphere/atmosphereBandBoundary';
@@ -72,6 +71,8 @@ export { projectPageGlyph, projectPageLabel } from '../navigation/projectPageDis
 /** The checkout the page is looking at: its machine and branch, and the exact choices behind the chip. */
 export type ProjectShellCheckout = Readonly<{
   machineName: string;
+  /** The name and the suffix telling same-named machines apart: the chip shortens only the name. */
+  machineNameParts: Readonly<{ name: string; hint: string | null }>;
   machineIcon: IconName;
   /** The branch the checkout reported; null while it is unread (its machine stands in). */
   branch: string | null;
@@ -397,6 +398,9 @@ export const ProjectCheckoutChip = React.memo(function ProjectCheckoutChip(
         branch,
       })
     : props.checkout.machineName;
+  // What stays whole beside the shortened name: the same-name suffix, then the row's branch separator.
+  const machineHint = props.checkout.machineNameParts.hint;
+  const machineTail = `${machineHint ? ` · ${machineHint}` : ''}${row && branch ? ' ·' : ''}`;
   return (
     <DropdownMenu
       testID={`${props.testID}.menu`}
@@ -467,10 +471,21 @@ export const ProjectCheckoutChip = React.memo(function ProjectCheckoutChip(
                   },
                 ]}
               >
-                {row && branch
-                  ? `${props.checkout.machineName} ·`
-                  : props.checkout.machineName}
+                {props.checkout.machineNameParts.name}
               </Text>
+              {machineTail ? (
+                <Text
+                  numberOfLines={1}
+                  style={[
+                    styles.chipText,
+                    styles.chipHint,
+                    row ? styles.rowText : null,
+                    { color: branch ? theme.colors.text.secondary : theme.colors.text.primary },
+                  ]}
+                >
+                  {machineTail}
+                </Text>
+              ) : null}
             </>
           )}
           {row || !branch ? null : (
@@ -593,4 +608,5 @@ const styles = StyleSheet.create(() => ({
     flexShrink: 1,
   },
   chipBranch: { ...Typography.default('semiBold') },
+  chipHint: { flexShrink: 0 },
 }));

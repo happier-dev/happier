@@ -709,8 +709,10 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
 
     if (offline && !hasRows) {
         return withFooter(
-            <CheckoutUnreachableState reachability={reachability}
-                testID={`${testID}-${reachability.announced ? 'waiting' : 'offline'}`} />
+            <ConstrainedScreenContent>
+                <CheckoutUnreachableState reachability={reachability}
+                    testID={`${testID}-${reachability.announced ? 'waiting' : 'offline'}`} />
+            </ConstrainedScreenContent>
         );
     }
 

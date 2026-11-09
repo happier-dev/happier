@@ -3,11 +3,11 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { CapabilityRow } from '@/components/capabilities/row/CapabilityRow';
-import { CapabilityStatusChip } from '@/components/capabilities/status/CapabilityStatusChip';
 import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { mcpServerRoute } from '@/components/settings/mcpServers/collection/mcpServerCollectionModel';
-import { McpServerMark } from '@/components/settings/mcpServers/identity/McpServerMark';
+import { HappierBrandMark } from '@/components/ui/media/HappierBrandMark';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
+import { SkillMark } from '@/components/settings/skills/SkillKindGlyph';
 import { skillHref } from '@/components/settings/skills/skillsCollectionModel';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -21,12 +21,15 @@ import {
 } from '@/components/ui/lists/ItemGroupColumns';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Text } from '@/components/ui/text/Text';
 import { useReachRules } from '@/sync/domains/capabilities/reach/useReachRules';
+import { useLocalSetting } from '@/sync/domains/state/storage';
 import { useFoundSkillsCount } from '@/sync/domains/skills/useFoundSkills';
 import { t } from '@/text';
 import { joinList } from '@/utils/text/joinList';
+import { CheckoutUnreachableState } from '@/components/workspaces/reachability/checkoutReachability';
 import { describeOfflineMachines } from '@/components/capabilities/where/whereItsOnPresentation';
 
 import {
@@ -44,7 +47,7 @@ import {
   type ScopeRowData,
 } from './useCapabilityScope';
 
-/** The least width a sheet reads well at; below two of these side by side, the sheets stack (Skills first). */
+/** The least width a sheet reads well at (default text size); below two of these side by side, the sheets stack (Skills first). */
 const SHEET_MIN_WIDTH_PX = 300;
 
 type Place = Readonly<{
@@ -105,30 +108,25 @@ const ScopeRow = React.memo(function ScopeRow(
     <CapabilityRow
       testID={props.testID}
       title={row.name}
-      whereSummary={words}
+      whereSummary={owner.valueAvailable ? words : undefined}
+      status={owner.valueAvailable ? row.status : null}
+      {...(row.kind === 'skill' ? { mark: <SkillMark /> } : {})}
       {...(row.kind === 'mcp_server' && row.transport
         ? {
             mark: (
-              <McpServerMark
-                transport={row.transport}
-                iconUrl={row.iconUrl ?? null}
-                size={20}
+              <HappierBrandMark
+                brand={{ displayName: row.name }} externallyLabelled
+                pixelSize={20}
               />
             ),
           }
         : {})}
-      {...(row.status
-        ? {
-            note: (
-              <CapabilityStatusChip
-                status={row.status}
-                showFix
-                testID={`${props.testID}.status`}
-              />
-            ),
-          }
+      {...(!owner.valueAvailable
+        ? { note: <SurfaceStateCard testID={`${props.testID}.${owner.status === 'loading' ? 'loading' : 'unavailable'}`}
+            kind={owner.status === 'loading' ? 'loading' : 'error'} size="line"
+            title={t(owner.status === 'loading' ? 'common.loading' : 'common.unavailable')} /> }
         : {})}
-      {...(row.masked
+      {...(row.masked || !owner.valueAvailable
         ? {}
         : {
             action: (
@@ -176,8 +174,11 @@ export const ScopeSheet = React.memo(function ScopeSheet(
     list: ScopeListData;
     place: Place;
     data: Pick<CapabilityScopeData, 'machines' | 'names' | 'open'>;
-    /** The name of the covered machine that is offline: its list comes when it runs, so a failed read is not an error. */
-    offlineMachine: string | null;
+    /**
+     * The covered machine that is offline: its list comes when it runs, so a failed read is not an error. When the
+     * page already says the machine is not answering, the sheet inherits that and says nothing of its own.
+     */
+    offlineMachine: Readonly<{ name: string; announced: boolean }> | null;
   }>,
 ) {
   const { list, data, kind } = props;
@@ -191,12 +192,20 @@ export const ScopeSheet = React.memo(function ScopeSheet(
       </View>
       {/* A read that failed while its machine is offline is not an error: the list comes when the machine runs. */}
       {list.state !== 'ready' && props.offlineMachine !== null ? (
-        <Item
-          testID={`${props.testID}.offline`}
-          mode="info"
-          showChevron={false}
-          title={t('capabilities.scopeSection.whenRunning', { machine: props.offlineMachine })}
-        />
+        props.offlineMachine.announced ? (
+          <CheckoutUnreachableState
+            silent
+            testID={`${props.testID}.offline`}
+            reachability={{ unreachable: true, machineName: props.offlineMachine.name, lastSeenAt: null, announced: true }}
+          />
+        ) : (
+          <Item
+            testID={`${props.testID}.offline`}
+            mode="info"
+            showChevron={false}
+            title={t('capabilities.scopeSection.whenRunning', { machine: props.offlineMachine.name })}
+          />
+        )
       ) : null}
       {list.state === 'unavailable' && props.offlineMachine === null ? (
         <EmptyLine
@@ -207,7 +216,7 @@ export const ScopeSheet = React.memo(function ScopeSheet(
         />
       ) : null}
       {list.state === 'loading' && props.offlineMachine === null ? (
-        <CollectionSkeletonRows count={SCOPE_ROW_LIMIT} />
+        <CollectionSkeletonRows count={SCOPE_ROW_LIMIT} rowRole="catalogRow" />
       ) : null}
       {list.state === 'ready' && list.total === 0 ? (
         <EmptyLine
@@ -310,6 +319,9 @@ export const CapabilityScopeSection = React.memo(
     }>,
   ) {
     const data = useCapabilityScope(props.place);
+    // Larger text needs a wider sheet before two fit side by side; below that they stack, never squeezing a row.
+    const uiFontScale = useLocalSetting('uiFontScale');
+    const sheetMinWidthPx = Math.round(SHEET_MIN_WIDTH_PX * Math.max(1, uiFontScale));
     const place = React.useMemo<Place>(
       () => ({ place: props.place, label: props.placeLabel }),
       [props.place, props.placeLabel],
@@ -323,7 +335,7 @@ export const CapabilityScopeSection = React.memo(
       [data.machines, data.names, data.open],
     );
     const migratedNames = data.migrated.names;
-    const offlineMachine = data.unreachableMachineName;
+    const offlineMachine = data.unreachableMachine;
     const offlineNote = describeOfflineMachines(data.offlineNames);
     return (
       <ItemGroup
@@ -351,7 +363,7 @@ export const CapabilityScopeSection = React.memo(
           />
         ) : null}
         <ListPresentationProvider value="page" pageInsets="contained">
-          <ItemGroupColumns columns={2} minColumnWidthPx={SHEET_MIN_WIDTH_PX} paddingHorizontal={0} paddingVertical={0}>
+          <ItemGroupColumns columns={2} minColumnWidthPx={sheetMinWidthPx} paddingHorizontal={0} paddingVertical={0}>
             <ItemGroupColumn>
               <ScopeSheet
                 testID={`${props.testID}.skills`}
