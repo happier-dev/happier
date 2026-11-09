@@ -8,6 +8,7 @@ import { TRIAGE_SOURCES_READ_CONFIGURED_ACTION_REF_V1 } from '@happier-dev/triag
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { BITBUCKET_PLUGIN_ID } from '../../bitbucketContracts.js';
+import { BITBUCKET_TRIAGE_CONTRIBUTION_ID } from '../../manifest.js';
 import { BITBUCKET_TRIAGE_ACTION_IDS } from '../../triage/source/descriptor.js';
 import { BITBUCKET_TRIAGE_DESCRIPTOR } from '../../triage/source/descriptor.js';
 
@@ -74,7 +75,10 @@ describe('the mounted Bitbucket Cloud PRs & Issues settings page', () => {
     ]);
     // Both mount reads are reads: opening a settings page must never configure
     // anything.
-    expect(recorded.map((entry) => entry.input)).toEqual([{ v: 1 }, { v: 1 }]);
+    expect(recorded.map((entry) => entry.input)).toEqual([
+      { v: 1 },
+      { v: 1, source: { pluginId: BITBUCKET_PLUGIN_ID, localId: BITBUCKET_TRIAGE_CONTRIBUTION_ID } },
+    ]);
   });
 
   it('names this source the way its own descriptor spells it', async () => {

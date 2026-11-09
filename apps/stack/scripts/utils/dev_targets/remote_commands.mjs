@@ -307,7 +307,6 @@ const COMMAND_RULES = [
     'scripts/workspaces/ensureWorkspacePackagesBuiltCli.mjs',
     'apps/cli/scripts/buildSharedDeps.mjs',
     'apps/server/scripts/buildSharedDeps.mjs',
-    'packages/plugins/triage/scripts/ensureTypecheckDeclarationPrerequisites.mjs',
   ] }, set: { ...validation, selfPublisher: '1', heavyClass: 'compilation' } },
   { when: { command: ['node', 'nodejs'], entryRepositoryPath: ['apps/cli/scripts/buildPublication.mjs'] }, set: { selfPublisher: '1' } },
   { when: { command: ['vitest'] }, set: { runnerKnown: '1', workerTool: 'vitest', workerArguments: '1' } },

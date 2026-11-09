@@ -52,8 +52,7 @@
     "build:finite": "pnpm --silent run build",
     "project:finite": "node --experimental-strip-types ../../../apps/cli/scripts/build-owned/checkBundledPluginWorkspace.mjs",
     "test": "../../../apps/stack/bin/hstack-exec --script=test:local",
-    "test:local": "pnpm --silent run test:unit:prepare && vitest run --config vitest.config.ts",
-    "test:unit:prepare": "node --test ./scripts/ensureTypecheckDeclarationPrerequisites.test.mjs",
+    "test:local": "vitest run --config vitest.config.ts",
     "typecheck": "../../../apps/stack/bin/hstack-exec --script=typecheck:local",
     "typecheck:local": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json",
     "build:ui": "happier-plugin-build-ui"

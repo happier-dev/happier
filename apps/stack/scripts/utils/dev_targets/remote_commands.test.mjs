@@ -2169,7 +2169,6 @@ test('finite workspace publishers retain placement class without an outer payloa
     ['apps/server', '../../scripts/workspaces/runTypeScriptCli.mjs', '0', 'compilation-server'],
     ['apps/server', 'scripts/runTypeScriptCli.mjs', '0', 'compilation-server'],
     ['apps/server', 'scripts/buildSharedDeps.mjs', '1', 'compilation'],
-    ['packages/plugins/triage', 'scripts/ensureTypecheckDeclarationPrerequisites.mjs', '1', 'compilation'],
     ['apps/server', 'fixture/runTypeScriptCli.mjs', '0', 'compilation-server'],
     ['packages/protocol', './fixture/buildTypeScriptPackageDist.mjs', '0', 'package-dist'],
   ]) {

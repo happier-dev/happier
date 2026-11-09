@@ -190,7 +190,7 @@ native_command_policy_base() {
   if { [ "$policy_command" = 'node' ] || [ "$policy_command" = 'nodejs' ]; } && { [ "$policy_entryRepositoryPath" = 'packages/plugin-sdk/scripts/bundleWorkspaceDeps.mjs' ]; } && { [ "$policy_declarations" = '1' ]; } && { [ "$policy_runScript" = '1' ]; }; then
     policy_selfPublisher='1'
   fi
-  if { [ "$policy_command" = 'node' ] || [ "$policy_command" = 'nodejs' ]; } && { [ "$policy_entryRepositoryPath" = 'scripts/workspaces/ensureWorkspacePackagesBuiltCli.mjs' ] || [ "$policy_entryRepositoryPath" = 'apps/cli/scripts/buildSharedDeps.mjs' ] || [ "$policy_entryRepositoryPath" = 'apps/server/scripts/buildSharedDeps.mjs' ] || [ "$policy_entryRepositoryPath" = 'packages/plugins/triage/scripts/ensureTypecheckDeclarationPrerequisites.mjs' ]; }; then
+  if { [ "$policy_command" = 'node' ] || [ "$policy_command" = 'nodejs' ]; } && { [ "$policy_entryRepositoryPath" = 'scripts/workspaces/ensureWorkspacePackagesBuiltCli.mjs' ] || [ "$policy_entryRepositoryPath" = 'apps/cli/scripts/buildSharedDeps.mjs' ] || [ "$policy_entryRepositoryPath" = 'apps/server/scripts/buildSharedDeps.mjs' ]; }; then
     policy_validation='1'
     policy_bootstrap='1'
     policy_heavyClass='compilation'

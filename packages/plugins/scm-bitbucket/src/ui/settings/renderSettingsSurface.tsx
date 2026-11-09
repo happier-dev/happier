@@ -17,11 +17,11 @@
 import { createTriageSourceSettingsSurface } from '@happier-dev/triage-sources/ui';
 
 import { BITBUCKET_PLUGIN_ID } from '../../bitbucketContracts.js';
+import { BITBUCKET_TRIAGE_CONTRIBUTION_ID } from '../../manifest.js';
 import {
   BITBUCKET_CONNECTED_ACCOUNT_SERVICE_ID,
   BITBUCKET_CONNECTED_ACCOUNT_PURPOSE,
   BITBUCKET_TRIAGE_ACTION_IDS,
-  BITBUCKET_TRIAGE_CONTRIBUTION_ID,
   BITBUCKET_TRIAGE_DESCRIPTOR,
 } from '../../triage/source/descriptor.js';
 
