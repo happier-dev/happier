@@ -50,7 +50,7 @@ import type {
   StartSessionResult,
 } from '../core';
 import type { AgentAcpCompletionEvidenceOutcome, AgentSessionMcpLaunchConfig } from '@happier-dev/plugin-sdk/agents/runtime';
-import type { JsonValue } from '@happier-dev/plugin-sdk';
+import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import type {
   AcpPromptSubmissionResult,
   AcpPromptSubmissionSettledResult,
@@ -2855,6 +2855,7 @@ export class AcpBackend implements CatalogAcpBackend {
     sessionId: SessionId,
     modelId: string,
     requestMeta?: Readonly<Record<string, unknown>>,
+    selection?: Readonly<{ allowUnlisted: boolean }>,
   ): Promise<void> {
     if (this.disposed) {
       throw new Error('Backend has been disposed');
@@ -2880,6 +2881,15 @@ export class AcpBackend implements CatalogAcpBackend {
       modelId: normalizedModelId,
       modelState: this.sessionModelState,
     });
+    // Resolve once before catalog admission so a native restart refusal reaches
+    // the host. A codec result alone does not admit an unlisted model.
+    if (selection && !selection.allowUnlisted
+      && this.sessionModelState && this.sessionModelState.availableModels.length > 0
+      && normalizedModelId !== this.sessionModelState.currentModelId
+      && !this.sessionModelState.availableModels.some(model => model.id === normalizedModelId)) {
+      throw new PluginError({ code: 'acp_model_not_available',
+        message: 'The requested model is not advertised by this Agent.' });
+    }
     const providerModelId = resolvedUpdate?.modelId ?? normalizedModelId;
     const providerRequestMeta = resolvedUpdate?.requestMeta ?? requestMeta;
 

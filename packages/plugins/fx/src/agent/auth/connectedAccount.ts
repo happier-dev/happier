@@ -79,11 +79,11 @@ export async function prepareFxConnectedAccount(environment?: AgentLaunchEnviron
   if (!environment) return environment;
   const capabilityFile = environment.values[CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV];
   if (!capabilityFile) return environment;
-  // FX's Codex provider has no compiled default (selectProviderModel). A copied
-  // native preference or ambient FX_MODEL is not the selected Account's choice.
-  const selectedModel = model?.selectionSource === 'explicit' ? model.value?.trim() : null;
+  // FX's Codex provider has no compiled default (selectProviderModel). Use the
+  // host-resolved model, including finite-run inheritance, rather than ambient FX_MODEL.
+  const selectedModel = model?.value?.trim();
   if (!selectedModel) throw new PluginError({ code: 'agent_startup_model_reconciliation_failed', retryable: false,
-    message: 'Choose an explicit model for the FX ChatGPT Connected Account.',
+    message: 'Choose a model for the FX ChatGPT Connected Account.',
     details: { failureCause: { code: 'agent_startup_model_reconciliation_failed',
       phase: 'client_start', failureReason: 'model_selection_required', retryable: false } } });
   const home = environment.values.HOME;

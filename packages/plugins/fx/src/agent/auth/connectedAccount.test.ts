@@ -8,6 +8,7 @@ import { CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_VERSION } from '@happier-dev/
 
 import type { AgentExecutionRunOpenRequest, AgentExecutionRunRuntimeContextV1, AgentSessionConfigurationSnapshot, AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { buildExecutionRunConfiguration } from '@/agent/runtime/bridges/executionRun/runtime/openInputs';
 import { sanitizeNativeAgentSessionBoundaryError } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionBoundaryError';
 import { readSessionPreparationFailureDiagnostic } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 import { FX_PLUGIN } from '../../manifest.js';
@@ -76,7 +77,7 @@ describe('FX connected-account native launch', () => {
     await expect(readFile(join(input.home, '.fx/chatgpt-auth.json'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  it.each(['session', 'run', 'conversation'] as const)('passes the deliberate account model to native %s startup', async lane => {
+  it.each(['session', 'run', 'conversation'] as const)('passes the resolved account model to native %s startup', async lane => {
     const input = await fixture();
     const open = vi.fn(async (request: { launchEnvironment?: { values: Readonly<Record<string, string>> } }) => {
       expect(request.launchEnvironment?.values).toMatchObject({ FX_PROVIDER: 'codex', FX_MODEL: 'gpt-selected' });
@@ -84,7 +85,15 @@ describe('FX connected-account native launch', () => {
     });
     const signal = new AbortController().signal;
     const runtime = await createFxAgentRuntime({ plugin: { id: 'happier.agent.fx', version: '0.0.0' }, agent: { id: 'fx' }, signal });
-    const request = { cwd: '/workspace', launchEnvironment: input.launchEnvironment, configuration: selectedConfiguration };
+    const resolvedConfiguration = lane === 'session' ? selectedConfiguration : buildExecutionRunConfiguration({
+      backendTarget: { kind: 'backend', backendId: 'fx' }, modelId: 'gpt-selected',
+      permissionMode: 'default', updatedAtMs: 1,
+    }).configuration;
+    // Some finite callers carry the resolved value without provenance.
+    const configuration = lane === 'conversation' ? { ...resolvedConfiguration, model: {
+      value: resolvedConfiguration.model.value, updatedAtMs: resolvedConfiguration.model.updatedAtMs,
+    } } : resolvedConfiguration;
+    const request = { cwd: '/workspace', launchEnvironment: input.launchEnvironment, configuration };
     const context = { signal, protocols: { acp: { open, openExecutionRunV1: open, openExecutionRunConversationV1: open } } };
     if (lane === 'session') await runtime.sessions!.open({ ...request, kind: 'create', sessionId: 'selected-model' }, context as unknown as AgentSessionRuntimeContext);
     else {
@@ -97,11 +106,10 @@ describe('FX connected-account native launch', () => {
     expect(input.requests).toHaveLength(1);
   });
 
-  it('does not adopt an inherited model or ambient FX_MODEL for the selected Account', async () => {
+  it('does not adopt ambient FX_MODEL without a resolved model for the selected Account', async () => {
     const input = await fixture();
     await expect(FX_TERMINAL_CONTRIBUTION.resolveLaunch({ sessionId: 'inherited-model', cwd: '/workspace', metadata: {}, modelSelection: null,
       launchEnvironment: { ...input.launchEnvironment, values: { ...input.launchEnvironment.values, FX_MODEL: 'ambient-model' } },
-      configuration: { ...selectedConfiguration, model: { value: 'inherited-model', updatedAtMs: 0, selectionSource: 'inherited' } },
     })).rejects.toMatchObject({ code: 'agent_startup_model_reconciliation_failed',
       details: { failureCause: { failureReason: 'model_selection_required', retryable: false } } });
     expect(input.requests).toEqual([]);

@@ -219,6 +219,7 @@ function waitForCompletionEventOrFallback(
 export function createOpenCodeSessionRuntime(params: Readonly<{
   operations: OpenCodeRuntimeTurnOperations;
   providerModelId?: string;
+  catalogConfidence?: AgentSessionModelsSnapshot['catalogConfidence'];
   request: AgentSessionOpenRequest;
   disposeOperations(): Promise<void>;
   models?: AgentSessionRuntimeContext['session']['services']['models'];
@@ -248,16 +249,19 @@ export function createOpenCodeSessionRuntime(params: Readonly<{
     const nativeModelId = catalog.currentModelId ?? null;
     const effectiveModelId = params.request.providerBinding && nativeModelId === params.providerModelId
       ? canonicalProviderBindingModelId : nativeModelId;
-    // A configured Provider owns its public membership; OpenCode's private dispatch carrier does not.
+    // Private dispatch configuration does not observe Account model membership.
+    // The shared publication owner consumes this provenance and keeps native controls.
     return {
-      ...(params.request.providerBinding
-        ? { observedAt: catalog.observedAt, models: null }
-        : catalog.models !== null
+      ...(catalog.models !== null
         ? catalog
         : {
             observedAt: 0,
             models: effectiveModelId ? [{ id: effectiveModelId, name: effectiveModelId }] : [],
           }),
+      ...(catalog.catalogConfidence === undefined ? {} : { catalogConfidence: catalog.catalogConfidence }),
+      ...(params.request.providerBinding
+        ? { catalogConfidence: 'account_unverified' as const }
+        : params.catalogConfidence === undefined ? {} : { catalogConfidence: params.catalogConfidence }),
       currentModelId: effectiveModelId,
     };
   };

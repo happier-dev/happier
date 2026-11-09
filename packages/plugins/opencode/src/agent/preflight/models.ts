@@ -1,4 +1,4 @@
-import type { AgentPreflightSessionControlsContributionV1 } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentPreflightSessionControlsContributionV1, AgentSessionModelsSnapshot } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { probeOpenCodePreflightCatalogs, resolveOpenCodePreflightProbeVariant, withOpenCodePreflightServer } from './catalogs.js';
 import { buildOpenCodeModesFromAgents } from './modes.js';
@@ -68,7 +68,7 @@ export function buildOpenCodePreflightModels(
 export function buildOpenCodeModelCatalogFromProviders(
   providers: Awaited<ReturnType<OpenCodeServerClient['providersList']>>,
   observedAt: number,
-): Readonly<{ models: readonly OpenCodePreflightModel[] | null; unavailableReason?: string }> {
+): Readonly<{ models: readonly OpenCodePreflightModel[] | null; unavailableReason?: string; catalogConfidence?: AgentSessionModelsSnapshot['catalogConfidence'] }> {
   // Native inventory is a model registry, not this ChatGPT Account's entitlement.
   // Keep its models for explicit runtime selections but do not advertise them.
   let unavailable = false;
@@ -85,6 +85,7 @@ export function buildOpenCodeModelCatalogFromProviders(
   const models = buildOpenCodePreflightModels(blocks, observedAt);
   return {
     models: unavailable && models?.length === 0 ? null : models,
+    ...(unavailable && models?.length === 0 ? { catalogConfidence: 'account_unverified' as const } : {}),
     ...(unavailable ? { unavailableReason: 'ChatGPT account model entitlement is unavailable from the native OpenCode inventory.' } : {}),
   };
 }

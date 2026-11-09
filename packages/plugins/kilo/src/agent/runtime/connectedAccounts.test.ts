@@ -38,8 +38,8 @@ describe('registered Kilo subscription startup', () => {
 
   it.each([
     { value: null, selectionSource: 'explicit' as const },
-    { value: 'openai/ambient-model', selectionSource: 'inherited' as const },
-  ])('requires a deliberate account model before native effects ($selectionSource)', async model => {
+    { value: null, selectionSource: 'inherited' as const },
+  ])('requires a resolved account model before native effects ($selectionSource)', async model => {
     const root = await mkdtemp(join(tmpdir(), 'kilo-account-default-'));
     const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
     try {
@@ -102,7 +102,7 @@ describe('registered Kilo subscription startup', () => {
         ...(kind === 'create' ? { kind } : { kind, providerSessionId: 'ses_fixture' }),
         sessionId: 'fixture', cwd: root,
         launchEnvironment: { values: { [CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV]: join(root, 'capability.json') }, unset: [] },
-        configuration: { model: { value: 'openai/gpt-5.4', selectionSource: 'explicit', updatedAtMs: 0 }, mode: { value: null, updatedAtMs: 0 }, permissionIntent: { value: 'read-only', updatedAtMs: 0 }, options: {} },
+        configuration: { model: { value: 'openai/gpt-5.4', ...(kind === 'create' ? { selectionSource: 'inherited' as const } : {}), updatedAtMs: 0 }, mode: { value: null, updatedAtMs: 0 }, permissionIntent: { value: 'read-only', updatedAtMs: 0 }, options: {} },
       };
       await runtime.sessions.open(request, { protocols: { acp: { open } } } as unknown as AgentSessionRuntimeContext);
       const env = open.mock.calls[0]![1].transport;

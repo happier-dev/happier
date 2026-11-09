@@ -60,7 +60,8 @@ export function buildCodeBuddySubscriptionConfiguration(input: Readonly<{
     projectModelState: ({ normalizedModelState }) => ({ ...normalizedModelState,
       availableModels: normalizedModelState.availableModels.filter((model) => model.id === modelId) }),
     resolveModelUpdate: ({ modelId: requested }) => {
-      if (requested !== modelId) refuse('codebuddy_subscription_model_restart_required', 'Restart CodeBuddy with the selected ChatGPT model to change models.');
+      if (requested !== modelId) throw new PluginError({ code: 'codebuddy_subscription_model_restart_required',
+        message: 'Restart CodeBuddy with the selected ChatGPT model to change models.', details: { status: 'requires_restart' } });
       return { modelId };
     },
   } };
@@ -84,7 +85,7 @@ export async function prepareCodeBuddyConnectedAccount(
   const binding = await accounts.getBinding(CODEBUDDY_CODEX_PURPOSE, { signal: context.signal });
   if (!binding) return null;
   if (request.providerBinding) refuse('codebuddy_subscription_provider_conflict', 'Select either a Connected ChatGPT account or a Provider connection for CodeBuddy.');
-  if (request.configuration?.model.selectionSource !== 'explicit' || !request.configuration.model.value?.trim()) {
+  if (!request.configuration?.model.value?.trim()) {
     modelSelectionRequired();
   }
   const materialized = await accounts.materialize(CODEBUDDY_CODEX_PURPOSE, {

@@ -91,11 +91,17 @@ type ApprovalRequester = (
 
 function createApprovalRequestMock() {
   let nextRequestId = 1;
-  return vi.fn<ApprovalRequester>(async () => ({
-    requestId: `test-approval-${nextRequestId++}`,
-    kind: 'approval',
-    status: 'approved',
-  }));
+  return vi.fn<ApprovalRequester>(async request => {
+    const choice = request.nativeChoices?.choices.find(candidate => candidate.decision === 'approved');
+    return {
+      requestId: `test-approval-${nextRequestId++}`,
+      kind: 'approval',
+      status: 'approved',
+      ...(choice && request.nativeChoices ? { nativeChoice: {
+        requirementId: request.nativeChoices.requirementId, choiceId: choice.id,
+      } } : {}),
+    };
+  });
 }
 
 function writePublicComposerAgent(dir: string): string {
@@ -3486,6 +3492,31 @@ describe('createPublicAcpSession', () => {
     });
   });
 
+  it.each(['absent', 'declined', 'codec'] as const)('rejects an unlisted model independently of native model mapping (resolver=%s)', async resolver => {
+    await withTempDir('happier-public-acp-declined-model-', async dir => {
+      const fixture = createFixture(dir, 'projected-config-models');
+      const configuration = { mode: { value: null, updatedAtMs: 1 }, model: { value: null, updatedAtMs: 1 },
+        permissionIntent: { value: null, updatedAtMs: 1 }, options: {} };
+      const session = await createPublicAcpSession({ kind: 'create', sessionId: 'declined-model', cwd: dir, configuration }, {
+        ...fixture.options, definition: { modelConfigOptionId: 'model', mcp: { policy: 'drop' },
+          ...(resolver === 'absent' ? {} : { models: { projectModel: (_raw, normalized) => normalized,
+            resolveModelUpdate: ({ modelId }) => resolver === 'codec' ? { modelId } : null } }) },
+      }, fixture.dependencies);
+      const events: AgentSessionRuntimeEvent[] = [];
+      const subscription = session.watch(event => events.push(event));
+      try {
+        expect(await session.updateConfiguration!({ ...configuration, model: { value: 'unlisted-model', updatedAtMs: 2 } }))
+          .toMatchObject({ status: 'rejected', diagnostic: { code: 'acp_model_not_available' } });
+        await session.send({ inputIds: ['declined-model'], input: { text: 'report configuration' },
+          delivery: { kind: 'newTurn', turnId: 'declined-model' } });
+        await collectUntil(events, 'turn-complete');
+        expect(events).toContainEqual(expect.objectContaining({ kind: 'message-delta', text: JSON.stringify({
+          selectedMode: null, selectedModel: null, selectedOptions: {},
+        }) }));
+      } finally { subscription.dispose(); await session.dispose(); }
+    });
+  });
+
   it('composes public model-state projection and provider identity resolution through configuration updates', async () => {
     await withTempDir('happier-public-acp-projected-config-models-', async (dir) => {
       const fixture = createFixture(dir, 'projected-config-models');
@@ -3895,6 +3926,18 @@ describe('createPublicAcpSession', () => {
             input: { command: 'pwd' },
           },
           allowSessionPersistence: true,
+          nativeChoices: {
+            requirementId: expect.any(String),
+            source: 'acp',
+            choices: [
+              { id: 'allow-once', label: 'Allow once', scope: 'once', decision: 'approved',
+                response: { approved: true, decision: 'approved' } },
+              { id: 'allow-session', label: 'Allow for session', scope: 'localPersistent', decision: 'approved',
+                response: { approved: true, decision: 'approved' } },
+              { id: 'reject-once', label: 'Deny', scope: 'once', decision: 'denied',
+                response: { approved: false, decision: 'denied' } },
+            ],
+          },
         }, {
           signal: expect.any(AbortSignal),
           permissionContext: {

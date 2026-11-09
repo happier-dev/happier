@@ -75,7 +75,10 @@ describe('Droid ChatGPT static access launch', () => {
 
   it.each(['create', 'resume'] as const)('materializes selected ChatGPT once for %s and cleans process settings on dispose', async kind => {
     const { runtime, context, open, connectedAccounts, session } = await fixture();
-    const request: AgentSessionOpenRequest = { ...(kind === 'create' ? { kind } : { kind, providerSessionId: 'native-session' }), sessionId: 'droid-chatgpt', cwd: '/workspace', configuration,
+    const request: AgentSessionOpenRequest = { ...(kind === 'create' ? { kind } : { kind, providerSessionId: 'native-session' }), sessionId: 'droid-chatgpt', cwd: '/workspace', configuration: {
+      ...configuration, model: { value: configuration.model.value, updatedAtMs: configuration.model.updatedAtMs,
+        ...(kind === 'create' ? { selectionSource: 'inherited' as const } : {}) },
+    },
       launchEnvironment: { values: { PATH: '/bin', FACTORY_API_KEY: 'inherited-native-secret' }, unset: ['UNRELATED'] } };
     const opened = await runtime.sessions!.open(request, context);
     const [prepared, options] = open.mock.calls[0]!;
@@ -116,7 +119,7 @@ describe('Droid ChatGPT static access launch', () => {
   it.each(['missing-model', 'inherited-model', 'provider-binding', 'wrong-materialization', 'missing-account'] as const)('refuses %s before native launch', async failure => {
     const { runtime, context, open, connectedAccounts } = await fixture({ ...(failure === 'wrong-materialization' ? { materialization: 'environment' } : failure === 'missing-account' ? { materialization: 'missing-account' } : {}) });
     const request: AgentSessionOpenRequest = { kind: 'create', sessionId: 'refused', cwd: '/workspace', configuration: failure === 'missing-model' ? undefined : failure === 'inherited-model'
-      ? { ...configuration, model: { ...configuration.model, selectionSource: 'inherited' } } : configuration,
+      ? { ...configuration, model: { ...configuration.model, value: null, selectionSource: 'inherited' } } : configuration,
       ...(failure === 'provider-binding' ? { providerBinding: { connectionId: 'selected-provider', upstream: { protocol: 'openai-responses', normalizedUrl: 'https://provider.example/v1', credential: 'none' },
         model: { id: 'other', name: 'Other' }, materialization: { v: 1, kind: 'configFile', rootPath: '/private/provider', relativePaths: ['droid/settings.json'] } } } : {}) };
     await expect(runtime.sessions!.open(request, context)).rejects.toMatchObject({ code: failure === 'provider-binding' ? 'droid_connected_account_provider_conflict'

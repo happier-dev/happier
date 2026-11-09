@@ -25,7 +25,7 @@ export async function prepareDroidConnectedAccount<Request extends LaunchRequest
   if (!binding) return { request, dispose() {} };
   if (request.providerBinding) throw new PluginError({ code: 'droid_connected_account_provider_conflict', message: 'Choose either a Droid Provider connection or a ChatGPT Connected Account.' });
   const model = request.configuration?.model;
-  if (!model?.value?.trim() || model.selectionSource !== 'explicit') {
+  if (!model?.value?.trim()) {
     throw new PluginError({ code: 'agent_startup_model_reconciliation_failed', retryable: false,
       message: 'Choose an explicit model for the Droid ChatGPT Connected Account.',
       details: { failureCause: { code: 'agent_startup_model_reconciliation_failed',

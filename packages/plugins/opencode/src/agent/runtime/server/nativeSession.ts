@@ -3,6 +3,7 @@ import type {
   AgentSessionRuntime,
   AgentSessionRuntimeContext,
   AgentRuntimeContext,
+  AgentSessionModelsSnapshot,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { createOpenCodeServerRuntimeAssembly } from './assembly.js';
@@ -25,6 +26,7 @@ export async function openOpenCodeServerSession(
   context: AgentRuntimeContext,
   workState?: AgentSessionRuntimeContext['workState'],
   bindActiveSkillsReader?: OpenCodeActiveSkillsReaderRegistrar,
+  catalogConfidence?: AgentSessionModelsSnapshot['catalogConfidence'],
 ): Promise<AgentSessionRuntime> {
   const sessionServices = readSessionServices(context);
   const runtimeContext = createOpenCodeRuntimeContext(
@@ -47,6 +49,7 @@ export async function openOpenCodeServerSession(
     permissionMode: request.configuration?.permissionIntent.value ?? null,
     mcpServers: request.mcpServers,
     request,
+    ...(catalogConfidence === undefined ? {} : { catalogConfidence }),
     ...(sessionServices ? { models: sessionServices.models, modes: sessionServices.modes, mcpService: sessionServices.mcp } : {}),
     ...(sessionServices?.inputFiles ? { inputFiles: sessionServices.inputFiles } : {}),
     ...(bindActiveSkillsReader ? { bindActiveSkillsReader } : {}),

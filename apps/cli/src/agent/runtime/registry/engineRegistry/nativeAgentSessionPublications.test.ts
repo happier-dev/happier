@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 
 import { readAcpSessionModeIntentFromMetadata } from '@happier-dev/agents';
 import type { Metadata } from '@/api/types';
@@ -6,8 +9,73 @@ import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import type { AgentSessionModelsSnapshot, AgentSessionModesSnapshot } from '@happier-dev/plugin-sdk/agents/runtime';
 import { createSessionRuntimeModelsPublisher } from '@/agent/runtime/controls/sessionRuntimeModelsPublisher';
 import { createNativeAgentSessionPublications } from './nativeAgentSessionPublications';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
+import { OPENCODE_PROVIDER_BINDING_ADAPTER_V1 } from '../../../../../../../packages/plugins/opencode/src/agent/providerBinding/adapter';
+import { createOpenCodeServerRuntimeAssembly } from '../../../../../../../packages/plugins/opencode/src/agent/runtime/server/assembly';
+import { createContextFixture } from '../../../../../../../packages/plugins/opencode/src/agent/runtime/server/assembly.managedServices.testkit';
+import { OPEN_CODE_REQUEST_AUTH_CODEX_BASE_URL } from '../../../../../../../packages/plugins/opencode/src/agent/auth/services/requestAuth/source';
 
 describe('createNativeAgentSessionPublications', () => {
+  it.each(['provider', 'native-chatgpt'] as const)('withholds prior global choices when the real OpenCode %s runtime has no Account model observation', async (source) => {
+    const rootPath = await mkdtemp(join(tmpdir(), 'happier-opencode-catalog-'));
+    const connectionId = ProviderConnectionIdSchema.parse('pc_catalog_account');
+    const model = { id: 'openai/selected-model', name: 'Selected model' };
+    const agentTargetKey = 'agent:happier.agent.opencode/opencode';
+    const prepared = OPENCODE_PROVIDER_BINDING_ADAPTER_V1.prepare({ v: 1, connectionId, agentTargetKey });
+    const output = await OPENCODE_PROVIDER_BINDING_ADAPTER_V1.materialize({ v: 1, prepared,
+      binding: { v: 1, agentTargetKey, selection: { connectionId, model }, contributionKey: 'example.provider/chat',
+        endpoint: { endpointTemplateId: 'chat', protocol: 'openai-chat', normalizedUrl: 'http://127.0.0.1:49199/v1', publicHeaders: {} },
+        runtimeCredentialTransport: null, compatibilityFingerprint: 'pcf1:catalog-fixture' },
+      credential: { kind: 'none' },
+    });
+    if (output.kind !== 'configFile') throw new Error('Expected canonical OpenCode private configuration');
+    for (const file of output.files) {
+      const path = join(rootPath, file.relativePath);
+      await mkdir(dirname(path), { recursive: true });
+      await writeFile(path, file.utf8);
+    }
+    let metadata = createTestMetadata({ path: '/repo', sessionModelsV1: {
+      v: 1, agentId: 'opencode', currentModelId: model.id, updatedAt: 1,
+      availableModels: [{ id: 'ambient/global-model', name: 'Global model' }],
+    } });
+    const publications = createNativeAgentSessionPublications({ agentId: 'opencode', session: null,
+      signal: new AbortController().signal, isCurrent: () => true, supportsInFlightSteer: false });
+    const ctx = createContextFixture({ managedServerBaseUrl: 'http://127.0.0.1:49199',
+      managedServerRequest: async input => {
+        const path = input.pathAndQuery.split('?')[0];
+        const body = path === '/provider'
+          ? { all: [{ id: 'openai', options: { baseURL: OPEN_CODE_REQUEST_AUTH_CODEX_BASE_URL },
+            models: { 'selected-model': { id: 'selected-model', name: 'Selected model' } } }], connected: ['openai'] }
+          : path === '/session' ? { id: 'catalog-native-session' } : {};
+        return { ok: true, status: 200, headers: { 'content-type': 'application/json' },
+          body: new Response(JSON.stringify(body)).body };
+      },
+    });
+    let assembly: Awaited<ReturnType<typeof createOpenCodeServerRuntimeAssembly>> | undefined;
+    let publisher: ReturnType<typeof createSessionRuntimeModelsPublisher> | undefined;
+    try {
+      assembly = await createOpenCodeServerRuntimeAssembly({ ctx, directory: '/repo', happierSessionId: 'catalog-session',
+        endpoint: { mode: 'managed-spawn' }, models: publications.services.models,
+        request: { kind: 'create', cwd: '/repo', sessionId: 'catalog-session',
+          configuration: { model: { value: model.id, updatedAtMs: 1 }, permissionIntent: { value: null, updatedAtMs: 0 }, options: {} },
+          ...(source === 'provider' ? { providerBinding: { connectionId, model,
+            materialization: { v: 1 as const, kind: 'configFile' as const, rootPath, relativePaths: output.files.map(file => file.relativePath) } } } : {}),
+        },
+      });
+      publisher = createSessionRuntimeModelsPublisher({ agentId: 'opencode', source: publications.modelsSource,
+        session: { getMetadataSnapshot: () => metadata,
+          updateMetadataAsCurrentPublisher: updater => { metadata = updater(metadata); }, on() {}, off() {} },
+      });
+      await publisher.flush();
+      expect(metadata.sessionModelsV1).toMatchObject({ currentModelId: model.id, availableModels: [] });
+    } finally {
+      await publisher?.stopAndDrain();
+      await assembly?.dispose();
+      publications.dispose();
+      await rm(rootPath, { recursive: true, force: true });
+    }
+  });
+
   it.each(['plan', 'build'] as const)('completes an accepted native mode only when the saved selection still matches (%s)', async (selectedMode) => {
     let metadata: Metadata = createTestMetadata({
       path: '/tmp/workspace',

@@ -67,9 +67,9 @@ export async function prepareCopilotConnectedAccount<T extends CopilotAccountReq
   }
   const selection = request.configuration?.model;
   const modelId = selection?.value;
-  if (!modelId?.trim() || selection?.selectionSource !== 'explicit') throw new PluginError({
+  if (!modelId?.trim()) throw new PluginError({
     code: 'agent_startup_model_reconciliation_failed', retryable: false,
-    message: 'Choose an explicit model for the Copilot ChatGPT account.',
+    message: 'Choose a model for the Copilot ChatGPT account.',
     details: { failureCause: { code: 'agent_startup_model_reconciliation_failed',
       phase: 'client_start', failureReason: 'model_selection_required', retryable: false } },
   });
@@ -118,7 +118,9 @@ export async function prepareCopilotConnectedAccount<T extends CopilotAccountReq
       },
       projectModelId: ({ modelId: selected }) => selected === nativeModelId ? modelId : selected,
       resolveModelUpdate({ modelId: selected }) {
-        if (selected !== modelId && selected !== nativeModelId) throw unavailable();
+        if (selected !== modelId && selected !== nativeModelId) throw new PluginError({
+          code: 'copilot_account_model_unavailable', message: 'Restart Copilot to apply a different ChatGPT model.',
+          details: { status: 'requires_restart' } });
         return { modelId: nativeModelId };
       },
     },

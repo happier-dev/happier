@@ -1,4 +1,4 @@
-import { isPluginError, isRecord, type PluginContributionRef } from '@happier-dev/plugin-sdk';
+import { isPluginError, isRecord, PluginError, type PluginContributionRef } from '@happier-dev/plugin-sdk';
 import { createSecureTempDirectorySync, type SecureTempDirectory } from '@happier-dev/plugin-sdk/fs';
 import {
   CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1,
@@ -11,6 +11,7 @@ import type {
   AgentSessionOpenRequest,
   AgentSessionRuntime,
   AgentSessionRuntimeEvent,
+  AgentSessionModelsSnapshot,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { AgentRuntimeJsonValueSchema } from '@happier-dev/plugin-sdk/agents/runtime';
 
@@ -18,6 +19,7 @@ import { buildOpenCodeQualifiedAuthContent, materializeOpenCodeAuthEnvironment }
 import { OPEN_CODE_REQUEST_AUTH_CAPABILITY_PATH_ENV } from './requestAuth/env.js';
 import { OPEN_CODE_REQUEST_AUTH_DECLARED_PURPOSES } from './requestAuth/purposes.js';
 import { buildOpenCodeConfigLaunchEnvironment } from '../../runtime/server/spawnSpec.js';
+import { normalizeOpenCodePromptConfigUpdate } from '../../runtime/server/promptConfig.js';
 import {
   OPEN_CODE_ANTHROPIC_API_KEY_PURPOSE_ID,
   OPEN_CODE_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
@@ -35,7 +37,7 @@ type Binding = Awaited<ReturnType<
   AgentRuntimeContext['services']['connectedAccounts']['getBinding']
 >>;
 
-type OpenCodeAccountLaunchRequest = Pick<AgentSessionOpenRequest, 'launchEnvironment' | 'providerBinding'>;
+type OpenCodeAccountLaunchRequest = Pick<AgentSessionOpenRequest, 'launchEnvironment' | 'providerBinding' | 'configuration'>;
 type OpenCodeAccountLaunchContext = Readonly<{
   signal?: AbortSignal;
   services: Readonly<{ connectedAccounts: Pick<AgentRuntimeContext['services']['connectedAccounts'], 'getBinding' | 'materialize' | 'watch'> }>;
@@ -45,6 +47,7 @@ export type PreparedOpenCodeQualifiedConnectedAccounts<
   Request extends OpenCodeAccountLaunchRequest,
 > = Readonly<{
   request: Request;
+  catalogConfidence?: AgentSessionModelsSnapshot['catalogConfidence'];
   isInvalidated(): boolean;
   bindSession(session: AgentSessionRuntime): AgentSessionRuntime;
   bindExecutionRun(runtime: AgentExecutionRunRuntime): AgentExecutionRunRuntime;
@@ -224,15 +227,26 @@ export async function prepareOpenCodeQualifiedConnectedAccounts<Request extends 
     const anthropicRequestAuthBinding = bindings[OPEN_CODE_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID];
     const anthropicBinding = bindings[OPEN_CODE_ANTHROPIC_API_KEY_PURPOSE_ID];
 
+    const hasSelectedAccount = bindingEntries.some(([, binding]) => Boolean(binding));
+    const selectedModel = normalizeOpenCodePromptConfigUpdate({ modelId: request.configuration?.model.value }).model;
+    // Native saved/default models may target another provider. A selected
+    // Account needs a concrete model of its declared provider before secrets.
+    // A resolved helper/Session model remains concrete when its source is inherited.
+    if (hasSelectedAccount && (!selectedModel || !OPEN_CODE_CONNECTED_ACCOUNT_DESCRIPTORS.some(
+      ({ declaration, provider }) => bindings[declaration.purpose] && provider === selectedModel.providerID,
+    ))) {
+      throw new PluginError({ code: 'agent_startup_model_reconciliation_failed', retryable: false,
+        message: 'Choose a model for the selected OpenCode Connected Account provider.',
+        details: { failureCause: { code: 'agent_startup_model_reconciliation_failed',
+          phase: 'client_start', failureReason: 'model_selection_required', retryable: false } } });
+    }
+
     const directAccountCredentials: Partial<Record<OpenCodeRequestAuthProvider, Readonly<{ key: string; service: PluginContributionRef }>>> = {};
     const requiredRequestAuthProviders: OpenCodeRequestAuthProvider[] = [];
-    let usedBinding = false;
 
     if (openAiCodexBinding) {
-      usedBinding = true;
       requiredRequestAuthProviders.push('openai');
     } else if (openAiBinding) {
-      usedBinding = true;
       const materialized = await context.services.connectedAccounts.materialize(
         OPEN_CODE_OPENAI_API_KEY_PURPOSE_ID,
         { kind: 'environment', keys: ['OPENAI_API_KEY'] },
@@ -246,7 +260,6 @@ export async function prepareOpenCodeQualifiedConnectedAccounts<Request extends 
     }
 
     if (anthropicRequestAuthBinding) {
-      usedBinding = true;
       try {
         const materialized = await context.services.connectedAccounts.materialize(
           OPEN_CODE_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
@@ -274,7 +287,6 @@ export async function prepareOpenCodeQualifiedConnectedAccounts<Request extends 
         requiredRequestAuthProviders.push('anthropic');
       }
     } else if (anthropicBinding) {
-      usedBinding = true;
       const materialized = await context.services.connectedAccounts.materialize(
         OPEN_CODE_ANTHROPIC_API_KEY_PURPOSE_ID,
         { kind: 'environment', keys: ['ANTHROPIC_API_KEY'] },
@@ -315,7 +327,7 @@ export async function prepareOpenCodeQualifiedConnectedAccounts<Request extends 
       });
       context.signal?.throwIfAborted();
     }
-    const qualifiedAuth = usedBinding ? buildOpenCodeQualifiedAuthContent({
+    const qualifiedAuth = hasSelectedAccount ? buildOpenCodeQualifiedAuthContent({
       baseAuthContent: requestAuthEnvironment?.env.OPENCODE_AUTH_CONTENT,
       directAccountCredentials,
       requiredRequestAuthProviders,
@@ -353,6 +365,7 @@ export async function prepareOpenCodeQualifiedConnectedAccounts<Request extends 
 
     return Object.freeze({
       request: preparedRequest,
+      ...(hasSelectedAccount ? { catalogConfidence: 'account_unverified' as const } : {}),
       isInvalidated: () => invalidated || context.signal?.aborted === true,
       bindSession(session) {
         let sessionDisposed = false;

@@ -11,6 +11,7 @@ import type {
   AgentSessionOpenRequest,
   AgentSessionRuntime,
   AgentSessionRuntimeContext,
+  AgentSessionConfigurationSnapshot,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { buildOpenCodeRequestAuthMarker } from '../auth/services/requestAuth/source.js';
@@ -52,6 +53,11 @@ function createExecutionRun(): AgentExecutionRunRuntime {
     watch: () => ({ dispose: () => undefined }),
     dispose: vi.fn(async () => undefined),
   };
+}
+
+function explicitNativeConfiguration(modelId = 'openai/gpt-5'): AgentSessionConfigurationSnapshot {
+  return { mode: { value: null, updatedAtMs: 0 }, model: { value: modelId, selectionSource: 'explicit', updatedAtMs: 1 },
+    permissionIntent: { value: null, updatedAtMs: 0 }, options: {} };
 }
 
 const OPEN_CODE_CONNECTED_ACCOUNT_PURPOSES = [
@@ -186,6 +192,7 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
       expect.anything(),
       expect.anything(),
       expect.anything(),
+      undefined,
     );
   });
 
@@ -386,6 +393,7 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
       kind: 'create',
       sessionId: 'happier-acp-openai',
       cwd: '/repo',
+      configuration: explicitNativeConfiguration(),
       launchEnvironment: {
         values: {
           HAPPIER_OPENCODE_BACKEND_MODE: 'acp',
@@ -458,6 +466,7 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
       kind: 'create',
       sessionId: 'happier-invalidated-before-open',
       cwd: '/repo',
+      configuration: explicitNativeConfiguration(),
       launchEnvironment: {
         values: { HAPPIER_OPENCODE_BACKEND_MODE: 'acp', OPENCODE_AUTH_CONTENT: '{}' },
         unset: [],
@@ -506,6 +515,7 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
       kind: 'create',
       sessionId: 'happier-invalidated-during-open',
       cwd: '/repo',
+      configuration: explicitNativeConfiguration(),
       launchEnvironment: {
         values: { HAPPIER_OPENCODE_BACKEND_MODE: 'acp', OPENCODE_AUTH_CONTENT: '{}' },
         unset: [],
@@ -562,6 +572,7 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
       kind: 'create',
       sessionId: 'happier-mixed-auth',
       cwd: '/repo',
+      configuration: explicitNativeConfiguration(),
       launchEnvironment: {
         values: {
           HAPPIER_OPENCODE_BACKEND_MODE: 'server',
@@ -611,6 +622,7 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
       expect.any(Object),
       expect.anything(),
       expect.any(Function),
+      'account_unverified',
     );
     await opened.dispose();
   });
@@ -641,6 +653,7 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
       kind: 'create',
       sessionId: 'happier-unselected-claude-refusal',
       cwd: '/repo',
+      configuration: explicitNativeConfiguration('anthropic/claude-sonnet-4-5'),
       launchEnvironment: {
         values: { HAPPIER_OPENCODE_BACKEND_MODE: 'acp', OPENCODE_AUTH_CONTENT: '{}' },
         unset: [],
@@ -684,6 +697,7 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
       kind: 'create',
       sessionId: 'happier-setup-token',
       cwd: '/repo',
+      configuration: explicitNativeConfiguration('anthropic/claude-sonnet-4-5'),
       launchEnvironment: {
         values: {
           HAPPIER_OPENCODE_BACKEND_MODE: 'server',
@@ -721,6 +735,7 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
       expect.any(Object),
       expect.anything(),
       expect.any(Function),
+      'account_unverified',
     );
   });
 
@@ -750,6 +765,7 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
       kind: 'create',
       sessionId: 'happier-malformed-auth',
       cwd: '/repo',
+      configuration: explicitNativeConfiguration('anthropic/claude-sonnet-4-5'),
       launchEnvironment: {
         values: { HAPPIER_OPENCODE_BACKEND_MODE: 'acp', OPENCODE_AUTH_CONTENT: '{}' },
         unset: [],
@@ -1014,6 +1030,7 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
         context,
         context.workState,
         expect.any(Function),
+        undefined,
       );
     },
   );
@@ -1063,6 +1080,7 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
       context,
       undefined,
       expect.any(Function),
+      undefined,
     );
     await openedSession.dispose();
   });

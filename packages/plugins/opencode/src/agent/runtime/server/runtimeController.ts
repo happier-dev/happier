@@ -493,7 +493,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
       const providers = await client.providersList();
       const observedAt = Date.now();
       const catalog = buildOpenCodeModelCatalogFromProviders(providers, observedAt);
-      modelCatalog = { ...modelCatalog, observedAt, models: catalog.models };
+      modelCatalog = { ...modelCatalog, observedAt, models: catalog.models, catalogConfidence: catalog.catalogConfidence };
       if (catalog.unavailableReason) {
         params.ctx.logger.warn('[OpenCodeServer] native model catalog is incomplete', { operation: 'model_inventory', reason: catalog.unavailableReason });
       }

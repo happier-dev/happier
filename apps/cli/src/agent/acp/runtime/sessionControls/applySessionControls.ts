@@ -7,6 +7,7 @@ type AcpRuntimeSessionControlBackend = Readonly<{
     sessionId: string,
     modelId: string,
     requestMeta?: Readonly<Record<string, unknown>>,
+    selection?: Readonly<{ allowUnlisted: boolean }>,
   ) => Promise<void>;
   setSessionConfigOption?: (
     sessionId: string,
@@ -42,6 +43,7 @@ export async function applyAcpRuntimeSessionModel(
   context: AcpRuntimeSessionControlContext,
   modelId: string,
   requestMeta?: Readonly<Record<string, unknown>>,
+  selection?: Readonly<{ allowUnlisted: boolean }>,
 ): Promise<void> {
   const normalizedModelId = readNonBlankOpaqueIdentifier(modelId);
   if (!normalizedModelId) return;
@@ -52,7 +54,7 @@ export async function applyAcpRuntimeSessionModel(
   }
 
   const backend = await context.ensureBackend();
-  await backend.setSessionModel?.(sessionId, normalizedModelId, requestMeta);
+  await backend.setSessionModel?.(sessionId, normalizedModelId, requestMeta, selection);
 }
 
 export async function applyAcpRuntimeSessionConfigOption(

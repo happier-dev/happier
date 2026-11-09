@@ -1,11 +1,12 @@
 import type { OpenCodeRuntimeEvent } from './runtimeEvents.js';
-import type { AgentSessionCompactRequest } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentSessionCompactRequest, AgentSessionModelsSnapshot } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { OpenCodePreflightModel } from '../../preflight/models.js';
 
 export type OpenCodeModelCatalogSnapshot = Readonly<{
   observedAt: number;
   models: readonly OpenCodePreflightModel[] | null;
   currentModelId?: string | null;
+  catalogConfidence?: AgentSessionModelsSnapshot['catalogConfidence'];
 }>;
 
 export type OpenCodeModeCatalogSnapshot = Readonly<{

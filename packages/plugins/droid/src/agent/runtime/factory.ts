@@ -46,8 +46,10 @@ function launch<TRequest extends AgentSessionOpenRequest | AgentExecutionRunOpen
         },
         projectModelId: ({ modelId }) => modelId === advertisedNativeModelId ? model.id : modelId,
         resolveModelUpdate({ modelId, modelState }) {
-          if (advertisedNativeModelId === null || !modelState?.availableModels.some(option => option.id === model.id && option.name === model.name)
-            || (modelId !== model.id && modelId !== advertisedNativeModelId)) throw unavailable();
+          if (advertisedNativeModelId === null || !modelState?.availableModels.some(option => option.id === model.id && option.name === model.name)) throw unavailable();
+          if (modelId !== model.id && modelId !== advertisedNativeModelId) throw new PluginError({
+            code: 'droid_provider_model_unavailable', message: 'Restart Droid to apply a different configured model.',
+            details: { status: 'requires_restart' } });
           return { modelId: advertisedNativeModelId };
         },
       } },

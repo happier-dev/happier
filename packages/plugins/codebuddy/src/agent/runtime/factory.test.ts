@@ -58,8 +58,8 @@ describe('CodeBuddy selected account default', () => {
 
   it.each([
     { value: null, selectionSource: 'explicit' as const },
-    { value: 'foreign-model', selectionSource: 'inherited' as const },
-  ])('requires a deliberate account model before native effects ($selectionSource)', async model => {
+    { value: null, selectionSource: 'inherited' as const },
+  ])('requires a concrete account model before native effects ($selectionSource)', async model => {
     const activation = await createPluginTestkit({ manifest: CODEBUDDY_PLUGIN.manifest, module: CODEBUDDY_PLUGIN });
     const account = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'selected' };
     const materialize = vi.fn(async () => { throw new Error('Model selection must precede credential acquisition'); });

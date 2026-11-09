@@ -1,5 +1,6 @@
 import { createAcpProviderJournalFollower } from '@/plugins/runtime/context/transcripts/acpProviderJournal';
 import { createPublicProviderTurns } from './providerTurns';
+import { isPluginError } from '@happier-dev/plugin-sdk';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import { PluginAgentAcpTransportSchema } from '@happier-dev/protocol/plugins/contributions/agentAcpTransport';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
@@ -1875,28 +1876,21 @@ async function createPublicAcpConversationFromAwaitableAdapter(
         await applyAcpRuntimeSessionConfigOption(controlContext, id, value.value);
       }
       if (modelChanged && update.model.value !== null) {
-        const observedModels = backend.getSessionModelState();
-        const nativeValidatesUnlisted = update.model.selectionSource === 'explicit'
-          && options.definition?.allowExplicitUnlistedModels === true;
-        const unavailable = observedModels && observedModels.availableModels.length > 0
-          && update.model.value !== observedModels.currentModelId
-          && !observedModels.availableModels.some(model => model.id === update.model.value)
-          && !nativeValidatesUnlisted;
-        if (unavailable && !applyOptions?.initial) {
-          return { status: 'rejected', diagnostic: diagnostic('acp_model_not_available',
-            'The requested model is not advertised by this Agent.') };
-        }
-        if (unavailable) {
-          // Scope is now settled by the standalone controls above. Retain the
-          // Agent's own default rather than sending a stale foreign selection.
-          initialConfiguration = { ...update, model: { ...update.model, value: null } };
-        } else {
+        try {
           // Initial configuration retains its established model-before-options
           // ordering; an observed current model already satisfies a live update.
           if (applyOptions?.initial || backend.getSessionModelState()?.currentModelId !== update.model.value) {
-            await applyAcpRuntimeSessionModel(controlContext, update.model.value);
+            await applyAcpRuntimeSessionModel(controlContext, update.model.value, undefined, {
+              allowUnlisted: update.model.selectionSource === 'explicit'
+                && options.definition?.allowExplicitUnlistedModels === true,
+            });
           }
           changed.push('model');
+        } catch (error) {
+          if (!applyOptions?.initial || !isPluginError(error) || error.code !== 'acp_model_not_available') throw error;
+          // Scope is now settled by the standalone controls above. Retain the
+          // Agent's own default rather than sending a stale foreign selection.
+          initialConfiguration = { ...update, model: { ...update.model, value: null } };
         }
       }
 
@@ -1962,14 +1956,17 @@ async function createPublicAcpConversationFromAwaitableAdapter(
         changed.push(`options.${id}`);
       }
     } catch (error) {
+      const restartRequired = !applyOptions?.signal?.aborted && isPluginError(error) && isRecord(error.details)
+        && error.details.status === 'requires_restart';
       return {
         status: applyOptions?.signal?.aborted ? 'unavailable' : 'rejected',
-        diagnostic: diagnostic(
+        diagnostic: { ...diagnostic(
           applyOptions?.signal?.aborted
             ? 'acp_configuration_update_aborted'
-            : 'acp_configuration_update_failed',
+            : isPluginError(error) && error.code === 'acp_model_not_available'
+              ? error.code : 'acp_configuration_update_failed',
           error instanceof Error ? error.message : undefined,
-        ),
+        ), ...(restartRequired ? { details: { status: 'requires_restart' } } : {}) },
       };
     }
     return { status: 'applied', changed: Object.freeze(changed) };

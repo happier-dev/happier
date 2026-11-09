@@ -1361,6 +1361,11 @@ export function assertNativeAgentSessionModeAvailable(
 function toHostConfigurationOutcome(
     result: Awaited<ReturnType<NonNullable<AgentSessionRuntime['updateConfiguration']>>>,
 ): RuntimeConfigUpdateOutcomeV1 {
+    if ('diagnostic' in result && result.diagnostic.details
+        && typeof result.diagnostic.details === 'object' && !Array.isArray(result.diagnostic.details)
+        && result.diagnostic.details.status === 'requires_restart') {
+        return { status: 'requires_restart', diagnostic: result.diagnostic };
+    }
     if ('diagnostic' in result && result.diagnostic.code === 'role_policy_restart_required') {
         return { status: 'requires_restart', reason: result.diagnostic.code, diagnostic: result.diagnostic };
     }

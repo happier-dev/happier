@@ -644,7 +644,8 @@ describe('createOpenCodeSessionRuntime', () => {
 
     expect(modelSource?.read()).toEqual({
       observedAt: 0,
-      models: null,
+      models: [],
+      catalogConfidence: 'account_unverified',
       currentModelId: null,
     });
   });

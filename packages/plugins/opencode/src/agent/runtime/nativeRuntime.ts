@@ -9,6 +9,7 @@ import {
   type AgentSessionRuntime,
   type AgentSessionRuntimeContext,
   type AgentSessionRuntimeFactory,
+  type AgentSessionModelsSnapshot,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { PluginError } from '@happier-dev/plugin-sdk';
 
@@ -47,10 +48,16 @@ const OPEN_CODE_ACP_RUNTIME_DEFINITION = {
   },
 } satisfies AgentAcpRuntimeDefinition;
 
-function openCodeAcpDefinition(request: AgentSessionOpenRequest | AgentExecutionRunOpenRequest): AgentAcpRuntimeDefinition {
+function openCodeAcpDefinition(request: AgentSessionOpenRequest | AgentExecutionRunOpenRequest,
+  catalogConfidence?: AgentSessionModelsSnapshot['catalogConfidence']): AgentAcpRuntimeDefinition {
   const projection = { registrations: Object.keys(request.mcpServers ?? {}).map((key) => ({ originalName: key, projectedName: key })) };
+  const confidence = request.providerBinding ? 'account_unverified' : catalogConfidence;
   return {
     ...OPEN_CODE_ACP_RUNTIME_DEFINITION,
+    ...(confidence === undefined ? {} : { models: {
+      catalogConfidence: confidence,
+      projectModel: (_raw, model) => model,
+    } satisfies NonNullable<AgentAcpRuntimeDefinition['models']> }),
     toolNameResolver({ toolName, input }) {
       const acp = input._acp !== null && typeof input._acp === 'object' ? input._acp as Readonly<Record<string, unknown>> : undefined;
       for (const name of [toolName, acp?.title]) {
@@ -112,6 +119,7 @@ async function withOpenCodeConfigLaunchEnvironment<
 async function openOpenCodeAcpExecutionRun(
   request: AgentExecutionRunOpenRequest,
   context: AgentExecutionRunRuntimeContextV1,
+  catalogConfidence?: AgentSessionModelsSnapshot['catalogConfidence'],
 ): Promise<AgentExecutionRunRuntime> {
   const launchRequest = await withOpenCodeConfigLaunchEnvironment(request);
   return await context.protocols.acp.openExecutionRunV1(launchRequest, {
@@ -122,7 +130,7 @@ async function openOpenCodeAcpExecutionRun(
       env: { NODE_ENV: 'production', DEBUG: '' },
       timeouts: { initializeMs: 60_000, idleMs: 1_500 },
     },
-    definition: openCodeAcpDefinition(request),
+    definition: openCodeAcpDefinition(request, catalogConfidence),
   });
 }
 
@@ -136,7 +144,7 @@ async function openOpenCodeExecutionRun(
       throw new Error('OpenCode qualified Connected Account launch was invalidated before opening the runtime.');
     }
     const runtime = readOpenCodeNativeMode(prepared.request) === 'acp'
-      ? await openOpenCodeAcpExecutionRun(prepared.request, context)
+      ? await openOpenCodeAcpExecutionRun(prepared.request, context, prepared.catalogConfidence)
       : await openOpenCodeServerExecutionRun(prepared.request, context);
     if (prepared.isInvalidated()) {
       await runtime.dispose();
@@ -152,6 +160,7 @@ async function openOpenCodeExecutionRun(
 async function openOpenCodeAcpSession(
   request: AgentSessionOpenRequest,
   context: AgentRuntimeContext,
+  catalogConfidence?: AgentSessionModelsSnapshot['catalogConfidence'],
 ) {
   const launchRequest = await withOpenCodeConfigLaunchEnvironment(request);
   return context.protocols.acp.open(launchRequest, {
@@ -171,7 +180,7 @@ async function openOpenCodeAcpSession(
         idleMs: 1_500,
       },
     },
-    definition: openCodeAcpDefinition(request),
+    definition: openCodeAcpDefinition(request, catalogConfidence),
   });
 }
 
@@ -187,12 +196,13 @@ async function openOpenCodeSession(
     }
     const mode = readOpenCodeNativeMode(prepared.request);
     const session = mode === 'acp'
-      ? await openOpenCodeAcpSession(prepared.request, context)
+      ? await openOpenCodeAcpSession(prepared.request, context, prepared.catalogConfidence)
       : await openOpenCodeServerSession(
           prepared.request,
           context,
           (context as Partial<AgentSessionRuntimeContext>).workState,
           bindActiveSkillsReader,
+          prepared.catalogConfidence,
         );
     if (prepared.isInvalidated()) {
       await session.dispose('runtime_recovery');

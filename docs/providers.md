@@ -140,9 +140,9 @@ stages share the admitted launch material. Neither integration receives refresh
 tokens. These static credentials are rematerialized on a new or restarted run;
 they do not renew inside an already-running native process.
 
-FX's Codex route has no built-in default model. Select an explicit model for a
-ChatGPT Connected Account; otherwise its shared Session, terminal, finite-run
-and preflight preparation returns the typed `model_selection_required` startup
+FX's Codex route has no built-in default model. A ChatGPT Connected Account
+requires a resolved, nonblank model, including an inherited finite-run model.
+Without one, its shared Session, terminal, finite-run and preflight preparation returns the typed `model_selection_required` startup
 failure reason before acquiring credentials or launching FX. Native-unbound
 launches keep their native model preferences.
 
@@ -711,6 +711,11 @@ runnable source-catalog membership for Provider connections and Connected Accoun
 or pool targets. It excludes unverified, stale, hidden and incompatible rows.
 Current exact-account observations and ordinary Provider `verified_static` or
 `manual` rows remain eligible under the same visibility and compatibility rules.
+The confidence rule is shared through Protocol's `rpc/providers.ts`. Native
+preflight pickers retain diagnostic rows but apply that rule to the selected
+Connected Account's scoped observation before offering choices. Static and
+provenance-less cached lists stay diagnostic until a dynamic observation answers;
+unbound native lists and explicit current selections retain their existing behavior.
 
 In 0.3 development, retained 0.2 Voice OpenAI-compatible Chat settings import
 into the connection's `modelSettings`, not per-prompt Voice configuration. The
@@ -1067,16 +1072,21 @@ model IDs use the Agent's ordinary freeform model selector. The upstream remains
 the authority on entitlement, and the host retains its existing known model
 eligibility blockers for account groups. These routes do not discover a new
 per-account model catalog.
-Copilot, CodeBuddy and Droid's generated selected-account overlays and Kilo's native catalog
-remain unverified inventory. The shared Session publication owner withholds their
+Selected-account inventories for Copilot, CodeBuddy, Droid, Kilo and FX remain
+unverified; generated overlays and native lists do not establish account membership. The shared Session publication owner withholds their
 model choices and ACP model-option choices while retaining the active model and
 explicit native model controls.
-Copilot's Provider-bound native choices also remain unverified; the selected
+Copilot and FX Provider-bound native choices also remain unverified; the selected
 Provider model still controls the launched process.
 Copilot, CodeBuddy, Droid and Kilo reuse their launch preparation for selected-account preflight.
-Without an explicit model, preparation refuses before native startup; choose a
+Without a concrete model, preparation refuses before native startup; choose a
 model and retry the launch. Copilot, CodeBuddy, Droid and Kilo retain `model_selection_required`
 as the typed startup failure reason through Session status and launch recovery.
+Resolved saved helper pins and inherited Session models retain their concrete
+model selection; their provenance does not make them a native default.
+Changing the process-selected model in a selected-account CodeBuddy, Droid or
+Copilot Session reports `restart_required`. Their native resume contracts do not
+currently admit the successor Session; the active Session retains its prior model.
 Kilo uses its existing OpenAI model namespace policy for both initial and later
 model choices.
 
@@ -1091,6 +1101,15 @@ warning carries that limitation without expanding the SDK contract.
 An observed native inventory refusal replaces stale cached rows even when the
 native account changes within the same probe scope; an unavailable transport
 retains the previous usable observation through the existing failed-refresh path.
+For a selected native Connected Account, OpenCode requires a concrete native
+model belonging to a selected account's declared provider before acquiring
+credentials. Resolved helper and Session model selections remain usable when
+inherited. A missing native model could select another provider's saved default,
+so preparation returns the typed `model_selection_required` startup reason
+instead. Selected-account and Provider-bound Session inventories remain
+`account_unverified`; the shared catalog owner withholds their choices while
+preserving the active model and explicit model controls. Unbound native launches
+retain OpenCode's own default selection.
 
 Copilot writes a private temporary providers file, Droid writes private temporary
 custom-model settings referencing a child-only access-token environment value,

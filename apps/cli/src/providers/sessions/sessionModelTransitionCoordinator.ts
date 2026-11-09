@@ -46,7 +46,7 @@ export type SessionModelTransitionApplyResult =
   | Readonly<{ status: 'applied' }>
   | Readonly<{ status: 'deferred'; reason?: string }>
   | Readonly<{
-      status: 'failed' | 'unsupported' | 'unproven';
+      status: 'failed' | 'unsupported' | 'unproven' | 'requires_restart';
       reason?: string;
       readbackAfterCompletion?: boolean;
     }>;
@@ -82,7 +82,7 @@ export function mapRuntimeConfigUpdateOutcomeToSessionModelTransitionApplyResult
     return { status: 'applied' };
   }
   return {
-    status: outcome.status === 'unsupported' ? 'unsupported' : 'failed',
+    status: outcome.status === 'requires_restart' ? 'requires_restart' : outcome.status === 'unsupported' ? 'unsupported' : 'failed',
     reason: projectSessionModelTransitionReason(
       outcome.reason,
       'runtime_model_transition_not_applied',
@@ -1277,7 +1277,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
         return;
       }
       proposal.resolve(failure(
-        'apply_failed',
+        applied.status === 'requires_restart' ? 'restart_required' : 'apply_failed',
         activeTarget.selection,
         proposal.selection,
         applied.reason,

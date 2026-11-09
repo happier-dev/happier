@@ -17,6 +17,8 @@ import { createDroidAgentRuntime } from '../../../../../packages/plugins/droid/s
 import { DROID_CHATGPT_PURPOSE } from '../../../../../packages/plugins/droid/src/agent/runtime/connectedAccount.js';
 import { createCopilotAgentRuntime } from '../../../../../packages/plugins/copilot/src/agent/runtime/factory.js';
 import { COPILOT_OPENAI_CODEX_PURPOSE_ID } from '../../../../../packages/plugins/copilot/src/agent/auth/services/accountPurposes.js';
+import { createOpenCodeAgentRuntime } from '../../../../../packages/plugins/opencode/src/agent/runtime/nativeRuntime.js';
+import { OPEN_CODE_OPENAI_API_KEY_PURPOSE_ID } from '../../../../../packages/plugins/opencode/src/agent/auth/services/purposes.js';
 import { PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID } from '../../../../../packages/plugins/pi/src/agent/auth/services/requestAuth/purposes.js';
 import { sanitizeNativeAgentSessionBoundaryError } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionBoundaryError';
 import { classifyPrimarySessionRuntimeIssue, readSessionPreparationFailureDiagnostic } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
@@ -31,13 +33,42 @@ import { projectSessionSpawnFailure } from './projectSessionSpawnFailure';
 vi.mock('axios');
 
 describe('Connected Account default refusal', () => {
-  it.each(['pi', 'codebuddy', 'droid', 'kilo', 'copilot'] as const)('retains %s model-pick guidance through native startup, durable status and launch Action projection', async agentId => {
+  it.each(['anthropic/claude-sonnet-4-5', 'google/gemini-2.5-pro'])('refuses an OpenCode model outside the selected account provider: %s', async modelId => {
+    const purpose = OPEN_CODE_OPENAI_API_KEY_PURPOSE_ID;
+    const service = { pluginId: 'happier.voice.openai', localId: 'openai' };
+    const materialize = vi.fn(async () => { throw new Error('Foreign model must not acquire credentials'); });
+    const open = vi.fn(async () => { throw new Error('Foreign model must not open native ACP'); });
+    const context = { signal: new AbortController().signal,
+      services: { connectedAccounts: { materialize,
+        watch(_purpose: string, callback: () => void) { callback(); return { dispose() {} }; },
+        async getBinding(requested: string) { return requested === purpose
+          ? { purpose, service, account: { service, accountId: 'primary' }, target: { kind: 'account', displayName: 'Primary' } }
+          : null; },
+      } }, protocols: { acp: { open } },
+    } as unknown as AgentSessionRuntimeContext;
+    const runtime = await createOpenCodeAgentRuntime({ plugin: { id: 'happier.agent.opencode', version: '0.0.0' },
+      agent: { id: 'opencode' }, signal: context.signal });
+    const failure = await runtime.sessions!.open({ kind: 'create', sessionId: 'opencode-foreign-model', cwd: '/workspace',
+      configuration: { mode: { value: null, updatedAtMs: 0 }, model: { value: modelId, selectionSource: 'explicit', updatedAtMs: 1 },
+        permissionIntent: { value: 'read-only', updatedAtMs: 0 }, options: {} },
+    }, context).catch((error: unknown) => sanitizeNativeAgentSessionBoundaryError(error, true));
+    expect(readSessionPreparationFailureDiagnostic(failure).failureCause).toMatchObject({
+      code: 'agent_startup_model_reconciliation_failed', phase: 'client_start',
+      failureReason: 'model_selection_required', retryable: false,
+    });
+    expect(materialize).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it.each(['pi', 'codebuddy', 'droid', 'kilo', 'copilot', 'opencode'] as const)('retains %s model-pick guidance through native startup, durable status and launch Action projection', async agentId => {
     const factories: Readonly<Record<typeof agentId, AgentRuntimeFactory>> = {
-      pi: createPiAgentRuntime, codebuddy: createCodeBuddyAgentRuntime, droid: createDroidAgentRuntime, kilo: createKiloAgentRuntime, copilot: createCopilotAgentRuntime,
+      pi: createPiAgentRuntime, codebuddy: createCodeBuddyAgentRuntime, droid: createDroidAgentRuntime, kilo: createKiloAgentRuntime, copilot: createCopilotAgentRuntime, opencode: createOpenCodeAgentRuntime,
     };
     const purpose = { pi: PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
-      codebuddy: CODEBUDDY_CODEX_PURPOSE, droid: DROID_CHATGPT_PURPOSE, kilo: KILO_CODEX_PURPOSE, copilot: COPILOT_OPENAI_CODEX_PURPOSE_ID }[agentId];
-    const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
+      codebuddy: CODEBUDDY_CODEX_PURPOSE, droid: DROID_CHATGPT_PURPOSE, kilo: KILO_CODEX_PURPOSE, copilot: COPILOT_OPENAI_CODEX_PURPOSE_ID,
+      opencode: OPEN_CODE_OPENAI_API_KEY_PURPOSE_ID }[agentId];
+    const service = agentId === 'opencode' ? { pluginId: 'happier.voice.openai', localId: 'openai' }
+      : { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
     // The Connected Account and OS adapters are genuine host boundaries. Keep the
     // Agent preparation, refusal, host classifiers and persistence writer real.
     const context = {

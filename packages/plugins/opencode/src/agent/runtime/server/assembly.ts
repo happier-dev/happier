@@ -5,6 +5,7 @@ import type {
   AgentSessionMcpService,
   AgentSessionRuntime,
   AgentSessionRuntimeContext,
+  AgentSessionModelsSnapshot,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { AGENT_DEFINITION } from '../../definition.js';
@@ -199,6 +200,7 @@ type OpenCodeServerRuntimeAssemblyCommon = Readonly<{
   signal?: AbortSignal;
   mcpService?: AgentSessionMcpService;
   models?: AgentSessionRuntimeContext['session']['services']['models'];
+  catalogConfidence?: AgentSessionModelsSnapshot['catalogConfidence'];
   modes?: AgentSessionRuntimeContext['session']['services']['modes'];
   inputFiles?: NonNullable<AgentSessionRuntimeContext['session']['services']['inputFiles']>;
   bindActiveSkillsReader?: OpenCodeActiveSkillsReaderRegistrar;
@@ -416,6 +418,7 @@ export async function createOpenCodeServerRuntimeAssembly(
             };
           },
           ...(params.models ? { models: params.models } : {}),
+          ...(params.catalogConfidence === undefined ? {} : { catalogConfidence: params.catalogConfidence }),
           ...(typeof providerConfigPart?.model === 'string' ? { providerModelId: providerConfigPart.model } : {}),
           ...(params.modes ? { modes: params.modes } : {}),
           ...(params.inputFiles ? { inputFiles: params.inputFiles } : {}),

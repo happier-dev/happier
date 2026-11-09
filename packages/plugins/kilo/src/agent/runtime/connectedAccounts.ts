@@ -61,9 +61,9 @@ export async function prepareKiloConnectedAccount(request: Pick<AgentSessionOpen
   const capabilityPath = request.launchEnvironment?.values[CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV];
   if (!capabilityPath) return { env: {} };
   if (request.providerBinding) throw new PluginError({ code: 'plugin_kilo_subscription_provider_conflict', message: 'Select either a Connected ChatGPT account or a Provider connection for Kilo.' });
-  if (!request.configuration?.model.value?.trim() || request.configuration.model.selectionSource !== 'explicit') {
+  if (!request.configuration?.model.value?.trim()) {
     throw new PluginError({ code: 'agent_startup_model_reconciliation_failed', retryable: false,
-      message: 'Choose an explicit model for the Kilo ChatGPT Connected Account.',
+      message: 'Choose a model for the Kilo ChatGPT Connected Account.',
       details: { failureCause: { code: 'agent_startup_model_reconciliation_failed',
         phase: 'client_start', failureReason: 'model_selection_required', retryable: false } } });
   }

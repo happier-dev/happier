@@ -14,7 +14,7 @@ import { COPILOT_PLUGIN } from '../../manifest.js';
 const account = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'synthetic-account' };
 const signal = new AbortController().signal;
 const configuration = { mode: { value: null, updatedAtMs: 1 },
-  model: { value: 'subscription-only-model', updatedAtMs: 2, selectionSource: 'explicit' as const },
+  model: { value: 'subscription-only-model', updatedAtMs: 2, selectionSource: 'inherited' as const },
   permissionIntent: { value: 'read-only' as const, updatedAtMs: 3 }, options: {} };
 const disposals: Array<() => void | Promise<void>> = [];
 afterEach(async () => { await Promise.all(disposals.splice(0).map(dispose => dispose())); });
@@ -158,11 +158,11 @@ describe('Copilot ChatGPT static native launch', () => {
     await expect(access(path)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  it.each(['missing-model', 'inherited-model', 'missing-account'] as const)('refuses %s before the native consumer opens', async failure => {
+  it.each(['missing-model', 'empty-model', 'missing-account'] as const)('refuses %s before the native consumer opens', async failure => {
     const { runtime, context, open } = await fixture(failure === 'missing-account');
     await expect(runtime.sessions.open({ kind: 'create', sessionId: 'refused', cwd: '/workspace',
-      configuration: failure === 'missing-model' ? undefined : failure === 'inherited-model'
-        ? { ...configuration, model: { ...configuration.model, selectionSource: 'inherited' } } : configuration,
+      configuration: failure === 'missing-model' ? undefined : failure === 'empty-model'
+        ? { ...configuration, model: { ...configuration.model, value: '' } } : configuration,
     }, context)).rejects.toMatchObject({ code: failure === 'missing-account' ? 'copilot_account_materialization_unavailable' : 'agent_startup_model_reconciliation_failed' });
     expect(open).not.toHaveBeenCalled();
   });

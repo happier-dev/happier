@@ -5670,11 +5670,14 @@ describe('createOpenCodeServerRuntime', () => {
     const launchEnvironment = { values: {
       HAPPIER_CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH: '/fixture/request-auth/capability.json',
     }, unset: [] };
+    const configuration = { mode: { value: null, updatedAtMs: 0 },
+      model: { value: `${row.slot}/native-model`, selectionSource: 'explicit' as const, updatedAtMs: 1 },
+      permissionIntent: { value: null, updatedAtMs: 0 }, options: {} };
     const runRequest = { kind: 'create' as const, runId: 'native-account-run', cwd: '/repo',
-      profile: { pluginId: 'happier.agent.opencode', localId: 'opencode' }, input: { text: 'hello' }, localInputId: 'native-account-input', launchEnvironment };
+      profile: { pluginId: 'happier.agent.opencode', localId: 'opencode' }, input: { text: 'hello' }, localInputId: 'native-account-input', launchEnvironment, configuration };
     const prepared = isRun
       ? await prepareOpenCodeQualifiedConnectedAccounts(runRequest, sourceContext)
-      : await prepareOpenCodeQualifiedConnectedAccounts({ kind: 'create', sessionId: 'happy-session-1', cwd: '/repo', launchEnvironment }, sourceContext);
+      : await prepareOpenCodeQualifiedConnectedAccounts({ kind: 'create', sessionId: 'happy-session-1', cwd: '/repo', launchEnvironment, configuration }, sourceContext);
     const auth = JSON.parse(prepared.request.launchEnvironment!.values.OPENCODE_AUTH_CONTENT) as Record<string, { key: string }>;
     expect(auth[row.slot].key).toBe(row.proxy ? buildOpenCodeRequestAuthMarker(row.slot) : 'fixture-native-key');
     let providerUserMessageId = '';
