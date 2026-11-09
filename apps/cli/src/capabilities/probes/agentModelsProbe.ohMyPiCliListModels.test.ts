@@ -9,42 +9,59 @@ import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRu
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { withAgentPreflightCatalog } from './withAgentPreflightCatalog';
 
-describe('probeAgentModelsBestEffort (OhMyPi preflight)', () => {
-  it('uses the OhMyPi plugin preflight contribution for source-real dynamic models', async () => {
-    const fixture = await createProbeTempDir('happier-ohmypi-cli-list-models');
+describe('probeAgentModelsBestEffort (Pi and Oh My Pi native candidate provenance)', () => {
+  it.each([
+    { agentId: 'ohMyPi', pluginId: 'happier.agent.ohmypi', executableName: 'omp', overrideKey: 'HAPPIER_OHMYPI_PATH',
+      script: [
+        'if (process.argv[2] !== "models" || process.argv[3] !== "--json") process.exit(1);',
+        `process.stdout.write(JSON.stringify({ models: [
+          { provider: 'openai', id: 'gpt-5.4', kind: 'chat', thinking: ['low', 'high'] },
+          { provider: 'anthropic', id: 'claude-3-7-sonnet-latest', kind: 'chat', thinking: [] },
+        ] }));`,
+      ] },
+    { agentId: 'pi', pluginId: 'happier.agent.pi', executableName: 'pi', overrideKey: 'HAPPIER_PI_PATH',
+      script: [
+        'if (process.argv[2] !== "--mode" || process.argv[3] !== "json" || !process.argv.includes("--no-session")) process.exit(1);',
+        `process.stderr.write(JSON.stringify({ type: 'happier-pi-model-catalog', models: [
+          { provider: 'openai', id: 'gpt-5.4', name: 'GPT', reasoning: true },
+          { provider: 'anthropic', id: 'claude-3-7-sonnet-latest', name: 'Claude', reasoning: false },
+        ] }) + '\\n');`,
+      ] },
+  ])('preserves $agentId candidate diagnostics as static through the actual host preflight ingress', async agent => {
+    const fixture = await createProbeTempDir(`happier-${agent.agentId}-cli-list-models`);
     const binDir = resolve(join(fixture.dir, 'bin'));
     await mkdir(binDir, { recursive: true });
 
     const scriptPath = join(binDir, 'omp.cjs');
     await writeFile(scriptPath, [
-      'if (process.argv[2] === "--version") { process.stdout.write("1.0.0\\n"); process.exit(0); }',
-      'if (process.argv[2] !== "--list-models") process.exit(1);',
-      'process.stdout.write("provider      model                       context  max-out  thinking  images\\nopenai        gpt-5.4                     272K     128K     yes       yes\\nanthropic     claude-3-7-sonnet-latest    200K     64K      no        yes\\n");',
+      'if (process.argv[2] === "--version") { process.stdout.write("0.82.1\\n"); process.exit(0); }',
+      ...agent.script,
     ].join('\n'));
     const ompPath = await writeExecutableShim({ dir: binDir,
-      fileName: process.platform === 'win32' ? 'omp.cmd' : 'omp',
+      fileName: process.platform === 'win32' ? `${agent.executableName}.cmd` : agent.executableName,
       contents: process.platform === 'win32'
         ? `@echo off\r\n"${process.execPath}" "${scriptPath}" %*\r\nexit /b %errorlevel%\r\n`
         : `#!/bin/sh\nexec "${process.execPath}" "${scriptPath}" "$@"\n`,
     });
 
     const prevPath = process.env.PATH;
-    const prevOverride = process.env.HAPPIER_OHMYPI_PATH;
+    const prevOverride = process.env[agent.overrideKey];
     const prevOpenAiApiKey = process.env.OPENAI_API_KEY;
     process.env.PATH = `${binDir}${delimiter}${prevPath ?? ''}`;
-    process.env.HAPPIER_OHMYPI_PATH = ompPath;
+    process.env[agent.overrideKey] = ompPath;
     process.env.OPENAI_API_KEY = 'sk-test';
     let runtime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | undefined;
     try {
       runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
-        runtimeOptions: { pluginIds: ['happier.agent.ohmypi'] },
+        runtimeOptions: { pluginIds: [agent.pluginId] },
       });
       const { probeAgentModelsBestEffort } = await import('./agentModelsProbe');
 
-      const result = await withAgentPreflightCatalog({ agentId: 'ohMyPi' }, async context =>
-        await probeAgentModelsBestEffort({ agentId: 'ohMyPi', cwd: fixture.dir, timeoutMs: 2_000,
+      const result = await withAgentPreflightCatalog({ agentId: agent.agentId }, async context =>
+        await probeAgentModelsBestEffort({ agentId: agent.agentId, cwd: fixture.dir, timeoutMs: 2_000,
           catalogEntry: context.catalogEntry, runtimeCacheKey: context.runtimeCacheKey }));
-      expect(result.source).toBe('dynamic');
+      expect(result.source).toBe('static');
+      expect(result.observedAt).toBeUndefined();
       expect(result.availableModels).toEqual(expect.arrayContaining([
         expect.objectContaining({
           id: 'openai/gpt-5.4',
@@ -60,9 +77,9 @@ describe('probeAgentModelsBestEffort (OhMyPi preflight)', () => {
       await runtime?.dispose();
       process.env.PATH = prevPath;
       if (typeof prevOverride === 'string') {
-        process.env.HAPPIER_OHMYPI_PATH = prevOverride;
+        process.env[agent.overrideKey] = prevOverride;
       } else {
-        delete process.env.HAPPIER_OHMYPI_PATH;
+        delete process.env[agent.overrideKey];
       }
       if (typeof prevOpenAiApiKey === 'string') {
         process.env.OPENAI_API_KEY = prevOpenAiApiKey;
