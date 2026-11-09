@@ -4,12 +4,70 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
+import ts from 'typescript';
 import { buildNativeAdmissionFixtureEnv, installNativeAdmissionFixture } from '../../apps/stack/scripts/testkit/core/native_admission_fixture.mjs';
 import { resolveTypeScriptCliInvocation } from './resolveTypeScriptCliInvocation.mjs';
-import { prepareWorkspaceSourceTypecheckProjects, sourceTypecheckCompilerOptions } from './workspaceSourceTypecheck.mjs';
+import { prepareWorkspaceSourceTypecheckProjects, readWorkspaceTypecheckSources, sourceTypecheckCompilerOptions } from './workspaceSourceTypecheck.mjs';
 import { prepareCliTypecheckProjects } from '../../apps/cli/scripts/deriveTypecheckProjects.mjs';
 import { prepareReferencedTypecheckDeclarations, orderTypecheckProjects } from './prepareReferencedTypecheckDeclarations.mjs';
 import { createDistTypeScriptProjectConfig } from './buildTypeScriptPackageDist.mjs';
+
+test('workspace consumers check declaration boundaries while producer self imports keep source types', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-owned-typecheck-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const files = {
+    'apps/cli/package.json': '{"name":"@fixture/cli"}',
+    'apps/ui/package.json': '{"name":"@fixture/ui"}',
+    'apps/server/package.json': '{"name":"@fixture/server"}',
+    'packages/shared/package.json': JSON.stringify({ name: '@fixture/shared', exports: {
+      '.': { 'happier-source': './src/index.ts', types: './dist/index.d.ts' },
+      './value': { 'happier-source': './src/value.ts', types: './dist/value.d.ts' },
+    } }),
+    'packages/shared/tsconfig.json': JSON.stringify({ compilerOptions: {
+      strict: true, declaration: true, outDir: 'dist', module: 'ESNext', moduleResolution: 'Bundler',
+    }, include: ['src/**/*.ts'] }),
+    'packages/shared/src/index.ts': 'export { value } from "@fixture/shared/value"; const allowed: { optional?: string } = { optional: undefined };',
+    'packages/shared/src/value.ts': 'export const value = "current";',
+    'packages/shared/dist/index.d.ts': 'export { value } from "./value.js";',
+    'packages/shared/dist/value.d.ts': 'export declare const value: "boundary";',
+  };
+  for (const [path, content] of Object.entries(files)) {
+    await mkdir(dirname(join(root, path)), { recursive: true });
+    await writeFile(join(root, path), content);
+  }
+  const sources = await readWorkspaceTypecheckSources(join(root, 'apps/server'));
+  const env = buildNativeAdmissionFixtureEnv();
+  const admission = process.platform === 'linux' ? await installNativeAdmissionFixture({ root }) : null;
+  for (const consumer of ['packages/plugin', 'apps/server']) {
+    const directory = join(root, consumer);
+    await mkdir(directory, { recursive: true });
+    const configPath = join(directory, 'tsconfig.json');
+    const compilerOptions = { strict: true, exactOptionalPropertyTypes: true, noEmit: true,
+      module: 'ESNext', moduleResolution: 'Bundler', types: [] };
+    await writeFile(configPath, JSON.stringify({ compilerOptions, files: ['index.ts'] }));
+    await writeFile(join(directory, 'index.ts'), 'import { value } from "@fixture/shared"; const invalid: number = value;');
+    const project = join(directory, 'consumer.json');
+    await writeFile(project, JSON.stringify({ extends: configPath,
+      compilerOptions: sourceTypecheckCompilerOptions(compilerOptions, configPath, sources, { declarations: true }) }));
+    const config = ts.getParsedCommandLineOfConfigFile(project, {}, { ...ts.sys,
+      onUnRecoverableConfigFileDiagnostic: diagnostic => assert.fail(ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')) });
+    const program = ts.createProgram(config.fileNames, config.options);
+    const foreign = program.getSourceFiles().filter(file => file.fileName.startsWith(join(root, 'packages/shared')) && !file.isDeclarationFile);
+    assert.equal(foreign.length, 0, `${consumer} must not check the producer implementation`);
+    const args = ['--project', project, '--pretty', 'false'];
+    const invocation = resolveTypeScriptCliInvocation({ args, workspaceDir: directory, env });
+    const result = spawnSync(admission ? admission.launcher : invocation.command,
+      [...invocation.argsPrefix, ...args, ...(invocation.argsSuffix ?? [])], { cwd: directory, env, encoding: 'utf8' });
+    assert.ifError(result.error);
+    assert.equal(result.status, 2, result.stdout + result.stderr);
+    assert.match(result.stdout, /index\.ts\(1,\d+\): error TS2322:/);
+    assert.doesNotMatch(result.stdout, /shared\/src|error TS2375:/);
+  }
+  const owner = join(root, 'packages/shared/tsconfig.json');
+  const options = sourceTypecheckCompilerOptions({}, owner, sources, { declarations: true });
+  assert.deepEqual(options.paths['@fixture/shared/value'], [join(root, 'packages/shared/src/value.ts')],
+    'a producer must not consume its own stale declaration output');
+});
 
 test('declaration preparation resolves producer self imports from source before replacing old output', async t => {
   const root = await mkdtemp(join(tmpdir(), 'happier-declaration-self-import-'));

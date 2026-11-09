@@ -122,7 +122,7 @@ export async function prepareReferencedTypecheckDeclarations(projects, cwd, inve
       include: [], exclude: [],
     });
     const args = ['--singleThreaded', '--project', project];
-    producers.push({ project, authoredProject: project, args, authoredArgs: args });
+    producers.push({ project, authoredProject: foreign.configPath, args, authoredArgs: args });
     redirects.set(foreign.configPath, project);
     memberships.set(foreign.configPath, new Map(foreign.files.map(file => [file, project])));
     ambientInputs.set(foreign.configPath, foreign.ambientInputs ?? []);

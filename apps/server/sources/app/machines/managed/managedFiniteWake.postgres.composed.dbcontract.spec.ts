@@ -1,5 +1,5 @@
 import { beforeAll } from 'vitest';
-import './managedFiniteWake.sqlite.integration.spec';
+import './managedFiniteWake.sqlite.composed.integration.spec';
 
 beforeAll(() => {
     if (!process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL

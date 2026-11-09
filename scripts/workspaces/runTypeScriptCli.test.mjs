@@ -223,7 +223,7 @@ test('source compiler preserves inferred roots and only widens authored noEmit r
 });
 
 for (const finite of [false, true]) {
-test(`public source compiler takes no package-dist reservations for stale transitive dependencies (${finite ? 'mixed CLI finite' : 'noEmit'})`, { skip: process.platform !== 'linux' }, async t => {
+test(`source-only workspace exports need no declaration publication (${finite ? 'mixed CLI finite' : 'noEmit'})`, { skip: process.platform !== 'linux' }, async t => {
   const setup = await fixture(t, { exitCode: 0, compilerBody: `
     const fs = require('node:fs');
     const path = require('node:path');
@@ -236,7 +236,6 @@ test(`public source compiler takes no package-dist reservations for stale transi
       const dir = path.join(process.cwd(), 'packages', name);
       const args = process.argv.slice(2);
       const project = JSON.parse(fs.readFileSync(args[args.findIndex(arg => ['-p', '--project'].includes(arg)) + 1], 'utf8'));
-      if (!project.compilerOptions.customConditions.includes('happier-source')) throw new Error('missing source condition');
       if (project.compilerOptions.paths['@fixture/' + name][0] !== path.join(dir, 'src/index.ts')) throw new Error('reader did not use canonical source');
       const source = fs.readFileSync(project.compilerOptions.paths['@fixture/' + name][0], 'utf8');
       if (name === 'first' && source !== process.env.FIXTURE_FIRST_SOURCE) throw new Error('reader did not consume the changed source');
@@ -272,7 +271,8 @@ test(`public source compiler takes no package-dist reservations for stale transi
     await mkdir(join(dir, 'src'), { recursive: true });
     await writeFile(join(dir, 'src/index.ts'), 'export const ready = true;\n');
     await writeFile(join(dir, 'package.json'), JSON.stringify({ name: `@fixture/${name}`, type: 'module',
-      main: './dist/index.js', exports: { '.': { 'happier-source': './src/index.ts', types: './dist/index.d.ts', default: './dist/index.js' } }, scripts: { build: 'node compile.mjs' },
+      // This fixture has no declaration contract or declaration-producing project.
+      main: './dist/index.js', exports: { '.': { 'happier-source': './src/index.ts', default: './dist/index.js' } }, scripts: { build: 'node compile.mjs' },
       ...(index ? { dependencies: { [`@fixture/${names[index - 1]}`]: 'workspace:*' } } : {}) }));
     // Only the compiler/package-manager process is substituted; graph, input
     // capture, native admission and publication custody use the real owners.

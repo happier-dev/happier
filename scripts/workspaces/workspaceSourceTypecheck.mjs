@@ -4,11 +4,23 @@ import { coerceHappyMonorepoRootFromPath } from '../../apps/stack/scripts/utils/
 import { writeJsonAtomic } from '../../apps/stack/scripts/utils/fs/json.mjs';
 import { packageNameOfSpecifier, readWorkspacePackages, SOURCE_CONDITION, workspaceSourceCompilerPaths } from '../../packages/cli-common/sourceRuntimeEntries.mjs';
 import { typecheckCompilerOptions } from './resolveTypeScriptCliInvocation.mjs';
+import { resolvePackageDeclarationTarget } from './packageBuildOutputTargets.mjs';
 
 export async function readWorkspaceTypecheckSources(directory) {
   const repoRoot = coerceHappyMonorepoRootFromPath(directory);
   const packages = repoRoot ? await readWorkspacePackages(repoRoot) : new Map();
-  return { repoRoot, packageNames: new Set(packages.keys()), paths: workspaceSourceCompilerPaths(packages) };
+  const declarationPaths = {};
+  for (const [name, { root, manifest }] of packages) {
+    const exports = manifest.exports;
+    const entries = Object.keys(exports ?? {}).some(key => key.startsWith('.'))
+      ? Object.entries(exports) : [['.', exports ?? manifest.types]];
+    for (const [key, value] of entries) {
+      const target = resolvePackageDeclarationTarget(value);
+      if (target) declarationPaths[key === '.' ? name : name + key.slice(1)] = [resolve(root, target)];
+    }
+  }
+  return { repoRoot, packageNames: new Set(packages.keys()), paths: workspaceSourceCompilerPaths(packages),
+    declarationPaths, packageRoots: new Map([...packages].map(([name, { root }]) => [name, root])) };
 }
 
 function workspaceDeclarationPaths(options, configPath, sources) {
@@ -25,20 +37,32 @@ function matchesPath(name, pattern) {
     : name.startsWith(pattern.slice(0, wildcard)) && name.endsWith(pattern.slice(wildcard + 1));
 }
 
-export function sourceTypecheckCompilerOptions(options, configPath, sources) {
+export function sourceTypecheckCompilerOptions(options, configPath, sources, { declarations: useDeclarations = false } = {}) {
   if (!sources.repoRoot) return {};
   const base = options.baseUrl ?? options.pathsBasePath ?? dirname(configPath);
   const declarations = workspaceDeclarationPaths(options, configPath, sources);
   const configRelative = relative(sources.repoRoot, configPath);
   const repositoryProject = !isAbsolute(configRelative) && configRelative !== '..'
     && !configRelative.startsWith('../') && !configRelative.startsWith('..\\');
+  const paths = { ...sources.paths };
+  if (useDeclarations) {
+    for (const [name, targets] of Object.entries(sources.declarationPaths ?? {})) {
+      const root = sources.packageRoots.get(packageNameOfSpecifier(name));
+      const ownerRelative = relative(root, configPath);
+      // Self imports belong to this check, even if its previous dist is stale.
+      if (isAbsolute(ownerRelative) || ownerRelative === '..' || ownerRelative.startsWith('../') || ownerRelative.startsWith('..\\')) {
+        paths[name] = targets;
+      }
+    }
+  }
   return {
-    customConditions: [...new Set([...(options.customConditions ?? []), SOURCE_CONDITION])],
+    customConditions: useDeclarations ? (options.customConditions ?? []).filter(condition => condition !== SOURCE_CONDITION)
+      : [...new Set([...(options.customConditions ?? []), SOURCE_CONDITION])],
     paths: {
       ...Object.fromEntries(Object.entries(options.paths ?? {})
         .filter(([name]) => !sources.packageNames.has(packageNameOfSpecifier(name)))
         .map(([name, targets]) => [name, targets.map(target => resolve(base, target))])),
-      ...Object.fromEntries(Object.entries(sources.paths)
+      ...Object.fromEntries(Object.entries(paths)
         .filter(([name]) => !Object.keys(declarations).some(pattern => matchesPath(name, pattern)))),
       ...declarations,
     },
@@ -50,9 +74,9 @@ export function sourceTypecheckCompilerOptions(options, configPath, sources) {
   };
 }
 
-/** Source consumers read authored workspace exports. Explicit declaration
- * boundaries prepare current output through the existing publication owner.
- * Authored project identity remains available for diagnostics. */
+/** Referenced source projects retain their compiler-owned declaration graph.
+ * Other consumers use public package declarations prepared by the existing
+ * publication owner. Authored identity remains available for diagnostics. */
 export async function prepareWorkspaceSourceTypecheckProjects(projects, cwd) {
   const sources = await readWorkspaceTypecheckSources(cwd);
   if (!sources.repoRoot) return;
@@ -61,11 +85,13 @@ export async function prepareWorkspaceSourceTypecheckProjects(projects, cwd) {
     const options = typecheckCompilerOptions(project.args, cwd);
     if (!options?.configFilePath) continue;
     const original = options.configFilePath;
-    if (Object.keys(workspaceDeclarationPaths(options, original, sources)).length) {
+    const useDeclarations = options.disableSourceOfProjectReferenceRedirect !== true;
+    if ((useDeclarations && Object.keys(sources.declarationPaths).length)
+      || Object.keys(workspaceDeclarationPaths(options, original, sources)).length) {
       const componentDir = dirname(resolve(cwd, project.authoredProject ?? original));
       if (!preparedDeclarations.has(componentDir)) {
-        // Explicit declaration consumers use the existing publication/currentness
-        // owner; a source check must never silently read stale package output.
+        // Declaration consumers share publication/currentness rather than
+        // silently accepting an earlier producer's output.
         const { prepareWorkspaceTypecheckDeclarations } = await import('./prepareReferencedTypecheckDeclarations.mjs');
         await prepareWorkspaceTypecheckDeclarations(componentDir);
         preparedDeclarations.add(componentDir);
@@ -78,7 +104,7 @@ export async function prepareWorkspaceSourceTypecheckProjects(projects, cwd) {
     const target = resolve(cache, `source-${basename(original)}`);
     await writeJsonAtomic(target, {
       extends: original,
-      compilerOptions: sourceTypecheckCompilerOptions(options, original, sources),
+      compilerOptions: sourceTypecheckCompilerOptions(options, original, sources, { declarations: useDeclarations }),
       // Project references are not inherited through extends.
       references: (authored.config.references ?? []).map(reference => ({ ...reference,
         path: resolve(dirname(original), reference.path) })),

@@ -74,8 +74,7 @@ test('server compiler roots keep cross-app composition in the test-only project'
         };
         // Another app, or TypeScript source from any other workspace package,
         // would join the server program outside its rootDir.
-        if (['cli', 'ui'].some(app => isInside(resolve(repoRoot, `apps/${app}`)))
-          || (isInside(repoRoot) && !isInside(serverRoot) && resolvesToTypeScriptSource(target))) {
+        if (isInside(repoRoot) && !isInside(serverRoot) && resolvesToTypeScriptSource(target)) {
           const { line } = source.getLineAndCharacterOfPosition(node.getStart(source));
           crossAppEdges.push(`${relative(repoRoot, file)}:${line + 1} -> ${node.text}`);
         }

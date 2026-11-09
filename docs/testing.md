@@ -1527,13 +1527,16 @@ are selected on the next invocation, so concurrent additions cannot invalidate
 an already selected program by changing the later coverage scan.
 
 Bootstrap admits source tools and UI postinstall outputs without compiling Stack's
-unrelated workspace closure. Source-consuming typecheck preparation does not rebuild
-workspace dependency dist or acquire its publication locks: `noEmit` programs and
-the recognized UI/CLI finite project sets resolve workspace exports from source
-under the consuming program's options. Finite checks retain their own internal
-declaration partitions and cross-app private-alias references. Explicit authored
-declaration boundaries and genuine declaration builds retain dependency declaration
-preparation and its live-input fence.
+unrelated workspace closure. Ordinary source typechecks consume other workspace
+packages through their declared type exports. The existing declaration-preparation
+owner refreshes those outputs under publication custody without rebuilding dependency
+JavaScript; consumers release that custody before checking. Producer self imports
+still resolve to source. Finite checks retain their internal declaration partitions
+and cross-app private-alias project references, which check producers under their own
+options. Source discovery for those references still follows authored implementations.
+Explicit declaration aliases retain their authored targets. Consumer strictness and
+diagnostics remain intact; the compiler boundary removes foreign implementation
+checks rather than filtering their output.
 
 Before a source compiler batch starts, the runner records an in-memory filesystem
 observation of its selected project roots and authored/generated configs. Its
