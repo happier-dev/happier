@@ -9,17 +9,15 @@ import { QualifiedConnectedAccountRefSchema } from './qualifiedConnectedAccountP
 import { ConnectedServiceAuthGroupPolicyV1Schema } from './connectedServiceSchemas.js';
 import { createActionExecutor, type ActionExecutorDeps } from '../actions/actionExecutor.js';
 import { ActionIdSchema } from '../actions/actionIds.js';
-import { getActionSpec, PublicActionIdSchema } from '../actions/actionSpecs.js';
-import { ActionsSettingsV1Schema } from '../actions/actionSettings.js';
+import { getActionSpec, PublicActionIdSchema, PUBLIC_ACTION_OUTPUT_SCHEMAS } from '../actions/actionSpecs.js';
+import { ActionsSettingsV1Schema, setActionApprovalOverride } from '../actions/actionSettings.js';
 import type { QualifiedConnectedAccountPurposeBindingsV1 } from './connectedAccountPurposeBindings.js';
 import { isApprovalRequiredByActionsSettings } from '../actions/actionApprovalPolicy.js';
 import { PluginConnectedAccountAuthenticationModeV2Schema } from './pluginConnectedAccountAuthenticationV2.js';
 import type { ConnectedConfigurationCatalogV1 } from './connectedAccountConfigurationRowsV1.js';
 import type { ConnectedServiceConfigurationCatalogWriteV1 } from './connectedServiceConfigurationCatalogV1.js';
 import { formatSharedSavedSecretRefV1 } from '../account/settings/savedSecretReferenceV1.js';
-
 import { openQualifiedConnectedAccountContentEnvelope, resolveQualifiedConnectedAccountCredentialValuesV1, sealQualifiedConnectedAccountContentEnvelope } from './qualifiedConnectedAccountContentEnvelope.js';
-
 import { parseQualifiedConnectedAccountCredentialPlaintextV1 } from './legacyConnectedServiceCompatibility.js';
 
 const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
@@ -39,6 +37,47 @@ function purposeCatalogBoundary(read: () => Record<string, unknown>, apply: (del
 }
 
 describe('connected-service configuration Action owner', () => {
+    it('admits Account authentication inputs and keeps continuation routing exclusively attempt-addressed', async () => {
+        const commands = [
+            ['beginConnect', { service, modeId: 'device' }],
+            ['beginReconnect', { account: { service, accountId: 'work' } }],
+            ['continueConnect', { attemptId: 'attempt-1', expectedConfigurationRevision: 'revision-2' }],
+            ['submitManual', { attemptId: 'attempt-1', fields: { token: 'private-token' } }],
+            ['completeOAuth', { attemptId: 'attempt-1', completion: { code: 'private-code', state: 'private-state', callbackUrl: 'https://callback.test/' } }],
+            ['pollDevice', { attemptId: 'attempt-1' }],
+            ['resumeDevice', { attemptId: 'attempt-1' }],
+            ['reconcile', { attemptId: 'attempt-1' }],
+            ['cancel', { attemptId: 'attempt-1' }],
+            ['read', { attemptId: 'attempt-1', waitForProviderStart: true }],
+            ['pending.list', { service }],
+        ] as const;
+        const safeContinuations = new Set(['continueConnect', 'pollDevice', 'resumeDevice', 'reconcile', 'cancel']);
+        const settings = ActionsSettingsV1Schema.parse({ v: 1 });
+        const discovery = createActionExecutor({});
+        for (const [operation, input] of commands) {
+            const id = ActionIdSchema.parse(`connectedServices.authentication.${operation}`);
+            const spec = getActionSpec(id);
+            const discovered = await discovery.execute('action.spec.get', { id }, { surface: 'agent' });
+            if (!discovered.ok) throw new Error(discovered.errorCode);
+            const published = PUBLIC_ACTION_OUTPUT_SCHEMAS['action.spec.get'].parse(discovered.result).actionSpec;
+            expect(published.inputSchema.required, operation).not.toContain('machineId');
+            expect(spec.inputSchema.safeParse(input).success, operation).toBe(true);
+            expect(spec.executionPlacement, operation).toBe('account');
+            const permitsMachine = operation === 'beginConnect' || operation === 'beginReconnect' || operation === 'pending.list';
+            expect(spec.inputSchema.safeParse({ ...input, machineId: 'native-machine' }).success, operation).toBe(permitsMachine);
+            expect(spec.inputHints?.fields.some(field => field.path === 'machineId' && field.required), operation).toBe(false);
+            expect(spec.approval.result, operation).toBe(safeContinuations.has(operation) ? 'none' : 'required');
+            if (safeContinuations.has(operation)) {
+                expect(isApprovalRequiredByActionsSettings(id, settings, { surface: 'agent', authority: 'account_automation' }), operation).toBe(false);
+                const explicitPolicy = setActionApprovalOverride({ settings, actionId: id, surface: 'agent', approvalRequired: true });
+                expect(isApprovalRequiredByActionsSettings(id, explicitPolicy, { surface: 'agent', authority: 'account_automation' }), operation).toBe(true);
+            }
+            if (safeContinuations.has(operation)) expect(spec.safety, operation).toBe('safe');
+        }
+        expect(getActionSpec('connectedServices.authentication.read').inputSchema.safeParse({
+            attemptId: 'attempt-1', restoreKind: 'oauth',
+        }).success).toBe(false);
+    });
     it('keeps Account-direct key input live-only and secret-free on every public observation surface', () => {
         const spec = getActionSpec('connectedServices.accounts.credentials.save');
         const input = spec.inputSchema.parse({ account: { service, accountId: 'direct' }, modeId: 'api-key', fields: { token: 'private-key' } });
@@ -52,6 +91,63 @@ describe('connected-service configuration Action owner', () => {
         expect(spec.inputSchema.safeParse({ ...input, machineId: 'unrelated-machine' }).success).toBe(false);
         expect(spec.outputSchema.safeParse({ applied: true, account: { service, accountId: 'direct' }, fields: { token: 'private-key' } }).success).toBe(false);
     });
+    it.each([
+        [new TypeError('Failed to fetch'), 'connect_group_read_failed'],
+        [Object.assign(new Error('server_unreachable'), { code: 'server_unreachable' }), 'connect_group_read_failed'],
+        [Object.assign(new Error('connect_group_not_found'), { code: 'connect_group_not_found' }), 'connect_group_not_found'],
+        [Object.assign(new Error('Read cancelled'), { name: 'AbortError' }), 'cancelled'],
+    ] as const)('keeps a failed pool source read definite without masking its domain refusal (%s)', async (failure, errorCode) => {
+        const requests: string[] = [];
+        const host: ConnectedServiceConfigurationActionHostV1 = {
+            assertCurrent() {},
+            async request(request) {
+                requests.push(request.method);
+                throw failure;
+            },
+            async mutatePurposeBindings() { throw new Error('reorder_must_not_change_defaults'); },
+            async resolveAgent() { throw new Error('reorder_must_not_probe'); },
+            async resetQuota() { throw new Error('reorder_must_not_refresh_quota'); },
+        };
+        const executor = createActionExecutor({ connectedServiceAction: ({ actionId, input }) =>
+            executeConnectedServiceConfigurationActionV1(host, actionId, input) });
+        expect(await executor.execute('connectedServices.pools.reorder', { group: { service, groupId: 'primary' },
+            move: { accountId: 'second', position: { anchorId: 'first', placement: 'before' } },
+        }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } }))
+            .toMatchObject({ ok: false, errorCode });
+        expect(requests).toEqual(['GET']);
+    });
+
+    it('writes the same safe Account label through rename and labels.set on every exposed surface', async () => {
+        let label: string | null = null;
+        const account = { service, accountId: 'work' };
+        const subject = { kind: 'account' as const, account };
+        const host: ConnectedServiceConfigurationActionHostV1 = {
+            assertCurrent() {},
+            async request() { throw new Error('label_must_not_fetch'); },
+            async mutatePurposeBindings() { throw new Error('label_must_not_change_defaults'); },
+            async resolveAgent() { throw new Error('label_must_not_probe'); },
+            async resetQuota() { throw new Error('label_must_not_refresh'); },
+            async setConnectedLabel(input) {
+                expect(input.subject).toEqual(subject);
+                label = input.label;
+            },
+        };
+        const executor = createActionExecutor({ connectedServiceAction: ({ actionId, input }) =>
+            executeConnectedServiceConfigurationActionV1(host, actionId, input) });
+        for (const surface of ['ui', 'cli', 'agent', 'mcp'] as const) {
+            const context = { surface, authority: 'account_automation' as const };
+            const renamed = await executor.execute('connectedServices.accounts.rename', { account, label: surface }, context);
+            expect(renamed, surface).toEqual({ ok: true, result: { applied: true } });
+            expect(label).toBe(surface);
+            if (!renamed.ok) throw new Error('expected_label_receipt');
+            expect(getActionSpec('connectedServices.accounts.rename').outputSchema.parse(renamed.result)).toEqual({ applied: true });
+            const alternateLabel = `Alternate ${surface}`;
+            expect(await executor.execute('connectedServices.labels.set', { subject, label: alternateLabel }, context))
+                .toEqual({ ok: true, result: { applied: true } });
+            expect(label).toBe(alternateLabel);
+        }
+    });
+
     it('lists saved accounts and credential health through the Action dispatcher without a Machine or provider refresh', async () => {
         const id = 'connectedServices.accounts.list';
         expect(ActionIdSchema.safeParse(id).success).toBe(true);
@@ -87,17 +183,21 @@ describe('connected-service configuration Action owner', () => {
     it('lists admitted setup descriptors with unavailable reasons and never starts authentication', async () => {
         const id = 'connectedServices.catalog.list';
         expect(ActionIdSchema.safeParse(id).success).toBe(true);
+        const catalogReads: unknown[] = [];
         const host: ConnectedServiceConfigurationActionHostV1 = {
             assertCurrent() {}, async request() { throw new Error('catalog_must_not_fetch'); },
             async mutatePurposeBindings() { throw new Error('catalog_must_not_write'); },
             async resolveAgent() { throw new Error('catalog_must_not_probe'); }, async resetQuota() {},
-            async readSetupCatalog() { return { status: 'partial', services: [{ service, canAdd: false,
+            async readSetupCatalog(...args: unknown[]) { catalogReads.push(args[0]); return { status: 'partial', services: [{ service, canAdd: false,
                 reason: 'machine-unavailable', descriptor: null }], gateways: [] }; },
         };
         const executor = createActionExecutor({ connectedServiceAction: ({ actionId, input }) => executeConnectedServiceConfigurationActionV1(host, actionId, input) });
         const result = await executor.execute(id, {}, { surface: 'agent' });
         expect(result).toMatchObject({ ok: true, result: { status: 'partial', services: [{ service, canAdd: false, reason: 'machine-unavailable' }], gateways: [] } });
         expect(getActionSpec(id).safety).toBe('safe');
+        const refreshed = await executor.execute(id, { refresh: true }, { surface: 'mcp' });
+        expect(refreshed).toMatchObject({ ok: true, result: { status: 'partial' } });
+        expect(catalogReads).toEqual([{}, { refresh: true }]);
     });
 
     it('changes only the selected declared Agent purpose and preserves another purpose on the same service', async () => {
@@ -119,7 +219,8 @@ describe('connected-service configuration Action owner', () => {
             .toMatchObject({ ok: false });
         expect(catalog.value.bindings).toHaveLength(1);
     });
-    it.each(['account', 'attempt'] as const)('routes %s configuration through the approved exact machine owner', async kind => {
+    it.each([['account', 'machine-1'], ['account', undefined], ['attempt', undefined]] as const)(
+        'routes %s configuration with its admitted Machine scope %s', async (kind, machineId) => {
         const exactTarget = kind === 'account'
             ? { kind, account: { service, accountId: 'work' } }
             : { kind, attemptId: 'attempt-1' };
@@ -148,7 +249,7 @@ describe('connected-service configuration Action owner', () => {
             isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context),
             connectedServiceAction: ({ actionId, input }) => executeConnectedServiceConfigurationActionV1(host, actionId, input),
         });
-        const input = { machineId: 'machine-1', target: exactTarget, expectedRevision: 'revision-1', values: {}, secretValues: {} };
+        const input = { ...(machineId ? { machineId } : {}), target: exactTarget, expectedRevision: 'revision-1', values: {}, secretValues: {} };
         const unapproved = createActionExecutor({
             isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, {}, context),
             connectedServiceAction: ({ actionId, input }) => executeConnectedServiceConfigurationActionV1(host, actionId, input),
@@ -158,17 +259,21 @@ describe('connected-service configuration Action owner', () => {
         expect(commands).toEqual([]);
         expect(await executor.execute('connectedServices.configuration.replace', input, { surface: 'cli' }))
             .toEqual({ ok: true, result: { applied: true, revision: 'revision-2' } });
-        expect(commands).toEqual([{ machineId: 'machine-1', command: { operation: 'replaceConfiguration',
+        expect(commands).toEqual([{ machineId, command: { operation: 'replaceConfiguration',
             target: exactTarget, expectedRevision: 'revision-1', values: {}, secretValues: {} } }]);
-        expect(getActionSpec('connectedServices.configuration.replace').executionPlacementForInput?.(input)).toBe('machine');
-        const readInput = { machineId: 'machine-1', target: exactTarget };
+        expect(getActionSpec('connectedServices.configuration.replace').executionPlacementForInput?.(input)).toBe(machineId ? 'machine' : 'account');
+        const readInput = { ...(machineId ? { machineId } : {}), target: exactTarget };
         expect(await executor.execute('connectedServices.configuration.get', readInput, { surface: 'cli' }))
             .toMatchObject({ ok: true, result: { target: exactTarget, configuration: { revision: 'revision-2' } } });
         peerMatches = false;
         expect(await executor.execute('connectedServices.configuration.get', readInput, { surface: 'cli' }))
             .toMatchObject({ ok: false, errorCode: 'qualified_connected_accounts_inconsistent_peer' });
         expect(CONNECTED_SERVICE_CONFIGURATION_ACTION_INPUT_SCHEMAS_V1['connectedServices.configuration.get']
-            .safeParse({ target: exactTarget }).success).toBe(false);
+            .safeParse({ target: exactTarget }).success).toBe(true);
+        if (kind === 'attempt') {
+            expect(CONNECTED_SERVICE_CONFIGURATION_ACTION_INPUT_SCHEMAS_V1['connectedServices.configuration.get']
+                .safeParse({ target: exactTarget, machineId: 'retargeted-machine' }).success).toBe(false);
+        }
         expect(CONNECTED_SERVICE_CONFIGURATION_ACTION_INPUT_SCHEMAS_V1['connectedServices.configuration.replace']
             .safeParse({ ...input, unreviewed: true }).success).toBe(false);
     });
@@ -236,7 +341,7 @@ describe('connected-service configuration Action owner', () => {
             selection, }, context)).toMatchObject({ ok: false });
         expect(catalog.value.teamResourceSelections ?? []).toEqual([]);
     });
-    it('admits exact authentication Actions through the incumbent machine command boundary and preserves human approval and secret custody', async () => {
+    it('admits exact Account authentication Actions and preserves credential-input approval and secret custody', async () => {
         const commands = [
             { operation: 'beginConnect', service, modeId: 'manual', expectedConfigurationRevision: 'revision-1' },
             { operation: 'beginReconnect', account: { service, accountId: 'work' } },
@@ -247,21 +352,21 @@ describe('connected-service configuration Action owner', () => {
             { operation: 'resumeDevice', attemptId: 'attempt-1' },
             { operation: 'reconcile', attemptId: 'attempt-1' },
             { operation: 'cancel', attemptId: 'attempt-1' },
-            { operation: 'read', attemptId: 'attempt-1', restoreKind: 'oauth' },
+            { operation: 'read', attemptId: 'attempt-1', waitForProviderStart: true },
         ] as const;
         let issued: unknown = null;
         const response = { status: 'awaitingOAuth', attemptId: 'attempt-1', authorizationUrl: 'https://oauth.test/?state=private-state', callbackUrl: 'https://callback.test/' };
         const host = { assertCurrent() {}, async request() { throw new Error('unexpected_http'); },
             async mutatePurposeBindings() {}, async resolveAgent() { return null; }, async resetQuota() {},
-            // Substitutes only the daemon RPC transport; canonical Action admission and command codecs are real.
-            async authenticationCommand(machineId: string, command: unknown) { issued = { machineId, command }; return response; },
+            // The host invocation boundary; canonical Action admission and command codecs are real.
+            async authenticationCommand(machineId: string | undefined, command: unknown) { issued = { machineId, command }; return response; },
         };
         for (const command of commands) {
             const id = ActionIdSchema.parse(`connectedServices.authentication.${command.operation}`);
             const spec = getActionSpec(id);
             const { operation: _operation, ...operands } = command;
-            const input = { machineId: 'controller', ...operands };
-            expect(spec).toMatchObject({ executionPlacement: 'machine', approvalResultCustody: 'live_only' });
+            const input = operands;
+            expect(spec).toMatchObject({ executionPlacement: 'account', approvalResultCustody: 'live_only' });
             expect(spec.projectObservationOutput?.(response)).toEqual({ status: 'awaitingOAuth', attemptId: 'attempt-1' });
             const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { [id]: ['ui'] } });
             const observations: unknown[] = [];
@@ -282,7 +387,7 @@ describe('connected-service configuration Action owner', () => {
                 observeActionExecution: async observation => { observations.push(observation); },
             } as unknown as ActionExecutorDeps);
             issued = null;
-            if (command.operation !== 'read') {
+            if (spec.safety === 'danger') {
                 expect(await executor.execute(id, input, { surface: 'mcp', authority: 'account_automation', actionCaller: { kind: 'host' },
                     serverId: 'home', runtimeAccountId: 'account', actionRequestId: 'request-1' }))
                     .toMatchObject({ ok: false, errorCode: 'approval_rejected' });
@@ -293,7 +398,7 @@ describe('connected-service configuration Action owner', () => {
             expect(await executor.execute(id, input, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
                 approvalOrigin }))
                 .toEqual({ ok: true, result: response });
-            expect(issued).toEqual({ machineId: 'controller', command });
+            expect(issued).toEqual({ machineId: undefined, command });
             expect(observations).toMatchObject([{ input: spec.projectObservationInput?.(input) ?? input,
                 context: { approvalOrigin: { kind: 'transcript_tool_call', sessionId: 'session-1', toolCallId: 'call-1' } },
                 result: { ok: true, result: { status: 'awaitingOAuth', attemptId: 'attempt-1' } } }]);
@@ -308,7 +413,7 @@ describe('connected-service configuration Action owner', () => {
     });
     it('keeps secret authentication input out of durable approval provenance while retaining the exact target and transcript correlation', async () => {
         const id = ActionIdSchema.parse('connectedServices.authentication.submitManual');
-        const input = { machineId: 'controller', attemptId: 'attempt-1', fields: { token: 'private-token' } };
+        const input = { attemptId: 'attempt-1', fields: { token: 'private-token' } };
         const persisted: unknown[] = [];
         const approvalBoundary = {
             // These substitute only the durable Artifact and human-decision boundaries.
@@ -323,28 +428,34 @@ describe('connected-service configuration Action owner', () => {
             approvalOrigin: { kind: 'transcript_tool_call', sessionId: 'session-1', toolCallId: 'call-1', toolInput: input } }))
             .toMatchObject({ ok: false, errorCode: 'approval_rejected' });
         expect(persisted).toMatchObject([{ actionId: id,
-            actionArgs: { machineId: 'controller', attemptId: 'attempt-1' },
+            actionArgs: { attemptId: 'attempt-1' },
             origin: { kind: 'transcript_tool_call', sessionId: 'session-1', toolCallId: 'call-1' },
-            executionOriginV1: { serverId: 'home', machineId: 'controller', accountId: 'account' },
+            executionOriginV1: { serverId: 'home', accountId: 'account' },
         }, {}]);
         expect(JSON.stringify(persisted)).not.toContain('private-');
     });
     it('lists pending authentication attempts without beginning or resuming one and preserves typed daemon refusals', async () => {
         const id = ActionIdSchema.parse('connectedServices.authentication.pending.list');
-        let response: unknown = { status: 'pendingAttempts', attempts: [{ attemptId: 'attempt-1', kind: 'device', modeId: 'device',
-            intent: 'connect', phase: 'awaitingDeviceAuthorization', createdAtMs: 1, expiresAtMs: 100 }] };
+        let response: unknown = { status: 'pendingAttempts', attempts: [
+            { attemptId: 'attempt-1', kind: 'device', modeId: 'device',
+                intent: 'connect', phase: 'awaitingDeviceAuthorization', createdAtMs: 1, expiresAtMs: 100 },
+            { attemptId: 'manual-attempt', kind: 'manual', modeId: 'api-key',
+                intent: 'connect', phase: 'awaitingManual', createdAtMs: 2, expiresAtMs: 100 },
+            { attemptId: 'configuration-attempt', kind: 'manual', modeId: 'api-key',
+                intent: 'reconnect', phase: 'configurationRequired', createdAtMs: 3, expiresAtMs: 100 },
+        ] };
         const host = { assertCurrent() {}, async request() { throw new Error('unexpected_http'); },
             async mutatePurposeBindings() {}, async resolveAgent() { return null; }, async resetQuota() {},
-            async controlCommand(machineId: string, command: unknown) {
-                expect({ machineId, command }).toEqual({ machineId: 'controller', command: { operation: 'listPendingAttempts', service } });
+            async listPendingAuthenticationAttempts(input: unknown) {
+                expect(input).toEqual({ service });
                 return response;
             },
         };
         const spec = getActionSpec(id);
-        expect(spec).toMatchObject({ safety: 'safe', executionPlacement: 'machine' });
+        expect(spec).toMatchObject({ safety: 'safe', executionPlacement: 'account' });
         const executor = createActionExecutor({ connectedServiceAction: ({ actionId, input }) =>
             executeConnectedServiceConfigurationActionV1(host, actionId, input) } as unknown as ActionExecutorDeps);
-        const input = { machineId: 'controller', service };
+        const input = { service };
         expect(await executor.execute(id, input, { surface: 'mcp', authority: 'account_automation', actionCaller: { kind: 'host' } }))
             .toEqual({ ok: true, result: response });
         response = { status: 'unavailable', code: 'connected_account_daemon_runtime_unavailable' };
@@ -378,6 +489,101 @@ describe('connected-service configuration Action owner', () => {
             .toMatchObject({ ok: false });
         expect(applied).toBeNull();
     });
+    it('chooses, replaces and clears existing configuration references without creating secret material', async () => {
+        const mode = PluginConnectedAccountAuthenticationModeV2Schema.parse({ id: 'manual', kind: 'manual', fields: [], outcomeReconciliation: 'none',
+            configuration: { scope: 'service', changeBehavior: 'refresh', fields: [
+                { id: 'endpoint', title: 'Endpoint', schema: { type: 'string' } },
+                { id: 'token', title: 'Token', secret: true, schema: { type: 'string' } },
+                { id: 'requiredToken', title: 'Required token', required: true, secret: true, schema: { type: 'string' } },
+            ] } });
+        const first = formatSharedSavedSecretRefV1('first');
+        const second = formatSharedSavedSecretRefV1('second');
+        const required = formatSharedSavedSecretRefV1('required');
+        const sibling = { service: { ...service, localId: 'other' }, modeId: 'manual', revision: 'sibling', values: { endpoint: 'sibling' }, secretRefs: {} };
+        let value: ConnectedConfigurationCatalogV1 = { v: 1, entries: [sibling, { service, modeId: 'manual', revision: 'before',
+            values: { endpoint: 'selected' }, secretRefs: { requiredToken: required } }] };
+        let catalogRevision = 3;
+        const writes: ConnectedServiceConfigurationCatalogWriteV1[] = [];
+        const host: ConnectedServiceConfigurationActionHostV1 = { assertCurrent() {}, async request() { throw new Error('unexpected_transport'); },
+            async mutatePurposeBindings() {}, async resolveAgent() { return null; }, async resetQuota() {}, configurationCatalog: {
+                async read() { return { status: 'ready', revision: catalogRevision, record: { key: 'configurations', value } }; },
+                async resolveMode() { return mode; }, async hasSecret(ref) { return [first, second, required].includes(ref); },
+                createRevision() { return `revision-${catalogRevision + 1}`; },
+                async write(write) {
+                    writes.push(write);
+                    value = write.record.value;
+                    return { status: 'updated', revision: ++catalogRevision, cursor: catalogRevision };
+                },
+            } };
+        const executor = createActionExecutor({ isActionApprovalRequired: () => false, connectedServiceAction: ({ actionId, input }) =>
+            executeConnectedServiceConfigurationActionV1(host, actionId, input) });
+        const context = { surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const } };
+        const target = { service, modeId: 'manual' };
+        const replace = (selectedSecrets: unknown, expectedRevision = `revision-${catalogRevision}`, secretValues = {}) => executor.execute(
+            'connectedServices.configuration.replace', { ...target, expectedRevision, values: { endpoint: 'selected' }, secretValues, selectedSecrets }, context);
+        expect(await replace({ token: { ref: first, resourceRevision: 7 } }, 'before')).toMatchObject({ ok: true, result: { applied: true } });
+        expect(writes[0]?.newSecrets).toEqual([]);
+        expect(writes[0]?.selectedSecrets).toEqual({ token: { ref: first, resourceRevision: 7 } });
+        expect(await executor.execute('connectedServices.configuration.get', target, context)).toMatchObject({ ok: true,
+            result: { target: { kind: 'service', ...target }, configuration: { secretRefs: { token: first, requiredToken: required } } } });
+        expect(await replace({ token: { ref: second, resourceRevision: 9 } })).toMatchObject({ ok: true });
+        expect(value.entries.find(entry => entry.service.localId === service.localId)?.secretRefs).toEqual({ token: second, requiredToken: required });
+        expect(await replace({ token: null })).toMatchObject({ ok: true });
+        expect(value.entries.find(entry => entry.service.localId === service.localId)?.secretRefs).toEqual({ requiredToken: required });
+        const beforeInvalid = writes.length;
+        expect(await replace({ requiredToken: null })).toMatchObject({ ok: false, errorCode: 'connected_account_configuration_invalid' });
+        expect(await replace({ token: { ref: first, resourceRevision: 7 } }, `revision-${catalogRevision}`, { token: 'entered-secret' }))
+            .toMatchObject({ ok: false, errorCode: 'connected_account_configuration_invalid' });
+        expect(await replace({ endpoint: { ref: first, resourceRevision: 7 } })).toMatchObject({ ok: false, errorCode: 'connected_account_configuration_invalid' });
+        expect(await replace({ token: { ref: formatSharedSavedSecretRefV1('missing'), resourceRevision: 1 } }))
+            .toMatchObject({ ok: false, errorCode: 'connected_account_configuration_invalid' });
+        expect(writes).toHaveLength(beforeInvalid);
+        expect(value.entries.find(entry => entry.service.localId === 'other')).toEqual(sibling);
+        for (const exactTarget of [{ kind: 'account', account: { service, accountId: 'work' } }, { kind: 'attempt', attemptId: 'attempt' }]) {
+            expect(await executor.execute('connectedServices.configuration.replace', { target: exactTarget, expectedRevision: null,
+                values: {}, secretValues: {}, selectedSecrets: { token: { ref: first, resourceRevision: 7 } } }, context)).toMatchObject({ ok: false });
+        }
+    });
+
+    it.each([true, false])('retains live configuration records across native confirmation (approve=%s)', async approve => {
+        const account = { service, accountId: 'configured-account' };
+        const input = { target: { kind: 'account' as const, account }, expectedRevision: 'before',
+            values: { origin: 'https://after.test' }, secretValues: {} };
+        const mode = PluginConnectedAccountAuthenticationModeV2Schema.parse({ id: 'manual', kind: 'manual',
+            outcomeReconciliation: 'none', fields: [], configuration: { scope: 'account', changeBehavior: 'reconnect',
+                fields: [{ id: 'origin', title: 'Origin', required: true, schema: { type: 'string' } }] } });
+        const writes: unknown[] = [];
+        const reviews: unknown[] = [];
+        const observations: unknown[] = [];
+        const host: ConnectedServiceConfigurationActionHostV1 = {
+            assertCurrent() {}, async request() { throw new Error('unexpected_request'); },
+            async mutatePurposeBindings() {}, async resolveAgent() { return null; },
+            async resetQuota() { throw new Error('unexpected_quota'); },
+            // The physical configuration RPC is the system boundary; Action
+            // admission, review, re-entry and command construction remain real.
+            async controlCommand(_machineId, command) {
+                writes.push(command);
+                return { status: 'configurationCommitted', target: { ...input.target, modeId: mode.id }, mode,
+                    occurrenceId: 'configuration-runtime', sourceCustody: { kind: 'development', registeredRootId: 'configuration-root' },
+                    configuration: { status: 'ready', revision: 'after', values: input.values,
+                        configuredSecretFieldIds: ['clientSecret'], missingFieldIds: [] } };
+            },
+        };
+        const executor = createActionExecutor({
+            presentUserActionConfirmation: async review => { reviews.push(review); return approve; },
+            connectedServiceAction: ({ actionId, input }) => executeConnectedServiceConfigurationActionV1(host, actionId, input),
+            observeActionExecution: async observation => { observations.push(observation); },
+        });
+        const result = await executor.execute('connectedServices.configuration.replace', input, {
+            surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, actionRequestId: 'configuration-request',
+        });
+        expect(result, JSON.stringify(result)).toMatchObject(approve ? { ok: true, result: { applied: true, revision: 'after' } }
+            : { ok: false, errorCode: 'approval_canceled' });
+        expect(reviews).toHaveLength(1);
+        expect(JSON.stringify([reviews, observations])).not.toContain('https://after.test');
+        expect(writes).toEqual(approve ? [{ operation: 'replaceConfiguration', ...input }] : []);
+    });
+
     it('reads and replaces service configuration through Account catalog CAS without a machine', async () => {
         const mode = PluginConnectedAccountAuthenticationModeV2Schema.parse({ id: 'oauth', kind: 'oauthAuthorizationCode' as const, callbackUrl: 'https://provider.example/oauth/callback', pkce: 'required' as const,
             outcomeReconciliation: 'none' as const, configuration: { scope: 'service' as const, changeBehavior: 'reconnect' as const,
@@ -1046,6 +1252,7 @@ describe('connected-service configuration Action owner', () => {
         expect([...current.members].sort((a, b) => a.priority - b.priority).map(member => member.connectedAccountId)).toEqual(['b', 'a', 'new']);
         expect(writes).toHaveLength(3);
     });
+
 
     describe('Account-direct key custody (one credential record)', () => {
         const anthropic = { pluginId: 'happier.agent.claude', localId: 'anthropic' };

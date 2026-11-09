@@ -291,7 +291,11 @@ describe('ConnectedAccountSetupController real ownership', () => {
 
     /** A fresh method's own Ready action begins authentication; the panel never starts a sign-in by itself. */
     async function pressReadyAction(screen: Awaited<ReturnType<typeof renderScreen>>, id = 'connected-account-oauth:start') {
-        await vi.waitFor(() => expect(screen.findHostByTestId(id)).not.toBeNull());
+        await vi.waitFor(() => {
+            const action = screen.findHostByTestId(id);
+            expect(action).not.toBeNull();
+            expect(action!.props.disabled).not.toBe(true);
+        });
         await screen.pressByTestIdAsync(id);
     }
 
@@ -3387,11 +3391,16 @@ describe('ConnectedAccountSetupController real ownership', () => {
         await installNativeConfigurationAttemptBoundary();
         const screen = await renderScreen(element());
         await pressReadyAction(screen);
-        await vi.waitFor(() => expect(screen.findHostByTestId('connected-account-configuration:endpoint')).not.toBeNull());
+        await vi.waitFor(() => expect(screen.findHostByTestId('connected-account-configuration:endpoint'),
+            JSON.stringify({ rendered: screen.getTextContent(), controlCommands, authenticationCommands })).not.toBeNull());
         await act(async () => screen.changeTextByTestId('connected-account-configuration:endpoint', 'https://unsaved.example'));
         await screen.pressByTestIdAsync('connected-account-configuration:save');
         await vi.waitFor(() => expect(screen.findHostByTestId('connected-account:error')).not.toBeNull());
         expect(screen.findHostByTestId('connected-account-configuration:endpoint')!.props.value).toBe('https://unsaved.example');
+        await screen.pressByTestIdAsync('connected-account:error-details-toggle');
+        expect(screen.getTextContent()).toContain('connected_account_configuration_invalid');
+        expect(controlRequestIds.at(-1)).toEqual(expect.any(String));
+        expect(screen.getTextContent()).toContain(controlRequestIds.at(-1)!);
         expect(controlCommands).toContainEqual({ operation: 'replaceConfiguration', target: { kind: 'attempt', attemptId: 'attempt-1' },
             expectedRevision: 'config-1', values: { endpoint: 'https://unsaved.example' }, secretValues: {} });
         expect(authenticationCommands.some((command) => command.operation === 'continueConnect')).toBe(false);

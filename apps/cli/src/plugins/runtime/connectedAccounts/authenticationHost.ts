@@ -122,13 +122,16 @@ export function createCredentialedConnectedAccountAuthenticationHost(input: Read
         const retained = runtime(selected);
         const basis = await retained.attempts.resolveConfigurationControlTarget({ attemptId });
         if (!basis) return unavailable('connected_account_configuration_target_unavailable');
-        if (command.operation === 'readConfiguration') return { status: 'configuration' as const, ...basis,
-            configuration: await retained.configuration.inspect(basis) };
+        if (command.operation === 'readConfiguration') {
+            const { mode, ...configuration } = await retained.configuration.inspect(basis);
+            return { status: 'configuration' as const, ...basis, mode, configuration };
+        }
         const replacement = await retained.configuration.replaceForControl({ ...basis,
             expectedRevision: command.expectedRevision, values: command.values,
             secretValues: command.secretValues });
         if (replacement.status !== 'committed') return replacement;
-        return { status: 'configurationCommitted', ...basis, configuration: replacement.configuration };
+        const { mode, ...configuration } = replacement.configuration;
+        return { status: 'configurationCommitted', ...basis, mode, configuration };
     };
     const host: CredentialedConnectedAccountAuthenticationHost = Object.freeze({
         ...(input.operationContext ? { savedSecretOperationContext: input.operationContext } : {}),
@@ -211,7 +214,7 @@ export function createCredentialedConnectedAccountAuthenticationHost(input: Read
                     if (machineId) return options.native(machineId, command);
                     const pending = await api.listPending({ service: command.service });
                     return { status: 'pendingAttempts' as const, attempts: pending.length === 0 ? pending
-                        : runtime(await select(command.service)).attempts.selectResumableAttempts(pending) };
+                        : await runtime(await select(command.service)).attempts.selectResumableAttempts(pending) };
                 }
                 if (command.operation === 'describeService') {
                     try {
@@ -246,9 +249,16 @@ export function createCredentialedConnectedAccountAuthenticationHost(input: Read
                         const retained = runtime(selected);
                         const basis = { target: { ...requested, modeId: mode.id }, mode,
                             occurrenceId: selected.occurrenceId, sourceCustody: selected.sourceCustody };
-                        if (command.operation === 'readConfiguration') return { status: 'configuration' as const, ...basis,
-                            configuration: await retained.configuration.inspect(basis) };
-                        return unavailable('connected_account_configuration_unavailable');
+                        if (command.operation === 'readConfiguration') {
+                            const { mode, ...configuration } = await retained.configuration.inspect(basis);
+                            return { status: 'configuration' as const, ...basis, mode, configuration };
+                        }
+                        const replacement = await retained.configuration.replaceForControl({ ...basis,
+                            expectedRevision: command.expectedRevision, values: command.values,
+                            secretValues: command.secretValues });
+                        if (replacement.status !== 'committed') return replacement;
+                        const { mode: effectiveMode, ...configuration } = replacement.configuration;
+                        return { status: 'configurationCommitted' as const, ...basis, mode: effectiveMode, configuration };
                     } catch (error) { return unavailable(failureCode(error)); }
                 }
                 return machineId ? options.native(machineId, command) : unavailable('connected_account_configuration_target_unavailable');

@@ -233,7 +233,11 @@ export function createUiConnectedAccountAuthenticationHost(account: LazyActionAc
                     const { mode: effectiveMode, ...configuration } = await retained.configuration.inspect(basis);
                     return { status: 'configuration', ...basis, mode: effectiveMode, configuration };
                 }
-                return unavailable('connected_account_configuration_unavailable');
+                const replacement = await retained.configuration.replaceForControl({ ...basis,
+                    expectedRevision: command.expectedRevision, values: command.values, secretValues: command.secretValues });
+                if (replacement.status !== 'committed') return replacement;
+                const { mode: effectiveMode, ...configuration } = replacement.configuration;
+                return { status: 'configurationCommitted', ...basis, mode: effectiveMode, configuration };
             } catch (error) { return unavailable(failureCode(error)); }
         }
         if (machineId) return nativeControl(machineId, command);

@@ -770,7 +770,8 @@ async function runPublicManualJourney(mode: 'plain' | 'e2ee', requireAccountConf
     const modeId = isVercel ? 'token' : provider === 'claude-oauth' ? 'oauth' : isClaude ? 'setup-token' : 'manual';
     const service = isVercel ? inventories.vercel : isClaude ? inventories.claude
         : requireAccountConfiguration ? inventories.staging : inventories.public;
-    const { QualifiedConnectedAccountCredentialSnapshotV4Schema, QualifiedConnectedAccountConfigurationSnapshotV4Schema } =
+    const { QualifiedConnectedAccountCredentialSnapshotV4Schema, QualifiedConnectedAccountConfigurationSnapshotV4Schema,
+        QualifiedConnectedAccountConfigurationPatchV4Schema } =
         await import('@happier-dev/protocol/connect/qualifiedConnectedAccountsV4');
     const { SharedSavedSecretPromoteInputV1Schema, SharedSavedSecretPromoteOutputV1Schema,
         SHARED_SAVED_SECRET_ACTION_PATHS_V1 } = await import('@happier-dev/protocol/account/settings/savedSecretResourceActionsV1');
@@ -843,6 +844,17 @@ async function runPublicManualJourney(mode: 'plain' | 'e2ee', requireAccountConf
                 throw new Error('Declared manual secrets must commit through atomic Saved Secret promotion');
             }
             if (request.pathname === '/v4/connect/qualified/configuration') {
+                if (method === 'PATCH') {
+                    const patch = QualifiedConnectedAccountConfigurationPatchV4Schema.parse(await new Response(init?.body).json());
+                    if (!saved.current || !saved.configuration) throw new Error('Missing Account configuration');
+                    expect(patch.expectedCredentialRevision).toBe(saved.current.credentialRevision);
+                    expect(patch.expectedConfigurationRevision).toBe(saved.configuration.configurationRevision);
+                    saved.current = { ...saved.current, configurationRevision: 'edited-configuration' };
+                    saved.configuration = { ...saved.configuration, configurationRevision: 'edited-configuration',
+                        configurationContent: patch.replacementContentEnvelope };
+                    return Response.json({ success: true, credentialRevision: saved.current.credentialRevision,
+                        configurationRevision: 'edited-configuration' });
+                }
                 expect(method).toBe('GET');
                 return saved.configuration ? Response.json(saved.configuration)
                     : Response.json({ error: 'connect_configuration_not_found' }, { status: 404 });
@@ -1013,6 +1025,19 @@ async function runPublicManualJourney(mode: 'plain' | 'e2ee', requireAccountConf
             if (!configuration) throw new Error('Staged account configuration was not committed');
             expect(persistence.content.open('configuration', await persistence.content.resolveAccountMode(),
                 configuration.configurationContent)).toMatchObject({ values: { teamId: 'team_fixture', projectId: 'prj_fixture' }, secretRefs: {} });
+            const { Modal } = await import('@/modal');
+            vi.spyOn(Modal, 'confirm').mockResolvedValue(true);
+            const replacement = await createDefaultActionExecutor().execute('connectedServices.configuration.replace', {
+                target: { kind: 'account', account: reopened.ref }, expectedRevision: configuration.configurationRevision,
+                values: { teamId: 'team_edited', projectId: 'prj_fixture' }, secretValues: {},
+            }, context);
+            expect(replacement, JSON.stringify(replacement)).toMatchObject({ ok: true, result: { applied: true, revision: 'edited-configuration' } });
+            const edited = await persistence.readConfiguration(reopened.ref);
+            if (!edited) throw new Error('Edited Account configuration disappeared');
+            expect(persistence.content.open('configuration', await persistence.content.resolveAccountMode(), edited.configurationContent))
+                .toMatchObject({ values: { teamId: 'team_edited', projectId: 'prj_fixture' }, secretRefs: {} });
+            expect(promotions).toBe(1);
+            expect(directCredentialWrites).toBe(0);
         }
     } finally { fresh.dispose(); }
 }
@@ -1020,8 +1045,8 @@ async function runPublicManualJourney(mode: 'plain' | 'e2ee', requireAccountConf
 it.each(['plain', 'e2ee'] as const)('activates the public author example and promotes its manual secret through fresh no-Machine Actions (%s)',
     async mode => runPublicManualJourney(mode));
 
-it('stages generic required account configuration through fresh no-Machine Actions before manual settlement',
-    async () => runPublicManualJourney('plain', true));
+it.each(['plain', 'e2ee'] as const)('stages and edits generic account configuration through fresh no-Machine Actions (%s)',
+    async mode => runPublicManualJourney(mode, true));
 
 it('connects actual Vercel Account authentication through pending and staged configuration without a Machine',
     async () => runPublicManualJourney('plain', true, 'vercel'));

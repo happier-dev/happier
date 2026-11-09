@@ -755,6 +755,14 @@ describe('ConnectedAccountConfigurationOwner', () => {
                     }
                     : {}),
             });
+            const edited = await harness.owner.replaceForControl({
+                target, mode: configuredMode('account'), expectedRevision: result.snapshot.revision,
+                values: { endpoint: 'https://edited.example.test' }, secretValues: {}, ...generation,
+            });
+            expect(edited).toMatchObject({ status: 'committed', configuration: { values: { endpoint: 'https://edited.example.test' } } });
+            if (edited.status !== 'committed') throw new Error('Expected configuration edit');
+            await expect(edited.snapshot.getSecret('clientSecret')).resolves.toBe(`inline-${target.kind}`);
+            expect(harness.readSecret).not.toHaveBeenCalled();
         }
     });
 

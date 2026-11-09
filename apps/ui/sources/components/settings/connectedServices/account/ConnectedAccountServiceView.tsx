@@ -873,7 +873,7 @@ const ConnectedAccountServiceController = React.memo(
         // A form for a setup flow cancelled while it loaded is never shown.
         if (requestEpoch !== setupAttemptEpochRef.current) return false;
         if (!execution.ok) {
-            setErrorCode(execution.errorCode ?? 'connected_account_configuration_unavailable', 'load');
+            setErrorCode(execution.errorCode ?? 'connected_account_configuration_unavailable', 'load', execution.requestId);
             return false;
         }
         const result = CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1['connectedServices.configuration.get'].parse(execution.result);
@@ -1171,6 +1171,7 @@ const ConnectedAccountServiceController = React.memo(
         if (configuration.target.kind === 'account' && machineRequired && !machineId) return false;
         // Replies to this submit belong to the draft as it is now (see `acceptAttemptResponse`).
         const requestEpoch = setupAttemptEpochRef.current;
+        const requestId = randomUUID();
         setBusy(true);
         try {
             const replacement = await executeAction('connectedServices.configuration.replace', {
@@ -1186,12 +1187,12 @@ const ConnectedAccountServiceController = React.memo(
                     ...(configuration.target.kind === 'service' && selectedSecrets
                         ? { selectedSecrets }
                         : {}),
-                }, { signal: accountOwned ? getAccountSignal() : getLifecycleSignal() });
+                }, { signal: accountOwned ? getAccountSignal() : getLifecycleSignal(), actionRequestId: requestId });
             if (!isConfigurationCurrent()) return false;
             // Discarded while saving: the abandoned attempt is not continued.
             if (requestEpoch !== setupAttemptEpochRef.current) return false;
             if (!replacement.ok) {
-                setErrorCode(replacement.errorCode ?? 'connected_account_configuration_unavailable');
+                setErrorCode(replacement.errorCode ?? 'connected_account_configuration_unavailable', 'change', replacement.requestId ?? requestId);
                 return false;
             }
             const committed = CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1['connectedServices.configuration.replace'].parse(replacement.result);
@@ -1238,9 +1239,10 @@ const ConnectedAccountServiceController = React.memo(
                 }
             }
             return isConfigurationCurrent();
-        } catch {
+        } catch (error) {
             if (!isConfigurationCurrent()) return false;
-            setErrorCode('connected_account_configuration_unavailable');
+            setErrorCode(readConnectedServiceSettingsErrorCode(error) ?? 'connected_account_configuration_unavailable', 'change',
+                readConnectedServiceSettingsErrorRequestId(error) ?? requestId);
             return false;
         } finally {
             if (isConfigurationCurrent()) setBusy(false);

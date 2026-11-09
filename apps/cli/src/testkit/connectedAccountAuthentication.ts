@@ -1,7 +1,8 @@
 import { join, resolve } from 'node:path';
 import fastify from 'fastify';
 import { ActionsSettingsV1Schema, accountSettingsParse, type QualifiedConnectedAccountRef } from '@happier-dev/protocol';
-import { QualifiedConnectedAccountCredentialHealthPatchV4Schema, QualifiedConnectedAccountCredentialMutationSuccessV4Schema,
+import { QualifiedConnectedAccountConfigurationPatchV4Schema, QualifiedConnectedAccountConfigurationSnapshotV4Schema,
+    QualifiedConnectedAccountCredentialHealthPatchV4Schema, QualifiedConnectedAccountCredentialMutationSuccessV4Schema,
     QualifiedConnectedAccountCredentialMutationV4Schema, QualifiedConnectedAccountCredentialSnapshotV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { QualifiedConnectedAccountCredentialPayloadV1Schema, openQualifiedConnectedAccountContentEnvelope, resolveQualifiedConnectedAccountCredentialValuesV1 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
 import { SHARED_SAVED_SECRET_ACTION_PATHS_V1, SharedSavedSecretMutationOutputV1Schema, SharedSavedSecretPromoteInputV1Schema,
@@ -97,7 +98,20 @@ export async function createPortableConnectedAccountAuthenticationHttpFixture(or
             credentialRevision: credential.credentialRevision, configurationRevision: credential.configurationRevision });
     };
     app.get('/v4/connect/qualified/credential', async (_request, reply) => credential ?? reply.code(404).send({ error: 'not_found' }));
-    app.get('/v4/connect/qualified/configuration', async (_request, reply) => reply.code(404).send({ error: 'not_found' }));
+    app.get('/v4/connect/qualified/configuration', async (_request, reply) => credential && initialConfiguration
+        ? QualifiedConnectedAccountConfigurationSnapshotV4Schema.parse({ target: { kind: 'account', ref: credential.ref },
+            authenticationModeId: credential.authenticationModeId, revisionSemantics: 'revisioned',
+            credentialRevision: credential.credentialRevision, configurationRevision: credential.configurationRevision,
+            configurationContent: initialConfiguration }) : reply.code(404).send({ error: 'not_found' }));
+    app.patch('/v4/connect/qualified/configuration', async (request, reply) => {
+        const patch = QualifiedConnectedAccountConfigurationPatchV4Schema.parse(request.body);
+        if (!credential || credential.credentialRevision !== patch.expectedCredentialRevision
+            || credential.configurationRevision !== patch.expectedConfigurationRevision) return reply.code(409).send({ error: 'connect_configuration_conflict' });
+        initialConfiguration = patch.replacementContentEnvelope;
+        credential = { ...credential, configurationRevision: 'cscr_replaced_configuration' };
+        return QualifiedConnectedAccountCredentialMutationSuccessV4Schema.parse({ success: true,
+            credentialRevision: credential.credentialRevision, configurationRevision: credential.configurationRevision });
+    });
     app.get<{ Querystring: { service: string } }>('/v4/connect/qualified/accounts', request =>
         QualifiedConnectedAccountListResponseV4Schema.parse({
             service: parseQualifiedConnectedAccountV4StructuredQueryValue(QualifiedConnectedAccountServiceRefSchema, request.query.service),

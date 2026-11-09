@@ -3311,11 +3311,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
               const confirmed = await confirm({ actionId, input: confirmationInput, context: ctx, preview: policyReview.preview });
               if (ctx.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
               if (!confirmed) return { ok: false, errorCode: 'approval_canceled', error: 'approval_canceled' };
+              // Review projections omit live-only operands. Keep execution on
+              // the admitted invocation, just as blocking approvals do.
+              const executionInput = spec.approvalInputCustody === 'live_only' ? admittedInput : confirmationInput;
               // Re-enter current authority and domain admission with the existing
               // exact-Action confirmation fact, never an approval bypass.
-              return await executeCoreTerminal(actionId, discussionParticipantLaunch ? parsed.data : confirmationInput,
+              return await executeCoreTerminal(actionId, discussionParticipantLaunch ? parsed.data : executionInput,
                 { ...confirmedContext, ...(ctx.actionRequestId ? {
-                  presentUserApproval: recordPresentUserApprovalV1({ actionId, input: confirmationInput,
+                  presentUserApproval: recordPresentUserApprovalV1({ actionId, input: executionInput,
                     requestId: ctx.actionRequestId, requestSurface: ctx.surface,
                     ...(ctx.runtimeAccountId ? { decidingAccountId: ctx.runtimeAccountId } : {}) }),
                 } : {}) }, true, legacyMetadataLabel);
