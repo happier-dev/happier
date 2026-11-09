@@ -45,7 +45,10 @@ export async function emitSourceAuthorDeclarations(
     const workingDirectory = createHappierTempDir({ purpose: 'plugin-author-declarations' });
     try {
       const compilerInputs = join(workingDirectory, 'dist', '.happier-source');
-      await cp(sourceRoot, compilerInputs, { recursive: true });
+      // Captured files may be read-only; write the adjusted project afresh.
+      await cp(sourceRoot, compilerInputs, {
+        recursive: true, filter: sourcePath => sourcePath !== projectPath,
+      });
       await rename(join(compilerInputs, 'src'), join(workingDirectory, 'src'));
       await writeFile(join(workingDirectory, 'package.json'), manifestSource);
       for (const [packageName, dependencyRoot] of dependencies) {
@@ -54,7 +57,7 @@ export async function emitSourceAuthorDeclarations(
         await symlink(dependencyRoot, destination, process.platform === 'win32' ? 'junction' : 'dir');
       }
       const compilerProject = join(compilerInputs, 'tsconfig.json');
-      const project: { compilerOptions: Record<string, unknown> } = JSON.parse(await readFile(compilerProject, 'utf8'));
+      const project: { compilerOptions: Record<string, unknown> } = JSON.parse(await readFile(projectPath, 'utf8'));
       project.compilerOptions.outDir = join(packageRoot, 'dist');
       await writeFile(compilerProject, JSON.stringify(project));
       await compile(compilerProject, workingDirectory);
