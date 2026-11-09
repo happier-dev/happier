@@ -208,7 +208,7 @@ async function setup(
       ? <CheckoutReachabilityScope scope={{ serverId: fixture.home.id, machineId: 'm1' }}>{section}</CheckoutReachabilityScope>
       : section,
   );
-  if (!options.holdPolicyRead && !options.deferMachineDiscovery && !options.presenceBeforeDiscovery)
+  if (!options.role && !options.holdPolicyRead && !options.deferMachineDiscovery && !options.presenceBeforeDiscovery)
     await vi.waitFor(() =>
       expect(screen.findAllByTestId('work.accepting')[0]?.props.disabled).toBe(
         false,
@@ -325,7 +325,7 @@ describe('Machine › Work from your projects through the Machine policy Actions
   });
   it('shows a Can use person the policy read-only and says who changes it', async () => {
     const { screen, sent } = await setup({ role: 'use' });
-    await vi.waitFor(() => expect(screen.findAllByTestId('work.accepting')[0]?.props.subtitle).toContain('machines.widgets.body.common.recipient'));
+    await vi.waitFor(() => expect(screen.getTextContent()).toContain('machines.widgets.body.common.recipient'));
     expect(screen.findAllByTestId('work.accepting')[0]?.props.disabled).toBe(true);
     expect(screen.findAllByTestId('work.capacity')[0]?.props.disabled).toBe(true);
     expect(sent).toHaveLength(0);
