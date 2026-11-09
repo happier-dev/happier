@@ -1,6 +1,7 @@
 import { z } from 'zod/mini';
 import { ActionFailureCauseV1Schema } from '../actions/actionExecutionResult.js';
 
+import { ProviderManagedPurposeOperationRestrictionV1Schema } from '../providers/managedPurposeOperationRestrictionV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '../connect/connectedServiceUxDiagnostics.js';
 import { ProviderConnectionIdSchema, ProviderContributionKeySchema, ProviderLocalIdSchema, ProviderMachineIdSchema, ProviderModelIdSchema } from '../providers/ids.js';
@@ -58,7 +59,7 @@ import { LegacyProfileMigrationConflictResolutionV1Schema } from '../providers/m
 import { ProfileRecordV1Schema } from '../profiles/profileRecordSchemaV1.js';
 import { LegacyProfileRecordPreparationDiagnosticV1Schema } from '../profiles/read.js';
 import { ProviderMigrationSourceProfileIdSchema } from '../providers/settings/v1.js';
-import { ConnectedServiceIdSchema } from '../connect/connectedServiceBindings.js';
+import { ConnectedAccountServiceKeyIngressSchema } from '../connect/connectedServiceBindings.js';
 import {
   ConnectedAccountPurposeIdSchema,
   PluginConnectedAccountMaterializationKindsSchema,
@@ -206,6 +207,14 @@ export const DaemonProviderModelsResponseV1Schema = lazyZodSchema(() => z.discri
     connectionRevision: z.number().check(z.int(), z.nonnegative()),
     manualModelPolicy: z.enum(['allowed', 'catalog-only']),
     modelLoadAction: z.enum(['available', 'descriptor_absent', 'feature_disabled', 'machine_required']),
+    /** Probed catalogs distinguish no current observation from an observed empty result. Static-only catalogs omit this fact. */
+    catalogObserved: z.optional(z.boolean()),
+    /** Managed sources retain presence independently, including sources with no usable model rows. */
+    sourceCatalogs: z.optional(z.array(z.strictObject({
+      purpose: ConnectedAccountPurposeIdSchema,
+      catalogObserved: z.boolean(),
+      models: z.array(DaemonProviderModelRowV1Schema),
+    }))),
     models: z.array(DaemonProviderModelRowV1Schema).check(z.maxLength(50_000)),
   }),
   z.strictObject({ status: z.literal('error'), error: ProviderErrorV1Schema }),
@@ -414,6 +423,7 @@ const DaemonProviderManagedConnectedAccountPurposeDeclarationV1Schema =
   purpose: ConnectedAccountPurposeIdSchema,
   service: asProtocolZod(PluginContributionIdentityV1Schema),
   title: z.optional(PluginLocalizedStringV2Schema),
+  operationRestriction: z.optional(ProviderManagedPurposeOperationRestrictionV1Schema),
   required: z.boolean(),
   materializationKinds: z.optional(PluginConnectedAccountMaterializationKindsSchema),
 }));
@@ -777,6 +787,15 @@ export const DaemonProviderModelProjectionRequestV1Schema = lazyZodSchema(() => 
 })));
 export type DaemonProviderModelProjectionRequestV1 = z.infer<typeof DaemonProviderModelProjectionRequestV1Schema>;
 
+/** Explicit connection-source refresh uses the existing refresh Action and projection RPC, without an Agent operand. */
+export const DaemonProviderModelRefreshRequestV1Schema = lazyZodSchema(() => z.union([
+  z.safeExtend(DaemonProviderModelProjectionRequestV1Schema, { forceRefresh: z.literal(true) }),
+  z.strictObject({ machineId: ProviderMachineIdSchema, connectionId: ProviderConnectionIdSchema, forceRefresh: z.literal(true) }),
+]));
+export const DaemonProviderModelProjectionRpcRequestV1Schema = lazyZodSchema(() => z.union([
+  DaemonProviderModelProjectionRequestV1Schema, DaemonProviderModelRefreshRequestV1Schema,
+]));
+
 const DaemonProviderReasoningEffortSupportV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ supported: z.literal(false) }),
   z.strictObject({
@@ -921,6 +940,8 @@ export type DaemonProviderModelProjectionRowV1 = z.infer<typeof DaemonProviderMo
 export const DaemonProviderModelProjectionGroupV1Schema = lazyZodSchema(() => z.strictObject({
   connectionId: ProviderConnectionIdSchema,
   connectedAccountTarget: z.optional(QualifiedConnectedAccountPurposeBindingTargetV1Schema),
+  /** Exact source observation presence; true includes a successfully observed empty catalog. */
+  catalogObserved: z.optional(z.boolean()),
   providerName: z.string().check(z.trim(), z.minLength(1), z.maxLength(128)),
   connectionName: z.string().check(z.trim(), z.minLength(1), z.maxLength(128)),
   connectionRole: z.enum(['default', 'named']),
@@ -948,7 +969,7 @@ export const DaemonProviderModelProjectionGroupV1Schema = lazyZodSchema(() => z.
   ]),
   manualModelPolicy: z.enum(['allowed', 'catalog-only']),
   supportsFreeformModelIds: z.boolean(),
-  suppressedConnectedServiceIds: z.array(ConnectedServiceIdSchema).check(z.maxLength(32)),
+  suppressedConnectedServiceIds: z.array(ConnectedAccountServiceKeyIngressSchema).check(z.maxLength(32)),
   rows: z.array(DaemonProviderModelProjectionRowV1Schema),
 }).check(z.superRefine((value, ctx) => {
   value.rows.forEach((row, index) => {
@@ -1099,6 +1120,9 @@ export const DaemonProviderModelProjectionResponseV1Schema = lazyZodSchema(() =>
   z.strictObject({ status: z.literal('error'), error: ProviderErrorV1Schema }),
 ]));
 export type DaemonProviderModelProjectionResponseV1 = z.infer<typeof DaemonProviderModelProjectionResponseV1Schema>;
+export const DaemonProviderModelRefreshResponseV1Schema = lazyZodSchema(() => z.union([
+  DaemonProviderModelProjectionResponseV1Schema, DaemonProviderModelsResponseV1Schema,
+]));
 
 export { admitTeamCredentialSourceModelRowsV1, type TeamCredentialSourceModelProjectionFailureV1 } from './teamCredentialSourceModels.js';
 

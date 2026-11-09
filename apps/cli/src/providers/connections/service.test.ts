@@ -658,9 +658,17 @@ describe('provider connection service', () => {
     'projects the same public managed deployment for a %s Provider without the UI Local Services gate',
     async (source) => {
       const managed = harness({ managedEnabled: false });
+      const operationRestriction = {
+        summary: { key: 'gateway.chatOnly', fallback: 'Chat only' },
+        sentence: { key: 'gateway.chatOnlyDescription', fallback: 'This vendor supports chat only.' },
+      };
+      const original = managedContributionForSource(source);
       managed.providersByContributionKey.set(
         contributionKey,
-        managedContributionForSource(source),
+        { ...original, definition: ProviderContributionV1Schema.parse({ ...original.definition, managedRuntime: {
+          ...original.definition.managedRuntime,
+          connectedAccounts: original.definition.managedRuntime?.connectedAccounts?.map(declaration => ({ ...declaration, operationRestriction })),
+        } }) },
       );
       managed.setRaw({
         providerSettingsV1: ProviderSettingsV1Schema.parse({
@@ -716,6 +724,7 @@ describe('provider connection service', () => {
           protocols: ['openai-responses', 'openai-chat'],
           connectedAccountPurposeBindingPolicy: { minimumBound: 1 },
           connectedAccountPurposes: [{
+            operationRestriction,
             purpose: 'upstream',
             service: {
               pluginId: 'happier.connected-account.openai',
@@ -744,6 +753,7 @@ describe('provider connection service', () => {
         targetMachineId: 'machine-a',
         connectedAccountPurposeBindingPolicy: { minimumBound: 1 },
         connectedAccountPurposes: [{
+          operationRestriction,
           purpose: 'upstream',
           service: {
             pluginId: 'happier.connected-account.openai',

@@ -820,7 +820,7 @@ describe('shared Provider Account Action producer', () => {
     expect(await row.execute(parseProviderActionRequestV1('providers.connections.describe', {}), {}))
       .toMatchObject({ ok: true, result: { status: 'success', available: [], connections: [{ displayName: 'Work' }] } });
     expect(await row.execute(parseProviderActionRequestV1('providers.models.list', { connectionId: 'pc_work' }), {}))
-      .toMatchObject({ ok: true, result: { status: 'success', connectionRevision: 0, modelLoadAction: 'machine_required',
+      .toMatchObject({ ok: true, result: { status: 'success', connectionRevision: 0, modelLoadAction: 'machine_required', catalogObserved: false,
         models: [{ source: 'static' }, { source: 'static' }] } });
   });
 

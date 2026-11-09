@@ -11,6 +11,7 @@ export type ManagedGatewayFamily = Readonly<{
     required: false;
     materializationKinds: readonly ['httpHeaders'];
     catalogObservation?: NonNullable<NonNullable<ProviderContribution['managedRuntime']>['connectedAccounts']>[number]['catalogObservation'];
+    operationRestriction?: NonNullable<NonNullable<ProviderContribution['managedRuntime']>['connectedAccounts']>[number]['operationRestriction'];
   }>;
   requestAuth: Readonly<{ materialization: Readonly<{
     kind: 'httpHeaders'; origin: string; headerNames: readonly string[];

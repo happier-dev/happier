@@ -24,7 +24,7 @@ function rpcErrorContext(request: RpcRequest) {
       break;
     case 'providers.models.projection':
     case 'providers.models.refresh':
-      connectionId = request.input.currentSelection?.providerConnectionId ?? undefined;
+      connectionId = 'connectionId' in request.input ? request.input.connectionId : request.input.currentSelection?.providerConnectionId ?? undefined;
       break;
     case 'providers.models.visibility.set':
       connectionId = request.input.ref.providerConnectionId ?? undefined;

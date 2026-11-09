@@ -66,6 +66,7 @@ import { createTeamCredentialNativeProviderSourceFixture } from '@/providers/bro
 
 import {
   createRuntimeProviderModelManagementServices,
+  createProviderAccountOperationScope,
   resolveProviderManualModelCatalog,
 } from './runtimeServices';
 
@@ -396,6 +397,83 @@ function providerSnapshot(
     scopeKey: resolveAccountSettingsScopeKeyForToken('provider-model-snapshot-account'),
   };
 }
+
+
+it('reads gateway helper models from the addressed current source without probing a gateway or borrowing ambient observations', async () => {
+  const service = { pluginId: 'acme.managed-run', localId: 'accounts' };
+  const fixture = await createManagedRunLaunchFixture({ connectedAccounts: [{ purpose: 'source-models', service: service.localId,
+    required: false, materializationKinds: ['httpHeaders'] }] });
+  try {
+    const base = createBrokerProviderRegistry();
+    const registry = { ...base, agentDefinitionsById: fixture.lease.registry.contributes.agentDefinitionsById,
+      providersByContributionKey: new Map([...base.providersByContributionKey].map(([key, provider]) => [key, { ...provider,
+        definition: ProviderContributionV1Schema.parse({ ...provider.definition, managedRuntime: { ...provider.definition.managedRuntime,
+          connectedAccounts: [{ purpose: 'openai-upstream', service,
+            endpointTemplateIds: provider.definition.endpointTemplates.map(endpoint => endpoint.id),
+            catalogObservation: { agent: fixture.lease.registry.contributes.agentDefinitionsById.get(fixture.agentId)!.identity },
+            staticModels: [{ id: 'unverified-static', name: 'Unverified' }] }] } }),
+      }])) };
+    const target = { kind: 'account' as const, account: { service, accountId: 'requester-source' } };
+    const connectionId = 'requester-gateway';
+    const snapshot = providerSnapshot(ProviderSettingsV1Schema.parse({ ...DEFAULT_PROVIDER_SETTINGS_V1, connections: [{
+      v: 1, id: connectionId, source: { kind: 'contribution', contributionKey: [...registry.providersByContributionKey.keys()][0] },
+      role: 'named', displayName: 'Requester gateway', displayNameMode: 'custom', deployment: { kind: 'managedLocal' },
+      purposeBindingDefaults: { 'openai-upstream': target }, revision: 1, createdAt: 1, updatedAt: 1,
+    }] }));
+    const unavailable = async (): Promise<never> => { throw new Error('Unexpected credential, gateway, mutation or ambient Account read'); };
+    const purposes = createConnectedAccountPurposeBindingOwner({
+      store: { read: async () => ({ v: 1, bindings: [] }), update: unavailable, subscribe: () => ({ dispose() {} }) },
+      selectTarget: unavailable, materializeAccount: unavailable, projectTargetAccounts: unavailable,
+      assertTargetAccountMaterializable: unavailable,
+      resolveTarget: async value => value.kind === 'account' ? { account: value.account, displayName: 'Requester source' } : null,
+    });
+    let current = true;
+    let observed = false;
+    let stale = false;
+    let nativeReads = 0;
+    let explicitRefresh = false;
+    let models = [] as { id: string; name: string; capabilities?: { toolRoundTrips: 'unsupported' } }[];
+    const services = createRuntimeProviderModelManagementServices({ machineId: fixture.machineId, registry,
+      featureGate: { isEnabled: () => true }, getAccountSettingsSnapshot: (): never => { throw new Error('Ambient Account read'); },
+      resolveAddresses: unavailable, invokeConnectedAccountNativeModels: unavailable,
+      modelSettingsMutation: unavailable,
+    });
+    const scope = createProviderAccountOperationScope({ getAccountSettingsSnapshot: () => snapshot,
+      resolveManagedPurposeBindingIntent: purposes.resolveBindingIntent,
+      resolveManagedPurposeBindingIntentSelection: purposes.resolveBindingIntentSelection,
+      invokeConnectedAccountNativeModels: async request => {
+        nativeReads++;
+        expect(request.params).toMatchObject({ currentOnly: !explicitRefresh, bypassCache: explicitRefresh, connectedServices: { v: 2, bindingsByServiceId: {
+          'acme.managed-run/accounts': { source: 'connected', profileId: 'requester-source' },
+        } } });
+        return observed ? { ok: true, result: { agentId: fixture.agentId, source: 'dynamic', observedAt: 1,
+          refreshError: stale, supportsFreeform: false, availableModels: models } } : { ok: false };
+      }, signal: new AbortController().signal, isCurrent: () => current });
+    const request = { machineId: fixture.machineId, connectionId };
+    expect(await services.models(request, undefined, scope)).toMatchObject({ status: 'success', models: [],
+      sourceCatalogs: [{ purpose: 'openai-upstream', catalogObserved: false, models: [] }] });
+    observed = true;
+    expect(await services.models(request, undefined, scope)).toMatchObject({ status: 'success', models: [],
+      sourceCatalogs: [{ purpose: 'openai-upstream', catalogObserved: true, models: [] }] });
+    models = [{ id: 'current-model', name: 'Current', capabilities: { toolRoundTrips: 'unsupported' } }];
+    expect(await services.models(request, undefined, scope)).toMatchObject({ status: 'success',
+      models: [{ id: 'current-model', descriptor: { capabilities: { toolRoundTrips: 'unsupported' } } }],
+      sourceCatalogs: [{ purpose: 'openai-upstream', catalogObserved: true,
+        models: [{ id: 'current-model', descriptor: { capabilities: { toolRoundTrips: 'unsupported' } } }] }] });
+    stale = true;
+    expect(await services.models(request, undefined, scope)).toMatchObject({ status: 'success', models: [],
+      sourceCatalogs: [{ purpose: 'openai-upstream', catalogObserved: true, models: [] }] });
+    expect(nativeReads).toBe(4);
+    explicitRefresh = true;
+    stale = false;
+    expect(await services.models(request, undefined, { ...scope, forceRefresh: true })).toMatchObject({ status: 'success',
+      models: [{ id: 'current-model' }], sourceCatalogs: [{ purpose: 'openai-upstream', catalogObserved: true }] });
+    expect(nativeReads).toBe(5);
+    current = false;
+    expect(await services.models(request, undefined, scope)).toMatchObject({ status: 'error', error: { code: 'provider_authorization_changed' } });
+    expect(nativeReads).toBe(5);
+  } finally { await fixture.cleanup(); }
+});
 
 async function registeredProviderProjectionFixture(
   requiredCapabilities: NonNullable<Parameters<typeof createManagedRunLaunchFixture>[0]>['requiredCapabilities'] = { streaming: true },

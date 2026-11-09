@@ -13,6 +13,24 @@ afterEach(() => vi.restoreAllMocks());
 
 const agentTargetKey = 'agent:happier.agent.codex/codex';
 
+it('refreshes an exact connection source through the existing refresh Action without requiring an Agent', async () => {
+  const operand = { machineId: 'machine-a', connectionId: 'gateway-a', forceRefresh: true };
+  const request = parseProviderActionRequestV1('providers.models.refresh', operand);
+  expect(() => parseProviderActionRequestV1('providers.models.list', operand)).toThrow();
+  const execute = createProviderActionExecuteV1({ assertCurrent() {},
+    // Machine transport is the only replaced boundary; route, operands and result admission are real.
+    rpc: async input => {
+      expect(input.method).toBe(RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION);
+      expect(input.request.input).toEqual(operand);
+      return { status: 'success', connectionId: 'gateway-a', connectionRevision: 1,
+        manualModelPolicy: 'catalog-only', modelLoadAction: 'descriptor_absent', models: [],
+        sourceCatalogs: [{ purpose: 'upstream', catalogObserved: true, models: [] }] };
+    }, setDefault: async () => ({ status: 'unchanged' }),
+  });
+  expect(await execute(request, {})).toMatchObject({ ok: true, result: { status: 'success',
+    sourceCatalogs: [{ purpose: 'upstream', catalogObserved: true, models: [] }] } });
+});
+
 describe('Session-addressed Provider binding status', () => {
   const launchBinding = {
     v: 1, connectionId: 'pc_work', contributionKey: null, connectionRevision: 3,

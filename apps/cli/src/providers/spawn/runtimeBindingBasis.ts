@@ -40,7 +40,7 @@ export function projectProviderRuntimeBindingBasis(
               ...authorization.deployment.implementation.managedRuntime,
               connectedAccounts: authorization.deployment.implementation
                 .managedRuntime.connectedAccounts.map(
-                  ({ title: _title, ...declaration }) => declaration,
+                  ({ title: _title, operationRestriction: _restriction, ...declaration }) => declaration,
                 ),
             },
             purposeBindings:

@@ -54,6 +54,7 @@ it('replaces static membership with one exact current account observation across
     resolveSelection: purposes.resolveBindingIntentSelection, request, observeModels };
   const observed = await projectConnectedAccountCatalog(input);
   expect(observed.groups).toHaveLength(3);
+  expect(observed.groups.every(group => group.catalogObserved === true)).toBe(true);
   expect(observed.groups.every(group => group.rows.length === 1 && group.rows[0]?.descriptor.id === 'gpt-6.1-sol'
     && group.rows[0].confidence === 'probe' && group.rows[0].sources.probe && !group.rows[0].sources.static)).toBe(true);
   expect(nativeReads).toBe(1);
@@ -77,6 +78,7 @@ it('replaces static membership with one exact current account observation across
   expect(direct.groups.every(group => group.rows[0]?.descriptor.id === 'gpt-5.5'
     && group.rows[0].confidence === 'account_unverified')).toBe(true);
   expect(nativeReads).toBe(2);
+  expect(direct.groups.every(group => group.catalogObserved === false)).toBe(true);
   models = [{ id: 'gpt-6.1-terra', name: 'Terra' }];
   const changed = await projectConnectedAccountCatalog(input);
   expect(changed.groups[0]?.rows.map(row => row.descriptor.id)).toEqual(['gpt-6.1-terra']);
@@ -88,7 +90,7 @@ it('replaces static membership with one exact current account observation across
   models = [];
   const empty = await projectConnectedAccountCatalog(input);
   expect(empty.groups).toHaveLength(3);
-  expect(empty.groups.every(group => group.rows.length === 0)).toBe(true);
+  expect(empty.groups.every(group => group.rows.length === 0 && group.catalogObserved === true)).toBe(true);
   expect(nativeReads).toBe(5);
   } finally { await fixture.cleanup(); }
 });

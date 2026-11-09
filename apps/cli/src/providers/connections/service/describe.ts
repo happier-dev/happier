@@ -4,9 +4,9 @@ import { resolveProviderGrantV1 } from '@happier-dev/protocol/providers/settings
 import { resolveProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol/providers/contributions';
 import { providerEndpointPolicySecurityFactsV1 } from '@happier-dev/protocol/providers/contributions';
 import { resolveEffectiveProviderEndpointV1 } from '@happier-dev/protocol/providers/connections/v1';
-import { projectAvailableProviderContributionsV1, readProviderAdditionalCredentialSlotsV1 } from '@happier-dev/protocol/providers/connections/sourceFactsV1';
+import { projectAvailableProviderContributionsV1, readProviderAdditionalCredentialSlotsV1, projectProviderManagedConnectedAccountPurposeV1 as projectManagedConnectedAccountPurpose } from '@happier-dev/protocol/providers/connections/sourceFactsV1';
 import { describeAccountProviderConnectionV1 } from '@happier-dev/protocol/providers/connections/accountProviderActionV1';
-import type { ProviderErrorV1, ResolvedProviderManagedConnectedAccountPurposeDeclarationV1 } from '@happier-dev/protocol';
+import type { ProviderErrorV1 } from '@happier-dev/protocol';
 
 import {
   getProviderContribution,
@@ -36,20 +36,6 @@ const EMPTY_RUNTIME_PROJECTION = Object.freeze({
   summary: EMPTY_RUNTIME_SUMMARY,
   probeObservationIdentity: null,
 });
-
-function projectManagedConnectedAccountPurpose(
-  declaration: ResolvedProviderManagedConnectedAccountPurposeDeclarationV1,
-) {
-  return {
-    purpose: declaration.purpose,
-    service: declaration.service,
-    ...(declaration.title === undefined ? {} : { title: declaration.title }),
-    required: declaration.required === true,
-    ...(declaration.materializationKinds !== undefined
-      ? { materializationKinds: [...declaration.materializationKinds] }
-      : {}),
-  };
-}
 
 async function readAdvisoryProjection<T>(read: () => Promise<readonly T[]>): Promise<readonly T[]> {
   try {

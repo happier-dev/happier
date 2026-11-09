@@ -280,6 +280,9 @@ describe('typed provider security fingerprints', () => {
           connectedAccounts: [{
             ...managedDeployment.managedRuntime.connectedAccounts[0],
             title: 'Use the renamed upstream account',
+            operationRestriction: {
+              summary: 'Chat only', sentence: 'This vendor supports chat only.',
+            },
           }],
         },
       },

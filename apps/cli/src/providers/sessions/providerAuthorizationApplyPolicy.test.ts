@@ -217,7 +217,7 @@ function managedAuthorization(
                 purpose,
                 materialization: {
                   kind: 'httpHeaders' as const,
-                  origins: ['https://api.example.test'],
+                  origin: 'https://api.example.test',
                   headerNames: ['authorization'],
                 },
               })),
@@ -331,7 +331,7 @@ function withChangedManagedConnectedAccountMaterializationKinds(
   };
 }
 
-function withChangedManagedConnectedAccountTitle(
+function withChangedManagedConnectedAccountPresentation(
   input: ManagedAuthorization,
 ): ManagedAuthorization {
   const [first, ...rest] =
@@ -348,6 +348,7 @@ function withChangedManagedConnectedAccountTitle(
           connectedAccounts: [{
             ...first,
             title: 'Use the renamed upstream account',
+            operationRestriction: { summary: 'Chat only', sentence: 'This vendor supports chat only.' },
           }, ...rest],
         },
       },
@@ -421,7 +422,7 @@ function withChangedManagedRequestAuthOrigin(
             ...first,
             materialization: {
               ...first.materialization,
-              origins: ['https://changed.example.test'],
+              origin: 'https://changed.example.test',
             },
           }, ...rest],
         },
@@ -772,7 +773,7 @@ describe('resolveProviderAuthorizationApplyPolicyForActiveBinding', () => {
         ['ä-upstream', 'Z-upstream'],
       ),
     );
-    const retitled = withChangedManagedConnectedAccountTitle(
+    const retitled = withChangedManagedConnectedAccountPresentation(
       managedAuthorization(
         'next',
         'account-a',
@@ -783,8 +784,10 @@ describe('resolveProviderAuthorizationApplyPolicyForActiveBinding', () => {
     if (retitledRuntimeBinding.deployment.kind !== 'managedLocal') {
       throw new TypeError('Expected a managed runtime binding');
     }
-    expect(retitledRuntimeBinding.deployment.managedRuntime.connectedAccounts[0])
-      .not.toHaveProperty('title');
+    for (const declaration of retitledRuntimeBinding.deployment.managedRuntime.connectedAccounts) {
+      expect(declaration).not.toHaveProperty('title');
+      expect(declaration).not.toHaveProperty('operationRestriction');
+    }
     const originalLocaleCompare = String.prototype.localeCompare;
     String.prototype.localeCompare = () => {
       throw new Error('localeCompare must not participate in Provider binding identity');

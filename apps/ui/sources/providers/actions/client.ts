@@ -122,7 +122,9 @@ export const probeProviderDraft: ProviderActionMethod<'probeProviderDraft'> = as
 export const describeProviderModels = async (input: ProviderActionInput<'providers.models.projection' | 'providers.models.refresh'> & Readonly<{ serverId: string | null }>, approval?: ProviderActionApprovalOptions) => {
     const { serverId, ...request } = input;
     const id = input.forceRefresh ? 'providers.models.refresh' : 'providers.models.projection';
-    return invoke(id, request, outputs[id], { serverId }, approval);
+    const result = await invoke(id, request, outputs[id], { serverId }, approval);
+    if (result.status === 'success' && 'connectionId' in result) throw createProviderErrorV1('provider_rpc_response_invalid');
+    return result;
 };
 export const describeProviderConnectionModels = async (input: ProviderActionInput<'providers.models.list'> & Readonly<{ serverId: string | null }>, approval?: ProviderActionApprovalOptions) => {
     const { serverId, ...request } = input;

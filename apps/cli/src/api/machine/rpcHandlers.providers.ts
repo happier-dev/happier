@@ -1,3 +1,4 @@
+import { DaemonProviderModelProjectionRpcRequestV1Schema } from '@happier-dev/protocol/rpc/providers';
 import { DaemonProviderModelLoadResponseV1Schema, DaemonProviderConnectionsDescribeRequestV1Schema, DaemonProviderConnectionsDescribeResponseV1Schema, DaemonProviderConnectionMutationRequestV1Schema, DaemonProviderConnectionMutationResponseV1Schema, DaemonProviderProbeRequestV1Schema, DaemonProviderModelsResponseV1Schema, DaemonProviderProbeResponseV1Schema, DaemonProviderModelProjectionRequestV1Schema, DaemonProviderModelProjectionResponseV1Schema, DaemonProviderTeamCredentialRequestPolicySupportRequestV1Schema, DaemonProviderTeamCredentialRequestPolicySupportResponseV1Schema, DaemonProviderModelSettingsMutationRequestV1Schema, DaemonProviderModelSettingsMutationResponseV1Schema, DaemonProviderTeamCredentialResourceTestCandidateRequestV1Schema, DaemonProviderTeamCredentialResourceTestCandidateResponseV1Schema, DaemonProviderTeamCredentialBrokerEligibilityRequestV1Schema, DaemonProviderTeamCredentialBrokerEligibilityResponseV1Schema, DaemonProviderBindingStatusRequestV1Schema, DaemonProviderBindingStatusResponseV1Schema, DaemonProviderProfileMigrationPreviewRequestV1Schema, DaemonProviderProfileMigrationPreviewResponseV1Schema, DaemonProviderProfileMigrationConfirmRequestV1Schema, DaemonProviderProfileMigrationConfirmResponseV1Schema, DaemonProviderProfileMigrationConflictConfirmRequestV1Schema, DaemonProviderProfileMigrationConflictConfirmResponseV1Schema } from '@happier-dev/protocol/rpc/providers';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { DaemonProviderProfileMigrationPrepareSourceRequestV1Schema, DaemonProviderProfileMigrationPrepareSourceResponseV1Schema, type DaemonProviderProfileMigrationPrepareSourceRequestV1, type DaemonProviderProfileMigrationPrepareSourceResponseV1 } from '@happier-dev/protocol/rpc/providers';
@@ -235,7 +236,12 @@ export function registerMachineProviderRpcHandlers(input: Readonly<{
   input.rpcHandlerManager.registerHandler(
     RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION,
     async (raw, context) => {
-      const request = DaemonProviderModelProjectionRequestV1Schema.parse(raw);
+      const request = DaemonProviderModelProjectionRpcRequestV1Schema.parse(raw);
+      if ('connectionId' in request) {
+        const result = !input.featureGate.isEnabled('providers') ? featureDisabled(request)
+          : await input.services.models({ machineId: request.machineId, connectionId: request.connectionId }, context?.signal, { forceRefresh: true });
+        return DaemonProviderModelsResponseV1Schema.parse(result);
+      }
       const result = !input.featureGate.isEnabled('providers')
         ? featureDisabled(request)
         : request.machineId !== input.machineId

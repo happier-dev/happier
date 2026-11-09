@@ -1,14 +1,28 @@
-import type { ProviderContributionV1, ProviderEndpointTemplateV1, ProviderModelLoadDescriptorV1 } from '../contributions/v1.js';
+import type { ProviderContributionV1, ProviderEndpointTemplateV1, ProviderModelLoadDescriptorV1, ResolvedProviderManagedConnectedAccountPurposeDeclarationV1 } from '../contributions/v1.js';
 import type { ProviderCredentialTransportV1 } from '../credentials/v1.js';
 import type { ProviderCatalogProbeV1 } from '../catalog/descriptorV1.js';
 import type { ProviderCatalogCommandFallbackV1 } from '../detection/descriptorV1.js';
 import type { CustomProviderTemplateV1 } from './customTemplateV1.js';
 import type { ProviderConnectionV1 } from './v1.js';
 import type { AccountProviderDeclarationV1 } from '../catalog/accountModelProjectionV1.js';
-import type { DaemonProviderConnectionsDescribeResponseV1 } from '../../rpc/providers.js';
+import type { DaemonProviderConnectionsDescribeResponseV1, DaemonProviderConnectionViewV1 } from '../../rpc/providers.js';
 import { normalizeProviderContributionKeyV1 } from '../contributionIdentityV1.js';
 import type { PluginLocalizedStringV2 } from '../../plugins/contributions/publicTypes.js';
 import { providerEndpointPolicySecurityFactsV1 } from '../endpointPolicyV1.js';
+
+/** Public managed-purpose facts shared by Account, Machine and gateway presentation. */
+export function projectProviderManagedConnectedAccountPurposeV1(
+  declaration: ResolvedProviderManagedConnectedAccountPurposeDeclarationV1,
+): NonNullable<DaemonProviderConnectionViewV1['managedLocalOption']>['connectedAccountPurposes'][number] {
+  return {
+    purpose: declaration.purpose,
+    service: declaration.service,
+    ...(declaration.title === undefined ? {} : { title: declaration.title }),
+    ...(declaration.operationRestriction === undefined ? {} : { operationRestriction: declaration.operationRestriction }),
+    required: declaration.required === true,
+    ...(declaration.materializationKinds === undefined ? {} : { materializationKinds: [...declaration.materializationKinds] }),
+  };
+}
 
 /** Only declared credential slots can acquire Saved Secret authority. Clearing stale bindings is independent. */
 export function isProviderConnectionCredentialSlotDeclaredV1(

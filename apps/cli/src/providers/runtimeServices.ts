@@ -27,7 +27,9 @@ import type { RuntimeProviderAccountModelProjectionContext } from '@/providers/m
 import type { ProviderActionRequestV1 } from '@happier-dev/protocol/providers/providerActionsV1';
 
 export type RuntimeProviderAccountReadRequest = Extract<ProviderActionRequestV1,
-  { actionId: 'providers.connections.describe' | 'providers.models.list' }>;
+  { actionId: 'providers.connections.describe' | 'providers.models.list' }>
+  | Readonly<{ actionId: 'providers.models.refresh'; input: Extract<
+    Extract<ProviderActionRequestV1, { actionId: 'providers.models.refresh' }>['input'], { connectionId: string }> }>;
 /** Host-private reads retain the receiving Action's admitted requester Account. */
 export type RuntimeProviderAccountRead = (request: RuntimeProviderAccountReadRequest,
   context: RuntimeProviderAccountModelProjectionContext) => Promise<

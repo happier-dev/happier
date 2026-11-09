@@ -238,6 +238,41 @@ function grantedSettings(providerRegistry = registry) {
 }
 
 describe('runtime provider services', () => {
+  it('does not report an ordinary catalog read as an explicit source refresh', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-provider-source-refresh-unsupported-'));
+    temporaryPaths.push(happyHomeDir);
+    const snapshot = providerSnapshot(grantedSettings());
+    const services = createRuntimeProviderServices({ machineId: 'machine-a', happyHomeDir, registry,
+      getAccountSettingsSnapshot: () => snapshot, resolveAddresses: async () => ['1.1.1.1'],
+      featureGate: { isEnabled: () => true },
+      client: createProviderProbeHttpClient({ resolveAddresses: async () => ['1.1.1.1'],
+        transport: async () => { throw new Error('An ordinary refresh remains with its probe owner'); } }),
+    });
+    await expect(services.models({ connectionId, machineId: 'machine-a' }, undefined, { forceRefresh: true }))
+      .resolves.toMatchObject({ status: 'error', error: { code: 'provider_catalog_unavailable' } });
+  });
+
+  it('preserves catalog observation absence independently of a successful empty probe', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-provider-observation-presence-'));
+    temporaryPaths.push(happyHomeDir);
+    const snapshot = providerSnapshot(grantedSettings());
+    const transport = vi.fn(async () => ({ status: 200, headers: { 'content-type': 'application/json' },
+      body: Buffer.from('{"data":[]}') }));
+    const services = createRuntimeProviderServices({ machineId: 'machine-a', happyHomeDir, registry,
+      getAccountSettingsSnapshot: () => snapshot, resolveAddresses: async () => ['1.1.1.1'],
+      featureGate: { isEnabled: () => true },
+      client: createProviderProbeHttpClient({ resolveAddresses: async () => ['1.1.1.1'], transport }),
+    });
+    const identity = { connectionId, machineId: 'machine-a' };
+    // Declared/manual rows remain usable while no dynamic observation exists.
+    await expect(services.models(identity)).resolves.toMatchObject({ status: 'success', catalogObserved: false });
+    await expect(services.probe(identity)).resolves.toMatchObject({ status: 'success' });
+    await expect(services.models(identity)).resolves.toMatchObject({ status: 'success', catalogObserved: true });
+    const state = await services.runtimeStore.read();
+    expect(state.catalogs[0]?.state.snapshot?.models).toEqual([]);
+    await services.scheduleDemandRefresh(identity, 'picker_open');
+  });
+
   it('settles the first empty catalog read with its DNS cause and retains models after a later failed refresh', async () => {
     const probeDefinition = ProviderContributionV1Schema.parse({ ...definition,
       catalog: { source: 'probe', manualModelPolicy: 'allowed',

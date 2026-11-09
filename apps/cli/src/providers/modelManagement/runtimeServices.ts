@@ -199,7 +199,10 @@ export function createProviderAccountOperationScope(context: RuntimeProviderAcco
     isAccountCurrent: context.isCurrent,
     savedSecretOperationContext: context.savedSecretOperationContext ?? null,
     managedRuntimeAccount: context.managedRuntimeAccount ?? null,
-    accountReadScope: context.accountReadScope ?? null };
+    accountReadScope: context.accountReadScope ?? null,
+    resolveManagedPurposeBindingIntentSelection: context.resolveManagedPurposeBindingIntentSelection,
+    invokeConnectedAccountNativeModels: context.invokeConnectedAccountNativeModels,
+    observeConnectedAccountSourceModels: context.observeConnectedAccountSourceModels };
 }
 
 export type RuntimeProviderModelManagementServices = Readonly<{
@@ -357,6 +360,55 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
       : {}),
     ...(input.openTeamDirect ? { openTeamDirect: input.openTeamDirect } : {}),
     modelLoadEnabled: () => input.featureGate.isEnabled('providers.localModelManagement'),
+    readManagedSourceModels: async ({ connection, registry, scope, modelLoadAction }) => {
+      const identity = { connectionId: connection.connectionId, machineId: connection.machineId };
+      const unavailable = () => ({ status: 'error' as const,
+        error: createProviderErrorV1('provider_catalog_unavailable', identity) });
+      if (connection.deployment.kind !== 'managedLocal' || connection.source.kind !== 'contribution') return unavailable();
+      const provider = getProviderContribution(registry, connection.source.contributionKey);
+      const resolveSelection = scope.resolveManagedPurposeBindingIntentSelection
+        ?? (scope.getAccountSettingsSnapshot ? undefined : input.resolveManagedPurposeBindingIntentSelection);
+      if (!provider || !resolveSelection) return unavailable();
+      const invoke = scope.getAccountSettingsSnapshot ? scope.invokeConnectedAccountNativeModels : input.invokeConnectedAccountNativeModels;
+      const observe = scope.getAccountSettingsSnapshot ? scope.observeConnectedAccountSourceModels : input.observeConnectedAccountSourceModels;
+      const sourceCatalogs = [];
+      const selectableModels = new Map<string, import('../probe/rpc').ProviderSavedModelsRpcRow>();
+      try {
+        for (const binding of connection.deployment.purposeBindingIntents.bindings) {
+          const projection = await awaitWithinProviderOperation(readConnectedAccountModelCatalog({
+            registry, provider, purpose: binding.purpose.purpose, resolveSelection,
+            request: { machineId: connection.machineId, connectedAccountTarget: binding.target,
+              sourceCatalog: true, ...(scope.forceRefresh ? { forceRefresh: true } : { refreshPolicy: 'current_only' }) }, signal: scope.lifetime.signal,
+            ...(invoke || observe ? { observeModels: createConnectedAccountModelObserver({ registry, invoke, observe,
+              resolveContributedCatalogParsers: scope.resolveContributedCatalogParsers }) } : {}),
+          }), scope.lifetime);
+          if (projection.error) return { status: 'error', error: projection.error };
+          if (!await awaitWithinProviderOperation(projection.isCurrent(), scope.lifetime)) return unavailable();
+          const current = projectCurrentProviderSourceModelCatalogs(projection.groups.flatMap(group => group.sourceRevision
+            ? [{ application: group.application, sourceRevision: group.sourceRevision, rows: group.rows }] : []));
+          if (current.status !== 'success') return current;
+          // The same descriptor can occur in several protocol applications. This
+          // display projection does not choose an execution application.
+          const models = new Map<string, import('../probe/rpc').ProviderSavedModelsRpcRow>();
+          for (const row of current.catalogs.flatMap(catalog => catalog.rows)) {
+            const model = { id: row.descriptor.id, name: row.descriptor.name, descriptor: row.descriptor,
+              source: 'probe' as const, stale: false, loadState: row.loadState, visibility: row.visibility };
+            if (!models.has(model.id)) models.set(model.id, model);
+            if (!selectableModels.has(model.id)) selectableModels.set(model.id, model);
+          }
+          sourceCatalogs.push({ purpose: binding.purpose.purpose,
+            catalogObserved: projection.groups.length > 0 && projection.groups.every(group => group.catalogObserved === true),
+            models: [...models.values()] });
+        }
+        return { status: 'success', ...identity, connectionRevision: connection.connection.revision,
+          manualModelPolicy: connection.source.definition.catalog.manualModelPolicy, modelLoadAction,
+          sourceCatalogs, models: [...selectableModels.values()] };
+      } catch (error) {
+        if (isConnectedAccountSourceReconnectRequiredError(error)) return { status: 'error',
+          error: createProviderErrorV1(CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired, identity) };
+        throw error;
+      }
+    },
   });
   const resolveManagementRegistry = async (): Promise<ProviderContributionRegistryView> => {
     if (input.registry) return input.registry;

@@ -49,9 +49,10 @@ export function createCliProviderActionExecuteV1(params: Readonly<{
     rpc: async ({ machineId, method, request, context, operationTimeoutMs }) => {
       const requesterProjection = params.projectModelsForAccount
         && (request.actionId === 'providers.models.projection' || request.actionId === 'providers.models.refresh')
-        && request.input.teamCredentialResources === undefined;
+        && !('connectionId' in request.input) && request.input.teamCredentialResources === undefined;
       const requesterRead = params.readProviderForAccount
-        && (request.actionId === 'providers.connections.describe' || request.actionId === 'providers.models.list');
+        && (request.actionId === 'providers.connections.describe' || request.actionId === 'providers.models.list'
+          || request.actionId === 'providers.models.refresh' && 'connectionId' in request.input);
       if (params.operationContext && (requesterProjection || requesterRead)) {
         const catalog = await prepareProviderConnectionsCatalogForCli({ expectedScopeKey: scopeKey,
           operationContext: params.operationContext, signal: context.signal });
@@ -59,6 +60,9 @@ export function createCliProviderActionExecuteV1(params: Readonly<{
         // The dispatch owner routes here only with the operand's exact Machine.
         if (request.actionId === 'providers.connections.describe' || request.actionId === 'providers.models.list') {
           return params.readProviderForAccount!(request, context);
+        }
+        if (request.actionId === 'providers.models.refresh' && 'connectionId' in request.input) {
+          return params.readProviderForAccount!({ actionId: request.actionId, input: request.input }, context);
         }
         if (request.actionId === 'providers.models.projection' || request.actionId === 'providers.models.refresh') {
           return params.projectModelsForAccount!({ ...request.input, machineId }, context);

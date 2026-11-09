@@ -10,6 +10,7 @@ import { preserveConnectedAccountSourceHealthFailure } from '@/daemon/connectedS
 import { projectManagedProviderBrokerApplication } from '@/providers/broker/applicationProjection';
 import { isCpxBrokerApplication } from '@/providers/broker/teamCredentialBrokerSourceOwner';
 import type { ProviderContributionRegistryView } from '@/providers/registry';
+import type { ResolvedProviderContribution } from '@/plugins/projection/registry/types';
 import { hasProviderExperimentalConfirmation } from '@/providers/catalog/compatibility';
 import { resolveProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol/providers/contributions';
 import { getProviderExperimentalConfirmationCatalogSourceKeyV1 } from '@happier-dev/protocol/providers/settings/v1';
@@ -32,8 +33,10 @@ export async function readConnectedAccountCatalogSources(input: Readonly<{
   signal?: AbortSignal;
   protocols?: readonly string[];
   endpointTemplateId?: string;
+  provider?: ResolvedProviderContribution;
+  purpose?: string;
 }>) {
-  const provider = readProviderConnectionBrokerImplementation(input.registry);
+  const provider = input.provider ?? readProviderConnectionBrokerImplementation(input.registry);
   if (!provider?.definition.managedRuntime) return [];
   const runtime = resolveProviderManagedRuntimeDeclarationV1({ implementationIdentity: provider.identity,
     managedRuntime: provider.definition.managedRuntime });
@@ -45,7 +48,8 @@ export async function readConnectedAccountCatalogSources(input: Readonly<{
     if (input.protocols && !input.protocols.includes(endpoint.protocol)
       || input.endpointTemplateId && input.endpointTemplateId !== endpoint.id) continue;
     if (!provider.definition.managedRuntime.endpointTemplateIds.includes(endpoint.id)) continue;
-    const families = runtime.connectedAccounts.filter(family => family.service.pluginId === service.pluginId
+    const families = runtime.connectedAccounts.filter(family => (input.purpose === undefined || family.purpose === input.purpose)
+      && family.service.pluginId === service.pluginId
       && family.service.localId === service.localId && family.endpointTemplateIds?.includes(endpoint.id));
     const family = families.length === 1 ? families[0] : undefined;
     if (!family) continue;
@@ -78,6 +82,8 @@ type ConnectedAccountCatalogInput = Readonly<{
   providerSettings: ProviderSettingsV1;
   resolveSelection: ResolveManagedProviderPurposeBindingIntentSelection;
   observeModels?: ObserveConnectedAccountModels;
+  provider?: ResolvedProviderContribution;
+  purpose?: string;
   signal?: AbortSignal;
 }>;
 
@@ -105,6 +111,7 @@ export async function readConnectedAccountModelCatalog(input: Omit<ConnectedAcco
     registry: input.registry, target, resolveSelection: input.resolveSelection, signal,
     protocols: input.request.application ? [input.request.application.protocol] : undefined,
     endpointTemplateId: input.request.application?.endpointTemplateId,
+    provider: input.provider, purpose: input.purpose,
   })) {
       const { provider, endpoint, family, selection } = source;
       const protocol = endpoint.protocol;
@@ -163,7 +170,7 @@ export async function readConnectedAccountModelCatalog(input: Omit<ConnectedAcco
       ]);
       groups.push({
         application,
-        connectionId, connectedAccountTarget: target, providerName: provider.definition.name, connectionName: selection.resolved.displayName,
+        connectionId, connectedAccountTarget: target, catalogObserved: observed !== null, providerName: provider.definition.name, connectionName: selection.resolved.displayName,
         connectionRole: 'named', connectionDisplayNameMode: 'automatic', connectionRevision: 0, sourceRevision,
         modelLoadAction: 'descriptor_absent', modelLoadPreflightPolicy: null, authorization: { authorized: true },
         manualModelPolicy: 'catalog-only', supportsFreeformModelIds: false,

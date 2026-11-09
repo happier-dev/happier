@@ -3,6 +3,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { parseQualifiedPluginContributionKey, PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
 import { resolveProviderManagedRuntimeDeclarationV1 } from './contributions/v1.js';
+import { projectProviderManagedConnectedAccountPurposeV1 } from './connections/sourceFactsV1.js';
 import { areProviderContributionKeysEqualV1 } from './contributionIdentityV1.js';
 import { ProviderContributionKeySchema, ProviderMachineIdSchema } from './ids.js';
 import type { AccountProviderDeclarationV1 } from './catalog/accountModelProjectionV1.js';
@@ -22,7 +23,7 @@ export function readProviderGatewayContributionPurposesV1(contributionKey: strin
     if (!declaration.definition.managedRuntime) return [];
     return resolveProviderManagedRuntimeDeclarationV1({ implementationIdentity: identity,
         managedRuntime: declaration.definition.managedRuntime }).connectedAccounts
-        .map(({ endpointTemplateIds: _endpoints, ...purpose }) => ({ ...purpose, required: purpose.required === true }));
+        .map(projectProviderManagedConnectedAccountPurposeV1);
 }
 
 /** Descriptor-only enumeration: no saved-connection read or runtime activation. */

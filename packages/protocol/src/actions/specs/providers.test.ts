@@ -4,8 +4,22 @@ import { isProviderActionMachineRequiredV1 } from '../../providers/providerActio
 import { createProviderErrorV1, ProviderErrorV1Schema } from '../../providers/errors.js';
 import { describeApprovalActionFields } from '../actionApprovalPresentation.js';
 import { resolveActionApprovalRouting } from '../actionApprovalPolicy.js';
+import { getActionSpec } from '../actionSpecs.js';
 
 describe('Provider Action placement declarations', () => {
+  it('requires agent approval for external connection and Agent model refresh', () => {
+    const spec = getActionSpec('providers.models.refresh');
+    const connection = spec.inputSchema.parse({ machineId: 'machine-a', connectionId: 'gateway', forceRefresh: true });
+    const agent = spec.inputSchema.parse({ machineId: 'machine-a', agentTargetKey: 'agent:example.agent/coder', forceRefresh: true });
+    const context = { surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' } } as const;
+    expect(resolveActionApprovalRouting({ actionId: spec.id, spec, input: connection, context }).required).toBe(true);
+    expect(spec.safetyForInput?.(connection) ?? spec.safety).toBe('danger');
+    expect(spec.sideEffectClass).toBe('external');
+    expect(resolveActionApprovalRouting({ actionId: spec.id, spec, input: agent, context }).required).toBe(true);
+    expect(spec.safetyForInput?.(agent) ?? spec.safety).toBe('danger');
+    expect(spec.safetyForInput?.({ ...connection, arbitrary: true }) ?? spec.safety).toBe('danger');
+  });
+
   it('reads Provider usage on the selected Machine without default approval on any surface', () => {
     const spec = PROVIDER_ACTION_SPECS_V1.find(spec => String(spec.id) === 'providers.usage.refresh');
     expect(spec).toBeDefined();

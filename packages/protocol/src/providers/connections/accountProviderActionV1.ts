@@ -19,7 +19,7 @@ import { prepareProviderConnectionCreationV1 } from './creationV1.js';
 import { composeProviderSettingsV1, splitProviderSettingsV1, type ProviderConnectionsCatalogV1,
   type ProviderConnectionsCatalogSnapshotV1 } from './connectionRowsV1.js';
 import { DaemonProviderConnectionViewV1Schema, type DaemonProviderConnectionViewV1, type DaemonProviderConnectionsDescribeResponseV1 } from '../../rpc/providers.js';
-import { readProviderConnectionSourceFactsV1, projectAvailableProviderContributionsV1, isProviderConnectionCredentialSlotDeclaredV1, readProviderAdditionalCredentialSlotsV1 } from './sourceFactsV1.js';
+import { projectProviderManagedConnectedAccountPurposeV1, readProviderConnectionSourceFactsV1, projectAvailableProviderContributionsV1, isProviderConnectionCredentialSlotDeclaredV1, readProviderAdditionalCredentialSlotsV1 } from './sourceFactsV1.js';
 import { normalizeProviderEndpointUrlSyntax } from '../safety/url.js';
 import { createProviderCustomCopyTemplateV1 } from './customCopyV1.js';
 import { compareProviderCanonicalStringsV1 } from '../canonicalOrderV1.js';
@@ -130,11 +130,11 @@ export function describeAccountProviderConnectionV1(settings: ProviderSettingsV1
     deployment: connection.deployment.kind === 'managedLocal' ? { kind: 'managedLocal', targetMachineId: connection.gatewayPlacement?.kind === 'machine' ? connection.gatewayPlacement.machineId : null,
       effects: managed && identity ? { implementationIdentity: identity, protocols: contribution?.endpointTemplates.filter(endpoint => managed.endpointTemplateIds.includes(endpoint.id)).map(endpoint => endpoint.protocol) ?? [],
         connectedAccountPurposes: managed.connectedAccounts.filter(declaration => connection.purposeBindingDefaults?.[declaration.purpose])
-          .map(({ endpointTemplateIds: _endpoints, staticModels: _models, ...declaration }) => ({ ...declaration, target: connection.purposeBindingDefaults?.[declaration.purpose] })),
+          .map(declaration => ({ ...projectProviderManagedConnectedAccountPurposeV1(declaration), target: connection.purposeBindingDefaults?.[declaration.purpose] })),
         ...(managed.connectedAccountPurposeBindingPolicy ? { connectedAccountPurposeBindingPolicy: managed.connectedAccountPurposeBindingPolicy } : {}) } : null } : { kind: 'external' },
     ...(connection.gatewayPlacement ? { gatewayPlacement: connection.gatewayPlacement } : {}),
     ...(connection.roleModels ? { roleModels: connection.roleModels } : {}),
-    managedLocalOption: managed ? { targetMachineId: null, connectedAccountPurposes: managed.connectedAccounts.map(({ endpointTemplateIds: _endpoints, staticModels: _models, ...declaration }) => declaration),
+    managedLocalOption: managed ? { targetMachineId: null, connectedAccountPurposes: managed.connectedAccounts.map(projectProviderManagedConnectedAccountPurposeV1),
       ...(managed.connectedAccountPurposeBindingPolicy ? { connectedAccountPurposeBindingPolicy: managed.connectedAccountPurposeBindingPolicy } : {}) } : null,
     endpoints: source ? accountEndpoints(connection, source).map(({ ready: _ready, reason: _reason, ...endpoint }) => endpoint) : [],
     scope: null, authorized: false, authorizationError,
@@ -288,7 +288,8 @@ export function createAccountProviderActionExecuteV1(host: Readonly<{
           const connection = find(request.input.connectionId); const source = requireSource(connection);
           const listed = projectAccountProviderConnectionModelsV1({ catalog: captured.catalog, connection, source: source.definition });
           output = { status: 'success', connectionId: connection.id, connectionRevision: connection.revision,
-            manualModelPolicy: source.definition.catalog.manualModelPolicy, modelLoadAction: 'machine_required', models: listed };
+            manualModelPolicy: source.definition.catalog.manualModelPolicy, modelLoadAction: 'machine_required',
+            ...('probes' in source.definition.catalog ? { catalogObserved: false } : {}), models: listed };
           break;
         }
         case 'providers.models.projection': {

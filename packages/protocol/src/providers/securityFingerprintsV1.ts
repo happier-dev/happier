@@ -115,7 +115,7 @@ function canonicalManagedConnectedAccountsV1(
 ): ResolvedProviderManagedRuntimeDeclarationV1['connectedAccounts'] {
   // Purpose ids are unique within one consumer by schema, so purpose is the
   // complete canonical order key for security-relevant declaration facts.
-  return connectedAccounts.map(({ title: _title, ...declaration }) => ({
+  return connectedAccounts.map(({ title: _title, operationRestriction: _restriction, ...declaration }) => ({
     ...declaration,
     ...(declaration.materializationKinds !== undefined
       ? {

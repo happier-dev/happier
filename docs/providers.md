@@ -1011,8 +1011,10 @@ Providers declare the protocols their endpoints speak. Agents declare accepted p
 
 The additional 0.3 development adapters use that same owner: Gemini CLI accepts
 Gemini wire endpoints, Kilo accepts its declared native drivers,
-Copilot CLI accepts Chat Completions and Anthropic, and Droid consumes its native
-custom-model settings. A Chat-only gateway
+Copilot CLI accepts Chat Completions and Anthropic, Droid consumes its native
+custom-model settings, and Pi and Oh My Pi accept credentialed OpenAI Responses.
+Pi and Oh My Pi register only the selected model in a private native home;
+undeclared model metadata uses the native owner's defaults. A Chat-only gateway
 cannot drive Gemini CLI. Protocol mismatch remains the typed
 `no_compatible_protocol` refusal; capability and credential requirements apply
 independently. A custom connection may declare a contributed protocol such as
@@ -1032,7 +1034,7 @@ Unsupported native credential/header forms are refused rather than silently
 dropping routing requirements. These development adapters use restart semantics;
 real Agent CLI and Provider-key acceptance is a release check. Native model
 configuration support alone does not establish a safe generic binding for Qwen,
-Pi, Oh My Pi, Kimi, CodeBuddy, Grok, FX or an arbitrary Custom ACP definition. See the
+Kimi, CodeBuddy, Grok, FX or an arbitrary Custom ACP definition. See the
 [Agent catalog](agents-catalog.md#additional-provider-bindings-03-development)
 and the published Agent pages for each native constraint.
 
@@ -1057,6 +1059,10 @@ model IDs use the Agent's ordinary freeform model selector. The upstream remains
 the authority on entitlement, and the host retains its existing known model
 eligibility blockers for account groups. These routes do not discover a new
 per-account model catalog.
+CodeBuddy and Droid's generated selected-account overlays and Kilo's native catalog
+remain unverified inventory. The shared Session publication owner withholds their
+model choices and ACP model-option choices while retaining the active model and
+explicit native model controls.
 CodeBuddy, Droid and Kilo reuse their launch preparation for selected-account preflight.
 Without an explicit model, preparation returns `model_selection_required` before
 native startup; choose a model and retry the launch. Kilo uses its existing OpenAI
@@ -1487,6 +1493,13 @@ that Agent's existing model capability. Browsing a service needs no Agent when
 it declares a Provider source. Provider-source current-only reads use metadata and cached
 observations without credential acquisition. A successful observed empty catalog
 stays empty; only an absent dynamic observation uses the purpose's static models.
+
+The connection model response preserves this distinction in `catalogObserved`
+and, for managed sources, `sourceCatalogs` keyed by the declared purpose. Each
+source carries its observation presence and model descriptors after the existing
+current/execution-compatible projection. An observed empty source remains an
+empty list; another source's observation does not make it observed. Exact Account
+requester context supplies these reads without falling back to the active Account.
 
 Pool gateway choices and vendor-slot writes use the captured Account catalog
 without selecting a machine. Each gateway needs its own admitted declaration;
@@ -2543,12 +2556,16 @@ endpoint, policy, and usage controls remain current through their existing owner
 
 ## Model catalogs, visibility, and stale references
 
-In 0.3 development, refreshing the model picker (`providers.models.refresh`) is a read Action: it
-requests current model metadata without changing Provider configuration. It uses
-the shared read approval defaults on every surface; explicit approval preferences
-still apply.
+In 0.3 development, `providers.models.list` reads current model metadata without
+refreshing a managed source. The existing `providers.models.refresh` Action also
+accepts an exact connection operand to refresh its declared sources. That operand
+can contact the Provider. Both the connection and Agent model-picker refresh
+operands use the shared dangerous-Action approval default for agents. Explicit
+approval preferences still apply. A connection without a
+supported source refresh returns typed unavailable rather than reporting success
+from its cached metadata.
 
-Refreshing saved Provider usage (`providers.usage.refresh`) likewise reads current
+Refreshing saved Provider usage (`providers.usage.refresh`) reads current
 spend and credits on the selected Machine using the shared read approval defaults.
 It does not change Provider configuration or credentials.
 

@@ -143,6 +143,11 @@ export type RuntimeProviderOperationScope = ProviderProbeOperationScope & Readon
   resolveContributedCatalogParsers?: ResolveContributedProviderCatalogParsers;
   /** Null is explicit Account custody without an issued transport reader. */
   accountReadScope?: AccountScopedProviderReadInput | null;
+  /** Host-private; issued only by the explicit refresh operand adapter. */
+  forceRefresh?: true;
+  resolveManagedPurposeBindingIntentSelection?: import('../modelManagement/connectedAccountCatalog').ResolveManagedProviderPurposeBindingIntentSelection;
+  invokeConnectedAccountNativeModels?: import('../modelManagement/connectedAccountModelObservation').InvokeConnectedAccountNativeModels;
+  observeConnectedAccountSourceModels?: import('../modelManagement/connectedAccountModelObservation').ObserveConnectedAccountSourceModels;
 }>;
 
 /** Exact Account settings basis for one bulk presentation pass. */
@@ -354,6 +359,13 @@ export function createRuntimeProviderServices(input: Readonly<{
     ProviderProbeHostAuthorizationTicket
   >;
   resolveManagedPurposeBindingIntent?: ResolveManagedProviderPurposeBindingIntent;
+  /** Source browsing consumes this same admitted connection before aggregate catalog probing. */
+  readManagedSourceModels?: (input: Readonly<{
+    connection: ResolvedProviderConnectionRecord;
+    registry: ProviderContributionRegistryView;
+    scope: RuntimeProviderOperationScope;
+    modelLoadAction: Extract<ProviderSavedModelsRpcResult, { status: 'success' }>['modelLoadAction'];
+  }>) => Promise<ProviderSavedModelsRpcResult>;
   resolveContributedCatalogParsers?: ResolveContributedProviderCatalogParsers;
   resolveContributedUsageParsers?: (identity: Readonly<{ pluginId: string; localId: string }>) => Promise<ProviderUsageParserBinding | null>;
   openTeamDirect?: Parameters<typeof createRuntimeProviderProbeAuthorizationPort>[0]['openTeamDirect'];
@@ -1530,6 +1542,10 @@ export function createRuntimeProviderServices(input: Readonly<{
     },
   });
 
+  const projectModelLoadAction = (connection: ResolvedProviderConnectionRecord) => connection.source.kind !== 'contribution'
+    || connection.source.definition.modelLoad === undefined ? 'descriptor_absent' as const
+      : input.modelLoadEnabled?.() === true ? 'available' as const : 'feature_disabled' as const;
+
   const projectModelCatalog = (
     identity: RuntimeProviderIdentity,
     context: Extract<RuntimeProviderCatalogContext, { status: 'success' }>,
@@ -1599,13 +1615,10 @@ export function createRuntimeProviderServices(input: Readonly<{
       status: 'success' as const,
       connectionId: identity.connectionId,
       connectionRevision: context.connection.connection.revision,
+      ...('probes' in sourceCatalog(context.connection)
+        ? { catalogObserved: context.catalogRuntimeRecord?.state.snapshot != null } : {}),
       manualModelPolicy: sourceCatalog(context.connection).manualModelPolicy,
-      modelLoadAction: context.connection.source.kind !== 'contribution'
-        || context.connection.source.definition.modelLoad === undefined
-        ? 'descriptor_absent' as const
-        : input.modelLoadEnabled?.() === true
-          ? 'available' as const
-          : 'feature_disabled' as const,
+      modelLoadAction: projectModelLoadAction(context.connection),
       models,
     };
   };
@@ -1619,6 +1632,14 @@ export function createRuntimeProviderServices(input: Readonly<{
       const connection = await resolveConnectionContext(identity, operationScope);
       if (!isProviderFeatureEnabled()) return providerFeatureDisabled(identity);
       if (!connection.ok) return { status: 'error', error: connection.error };
+      if (connection.value.connection.deployment.kind === 'managedLocal'
+        && connection.value.connection.deployment.managedRuntime.connectedAccounts.length > 0 && input.readManagedSourceModels) {
+        return input.readManagedSourceModels({ connection: connection.value.connection,
+          registry: connection.value.registry, scope: operationScope,
+          modelLoadAction: projectModelLoadAction(connection.value.connection) });
+      }
+      if (operationScope.forceRefresh) return { status: 'error',
+        error: createProviderErrorV1('provider_catalog_unavailable', identity) };
       const remote = await readPlacedGatewayCatalog(identity, connection.value,
         (reader, target, signal) => reader.models(target, signal));
       if (remote) return remote;
