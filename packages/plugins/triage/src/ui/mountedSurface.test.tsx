@@ -465,7 +465,6 @@ function createHarness(options: Readonly<{ tasks?: boolean; details?: boolean; c
         settledLocations,
         surfaceOpens,
         accountKv,
-        collections,
         admitted,
         scanCalls,
         state,
