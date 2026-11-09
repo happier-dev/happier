@@ -1,7 +1,7 @@
 import type { BackendTargetRefV2Input } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { PermissionMode } from './permissionTypes';
 import type { AgentId } from '@/agents/catalog/catalog';
-import { parsePermissionIntentAlias } from '@happier-dev/agents';
+import { parsePermissionIntentAlias, type AgentSessionModeDescriptor } from '@happier-dev/agents';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { normalizePermissionModeForAgentType } from './permissionModeOptions';
 import { parseAgentPermissionIntentV1Alias } from '@happier-dev/protocol/runtime/permissionIntentV1';
@@ -11,10 +11,6 @@ import type { OrganizationPolicyLock } from '@happier-dev/protocol/organizationP
 export type AccountPermissionDefaults = Readonly<{
     byTargetKey: Record<string, PermissionMode>;
 }>;
-
-function normalizeForAgentType(mode: PermissionMode, agentType: string): PermissionMode {
-    return normalizePermissionModeForAgentType(mode, agentType);
-}
 
 export function readAccountPermissionDefaults(
     raw: unknown,
@@ -36,6 +32,7 @@ export function readAccountPermissionDefaults(
 
 type NewSessionPermissionModeInput = Readonly<{
     agentType: string;
+    sessionModeDescriptor?: AgentSessionModeDescriptor | null;
     backendTarget?: BackendTargetRefV2Input | null;
     accountDefaults: AccountPermissionDefaults;
     profileDefaultsByTargetKey?: Record<string, PermissionMode | undefined> | null;
@@ -63,7 +60,7 @@ export function resolveNewSessionDefaultPermissionModeDecision(params: NewSessio
         ...(explicitIntent ? { explicitChoices: { permissionModeByAgentTargetKey: { [targetKey]: explicitIntent } } } : {}),
     }).permissionMode;
     return {
-        permissionMode: normalizeForAgentType(decision.value ?? 'default', agentType),
+        permissionMode: normalizePermissionModeForAgentType(decision.value ?? 'default', agentType, params.sessionModeDescriptor),
         lock: decision.lock,
     };
 }

@@ -102,9 +102,9 @@ vi.mock('../permissions/PermissionFooter', () => ({
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: ['claude', 'codex', 'gemini', 'opencode'],
     DEFAULT_AGENT_ID: 'codex',
-    getAgentCore: (agentId: string) => ({
+    getAgentCore: () => ({
         toolRendering: { hideUnknownToolsByDefault: false },
-        permissions: { modeGroup: agentId === 'codex' ? 'codexLike' : 'cliLike' },
+        permissions: {},
     }),
     resolveAgentIdFromFlavor: (flavor: any) => {
         if (flavor === 'claude' || flavor === 'codex') return flavor;

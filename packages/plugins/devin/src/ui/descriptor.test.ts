@@ -11,7 +11,7 @@ describe('Devin UI projection source', () => {
     expect(DEVIN_UI_DESCRIPTOR.display).toMatchObject({
       nameKey: 'agentInput.agent.devin',
       subtitleKey: 'profiles.aiBackend.devinSubtitleExperimental',
-      permissions: { modeGroup: 'codexLike', promptProtocol: 'codexDecision' },
+      permissions: { promptProtocol: 'codexDecision' },
       localControl: true,
       picker: { iconName: 'cpu', cliGlyph: 'DV' },
     });

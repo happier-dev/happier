@@ -90,7 +90,6 @@ vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
             if (!core) throw new Error('Expected the bundled Codex Agent core');
             return {
                 ...core,
-                permissions: { ...core.permissions, modeGroup: 'codexLike' },
                 // Both targets share the same machine-login key; this is the scenario that must clear persistence selection.
                 cli: { ...core.cli, machineLoginKey: 'codex' },
                 ui: { ...core.ui, agentPickerIconName: 'terminal-outline' },

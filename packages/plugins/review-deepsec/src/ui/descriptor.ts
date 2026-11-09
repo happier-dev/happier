@@ -11,7 +11,6 @@ export const DEEPSEC_UI_DESCRIPTOR = Object.freeze({
     connectedService: { serviceId: null, labelKey: 'agentInput.agent.deepsec', connectRoute: null },
     flavorAliases: ['deepsec'],
     permissions: {
-      modeGroup: 'codexLike',
       promptProtocol: 'codexDecision',
     },
     resume: {

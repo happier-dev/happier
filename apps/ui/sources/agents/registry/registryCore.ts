@@ -37,7 +37,6 @@ export type { AgentId, BundledAgentId, SessionMetadataAgentId };
  */
 export type CanonicalAgentId = BundledAgentId;
 
-export type PermissionModeGroupId = 'claude' | 'codexLike';
 export type PermissionPromptProtocol = 'claude' | 'codexDecision';
 
 export type MachineLoginKey = string;
@@ -120,7 +119,6 @@ export type AgentCoreConfig = Readonly<{
         spawnAgent: AgentId;
     }> | null;
     permissions: Readonly<{
-        modeGroup: PermissionModeGroupId;
         promptProtocol: PermissionPromptProtocol;
         /** Manifest-declared ACP policy mapping; null leaves the provider policy in place. */
         permissionModeMapping?: Readonly<Partial<Record<PermissionIntent, string | null>>>;

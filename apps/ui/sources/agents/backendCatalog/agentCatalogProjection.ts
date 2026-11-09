@@ -12,6 +12,7 @@ import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/cat
 import { AgentExecutionTargetV1Schema, CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 } from '@happier-dev/protocol/agents/executionTargetV1';
 
 import { AGENT_IDS, getAgentCore, getBundledAgentDeclaration, isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
+import { getAgentSessionModeDescriptor, type AgentSessionModeDescriptor } from '@happier-dev/agents';
 import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
 import { getAgentLocalAuthPlugin } from '@/agents/catalog/localAuth/agentLocalAuthCatalog';
 import { createProjectedAgentLocalAuthPlugin } from '@/agents/catalog/localAuth/createProjectedAgentLocalAuthPlugin';
@@ -68,6 +69,7 @@ export type ResolvedAgentCatalogEntry = Readonly<{
     authPlugin: AgentLocalAuthPlugin | null;
     /** Exact public CLI declaration; bundled facts do not grant execution. */
     cli?: PluginAgentCliMetadata | null;
+    sessionModeDescriptor?: AgentSessionModeDescriptor | null;
     /** Exact data-only registry identities; no executable selection authority. */
     acpRegistryIds?: readonly string[];
     cliAuthBackgroundCheckSafe: boolean;
@@ -475,6 +477,9 @@ export function resolveAgentCatalogProjection(agentId: string, params: Readonly<
         behavior: behaviorProjection?.behavior ?? null,
         authPlugin: resolveAgentLocalAuthPlugin(normalizedProviderId, behaviorProviderId, mergedProviderProjection, isBuiltIn),
         cli: mergedProviderProjection?.cli ?? declaration?.cli ?? null,
+        sessionModeDescriptor: mergedProviderProjection
+            ? mergedProviderProjection.sessionModeDescriptor ?? null
+            : getAgentSessionModeDescriptor(normalizedProviderId),
         acpRegistryIds: mergedProviderProjection?.acpRegistryIds ?? declaration?.acpRegistryIds ?? [],
         cliAuthBackgroundCheckSafe: resolveCliAuthBackgroundCheckSafe(normalizedProviderId, mergedProviderProjection),
         connectedAccounts: mergedProviderProjection?.connectedAccounts ?? declaration?.connectedAccounts.map((purpose) => ({

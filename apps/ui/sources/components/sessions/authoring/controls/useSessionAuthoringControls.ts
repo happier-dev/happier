@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { AgentSessionModeDescriptor } from '@happier-dev/agents';
 
 import type { AcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
 import type { ComposerOptionsInputV1 } from '@happier-dev/protocol/embed';
@@ -84,6 +85,7 @@ export type SessionAuthoringControlsInput = Readonly<{
     agentId: string;
     /** Present when Session safety intent is previewed for an armed continuation. */
     permissionTargetAgentId?: string | null;
+    sessionModeDescriptor?: AgentSessionModeDescriptor | null;
     metadata?: Metadata | null;
     composerOptionsInput?: ComposerOptionsInputV1 | null;
     sessionId?: string;
@@ -166,11 +168,12 @@ export function useSessionAuthoringControls(
     const effectivePermissionPolicy = React.useMemo(() => {
         return describeEffectivePermissionMode({
             agentType: permissionAgentId,
+            sessionModeDescriptor: input.sessionModeDescriptor,
             selectedMode: input.permissionMode ?? 'default',
             metadata: permissionMetadata,
             applyTiming: sessionPermissionModeApplyTiming ?? 'immediate',
         });
-    }, [permissionAgentId, input.permissionMode, permissionMetadata, sessionPermissionModeApplyTiming]);
+    }, [permissionAgentId, input.permissionMode, input.sessionModeDescriptor, permissionMetadata, sessionPermissionModeApplyTiming]);
 
     const effectivePermissionLabel = React.useMemo(() => {
         return effectivePermissionPolicy.nativeModeLabel ?? getPermissionModeLabelForAgentType(permissionAgentId, effectivePermissionPolicy.effectiveMode);

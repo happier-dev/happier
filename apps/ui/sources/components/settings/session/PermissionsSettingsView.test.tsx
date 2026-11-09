@@ -62,7 +62,7 @@ vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
         resolveAgentIdFromFlavor: (agentId: string) => agentId,
         getAgentCore: (agentId: string) => ({
             displayNameKey: `agent.${agentId}`,
-            permissions: { modeGroup: 'codexLike' },
+            permissions: {},
             sessionStorage: { direct: true, persisted: true },
             ui: { agentPickerIconName: 'sparkles-outline' },
         }),

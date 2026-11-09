@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { AgentSessionModeDescriptor } from '@happier-dev/agents';
 import { type PersistedBackendTargetRefV2} from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/selection/v1';
 
@@ -31,6 +32,7 @@ export function useNewSessionProfileBackendReconciliation(params: Readonly<{
     resolveDefaultPermissionMode: (profile: AIBackendProfile | null) => PermissionMode;
     prepareSecretPromptForProfileSelection: (prevProfileId: string | null) => void;
     agentType: string;
+    sessionModeDescriptor?: AgentSessionModeDescriptor | null;
     resolveProfileAuthoringIntent?: (profileId: string) => Readonly<{
         preferredAgentTargetKey: string | null;
         modelSelection: SessionModelSelectionV1 | null;
@@ -231,10 +233,11 @@ export function useNewSessionProfileBackendReconciliation(params: Readonly<{
         }
 
         const current = params.permissionModeRef.current;
-        const mapped = normalizePermissionModeForAgentType(current, params.agentType);
+        const mapped = normalizePermissionModeForAgentType(current, params.agentType, params.sessionModeDescriptor);
         params.applyPermissionMode(mapped, 'auto');
     }, [
         params.agentType,
+        params.sessionModeDescriptor,
         params.applyPermissionMode,
         params.profileMap,
         params.resolveDefaultPermissionMode,

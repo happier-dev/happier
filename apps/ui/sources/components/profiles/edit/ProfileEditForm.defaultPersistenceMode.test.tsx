@@ -72,7 +72,6 @@ vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
             return {
                 ...core,
                 sessionStorage: { ...core.sessionStorage, direct: true, persisted: true },
-                permissions: { ...core.permissions, modeGroup: 'codexLike' },
                 cli: { ...core.cli, machineLoginKey: 'codex' },
                 ui: { ...core.ui, agentPickerIconName: 'terminal-outline' },
             };

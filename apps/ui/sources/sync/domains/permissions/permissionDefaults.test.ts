@@ -50,7 +50,7 @@ describe('resolveNewSessionDefaultPermissionMode', () => {
     });
 
     it('uses account defaults when no profile override is present', () => {
-        expect(resolveNewSessionDefaultPermissionMode({ agentType: 'claude', accountDefaults })).toBe('read-only');
+        expect(resolveNewSessionDefaultPermissionMode({ agentType: 'claude', accountDefaults })).toBe('plan');
         expect(resolveNewSessionDefaultPermissionMode({ agentType: 'codex', accountDefaults })).toBe('safe-yolo');
         expect(resolveNewSessionDefaultPermissionMode({ agentType: 'gemini', accountDefaults })).toBe('read-only');
     });
@@ -61,7 +61,7 @@ describe('resolveNewSessionDefaultPermissionMode', () => {
         };
         expect(resolveNewSessionDefaultPermissionMode({ agentType: 'codex', accountDefaults, profileDefaultsByTargetKey })).toBe('yolo');
         // Other providers fall back to account defaults when no override exists.
-        expect(resolveNewSessionDefaultPermissionMode({ agentType: 'claude', accountDefaults, profileDefaultsByTargetKey })).toBe('read-only');
+        expect(resolveNewSessionDefaultPermissionMode({ agentType: 'claude', accountDefaults, profileDefaultsByTargetKey })).toBe('plan');
     });
 
     it('prefers configured ACP backend target defaults over the agent-type fallback default', () => {
@@ -80,13 +80,13 @@ describe('resolveNewSessionDefaultPermissionMode', () => {
 
     it('falls back to legacy profile override mapping when provider-specific override is missing', () => {
         const emptyAccountDefaults = readAccountPermissionDefaults({}, ['claude', 'codex', 'gemini']);
-        expect(resolveNewSessionDefaultPermissionMode({ agentType: 'claude', accountDefaults: emptyAccountDefaults, legacyProfileDefaultPermissionMode: 'plan' })).toBe('read-only');
+        expect(resolveNewSessionDefaultPermissionMode({ agentType: 'claude', accountDefaults: emptyAccountDefaults, legacyProfileDefaultPermissionMode: 'plan' })).toBe('plan');
         // Legacy "plan" is mapped to read-only.
         expect(resolveNewSessionDefaultPermissionMode({ agentType: 'codex', accountDefaults: emptyAccountDefaults, legacyProfileDefaultPermissionMode: 'plan' })).toBe('read-only');
         expect(resolveNewSessionDefaultPermissionMode({ agentType: 'gemini', accountDefaults: emptyAccountDefaults, legacyProfileDefaultPermissionMode: 'bypassPermissions' })).toBe('yolo');
     });
 
-    it('preserves an external Agent default without borrowing bundled permission policy', () => {
+    it('requires an external Agent descriptor before preserving planning behavior', () => {
         const externalTarget = { kind: 'backend', backendId: 'acme.review.backend' } as const;
         const externalDefaults = readAccountPermissionDefaults({
             [resolveBackendTargetKeyV2(externalTarget)]: 'plan',
@@ -96,6 +96,12 @@ describe('resolveNewSessionDefaultPermissionMode', () => {
             agentType: 'acme.review.backend',
             backendTarget: externalTarget,
             accountDefaults: externalDefaults,
+        })).toBe('read-only');
+        expect(resolveNewSessionDefaultPermissionMode({
+            agentType: 'acme.review.backend',
+            backendTarget: externalTarget,
+            accountDefaults: externalDefaults,
+            sessionModeDescriptor: { source: 'provider-native', semantics: 'agent-modes', runtimeSwitch: 'provider-native' },
         })).toBe('plan');
     });
 });

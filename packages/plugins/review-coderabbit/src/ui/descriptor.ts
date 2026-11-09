@@ -11,7 +11,6 @@ export const CODERABBIT_UI_DESCRIPTOR = Object.freeze({
     connectedService: { serviceId: null, labelKey: 'agentInput.agent.coderabbit', connectRoute: null },
     flavorAliases: ['coderabbit'],
     permissions: {
-      modeGroup: 'codexLike',
       promptProtocol: 'codexDecision',
     },
     resume: {

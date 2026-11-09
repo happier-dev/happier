@@ -2521,6 +2521,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         resolveDefaultPermissionMode,
     } = useNewSessionPermissionModeState({
         agentType: agentPolicyType,
+        sessionModeDescriptor: selectedBackendEntry?.agentCatalogEntry.sessionModeDescriptor,
         backendTarget,
         hydratedTempAuthoringDraft,
         hydratedPersistedAuthoringDraft,
@@ -2557,6 +2558,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         resolveDefaultPermissionMode,
         prepareSecretPromptForProfileSelection,
         agentType: agentPolicyType,
+        sessionModeDescriptor: selectedBackendEntry?.agentCatalogEntry.sessionModeDescriptor,
         resolveProfileAuthoringIntent: resolveSelectedProfileAuthoringIntent,
         setModelSelectionForBackendTarget,
     });

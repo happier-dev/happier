@@ -26,7 +26,7 @@ export const CODEBUDDY_UI_DESCRIPTOR = Object.freeze({
     availability: { experimental: true },
     connectedService: { serviceId: null, labelKey: 'agentInput.agent.codebuddy', connectRoute: null },
     flavorAliases: ['codebuddy-code'],
-    permissions: { modeGroup: 'codexLike', promptProtocol: 'codexDecision' },
+    permissions: { promptProtocol: 'codexDecision' },
     resume: {
       uiVendorResumeIdLabelKey: 'sessionInfo.codebuddySessionId',
       uiVendorResumeIdCopiedKey: 'sessionInfo.codebuddySessionIdCopied',

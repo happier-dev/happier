@@ -694,6 +694,7 @@ interface AgentInputProps {
      */
     armedContinuationTarget?: Readonly<{
         agentId: string;
+        sessionModeDescriptor?: ResolvedAgentCatalogEntry['sessionModeDescriptor'];
         /** Exact catalog target key the selected picker row came from. */
         backendTargetKey?: string;
         label: string;
@@ -1592,6 +1593,9 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     } = useSessionAuthoringControls({
         agentId: sessionAgentId,
         permissionTargetAgentId: armedComposerTarget?.agentId,
+        sessionModeDescriptor: armedComposerTarget
+            ? armedComposerTarget.sessionModeDescriptor ?? null
+            : props.agentCatalogIdentity?.entry.sessionModeDescriptor,
         metadata: props.metadata ?? null,
         composerOptionsInput: props.composerOptionsInput,
         sessionId: props.sessionId,

@@ -755,6 +755,7 @@ export function adaptDaemonContributionRegistryProjectionToMergedProjectionInput
             catalogAgentId: isProjectedAgentId(entry.catalogAgentId) ? entry.catalogAgentId : null,
             iconAgentId: isProjectedAgentId(entry.iconAgentId) ? entry.iconAgentId : null,
             cli: entry.cli ?? null,
+            sessionModeDescriptor: entry.sessionModeDescriptor ?? null,
             acpRegistryIds: entry.acpRegistryIds ?? [],
             connectedAccounts: entry.connectedAccounts ?? null,
             ui: entry.ui ?? null,

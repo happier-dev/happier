@@ -8,7 +8,7 @@ import {
     readSessionModelsState,
     readSessionModesState,
 } from '@/sync/domains/sessionControl/readSessionControlMetadata';
-import { parsePermissionIntentAlias, resolveProviderNativePermissionModeForAgent } from '@happier-dev/agents';
+import { getAgentSessionModeDescriptor, parsePermissionIntentAlias, resolveProviderNativePermissionModeForAgent, type AgentSessionModeDescriptor } from '@happier-dev/agents';
 import { computeSessionModePickerControl } from '@/sync/domains/sessionControl/sessionModeControl';
 import { t } from '@/text';
 
@@ -68,6 +68,7 @@ export function describeEffectivePermissionMode(_params: {
     selectedMode: PermissionMode;
     metadata: Metadata | null;
     applyTiming: 'immediate' | 'next_prompt';
+    sessionModeDescriptor?: AgentSessionModeDescriptor | null;
 }): EffectivePermissionModeDescription {
     const agentId = resolveAgentIdFromFlavor(_params.agentType);
     const core = agentId ? getAgentCore(agentId) : null;
@@ -78,7 +79,9 @@ export function describeEffectivePermissionMode(_params: {
     );
 
     const selected = parsePermissionIntentAlias(_params.selectedMode) ?? 'default';
-    const normalized = normalizePermissionModeForAgentType(selected, _params.agentType);
+    const descriptor = _params.sessionModeDescriptor === undefined && agentId
+        ? getAgentSessionModeDescriptor(agentId) : _params.sessionModeDescriptor;
+    const normalized = normalizePermissionModeForAgentType(selected, _params.agentType, descriptor);
     const reasons: EffectivePermissionModeReason[] = [];
 
     let effectiveMode: PermissionMode = normalized;
@@ -91,7 +94,6 @@ export function describeEffectivePermissionMode(_params: {
         return { effectiveMode, reasons, notes };
     }
 
-    const group = core.permissions.modeGroup;
     const permissionMapping = core.permissions.permissionModeMapping;
     const nativePolicy = permissionMapping
         ? computeSessionModePickerControl({ agentId, metadata: _params.metadata })
@@ -107,7 +109,7 @@ export function describeEffectivePermissionMode(_params: {
         }
     }
 
-    if (selected === 'plan' && !permissionMapping?.[selected]) {
+    if (selected === 'plan' && normalized !== 'plan' && !permissionMapping?.[selected]) {
         reasons.push({ code: 'plan_not_supported_for_provider' });
     }
 
@@ -116,7 +118,7 @@ export function describeEffectivePermissionMode(_params: {
         reasons.push({ code: 'mode_mapped_for_provider', params: { providerMode: providerNative } });
     }
 
-    if (group === 'codexLike') {
+    if (descriptor?.source !== 'provider-native') {
         if (effectiveMode === 'read-only' || effectiveMode === 'plan') {
             reasons.push({ code: 'read_only_enforced_by_tool_gating' });
         } else if (effectiveMode === 'safe-yolo' || effectiveMode === 'yolo') {
@@ -124,7 +126,7 @@ export function describeEffectivePermissionMode(_params: {
         }
     }
 
-    if (effectiveMode === 'read-only' && providerNative !== 'read-only' && group !== 'codexLike') {
+    if (effectiveMode === 'read-only' && providerNative !== 'read-only' && descriptor?.source === 'provider-native') {
         reasons.push({ code: 'read_only_best_effort' });
     }
 

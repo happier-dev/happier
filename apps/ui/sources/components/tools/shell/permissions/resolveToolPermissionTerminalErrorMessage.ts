@@ -1,8 +1,7 @@
-import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
+import { getAgentSessionModeDescriptor, resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import type { ToolCall } from "@happier-dev/session-core/messages";
 import type { Metadata } from '@happier-dev/session-core/state';
 
-import { getAgentCore } from '@/agents/catalog/catalog';
 import { formatToolPermissionDecisionLabel } from '@/components/approvals/approvalStatusLabel';
 import { t } from '@/text';
 import type { TranscriptPermissionDisabledReason } from '@/utils/sessions/deriveTranscriptInteraction';
@@ -28,7 +27,8 @@ export function resolveToolPermissionTerminalErrorMessage(params: Readonly<{
         if (params.metadata?.permissionMode !== 'read-only') return false;
         const agentId = params.historicalAgentId ?? resolveAgentIdFromSessionMetadata(params.metadata);
         if (!agentId) return false;
-        return getAgentCore(agentId)?.permissions?.modeGroup === 'codexLike';
+        const descriptor = getAgentSessionModeDescriptor(agentId);
+        return descriptor != null && descriptor.source !== 'provider-native';
     })();
     return canBlameReadOnlyMode
         ? t('errors.permissionDeniedReadOnlyMode')

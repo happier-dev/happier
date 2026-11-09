@@ -70,7 +70,6 @@ describe('agents/catalog', () => {
                 expect(typeof core.cli.detectKey).toBe('string');
                 expect(core.cli.detectKey.length).toBeGreaterThan(0);
             }
-            expect(typeof core.permissions.modeGroup).toBe('string');
             expect(typeof core.permissions.promptProtocol).toBe('string');
             expect(typeof core.availability.experimental).toBe('boolean');
         }

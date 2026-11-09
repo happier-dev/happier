@@ -24,7 +24,7 @@ export const FX_UI_DESCRIPTOR = Object.freeze({
     nameKey: 'agentInput.agent.fx', subtitleKey: 'profiles.aiBackend.fxSubtitleExperimental',
     permissionModeI18nPrefix: 'agentInput.codexPermissionMode', availability: { experimental: true },
     connectedService: { serviceId: null, labelKey: 'agentInput.agent.fx', connectRoute: null },
-    flavorAliases: ['fx', 'vercel-fx'], permissions: { modeGroup: 'codexLike', promptProtocol: 'codexDecision' },
+    flavorAliases: ['fx', 'vercel-fx'], permissions: { promptProtocol: 'codexDecision' },
     resume: { uiVendorResumeIdLabelKey: 'sessionInfo.fxSessionId', uiVendorResumeIdCopiedKey: 'sessionInfo.fxSessionIdCopied' },
     localControl: true, toolRendering: { hideUnknownToolsByDefault: false },
     picker: { iconName: 'lightning', cliGlyph: 'FX', cliGlyphScale: 1, profileCompatibilityGlyphScale: 1, iconScale: 1.15 },

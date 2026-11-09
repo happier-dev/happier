@@ -3,7 +3,8 @@ import type { TranslationKey } from '@/text';
 import type { AgentType } from '../models/modelOptions';
 import type { PermissionMode } from './permissionTypes';
 import type { Metadata } from '@happier-dev/session-core/state';
-import { CLAUDE_PERMISSION_MODES, CODEX_LIKE_PERMISSION_MODES, normalizePermissionModeForGroup } from './permissionTypes';
+import { PERMISSION_MODE_OPTIONS } from './permissionTypes';
+import { getAgentSessionModeDescriptor, normalizePermissionModeForSessionDescriptor, type AgentSessionModeDescriptor } from '@happier-dev/agents';
 import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
 import { parsePermissionIntentAlias } from '@happier-dev/agents/permissions';
 import { isPermissionModeGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
@@ -25,13 +26,7 @@ const PERMISSION_MODE_KEY_SEGMENT: Record<PermissionMode, string> = {
     yolo: 'yolo',
 };
 
-const BADGE_KEY_SEGMENT_CLAUDE: Partial<Record<PermissionMode, string>> = {
-    'read-only': 'badgeReadOnly',
-    'safe-yolo': 'badgeSafeYolo',
-    yolo: 'badgeYolo',
-};
-
-const BADGE_KEY_SEGMENT_CODEX_LIKE: Partial<Record<PermissionMode, string>> = {
+const BADGE_KEY_SEGMENT: Partial<Record<PermissionMode, string>> = {
     'read-only': 'badgeReadOnly',
     'safe-yolo': 'badgeSafeYolo',
     yolo: 'badgeYolo',
@@ -64,7 +59,7 @@ export function getPermissionModeLabelForAgentType(agentType: AgentType, mode: P
 
 // The offered modes state what the agent may do without asking. A mode with no consequence line
 // yields '' and the pickers omit the line instead of repeating the label.
-const DESCRIBED_PERMISSION_MODES: ReadonlySet<PermissionMode> = new Set(['default', 'read-only', 'safe-yolo', 'yolo']);
+const DESCRIBED_PERMISSION_MODES: ReadonlySet<PermissionMode> = new Set(PERMISSION_MODE_OPTIONS);
 
 function getPermissionModeDescriptionForAgentType(agentType: AgentType, mode: PermissionMode): string {
     const prefix = getAgentPermissionModeI18nPrefix(agentType);
@@ -73,14 +68,11 @@ function getPermissionModeDescriptionForAgentType(agentType: AgentType, mode: Pe
 }
 
 export function getPermissionModesForAgentType(agentType: AgentType): readonly PermissionMode[] {
-    const group = getAgentPermissionModeCore(agentType)?.permissions.modeGroup;
-    if (!group) return [];
-    return group === 'codexLike' ? CODEX_LIKE_PERMISSION_MODES : CLAUDE_PERMISSION_MODES;
+    return getAgentPermissionModeCore(agentType) ? PERMISSION_MODE_OPTIONS : [];
 }
 
 export function getPermissionModeOptionsForAgentType(agentType: AgentType, presentation: 'menu' | 'settings' = 'menu'): readonly PermissionModeOption[] {
-    const group = getAgentPermissionModeCore(agentType)?.permissions.modeGroup;
-    if (!group) return [];
+    if (!getAgentPermissionModeCore(agentType)) return [];
     const label = (mode: PermissionMode) => presentation === 'settings'
         ? t(`settingsSession.permissions.modeLabels.${PERMISSION_MODE_KEY_SEGMENT[mode]}` as TranslationKey)
         : getPermissionModeLabelForAgentType(agentType, mode);
@@ -99,22 +91,25 @@ export function getPermissionModeOptionsForSession(agentType: AgentType, metadat
     return getPermissionModeOptionsForAgentType(agentType);
 }
 
-export function normalizePermissionModeForAgentType(mode: PermissionMode, agentType: AgentType): PermissionMode {
-    const normalized = (parsePermissionIntentAlias(mode) ?? 'default') as PermissionMode;
-    const core = getAgentPermissionModeCore(agentType);
-    return core ? normalizePermissionModeForGroup(normalized, core.permissions.modeGroup) : normalized;
+export function normalizePermissionModeForAgentType(
+    mode: PermissionMode,
+    agentType: AgentType,
+    descriptor?: AgentSessionModeDescriptor | null,
+): PermissionMode {
+    const agentId = resolveAgentIdFromFlavor(agentType);
+    return normalizePermissionModeForSessionDescriptor({
+        mode,
+        descriptor: descriptor === undefined && agentId ? getAgentSessionModeDescriptor(agentId) : descriptor,
+    });
 }
 
 export function getPermissionModeBadgeLabelForAgentType(agentType: AgentType, mode: PermissionMode): string {
     const core = getAgentPermissionModeCore(agentType);
     if (!core) return '';
-    const group = core.permissions.modeGroup;
     const normalized = normalizePermissionModeForAgentType(mode, agentType);
     if (normalized === 'default') return '';
 
-    const seg = group === 'codexLike'
-        ? BADGE_KEY_SEGMENT_CODEX_LIKE[normalized]
-        : BADGE_KEY_SEGMENT_CLAUDE[normalized];
+    const seg = BADGE_KEY_SEGMENT[normalized === 'plan' ? 'read-only' : normalized];
     if (!seg) return '';
 
     return t(`${core.permissionModeI18nPrefix}.${seg}` as TranslationKey);

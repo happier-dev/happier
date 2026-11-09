@@ -90,7 +90,7 @@ vi.mock('@/agents/catalog/catalog', () => ({
     DEFAULT_AGENT_ID: 'claude',
     isBundledAgentId: (value: unknown): value is 'claude' | 'customAcp' =>
         typeof value === 'string' && ['claude', 'customAcp'].includes(value),
-    getAgentCore: () => ({ permissions: { modeGroup: 'default' } }),
+    getAgentCore: () => ({ permissions: {} }),
 }));
 
 vi.mock('@/components/ui/lists/Item', () => ({

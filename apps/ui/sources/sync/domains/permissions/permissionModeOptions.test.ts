@@ -13,9 +13,22 @@ import {
     restrictPermissionModeOptions,
 } from './permissionModeOptions';
 import { resolveAgentCatalogProjection } from '@/agents/backendCatalog/agentCatalogProjection';
+import { adaptDaemonContributionRegistryProjectionToMergedProjectionInputs } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { t } from '@/text';
 
 describe('permissionModeOptions', () => {
+    it('retains installed native planning through the daemon and resolved catalog descriptor (01C)', () => {
+        const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1, agentsById: {
+            'acme.agent': { id: 'acme.agent', sessionModeDescriptor: {
+                source: 'provider-native', semantics: 'agent-modes', runtimeSwitch: 'provider-native',
+            } },
+        } });
+        const inputs = adaptDaemonContributionRegistryProjectionToMergedProjectionInputs(projection);
+        const resolved = resolveAgentCatalogProjection('acme.agent', { enabledAgentIds: ['acme.agent'], ...inputs });
+        expect(normalizePermissionModeForAgentType('plan', resolved.agentId, resolved.sessionModeDescriptor)).toBe('plan');
+        expect(normalizePermissionModeForAgentType('plan', 'acme.agent')).toBe('read-only');
+    });
     it('exposes canonical intents in option lists', () => {
         const claude = getPermissionModeOptionsForAgentType('claude').map((o) => o.value);
         expect(claude).toContain('safe-yolo');
@@ -24,11 +37,15 @@ describe('permissionModeOptions', () => {
         expect(claude).not.toContain('bypassPermissions');
     });
 
-    it('normalizes unsupported modes per agent group', () => {
+    it('normalizes unsupported planning without discarding declared Agent-mode behavior', () => {
         expect(normalizePermissionModeForAgentType('read-only', 'claude')).toBe('read-only');
         expect(normalizePermissionModeForAgentType('acceptEdits', 'codex')).toBe('safe-yolo');
         expect(normalizePermissionModeForAgentType('plan', 'codex')).toBe('read-only');
-        expect(normalizePermissionModeForAgentType('plan', 'claude')).toBe('read-only');
+        expect(normalizePermissionModeForAgentType('plan', 'claude')).toBe('plan');
+        expect(normalizePermissionModeForAgentType('plan', 'acme.agent')).toBe('read-only');
+        expect(normalizePermissionModeForAgentType('plan', 'acme.agent', {
+            source: 'provider-native', semantics: 'agent-modes', runtimeSwitch: 'provider-native',
+        })).toBe('plan');
     });
 
     it('does not include legacy plan in option lists', () => {

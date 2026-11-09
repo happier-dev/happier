@@ -1,40 +1,15 @@
-import type { PermissionMode, PermissionModeGroupId as SharedPermissionModeGroupId } from '@happier-dev/agents/permissions';
+import type { PermissionMode } from '@happier-dev/agents/permissions';
 import { PERMISSION_MODES } from '@happier-dev/agents/permissions';
-import { parsePermissionIntentAlias } from '@happier-dev/agents/permissions';
+import { PERMISSION_INTENTS } from '@happier-dev/agents';
 
 export type { PermissionMode } from '@happier-dev/agents/permissions';
-export { normalizePermissionModeForGroup } from '@happier-dev/agents/permissions';
 
 // We keep the user-facing intents consistent across agents. Providers that cannot enforce
 // certain intents (e.g. Claude "read-only") are handled via effective-policy mapping.
-export const CLAUDE_PERMISSION_MODES = ['default', 'read-only', 'safe-yolo', 'yolo'] as const;
-export const CODEX_LIKE_PERMISSION_MODES = ['default', 'read-only', 'safe-yolo', 'yolo'] as const;
-
-const CLAUDE_PERMISSION_MODE_CYCLE = ['default', 'safe-yolo', 'yolo'] as const;
-
-export type PermissionModeGroupId = SharedPermissionModeGroupId;
+export const PERMISSION_MODE_OPTIONS = PERMISSION_INTENTS.filter((mode) => mode !== 'plan');
 
 export function isPermissionMode(value: unknown): value is PermissionMode {
     return typeof value === 'string' && (PERMISSION_MODES as readonly string[]).includes(value);
-}
-
-export function getNextPermissionModeForGroup(mode: PermissionMode, group: PermissionModeGroupId): PermissionMode {
-    if (group === 'codexLike') {
-        const normalized = (parsePermissionIntentAlias(mode) ?? 'default') as (typeof CODEX_LIKE_PERMISSION_MODES)[number];
-        const currentIndex = CODEX_LIKE_PERMISSION_MODES.indexOf(normalized);
-        const safeIndex = currentIndex >= 0 ? currentIndex : 0;
-        const nextIndex = (safeIndex + 1) % CODEX_LIKE_PERMISSION_MODES.length;
-        return CODEX_LIKE_PERMISSION_MODES[nextIndex];
-    }
-
-    // Claude cannot enforce read-only as a provider-native permission mode, but we still keep it
-    // as a user-facing intent in other surfaces. When cycling, treat read-only as default.
-    const normalizedRaw = parsePermissionIntentAlias(mode) ?? 'default';
-    const normalized = (normalizedRaw === 'read-only' ? 'default' : normalizedRaw) as (typeof CLAUDE_PERMISSION_MODE_CYCLE)[number];
-    const currentIndex = CLAUDE_PERMISSION_MODE_CYCLE.indexOf(normalized);
-    const safeIndex = currentIndex >= 0 ? currentIndex : 0;
-    const nextIndex = (safeIndex + 1) % CLAUDE_PERMISSION_MODE_CYCLE.length;
-    return CLAUDE_PERMISSION_MODE_CYCLE[nextIndex];
 }
 
 export function normalizeProfileDefaultPermissionMode(mode: PermissionMode | null | undefined): PermissionMode {

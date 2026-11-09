@@ -11,8 +11,7 @@ import {
     buildAgentUniverseBackendTargetKey,
     listExecutableAgentUniverseIds,
 } from '@/agents/catalog/agentUniverse';
-import { getAgentCore } from '@/agents/registry/registryCore';
-import { CLAUDE_PERMISSION_MODES, CODEX_LIKE_PERMISSION_MODES, isPermissionMode, type PermissionMode } from '@/sync/domains/permissions/permissionTypes';
+import { PERMISSION_MODE_OPTIONS, isPermissionMode, type PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 
 import { PredecessorVoiceCredentialBindingV1Schema } from '../voiceCredentialBindingCompatibility';
 import { VOICE_LEGACY_CREDENTIAL_RECOVERY_MARKER } from '../voiceSettings';
@@ -221,8 +220,7 @@ export function applyAccountSettingsCompatibilityMigrations<TSettings extends Re
             for (const agentId of listExecutableAgentUniverseIds()) {
                 const raw = (legacyByAgent as Record<string, unknown>)[agentId];
                 if (isPermissionMode(raw)) {
-                    const group = getAgentCore(agentId)?.permissions.modeGroup;
-                    const allowed = group === 'codexLike' ? CODEX_LIKE_PERMISSION_MODES : CLAUDE_PERMISSION_MODES;
+                    const allowed = PERMISSION_MODE_OPTIONS;
                     if (!(allowed as readonly string[]).includes(raw)) continue;
                     byTargetKey[buildAgentUniverseBackendTargetKey(agentId)] = raw;
                 }
@@ -233,8 +231,7 @@ export function applyAccountSettingsCompatibilityMigrations<TSettings extends Re
             if (parsed) {
                 const seededMode: PermissionMode = parsed === 'plan' ? 'read-only' : parsed;
                 for (const to of listExecutableAgentUniverseIds()) {
-                    const group = getAgentCore(to)?.permissions.modeGroup;
-                    const allowed = group === 'codexLike' ? CODEX_LIKE_PERMISSION_MODES : CLAUDE_PERMISSION_MODES;
+                    const allowed = PERMISSION_MODE_OPTIONS;
                     byTargetKey[buildAgentUniverseBackendTargetKey(to)] =
                         (allowed as readonly string[]).includes(seededMode) ? seededMode : 'default';
                 }

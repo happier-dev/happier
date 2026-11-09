@@ -23,7 +23,7 @@ export const DROID_UI_DESCRIPTOR = Object.freeze({
     nameKey: 'agentInput.agent.droid', subtitleKey: 'profiles.aiBackend.droidSubtitleExperimental',
     permissionModeI18nPrefix: 'agentInput.codexPermissionMode', availability: { experimental: true },
     connectedService: { serviceId: null, labelKey: 'agentInput.agent.droid', connectRoute: null },
-    flavorAliases: ['droid', 'factory', 'factory-droid'], permissions: { modeGroup: 'codexLike', promptProtocol: 'codexDecision' },
+    flavorAliases: ['droid', 'factory', 'factory-droid'], permissions: { promptProtocol: 'codexDecision' },
     resume: { uiVendorResumeIdLabelKey: 'sessionInfo.droidSessionId', uiVendorResumeIdCopiedKey: 'sessionInfo.droidSessionIdCopied' },
     localControl: true, toolRendering: { hideUnknownToolsByDefault: false },
     picker: { iconName: 'cpu', cliGlyph: 'DR', cliGlyphScale: 1, profileCompatibilityGlyphScale: 1, iconScale: 1.1 },

@@ -17,7 +17,7 @@ export const DEVIN_UI_DESCRIPTOR = Object.freeze({
     availability: { experimental: true },
     connectedService: { serviceId: null, labelKey: 'agentInput.agent.devin', connectRoute: null },
     flavorAliases: ['devin', 'devin-cli'],
-    permissions: { modeGroup: 'codexLike', promptProtocol: 'codexDecision' },
+    permissions: { promptProtocol: 'codexDecision' },
     resume: {
       uiVendorResumeIdLabelKey: 'sessionInfo.devinSessionId',
       uiVendorResumeIdCopiedKey: 'sessionInfo.devinSessionIdCopied',

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { AgentSessionModeDescriptor } from '@happier-dev/agents';
 
 import { type AgentId } from '@/agents/catalog/catalog';
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
@@ -24,6 +25,7 @@ type TempAuthoringDraftLike = Readonly<{
 
 export function useNewSessionPermissionModeState(params: Readonly<{
     agentType: string;
+    sessionModeDescriptor?: AgentSessionModeDescriptor | null;
     backendTarget: PersistedBackendTargetRefV2;
     hydratedTempAuthoringDraft: TempAuthoringDraftLike;
     hydratedPersistedAuthoringDraft: PersistedAuthoringDraftLike;
@@ -51,13 +53,14 @@ export function useNewSessionPermissionModeState(params: Readonly<{
     const resolveDefaultPermissionMode = React.useCallback((profile: AIBackendProfile | null) => {
         return resolveNewSessionDefaultPermissionMode({
             agentType: params.agentType,
+            sessionModeDescriptor: params.sessionModeDescriptor,
             backendTarget: params.backendTarget,
             accountDefaults,
             profileDefaultsByTargetKey: profile?.defaultPermissionModeByTargetKey ?? null,
             legacyProfileDefaultPermissionMode: (profile?.defaultPermissionMode as PermissionMode | undefined) ?? undefined,
             managedDefaults: params.managedDefaults,
         });
-    }, [accountDefaults, params.agentType, params.backendTarget, params.managedDefaults]);
+    }, [accountDefaults, params.agentType, params.backendTarget, params.managedDefaults, params.sessionModeDescriptor]);
 
     // Draft hydration can finish after mount. Store only a choice made in this
     // editor; until then the hydrated draft remains the source of intent.
@@ -78,6 +81,7 @@ export function useNewSessionPermissionModeState(params: Readonly<{
     const resolvePermissionModeDecision = React.useCallback((explicitPermissionMode?: PermissionMode) => {
         return resolveNewSessionDefaultPermissionModeDecision({
             agentType: params.agentType,
+            sessionModeDescriptor: params.sessionModeDescriptor,
             backendTarget: params.backendTarget,
             accountDefaults,
             profileDefaultsByTargetKey: selectedProfile?.defaultPermissionModeByTargetKey ?? null,
@@ -85,7 +89,7 @@ export function useNewSessionPermissionModeState(params: Readonly<{
             managedDefaults: params.managedDefaults,
             explicitPermissionMode,
         });
-    }, [accountDefaults, params.agentType, params.backendTarget, params.managedDefaults, selectedProfile]);
+    }, [accountDefaults, params.agentType, params.backendTarget, params.managedDefaults, params.sessionModeDescriptor, selectedProfile]);
     const decision = resolvePermissionModeDecision(explicitPermissionMode);
     const permissionMode = decision.permissionMode;
 

@@ -57,7 +57,6 @@ describe('CLAUDE_UI_DESCRIPTOR', () => {
           connectRoute: '/(app)/settings/connect/claude',
         },
         permissions: {
-          modeGroup: 'claude',
           promptProtocol: 'claude',
         },
         sessionModes: {

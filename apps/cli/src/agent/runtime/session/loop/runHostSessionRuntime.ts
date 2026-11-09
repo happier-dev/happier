@@ -1486,6 +1486,9 @@ export async function runHostSessionRuntime(
     .agentDefinitionsById.get(policyAgentId);
   const permissionModeSeed = resolvePermissionModeSeedForAgentStart({
     agentId: policyAgentId,
+    sessionModeDescriptor: permissionAgent
+      ? permissionAgent.richDefinition?.definition.sessionModeDescriptor ?? null
+      : undefined,
     backendTarget: runtimeOpts.backendTarget,
     explicitPermissionMode: runtimeOpts.permissionMode,
     accountSettings,

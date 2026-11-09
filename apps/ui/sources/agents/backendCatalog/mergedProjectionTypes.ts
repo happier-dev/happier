@@ -1,4 +1,5 @@
 import type { AgentId } from '@/agents/catalog/catalog';
+import type { AgentSessionModeDescriptor } from '@happier-dev/agents';
 import type {
     PluginAgentCliMetadata} from '@happier-dev/protocol/plugins/contributions/agentCliMetadata';
 import type {
@@ -34,6 +35,7 @@ export type MergedProviderProjectionEntry = Readonly<{
     catalogAgentId?: AgentId | null;
     iconAgentId?: AgentId | null;
     cli?: PluginAgentCliMetadata | null;
+    sessionModeDescriptor?: AgentSessionModeDescriptor | null;
     acpRegistryIds?: readonly string[] | null;
     connectedAccounts?: readonly PluginProjectedAgentConnectedAccountPurposeV2[] | null;
     /**
