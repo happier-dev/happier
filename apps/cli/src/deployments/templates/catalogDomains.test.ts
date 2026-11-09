@@ -57,7 +57,7 @@ afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
 // Persistence/Artifact and native transport are the boundaries. Catalog admission,
 // reviewed-child issuance, template apply and Domain placement/settlement stay real.
-it.each(['active', 'warning', 'failed', 'nativeFailure', 'discoveryFailure', 'optionalOnly', 'firstInstall', 'deployRetry', 'newProject', 'noProbe'] as const)('spends one Catalog create review on the real Domain owner: %s', async outcome => {
+it.each(['active', 'warning', 'failed', 'nativeFailure', 'discoveryFailure', 'optionalOnly', 'firstInstall', 'deployRetry', 'deployRollback', 'newProject', 'noProbe'] as const)('spends one Catalog create review on the real Domain owner: %s', async outcome => {
     const nativeRemedy = 'Caddy refused the route configuration. Check the Caddy admin service and retry adding the Domain.';
     const nativeFailureCause = { phase: 'deployment.domain.native_execution', errorClass: 'Error', errorCode: null, httpStatus: 503 };
     const state = outcome === 'active' || outcome === 'warning' ? outcome : outcome === 'firstInstall' || outcome === 'deployRetry' || outcome === 'newProject' || outcome === 'noProbe' || outcome === 'optionalOnly' ? 'active' : 'failed';
@@ -189,6 +189,9 @@ it.each(['active', 'warning', 'failed', 'nativeFailure', 'discoveryFailure', 'op
             }
             if (request.url?.endsWith('/secret-launch-admission')) return { status: 200, data: { ok: true, grants: [] } };
             if (request.url?.endsWith('/deploy')) {
+                if (outcome === 'deployRollback') return { status: 503, data: {
+                    error: 'database_transaction_timeout', statusCode: 503, transactionOutcome: 'rolled_back',
+                } };
                 writes.push('deployments.deploy'); environment.environment.revision++;
                 deployAttempts++;
                 const settledState = outcome === 'deployRetry' && deployAttempts === 1 ? 'failed' : 'succeeded';
@@ -375,7 +378,7 @@ it.each(['active', 'warning', 'failed', 'nativeFailure', 'discoveryFailure', 'op
         }
         expect(writes).toEqual([]); expect(contents.size).toBe(0);
         // Store's first install and retained retry share the instantiate Action root.
-        const templateRoot = outcome === 'firstInstall' || outcome === 'deployRetry' || outcome === 'optionalOnly' || outcome === 'nativeFailure';
+        const templateRoot = outcome === 'firstInstall' || outcome === 'deployRetry' || outcome === 'deployRollback' || outcome === 'optionalOnly' || outcome === 'nativeFailure';
         const rootAction = templateRoot ? 'deployments.templates.instantiate' as const : 'deployments.environments.create' as const;
         let rootInput = templateRoot ? DeploymentTemplateInstantiateInputV1Schema.parse({
             mode: 'apply', serverId: input.serverId, machineId: 'target', projectSourceId: input.projectSourceId, templateRef,
@@ -440,6 +443,20 @@ it.each(['active', 'warning', 'failed', 'nativeFailure', 'discoveryFailure', 'op
         expect(sourceReads).toBe(outcome === 'newProject' ? 0 : 1);
         sourceCanManage = false;
         const result = await prepared.invocation.run();
+        if (outcome === 'deployRollback') {
+            expect(result).toMatchObject({ ok: false, errorCode: 'database_transaction_timeout', details: {
+                kind: 'partial', phase: 'deploy', environmentId: environment.environment.id,
+                requiredFact: 'transaction_commit', remedy: expect.any(String),
+            } });
+            if (result.ok) throw new Error('Expected deploy rollback');
+            const partial = DeploymentTemplateInstantiationPartialV1Schema.parse(result.details);
+            expect(readDeploymentFailureRecoveryV1(result.errorCode, partial)).toMatchObject({
+                requiredFact: 'transaction_commit', nextAction: { destination: 'review' },
+            });
+            expect(deployAttempts).toBe(0);
+            expect(nativeEffects).toBe(0);
+            return;
+        }
         if (outcome === 'firstInstall') expect(domainTargetLinkRevisions).toEqual([link.revision]);
         if (outcome === 'deployRetry') {
             expect(result).toMatchObject({ ok: false, errorCode: 'deployment_failed', details: { kind: 'partial', phase: 'deploy',

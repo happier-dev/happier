@@ -643,7 +643,8 @@ describe("inTx", () => {
             afterTx(tx, () => published.push(attempt));
             if (attempt === 1) throw expired;
             return "committed";
-        })).rejects.toMatchObject({ name: "TransactionDeadlineExceededError", code: "database_transaction_timeout", cause: expired });
+        })).rejects.toMatchObject({ name: "TransactionDeadlineExceededError", code: "database_transaction_timeout",
+            transactionOutcome: "rolled_back", cause: expired });
         expect(attempts).toBe(1);
         expect(published).toEqual([]);
         expect(delayMock).not.toHaveBeenCalled();
@@ -934,9 +935,11 @@ describe("inTx", () => {
             transaction.mockRejectedValueOnce(finalFailure);
         }
 
-        await expect(inTx(async () => "request-effect", { deadlineAtMs: Date.now() + 60_000 })).rejects.toMatchObject({
+        const result = inTx(async () => "request-effect", { deadlineAtMs: Date.now() + 60_000 });
+        await expect(result).rejects.toMatchObject({
             name: "TransactionDeadlineExceededError", cause: uncertainCompletion,
         });
+        await expect(result).rejects.not.toMatchObject({ transactionOutcome: 'rolled_back' });
     });
 
     it("preserves confirmed SQL rollback even when the caller supplied a longer deadline", async () => {

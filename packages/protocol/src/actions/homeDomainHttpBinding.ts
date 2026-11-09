@@ -7,22 +7,24 @@ export type HomeDomainHttpRequestV1 = Readonly<{
   body: unknown | undefined;
 }>;
 
-const HomeDomainConfirmedRollbackV1Schema = z.strictObject({
-  error: z.literal('database_transaction_conflict_exhausted'),
-  statusCode: z.literal(503),
-});
+const HomeDomainConfirmedRollbackV1Schema = z.union([
+  z.strictObject({ error: z.literal('database_transaction_conflict_exhausted'), statusCode: z.literal(503) }),
+  z.strictObject({ error: z.literal('database_transaction_timeout'), statusCode: z.literal(503),
+    transactionOutcome: z.literal('rolled_back') }),
+]);
+type HomeDomainConfirmedRollbackV1 = z.infer<typeof HomeDomainConfirmedRollbackV1Schema>;
 
 /**
- * Read the Home's global confirmation that a transaction exhausted conflict
- * retries and rolled back. This response settles the mutation as a definite
+ * Read the Home's global confirmation that a transaction rolled back after a
+ * conflict or deadline. This response settles the mutation as a definite
  * failure; it must never be collapsed into response-loss ambiguity.
  */
 export function readHomeDomainConfirmedRollbackV1(
   httpStatus: number,
   value: unknown,
 ): Readonly<{
-  code: 'database_transaction_conflict_exhausted';
-  details: Readonly<{ error: 'database_transaction_conflict_exhausted'; statusCode: 503 }>;
+  code: HomeDomainConfirmedRollbackV1['error'];
+  details: HomeDomainConfirmedRollbackV1;
 }> | null {
   if (httpStatus !== 503) return null;
   const parsed = HomeDomainConfirmedRollbackV1Schema.safeParse(value);

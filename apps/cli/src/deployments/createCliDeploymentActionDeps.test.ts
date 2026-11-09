@@ -75,6 +75,41 @@ it('settles a rolled-back deployment request with its missing fact, recovery and
         failureCause: { phase: 'home.database.transaction', errorCode: 'database_transaction_conflict_exhausted', httpStatus: 503 } });
 });
 
+it.each([true, false])('distinguishes a confirmed rollback from an ambiguous deploy timeout (confirmed: %s)', async confirmed => {
+    vi.spyOn(axios, 'request').mockResolvedValue({ status: 503, data: {
+        error: 'database_transaction_timeout', statusCode: 503,
+        ...(confirmed ? { transactionOutcome: 'rolled_back' } : {}),
+    } });
+    const deps = createCliDeploymentActionDeps({ serverHttpBaseUrl: 'https://home.test', admitAccount: async () => null,
+        resolveRequestHeaders: () => ({}), dispatchReceipt: async () => { throw new Error('No receipt was accepted'); } });
+    const result = await deps.deploymentAction!('deployments.deploy', {
+        serverId: 'home', environmentId: 'environment', targetLinkId: 'runtime', expectedRevision: 1,
+        expectedTargetLinkRevision: 1, requestKey: 'original-deploy', contentArtifactId: 'candidate',
+        contentHeaderVersion: 1, contentBodyVersion: 1,
+    }, { operationAcceptance: { operationId: 'operation', accept() {} } });
+    expect(result).toMatchObject(confirmed
+        ? { ok: false, errorCode: 'database_transaction_timeout', effectAttempted: false,
+            details: { requiredFact: 'transaction_commit', transactionOutcome: 'rolled_back' },
+            failureCause: { phase: 'home.database.transaction', httpStatus: 503 } }
+        : { ok: false, errorCode: 'outcome_unknown' });
+});
+
+it('follows an accepted deploy to its settled receipt rather than reporting a lost result', async () => {
+    const receipt = { ok: true as const, environmentId: 'environment', revision: 2,
+        deploymentId: 'receipt', deploymentRevision: 1, state: 'queued' as const };
+    vi.spyOn(axios, 'request').mockResolvedValue({ status: 200, data: receipt });
+    const deps = createCliDeploymentActionDeps({ serverHttpBaseUrl: 'https://home.test', admitAccount: async () => null,
+        resolveRequestHeaders: () => ({}), dispatchReceipt: async request => ({ ...request.receipt,
+            deploymentRevision: 4, state: 'succeeded' }) });
+    await expect(deps.deploymentAction!('deployments.deploy', {
+        serverId: 'home', environmentId: 'environment', targetLinkId: 'runtime', expectedRevision: 1,
+        expectedTargetLinkRevision: 1, requestKey: 'original-deploy', contentArtifactId: 'candidate',
+        contentHeaderVersion: 1, contentBodyVersion: 1,
+    }, { operationAcceptance: { operationId: 'operation', accept() {} } })).resolves.toEqual({
+        ...receipt, deploymentRevision: 4, state: 'succeeded',
+    });
+});
+
 it.each(['bearer', 'signed'] as const)('distinguishes a rejected %s request from a signed-out Home', async kind => {
     vi.spyOn(axios, 'request').mockResolvedValue({ status: 401, data: { error: 'invalid_token' } });
     const deps = createCliDeploymentActionDeps({ serverHttpBaseUrl: 'https://home.test', admitAccount: async () => null,

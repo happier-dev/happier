@@ -28,7 +28,8 @@ export class TransactionAcquisitionUnavailableError extends Error {
 export class TransactionDeadlineExceededError extends Error {
     readonly code = "database_transaction_timeout";
 
-    constructor(readonly cause: unknown, readonly transactionClass?: string) {
+    constructor(readonly cause: unknown, readonly transactionClass?: string,
+        readonly transactionOutcome?: 'rolled_back') {
         super("Database transaction deadline expired");
         this.name = "TransactionDeadlineExceededError";
     }

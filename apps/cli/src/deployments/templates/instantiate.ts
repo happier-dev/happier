@@ -12,6 +12,8 @@ import { DeploymentDomainMutationResultV1Schema, DeploymentEnvironmentCreateResu
 import { DeploymentTemplateInstantiateInputV1Schema, areDeploymentTemplateReviewFactsEqualV1,
     readDeploymentTemplateDeployIntentV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { DeploymentDomainFailureDetailsV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainFailureV1';
+import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { isRecord } from '@happier-dev/protocol/common/records';
 import { DeploymentReceiptAcceptedResultV1Schema, DeploymentReceiptSettlementFailureDetailsV1Schema,
     projectDeploymentReceiptSettlementAcceptedResultV1 } from '@happier-dev/protocol/deployments/deploymentReceiptResultV1';
 import { REGISTRY_ACTION_OUTPUT_SCHEMAS_V1, registryContentRefEqualV1, RegistryFetchErrorV1 } from '@happier-dev/protocol/registries';
@@ -416,7 +418,9 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
             const authorizationFailure = readDeploymentAuthorizationFailure(error);
             const diagnostic = authorizationFailure ?? failure(code, error);
             const domainFailure = phase === 'domains' ? DeploymentDomainFailureDetailsV1Schema.safeParse(diagnostic.details) : undefined;
+            const recovery = projectDeploymentFailureRecoveryV1(isRecord(diagnostic.details) ? diagnostic.details : {}, code);
             const partial: Extract<DeploymentTemplateInstantiateResultV1, { kind: 'partial' }> = { kind: 'partial', phase, errorCode: code, savedSecrets,
+                requiredFact: recovery.requiredFact, remedy: recovery.remedy,
                 ...(domainFailure?.success ? { failure: domainFailure.data } : {}),
                 ...(environmentId ? { environmentId, revision } : {}), ...(targetLinkId ? { targetLinkId } : {}),
                 ...(deployment ? { deployment } : {}),

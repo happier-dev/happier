@@ -248,6 +248,15 @@ describe('deployment refusal recovery (a refused press: banner and platform shee
 });
 
 describe('an unconfirmed receipt with a typed cause', () => {
+    it('offers review after a confirmed rollback while keeping an unconfirmed timeout in history', () => {
+        expect(readDeploymentFailureRecoveryV1('database_transaction_timeout', {
+            error: 'database_transaction_timeout', statusCode: 503, transactionOutcome: 'rolled_back',
+            requiredFact: 'transaction_commit',
+        })).toMatchObject({ nextAction: { destination: 'review' } });
+        expect(readDeploymentFailureRecoveryV1('database_transaction_timeout')).toMatchObject({
+            nextAction: { destination: 'history' },
+        });
+    });
     it('remedies the recorded cause, not the generic lost confirmation, and stays generic without one', () => {
         const failure = { code: 'outcome_unknown', phase: 'activate', failureCause: {
             phase: 'deployment.transition', errorCode: 'database_transaction_conflict_exhausted', httpStatus: 503 } };

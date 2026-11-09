@@ -84,6 +84,17 @@ Serializable transaction. A confirmed Home rollback reports the missing
 transaction commit, a retry remedy, and a sanitized database cause before native
 dispatch, without increasing retries.
 
+The global HTTP timeout response carries `transactionOutcome: rolled_back` only
+when the transaction owner established rollback with no earlier ambiguous attempt.
+The shared Home response reader preserves the timeout code and that certainty, so
+Store retains the recovery fact and remedy in its partial install result, keeps
+the created Environment, and offers another deployment review.
+A timeout without this fact stays uncertain. An accepted receipt continues through
+the existing dispatch and settlement owner. This is an unreleased 0.3 response
+extension (including optional partial-result recovery fields): reload the matching
+clients and hosts together. Older readers conservatively keep timeout outcomes
+unknown; no stored format or native execution contract changes.
+
 ## Redeploy after teardown (0.3 development)
 
 The shared member-version projection treats successful teardown as proof of

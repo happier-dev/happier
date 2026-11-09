@@ -490,7 +490,7 @@ export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options?: InTxOptions)
                     }, acquisitionTimeout ? "Database transaction acquisition is unavailable"
                         : expired ? "Database transaction deadline expired" : "Database transaction rollback recovery exhausted");
                     if (acquisitionTimeout) throw new TransactionAcquisitionUnavailableError(e);
-                    if (expired) throw new TransactionDeadlineExceededError(e, options?.transactionClass);
+                    if (expired) throw new TransactionDeadlineExceededError(e, options?.transactionClass, 'rolled_back');
                     throw new TransactionConflictExhaustedError(e);
                 }
                 throw e;
@@ -506,7 +506,8 @@ export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options?: InTxOptions)
                 && transactionCallbackEntered
                 && (Date.now() >= options.deadlineAtMs || isPrismaErrorCode(e, "P2028") || sqlState === "57014")
             ) {
-                throw new TransactionDeadlineExceededError(ambiguousAttemptFailure?.error ?? e, options?.transactionClass);
+                throw new TransactionDeadlineExceededError(ambiguousAttemptFailure?.error ?? e, options?.transactionClass,
+                    !ambiguousAttemptFailure && confirmedRollback ? 'rolled_back' : undefined);
             }
             if (retryable && counter < transactionConfig.maxRetries) {
                 const nextAttempt = counter + 1;
@@ -528,7 +529,8 @@ export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options?: InTxOptions)
                 }
                 if (deadlineAtMs !== undefined && Date.now() + retryDelayMs >= deadlineAtMs) {
                     if (provider === "postgres") throwExhausted();
-                    throw new TransactionDeadlineExceededError(ambiguousAttemptFailure?.error ?? e, options?.transactionClass);
+                    throw new TransactionDeadlineExceededError(ambiguousAttemptFailure?.error ?? e, options?.transactionClass,
+                        !ambiguousAttemptFailure && confirmedRollback ? 'rolled_back' : undefined);
                 }
                 counter = nextAttempt;
                 recordDatabaseTransactionRetry(provider);

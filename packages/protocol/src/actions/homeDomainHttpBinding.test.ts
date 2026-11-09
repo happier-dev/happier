@@ -38,6 +38,14 @@ describe('Home-domain HTTP binding', () => {
     expect(readHomeDomainConfirmedRollbackV1(503, { ...body, extra: true })).toBeNull();
   });
 
+  it('preserves a timeout only when the transaction owner explicitly confirms rollback', () => {
+    const body = { error: 'database_transaction_timeout', statusCode: 503, transactionOutcome: 'rolled_back' };
+    expect(readHomeDomainConfirmedRollbackV1(503, body)).toEqual({ code: body.error, details: body });
+    expect(readHomeDomainConfirmedRollbackV1(500, body)).toBeNull();
+    expect(readHomeDomainConfirmedRollbackV1(503, { ...body, transactionOutcome: 'unknown' })).toBeNull();
+    expect(readHomeDomainConfirmedRollbackV1(503, { ...body, extra: true })).toBeNull();
+  });
+
   it('keeps organization deletion identities in the body required by the existing HTTP routes', () => {
     const tag = bindHomeDomainActionHttpRequestV1('session.tags.delete', { tagId: 'tag/a' });
     expect(tag.path).toBe('/v2/session-organization/tags/tag%2Fa');

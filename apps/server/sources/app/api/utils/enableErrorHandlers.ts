@@ -10,7 +10,7 @@ import { redactPublicShareCapabilityUrl } from '@happier-dev/protocol/crypto/pub
 import { redactHttpRequestUrlForLog } from "@/utils/logging/redactHttpRequestUrlForLog";
 import { InactiveAccountError } from "@/app/auth/accountStatus";
 import { readSharedQaSchemaMismatchDiagnostic, readPrismaQueryValidationDiagnostic, withPrismaQueryValidationDiagnostic } from '@/storage/prismaErrors';
-import { readDatabaseErrorCode } from '@/storage/transactionErrors';
+import { readDatabaseErrorCode, isTransactionDeadlineExceededError } from '@/storage/transactionErrors';
 export { readDatabaseErrorCode } from '@/storage/transactionErrors';
 import { logUnexpectedRequestError } from './logUnexpectedRequestError';
 
@@ -49,7 +49,9 @@ export function enableErrorHandlers(app: Fastify) {
             // Expected storage refusals still need the same safe request
             // correlation as other failures; never retain SQL or HTTP input.
             logUnexpectedRequestError(error, correlation);
-            return sendGlobalErrorResponse(reply, 503, { error: databaseError, statusCode: 503 });
+            return sendGlobalErrorResponse(reply, 503, { error: databaseError, statusCode: 503,
+                ...(isTransactionDeadlineExceededError(error) && error.transactionOutcome
+                    ? { transactionOutcome: error.transactionOutcome } : {}) });
         }
         const prismaValidation = readPrismaQueryValidationDiagnostic(error);
         if (prismaValidation) {

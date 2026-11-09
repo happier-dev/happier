@@ -188,8 +188,11 @@ const missingFacts = {
 
 const legacyGenericRemedy = 'Inspect the reported deployment phase and current target state. Restore the missing prerequisite or choose a supported target action, then retry the original request after confirming whether the previous change took effect.';
 const fallback = recovery('Happier could not complete this change. Check deployment history and the running app before trying again.', 'history', 'Review deployment');
+const transactionRollbackRecovery = recovery('The Home could not record this change and rolled it back. Review the deployment and try again.', 'review', 'Review deployment');
 
 function recoveryFor(details: Record<string, unknown>, errorCode?: string) {
+    // The transport sets this fact only after consuming Home's confirmed rollback.
+    if (details.requiredFact === 'transaction_commit') return transactionRollbackRecovery;
     const failure = isRecord(details.failure) ? details.failure : undefined;
     const sourceAdmission = isRecord(details.sourceAdmission) ? details.sourceAdmission
         : isRecord(failure?.sourceAdmission) ? failure.sourceAdmission : undefined;

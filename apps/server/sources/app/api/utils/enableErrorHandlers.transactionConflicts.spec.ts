@@ -58,10 +58,14 @@ describe('HTTP transaction conflict projection', () => {
         } finally { await app.close(); }
     });
 
-    it('projects exhausted rollback once as typed 503 despite a narrow route response schema', async () => {
+    it.each([
+        { driver: 'P2034', code: 'database_transaction_conflict_exhausted', meta: undefined },
+        { driver: 'P2028', code: 'database_transaction_timeout',
+            meta: { error: 'A query cannot be executed on an expired transaction.' } },
+    ])('preserves confirmed $code rollback through the HTTP response and client reader', async ({ driver, code, meta }) => {
         vi.stubEnv('HAPPIER_DB_PROVIDER', 'postgres');
         vi.stubEnv('HAPPIER_DB_TX_MAX_RETRIES', '0');
-        transaction.mockRejectedValue(Object.assign(new Error('private SQL contents'), { code: 'P2034' }));
+        transaction.mockRejectedValue(Object.assign(new Error('private SQL contents'), { code: driver, ...(meta ? { meta } : {}) }));
         const app = Fastify({ logger: false });
         app.setSerializerCompiler(serializerCompiler);
         const typed = app.withTypeProvider<ZodTypeProvider>();
@@ -72,7 +76,10 @@ describe('HTTP transaction conflict projection', () => {
         try {
             const response = await app.inject({ method: 'POST', url: '/conflicting-write' });
             expect(response.statusCode).toBe(503);
-            expect(response.json()).toEqual({ error: 'database_transaction_conflict_exhausted', statusCode: 503 });
+            const body = { error: code, statusCode: 503,
+                ...(driver === 'P2028' ? { transactionOutcome: 'rolled_back' } : {}) };
+            expect(response.json()).toEqual(body);
+            expect(readHomeDomainConfirmedRollbackV1(response.statusCode, response.json())).toEqual({ code, details: body });
             expect(response.body).not.toContain('private SQL contents');
         } finally {
             await app.close();

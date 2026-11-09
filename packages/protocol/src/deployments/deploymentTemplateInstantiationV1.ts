@@ -131,6 +131,7 @@ export const DeploymentTemplateInstantiationPartialV1Schema = lazyZodSchema(() =
   kind: z.literal('partial'), environmentId: z.optional(id), revision: z.optional(revision),
   targetLinkId: z.optional(id), definition: z.optional(storedPin), savedSecrets,
   phase: z.enum(['generation', 'environment', 'target', 'bindings', 'metadata', 'domains', 'deploy']), errorCode: id,
+  requiredFact: z.optional(z.string()), remedy: z.optional(z.string()),
   failure: z.optional(DeploymentDomainFailureDetailsV1Schema),
   deployment: z.optional(DeploymentReceiptAcceptedResultV1Schema),
   continuation: z.optional(z.discriminatedUnion('actionId', [
