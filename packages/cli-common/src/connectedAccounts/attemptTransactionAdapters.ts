@@ -9,6 +9,7 @@ import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/
 import type { StoredJsonContentEnvelope } from '@happier-dev/protocol';
 import { z } from 'zod/mini';
 import { ConnectedServiceCredentialKindSchema } from '@happier-dev/protocol/connect/connectedServiceCredentialKind';
+import { ConnectedAccountAccessModeV1Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 
 import {
   CONNECTED_ACCOUNT_ATTEMPT_TRANSACTION_LIFETIME_MS,
@@ -50,6 +51,8 @@ const PreparedSettlementShape = {
   accountId: BoundedIdSchema,
   authenticationModeId: BoundedIdSchema,
   credentialKind: z.optional(ConnectedServiceCredentialKindSchema),
+  includesApiKey: z.optional(z.literal(true)),
+  accessMode: z.optional(ConnectedAccountAccessModeV1Schema),
   directExportContract: z.optional(z.nullable(z.literal(CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1))),
   expectedCredentialRevision: z.nullable(z.string().check(z.maxLength(4_096))),
   expectedCredentialConfigurationRevision:

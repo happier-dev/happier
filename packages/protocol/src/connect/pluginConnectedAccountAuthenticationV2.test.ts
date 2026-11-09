@@ -3,6 +3,23 @@ import { describe, expect, it } from 'vitest';
 import { PluginConnectedAccountAuthenticationModeV2Schema, PluginConnectedAccountConfigurationFieldV2Schema, PluginConnectedAccountDescriptorContributionV2Schema } from './pluginConnectedAccountAuthenticationV2.js';
 import { ConnectedAccountUiProjectionEntryV1Schema, projectConnectedAccountDescriptorV1 } from './connectedAccountUiProjectionV1.js';
 
+it('preserves an explicitly declared API-key mode through the public catalog descriptor without inferring other manual modes', () => {
+  const descriptor = PluginConnectedAccountDescriptorContributionV2Schema.parse({
+    id: 'vendor', title: 'Vendor', authentication: { defaultModeId: 'key', modes: [
+      { id: 'key', kind: 'manual', apiKey: true, outcomeReconciliation: 'none', fields: [] },
+      { id: 'existing', kind: 'manual', credentialOrigin: 'native_import', outcomeReconciliation: 'none', fields: [] },
+      { id: 'manual', kind: 'manual', outcomeReconciliation: 'none', fields: [] },
+    ] },
+  });
+  const projection = ConnectedAccountUiProjectionEntryV1Schema.parse(projectConnectedAccountDescriptorV1({
+    descriptor, serviceId: 'vendor', pluginId: 'acme.vendor', provenance: 'external', sourceKind: 'installed',
+    availability: { state: 'available', reason: 'resolved' }, diagnostics: [],
+  }));
+  expect(projection.authentication.modes[0]).toMatchObject({ apiKey: true });
+  expect(projection.authentication.modes[1]).not.toHaveProperty('apiKey');
+  expect(projection.authentication.modes[2]).not.toHaveProperty('apiKey');
+});
+
 it('preserves manual credential-check reachability through the UI projection', () => {
   const descriptor = PluginConnectedAccountDescriptorContributionV2Schema.parse({
     id: 'vendor', title: 'Vendor', authentication: { defaultModeId: 'token', modes: [{

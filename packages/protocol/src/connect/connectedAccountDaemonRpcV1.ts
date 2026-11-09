@@ -20,6 +20,7 @@ import {
 import { QualifiedConnectedAccountRefSchema, ConnectedAccountServiceIdentityV1Schema, ConnectedAccountSourceCustodyV1Schema } from './qualifiedConnectedAccountPersistence.js';
 import { ConnectedServiceIdSchema, type ConnectedServiceId } from './connectedServiceBindings.js';
 import { ConnectedServiceCredentialRevisionV1Schema } from './connectedServiceSchemas.js';
+import { ConnectedAccountAccessModeV1Schema } from './connectedAccountAccessModeV1.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 import { SharedSavedSecretReferenceSelectionV1Schema } from '../account/settings/savedSecretReferenceV1.js';
 
@@ -44,10 +45,7 @@ type ReadonlyControlResponse<T> =
       }
     : ReadonlyArrayProperties<T>;
 
-export const CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD =
-  'daemon.connectedAccounts.authentication.command';
-export const CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD =
-  'daemon.connectedAccounts.control.command';
+export { CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD } from '../rpc/methods.js';
 
 const BoundedIdentitySchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(256)));
 const ExpectedConfigurationRevisionSchema =
@@ -353,6 +351,8 @@ export const ConnectedAccountAttemptResponseSchema =
       status: z.literal('connected'),
       attemptId: BoundedIdentitySchema,
       account: asProtocolZod(QualifiedConnectedAccountRefSchema),
+      includesApiKey: z.optional(z.literal(true)),
+      accessMode: z.optional(ConnectedAccountAccessModeV1Schema),
     }),
     z.strictObject({
       status: z.literal('cancelled'),

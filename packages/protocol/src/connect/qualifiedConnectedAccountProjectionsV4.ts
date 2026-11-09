@@ -5,6 +5,7 @@ import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 import { MachineTargetV1Schema } from '../machines/machineAccessV1.js';
 import { ConnectedServiceCredentialKindSchema } from './connectedServiceCredentialKind.js';
+import { ConnectedAccountAccessModeV1Schema } from './connectedAccountAccessModeV1.js';
 
 import {
   PluginContributionLocalIdSchema,
@@ -136,6 +137,10 @@ export const QualifiedConnectedAccountAuthenticationProvenanceV4Schema = lazyZod
 
 export const QualifiedConnectedAccountPresentationMetadataV4Schema = lazyZodSchema(() => z.strictObject({
   providerIdentity: z.optional(QualifiedConnectedAccountProviderIdentityV4Schema),
+  /** Produced from the service's actual mode; omission is unknown. */
+  accessMode: z.optional(ConnectedAccountAccessModeV1Schema),
+  /** Authentication actually created an additional API key; absence is unknown. */
+  includesApiKey: z.optional(z.literal(true)),
   displayName: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(512))),
   scopes: QualifiedConnectedAccountScopesV4Schema,
   authenticationProvenance: z.optional(QualifiedConnectedAccountAuthenticationProvenanceV4Schema),

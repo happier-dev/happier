@@ -6,6 +6,56 @@ import { createConnectedAccountCredentialSettlement } from './credentialSettleme
 import { QualifiedConnectedAccountCredentialSnapshotV4Schema, QualifiedConnectedAccountCredentialHealthPatchV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 
 describe('Connected Account credential settlement', () => {
+    it.each(['subscription', 'apiKey', undefined] as const)('stores the reported access mode and leaves unknown mode absent (%s)', async accessMode => {
+        type Mutation = Parameters<Parameters<typeof createConnectedAccountCredentialSettlement>[0]['mutateCredential']>[0];
+        let written: Mutation | undefined;
+        const owner = createConnectedAccountCredentialSettlement({
+            now: () => 1, resolveAccountMode: async () => 'plain',
+            seal: (kind, _mode, payload) => sealQualifiedConnectedAccountContentEnvelope({ kind, accountMode: 'plain', payload,
+                randomBytes: length => new Uint8Array(length) }),
+            open: (kind, _mode, envelope) => openQualifiedConnectedAccountContentEnvelope({ kind, accountMode: 'plain', envelope }),
+            parseConfigurationContent: value => value,
+            mutateCredential: async mutation => { written = mutation; return { success: true,
+                credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', configurationRevision: null }; },
+            mutateCredentialHealth: async () => {}, readCredential: async () => null, readConfiguration: async () => null,
+            readHttpStatus: () => null, readFailureCode: () => null,
+        });
+        const request = { intent: 'connect' as const, service: { pluginId: 'acme.cloud', localId: 'api' }, accountId: 'selected',
+            authenticationModeId: 'device', expectedCredentialRevision: null, expectedCredentialConfigurationRevision: null,
+            expectedConfigurationRevision: 'unconfigured', credentialKind: 'oauth' as const,
+            sourceCustody: { kind: 'managed' as const, immutableGenerationId: 'artifact-1', installSource: 'archive' as const },
+            stagedCredentials: { token: 'synthetic-token' }, displayName: 'Cloud', scopes: [],
+            ...(accessMode ? { accessMode } : {}),
+        };
+        expect(await owner.settle(request)).toMatchObject({ status: 'connected' });
+        if (accessMode) expect(written?.metadata).toMatchObject({ accessMode });
+        else expect(written?.metadata).not.toHaveProperty('accessMode');
+    });
+    it.each([true, false])('stores the observed additional-key fact without inferring it from credential material (%s)', async includesApiKey => {
+        type Mutation = Parameters<Parameters<typeof createConnectedAccountCredentialSettlement>[0]['mutateCredential']>[0];
+        let written: Mutation | undefined;
+        const owner = createConnectedAccountCredentialSettlement({
+            now: () => 1, resolveAccountMode: async () => 'plain',
+            seal: (kind, _mode, payload) => sealQualifiedConnectedAccountContentEnvelope({ kind, accountMode: 'plain', payload,
+                randomBytes: length => new Uint8Array(length) }),
+            open: (kind, _mode, envelope) => openQualifiedConnectedAccountContentEnvelope({ kind, accountMode: 'plain', envelope }),
+            parseConfigurationContent: value => value,
+            mutateCredential: async mutation => { written = mutation; return { success: true,
+                credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', configurationRevision: null }; },
+            mutateCredentialHealth: async () => {}, readCredential: async () => null, readConfiguration: async () => null,
+            readHttpStatus: () => null, readFailureCode: () => null,
+        });
+        const request = { intent: 'connect' as const, service: { pluginId: 'acme.cloud', localId: 'api' }, accountId: 'selected',
+            authenticationModeId: 'device', expectedCredentialRevision: null, expectedCredentialConfigurationRevision: null,
+            expectedConfigurationRevision: 'unconfigured',
+            sourceCustody: { kind: 'managed' as const, immutableGenerationId: 'artifact-1', installSource: 'archive' as const },
+            stagedCredentials: { accountToken: 'synthetic-token', inferenceKey: 'synthetic-key' }, displayName: 'Cloud', scopes: [],
+            ...(includesApiKey ? { includesApiKey: true as const } : {}),
+        };
+        expect(await owner.settle(request)).toMatchObject({ status: 'connected' });
+        if (includesApiKey) expect(written?.metadata).toMatchObject({ includesApiKey: true });
+        else expect(written?.metadata).not.toHaveProperty('includesApiKey');
+    });
     it.each(['acknowledged', 'reconciled', 'health-conflict', 'health-unknown', 'credential-conflict'] as const)('settles reconnect health before reporting a recovered Account (%s)', async outcome => {
         const service = { pluginId: 'acme.cloud', localId: 'api' };
         const account = { service, accountId: 'selected' };

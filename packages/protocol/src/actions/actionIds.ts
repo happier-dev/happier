@@ -16,6 +16,7 @@ export function isSessionSpawnNewActionIdV1(actionId: string): actionId is typeo
 }
 export const SESSION_OPEN_ACTION_ID_V1 = 'session.open' as const;
 export const SESSION_MESSAGE_SEND_ACTION_ID_V1 = 'session.message.send' as const;
+export const SESSION_COMPACT_ACTION_ID_V1 = 'session.compact' as const;
 
 /** Native Service Stop consumes only its exact handle; Ask stays with the original Account. */
 export function isLocalServiceStopActionIdV1(actionId: unknown): actionId is 'localServices.actions.stopManaged' {

@@ -9,6 +9,7 @@ import type { CredentialedConnectedAccountAuthenticationHost } from '@/plugins/r
 import type { AccountExecutionRuntime } from '@/plugins/runtime/accountExecutionRuntime';
 import { SavedSecretSchema } from '@happier-dev/protocol/profiles/backendProfileSchema';
 import type { ActionExecutorDeps, ActionExecutorContext } from '@happier-dev/protocol';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { CONNECTED_SERVICE_POOL_SELECTION_RPC_METHOD } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
@@ -437,11 +438,11 @@ export function createCliConnectedServiceAction(params: Readonly<{
       listPendingAuthenticationAttempts: async ({ machineId, service }) => host.controlCommand!(machineId,
         { operation: 'listPendingAttempts', service }),
       };
-      const readOnlyCatalog = actionId === 'connectedServices.accounts.list' || actionId === 'connectedServices.catalog.list';
-      if (readOnlyCatalog) await assertReadCurrent();
+      const readOnlyAction = getActionSpec(actionId).sideEffectClass === 'read';
+      if (readOnlyAction) await assertReadCurrent();
       try {
         const result = await (prepare ? prepareConnectedServiceRevokeInputV1(host, input) : executeConnectedServiceConfigurationActionV1(host, actionId, input));
-        if (readOnlyCatalog) await assertReadCurrent();
+        if (readOnlyAction) await assertReadCurrent();
         return result;
       } finally {
         // A supplied journey/Session host keeps its own lifetime. Only this

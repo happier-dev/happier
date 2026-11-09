@@ -44,7 +44,7 @@ export const PLUGIN = definePlugin({
   connectedAccountDescriptors: { [ACCOUNT_ID]: {
     declaration: { title: 'Maritime account', ui: { category: 'cloud-machines' }, authentication: {
       account: { artifactId: 'connected-account-authentication', exportName: 'activate' }, defaultModeId: 'token', modes: [{
-        id: 'token', title: 'API key', kind: 'manual', outcomeReconciliation: 'none', credentialOrigin: 'authentication',
+        id: 'token', title: 'API key', kind: 'manual', apiKey: true, outcomeReconciliation: 'none', credentialOrigin: 'authentication',
         browserReachability: 'unreachable',
         setup: { url: 'https://maritime.sh/docs/sdk/authentication', createKeyTitle: 'Maritime API key setup',
           checklist: ['Use one API key with manage scope: deleting agent boxes requires manage, beyond deploy and computers.', 'Select an existing Saved Secret for the API key, or enter a new key.'],

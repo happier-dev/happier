@@ -23,6 +23,7 @@ import {
   QualifiedConnectedAccountGroupMemberMutationV4Schema,
   QualifiedConnectedAccountListResponseV4Schema,
   QualifiedConnectedAccountProfileV4Schema,
+  QualifiedConnectedAccountPresentationMetadataV4Schema,
   QualifiedConnectedAccountQuotaResponseV4Schema,
   QualifiedProviderAccountUsageRecordResponseV4Schema,
   QualifiedProviderAccountUsageReadErrorV4Schema,
@@ -33,6 +34,13 @@ import {
   projectProviderAccountUsageSnapshotToQualifiedConnectedAccountQuotaSnapshotV4,
   sameQualifiedConnectedAccountGroupRef,
 } from './qualifiedConnectedAccountsV4.js';
+
+it('preserves an observed account access mode without deriving one from credential category', () => {
+  expect(QualifiedConnectedAccountPresentationMetadataV4Schema.parse({ scopes: [], accessMode: 'subscription' }).accessMode).toBe('subscription');
+  expect(QualifiedConnectedAccountPresentationMetadataV4Schema.parse({ scopes: [], accessMode: 'apiKey' }).accessMode).toBe('apiKey');
+  expect(QualifiedConnectedAccountPresentationMetadataV4Schema.parse({ scopes: [] }).accessMode).toBeUndefined();
+  expect(QualifiedConnectedAccountPresentationMetadataV4Schema.safeParse({ scopes: [], accessMode: 'oauth' }).success).toBe(false);
+});
 import {
   isQualifiedConnectedAccountProfileActiveV4,
   isQualifiedConnectedAccountProfileUsableV4,

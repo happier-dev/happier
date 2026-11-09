@@ -45,7 +45,7 @@ export const PLUGIN = definePlugin({
   connectedAccountDescriptors: { [ACCOUNT_ID]: {
     declaration: { title: 'Superserve account', ui: { category: 'cloud-machines' }, authentication: {
       account: { artifactId: 'connected-account-authentication', exportName: 'activate' }, defaultModeId: 'token', modes: [{
-        id: 'token', title: 'API key', kind: 'manual', outcomeReconciliation: 'none', credentialOrigin: 'authentication',
+        id: 'token', title: 'API key', kind: 'manual', apiKey: true, outcomeReconciliation: 'none', credentialOrigin: 'authentication',
         browserReachability: 'unreachable',
         setup: { url: 'https://console.superserve.ai/', createKeyTitle: 'Open Superserve console',
           checklist: ['Select your team in the Superserve console, then open Settings → API keys.', 'Choose Create key, then copy the new key and paste it here.'],

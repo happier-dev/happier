@@ -316,6 +316,7 @@ export const POSTHOG_PLUGIN = definePlugin({
                     modes: [{
                         id: POSTHOG_PERSONAL_API_KEY_MODE_ID,
                         kind: 'manual',
+                        apiKey: true,
                         setup: {
                             url: 'https://posthog.com/docs/api/personal-api-keys',
                             checklist: ['Open Personal API keys in the account settings of the PostHog deployment you will connect.', 'Create a personal API key with the scopes needed for the projects and actions you want to use.', 'Copy the key and enter the matching deployment URL here.'],

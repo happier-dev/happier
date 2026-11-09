@@ -45,7 +45,7 @@ export const PLUGIN = definePlugin({
   connectedAccountDescriptors: { [ACCOUNT_ID]: {
     declaration: { title: 'Agent37 account', ui: { category: 'cloud-machines' }, authentication: {
       account: { artifactId: 'connected-account-authentication', exportName: 'activate' }, defaultModeId: 'token', modes: [{
-        id: 'token', title: 'API key', kind: 'manual', outcomeReconciliation: 'none', credentialOrigin: 'authentication',
+        id: 'token', title: 'API key', kind: 'manual', apiKey: true, outcomeReconciliation: 'none', credentialOrigin: 'authentication',
         browserReachability: 'unreachable',
         setup: { url: 'https://www.agent37.com/dashboard', createKeyTitle: 'Open Agent37 API keys',
           checklist: ['Open API keys in the Agent37 dashboard.', 'Choose an existing Saved Secret for the API key, or enter a new key.'],

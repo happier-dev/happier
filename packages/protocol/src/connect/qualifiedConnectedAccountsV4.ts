@@ -1,4 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
+export { ConnectedAccountAccessModeV1Schema, type ConnectedAccountAccessModeV1 } from './connectedAccountAccessModeV1.js';
 import { z } from 'zod/mini';
 import { ManagedResourceDependencyV1Schema, ManagedResourceDispositionV1Schema } from '../machines/managed/managedDependencyV1.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";

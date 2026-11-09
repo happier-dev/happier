@@ -44,7 +44,7 @@ export const PLUGIN = definePlugin({
   connectedAccountDescriptors: { [ACCOUNT_ID]: {
     declaration: { title: 'Upstash Box account', ui: { category: 'cloud-machines' }, authentication: {
       account: { artifactId: 'connected-account-authentication', exportName: 'activate' }, defaultModeId: 'token', modes: [{
-        id: 'token', title: 'API key', kind: 'manual', outcomeReconciliation: 'none', credentialOrigin: 'authentication',
+        id: 'token', title: 'API key', kind: 'manual', apiKey: true, outcomeReconciliation: 'none', credentialOrigin: 'authentication',
         setup: { url: 'https://console.upstash.com/', createKeyTitle: 'Open Upstash Console',
           checklist: ['Open Upstash Box in the Upstash Console and create a Box API key.', 'Copy the Box API key and paste it here.'],
           shapeHint: 'Use a Box API key starting with box_, not a Redis REST token or Developer API key.' },

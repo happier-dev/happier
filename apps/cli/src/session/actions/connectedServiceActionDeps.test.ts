@@ -10,7 +10,8 @@ import { once } from 'node:events';
 import Fastify from 'fastify';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { activate as activateGemini, manifest as geminiManifest } from '@happier-dev/plugins-gemini';
-import { QualifiedConnectedAccountGroupV4Schema, QualifiedConnectedAccountCredentialMutationV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import { QualifiedConnectedAccountGroupV4Schema, QualifiedConnectedAccountGroupRefSchema, QualifiedConnectedAccountCredentialMutationV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import { parseQualifiedConnectedAccountV4StructuredQueryValue } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4QueryCodec';
 import { openQualifiedConnectedAccountContentEnvelope, resolveQualifiedConnectedAccountCredentialValuesV1 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
 import { SharedSavedSecretPromoteInputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { homeDomainActionTransportV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
@@ -83,6 +84,47 @@ const accountDirectUserContext = { surface: 'cli', authority: 'present_user', ac
 
 describe('native connected-service Action adapter', () => {
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); resetActiveAccountSettingsSnapshotForTests(); });
+
+  it('reads only the selected pool on its captured Home and refuses a retired Account without contacting a Machine', async () => {
+    const { token, credentials } = directKeyAccount('selected-pool-requester');
+    const ref = { service: { pluginId: 'example.accounts', localId: 'work' }, groupId: 'selected' };
+    const group = QualifiedConnectedAccountGroupV4Schema.parse({ v: 1, ref, incarnation: 'selected-pool', displayName: null,
+      policy: { strategy: 'manual' }, activeConnectedAccountId: 'second', generation: 4, runtimeStateRevision: 1,
+      state: {}, createdAt: 1, updatedAt: 1,
+      members: [{ v: 1, connectedAccountId: 'second', priority: 100, enabled: true, state: {}, createdAt: 1, updatedAt: 1 }] });
+    const requests: string[] = [];
+    let current = true;
+    let retireDuringRequest = false;
+    const server = Fastify();
+    server.get('/v4/connect/qualified/group', async request => {
+      requests.push(request.url);
+      expect(request.headers.authorization).toBe(`Bearer ${token}`);
+      expect(parseQualifiedConnectedAccountV4StructuredQueryValue(QualifiedConnectedAccountGroupRefSchema,
+        new URL(request.url, 'https://home.test').searchParams.get('group'))).toEqual(ref);
+      if (retireDuringRequest) current = false;
+      return { group };
+    });
+    const home = await server.listen({ host: '127.0.0.1', port: 0 });
+    const action = createCliConnectedServiceAction({ credentials,
+      serverHttpBaseUrl: home, isCredentialCurrent: () => current,
+      resolveHeaders: () => ({ Authorization: `Bearer ${token}` }),
+      callMachineAction: async () => { throw new Error('Account pool read must not contact a Machine'); } });
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), connectedServiceAction: action });
+    try {
+      expect(await executor.execute('connectedServices.pools.get', { group: ref }, { surface: 'cli', authority: 'present_user' }))
+        .toEqual({ ok: true, result: { group } });
+      expect(requests).toHaveLength(1);
+      current = false;
+      expect(await executor.execute('connectedServices.pools.get', { group: ref }, { surface: 'cli', authority: 'present_user' }))
+        .toMatchObject({ ok: false, errorCode: 'scope-retired' });
+      expect(requests).toHaveLength(1);
+      current = true;
+      retireDuringRequest = true;
+      expect(await executor.execute('connectedServices.pools.get', { group: ref }, { surface: 'cli', authority: 'present_user' }))
+        .toMatchObject({ ok: false, errorCode: 'scope-retired' });
+      expect(requests).toHaveLength(2);
+    } finally { await server.close(); }
+  });
 
   it.each([
     { mode: 'plain', provider: 'anthropic' }, { mode: 'e2ee', provider: 'anthropic' }, { mode: 'locked', provider: 'anthropic' },

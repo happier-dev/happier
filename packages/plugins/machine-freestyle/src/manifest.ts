@@ -44,7 +44,7 @@ export const PLUGIN = definePlugin({
   connectedAccountDescriptors: { [ACCOUNT_ID]: {
     declaration: { title: 'Freestyle account', ui: { category: 'cloud-machines' }, authentication: {
       account: { artifactId: 'connected-account-authentication', exportName: 'activate' }, defaultModeId: 'token', modes: [{
-        id: 'token', title: 'API key', kind: 'manual', outcomeReconciliation: 'none', credentialOrigin: 'authentication',
+        id: 'token', title: 'API key', kind: 'manual', apiKey: true, outcomeReconciliation: 'none', credentialOrigin: 'authentication',
         browserReachability: 'unreachable',
         setup: { url: 'https://dash.freestyle.sh/', createKeyTitle: 'Open Freestyle dashboard',
           checklist: ['Sign in to Freestyle and select the team that will own your VMs.', 'Create an API key in the dashboard, or use freestyle tokens create after signing in with freestyle login.', 'Copy the API key and paste it here.'],

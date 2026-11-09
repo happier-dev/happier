@@ -10,6 +10,9 @@ export const CURRENT_SESSION_PRESENTATION_APPLY_RPC_METHOD = 'session.presentati
 /** Closed server-to-exact-daemon method; never a public Action or SDK method. */
 export const EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 = 'daemon.actions.external.dispatch' as const;
 
+export const CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD = 'daemon.connectedAccounts.authentication.command' as const;
+export const CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD = 'daemon.connectedAccounts.control.command' as const;
+
 export const RPC_METHODS = {
   DAEMON_BROWSER_PROFILE_LOGIN_SOURCES: 'daemon.browser.profile.loginSources',
   DAEMON_BROWSER_PROFILE_COOKIE_SOURCE_READ: 'daemon.browser.profile.cookieSource.read',

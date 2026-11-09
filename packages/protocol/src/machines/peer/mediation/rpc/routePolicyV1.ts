@@ -13,7 +13,7 @@ import { USAGE_SOURCE_ACTION_IDS } from '../../../../usage/usageSourcesActionIds
 import { LOCAL_SERVICE_CONTROL_ACTION_RPC_METHODS } from '../../../../local/services/actionIdsV1.js';
 import { ACTION_INVOKE_ACTION_ID_V1, isWorkspaceSyncRelationshipWriteActionId, WORKSPACE_SYNC_RELATIONSHIP_CONTROL_ACTION_RPC_METHODS, type WorkflowActionIdV1 } from '../../../../actions/actionIds.js';
 import { AGENT_SIGN_IN_STATUS_RPC_METHOD } from '../../../../daemon/agentSignIn.js';
-import { CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD } from '../../../../connect/connectedAccountDaemonRpcV1.js';
+import { CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD } from '../../../../rpc/methods.js';
 
 const WORKFLOW_RUN_START_METHOD = 'workflow.run.start' satisfies WorkflowActionIdV1;
 

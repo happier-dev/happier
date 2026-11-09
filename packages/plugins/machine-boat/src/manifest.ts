@@ -113,7 +113,7 @@ export function createBoatPlugin(resolveSshBootstrap?: typeof resolveMachineProv
   systemTools: { 'ssh-keyscan': { title: 'OpenSSH host key scanner', executableNames: ['ssh-keyscan'] } },
   connectedAccountDescriptors: { [ACCOUNT_ID]: {
     declaration: { title: 'Boat account', ui: { category: 'cloud-machines' }, authentication: { defaultModeId: 'token', modes: [{
-      id: 'token', kind: 'manual', title: 'API key', outcomeReconciliation: 'none',
+      id: 'token', kind: 'manual', title: 'API key', apiKey: true, outcomeReconciliation: 'none',
       setup: { url: 'https://boat.dev/dashboard', createKeyTitle: 'Open Boat dashboard',
         // https://docs.boat.dev/api-keys/scopes does not enumerate ci's
         // account.read membership; old ci keys do not acquire newer permissions.
