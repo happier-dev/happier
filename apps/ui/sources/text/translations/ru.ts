@@ -1,3 +1,4 @@
+import { newSessionActionDefaultTranslations } from './newSessionActionDefaultTranslations';
 import { chatLinksTranslations } from './chatLinksTranslations';
 import { deploymentDefaultsTranslations } from './deploymentDefaultsTranslations';
 import { deploymentCopyTranslations } from './deploymentCopyTranslations';
@@ -7282,6 +7283,7 @@ export const ru: TranslationStructure = {
     folder: folderlessSessionTranslations.ru.composer,
     ...newSessionMcpTranslationExtension,
     ...acpCatalogTranslationExtension.newSession,
+    actionDefault: newSessionActionDefaultTranslations['ru'],
     // Used by new-session screen and launch flows
     title: "Начать новую сессию",
     wizardSection: {
@@ -18601,12 +18603,7 @@ settingsSession: {
         noDataToKeep: "Нет данных для сохранения.",
         factKeeps: "Сохраняется",
         factKeepsValue: "Историю развёртываний и резервные копии",
-        factFrees: "Освобождает",
-        factFreesValue: ({ machine }: { machine: string }) => `Папки релизов и образы на ${machine}`,
-        factStopsDomains: ({ domains }: { domains: string }) => `${domains} больше недоступен`,
-        removedTitle: "Это окружение удалено",
-        removedBody: "Его сервисы, маршрут и папки релизов удалены. Прошлые развёртывания остаются в истории.",
-        removedOn: ({ when }: { when: string }) => `Удалено ${when}`,
+        deleteDomains: ({ domains }: { domains: string }) => `Также удаляет эти домены: ${domains}`,
         healthServers: ({ healthy, count }: { healthy: number; count: number }) => `${healthy} из ${count} серверов в норме`,
         sectionChecks: "Проверки и оповещения",
         sectionChecksDescription: "Проверки состояния этого окружения и кто узнаёт, когда проверка не проходит.",
@@ -18687,7 +18684,8 @@ settingsSession: {
       addShortDisk: "Мало места на диске. Всё равно можно добавить, но диск может заполниться.",
       addConfirm: "Добавить",
       addBack: "Выбрать другое",
-      addAdded: ({ name }: { name: string }) => `${name} добавлен и развёртывается`,
+      addAdded: ({ name }: { name: string }) => `${name} добавлен`,
+      addDeploysNow: ({ name, machine }: { name: string; machine: string }) => `Добавляет ${name} в это окружение и сразу развёртывает на ${machine}.`,
       addFirstRunTitle: "Создайте администратора сейчас",
       addFirstRunBody: "Первый, кто его откроет, станет администратором.",
       addRefused: "Не удалось добавить",
@@ -18727,6 +18725,10 @@ settingsSession: {
       databaseBackupsDescription: "Копии этой базы в вашем хранилище резервных копий.",
       databaseLastBackup: "Последняя успешная копия",
       databaseNoBackupYet: "Пока нет",
+      databasePassword: "Пароль",
+      databaseUsername: "Имя пользователя",
+      databaseShare: "Поделиться",
+      databaseBackupsUnprotected: "Если эта машина будет потеряна, вместе с ней пропадёт и эта база данных. Резервная копия поможет её вернуть.",
       databaseDestinationDetail: "Куда сохраняются копии и сколько хранится",
       databaseHistoryTitle: "Недавние копии",
       databaseHistoryBackup: "Копия",
@@ -18899,8 +18901,6 @@ settingsSession: {
         whatRunsTitle: "Что работает",
         whatRunsDescription: "Файл Compose в репозитории этого проекта, в выбранной ветке.",
         composeFile: "Файл Compose",
-        imageName: "Образ",
-        imagePort: "Порт",
         branch: "Ветка",
         branchDefault: ({ ref }: { ref: string }) => `${ref} (по умолчанию)`,
         branchChoose: "Выберите ветку",
@@ -18926,7 +18926,6 @@ settingsSession: {
           versionStored: ({ revision }: { revision: number }) => `Файл Compose, ревизия ${revision}`,
           replaces: "Заменяет",
           replacesNothing: "Пока ничего не работает",
-          replacesSame: `Та же версия, что сейчас запущена`,
           secrets: "Секреты",
           ingressTunnel: "Cloudflare Tunnel",
           reachedThrough: "Доступно через",
@@ -18942,7 +18941,6 @@ settingsSession: {
           portLocal: ({ port }: { port: string }) => `Порт ${port}, только эта машина`,
           noHealthCheck: "Нет проверки состояния",
           risksTitle: "Проверьте перед одобрением",
-          risksNotedTitle: "Отмечено при этой проверке",
           risksOn: ({ machine }: { machine: string }) => `Проверьте перед одобрением на ${machine}`,
           risk: {
             privileged: "Работает с полными привилегиями на машине",

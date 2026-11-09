@@ -1,3 +1,4 @@
+import { newSessionActionDefaultTranslations } from './newSessionActionDefaultTranslations';
 import { chatLinksTranslations } from './chatLinksTranslations';
 import { deploymentDefaultsTranslations } from './deploymentDefaultsTranslations';
 import { deploymentCopyTranslations } from './deploymentCopyTranslations';
@@ -7634,6 +7635,7 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
     folder: folderlessSessionTranslations.pt.composer,
     ...newSessionMcpTranslationExtension,
     ...acpCatalogTranslationExtension.newSession,
+    actionDefault: newSessionActionDefaultTranslations['pt'],
     // Used by new-session screen and launch flows
     title: "Iniciar nova sessão",
     wizardSection: {
@@ -18754,12 +18756,7 @@ settingsSession: {
         noDataToKeep: "Não há dados para manter.",
         factKeeps: "Mantém",
         factKeepsValue: "O histórico de implementações e as cópias de segurança",
-        factFrees: "Liberta",
-        factFreesValue: ({ machine }: { machine: string }) => `Pastas de versão e imagens em ${machine}`,
-        factStopsDomains: ({ domains }: { domains: string }) => `${domains} deixa de estar acessível`,
-        removedTitle: "Este ambiente foi removido",
-        removedBody: "Os seus serviços, a rota e as pastas de versão já não existem. As implementações anteriores permanecem no histórico.",
-        removedOn: ({ when }: { when: string }) => `Removido ${when}`,
+        deleteDomains: ({ domains }: { domains: string }) => `Também remove estes domínios: ${domains}`,
         healthServers: ({ healthy, count }: { healthy: number; count: number }) => `${healthy} de ${count} servidores saudáveis`,
         sectionChecks: "Verificações e alertas",
         sectionChecksDescription: "Verificações de saúde deste ambiente e quem fica sabendo quando uma falha.",
@@ -18840,7 +18837,8 @@ settingsSession: {
       addShortDisk: "Pouco espaço em disco. Podes adicioná-lo na mesma; pode encher.",
       addConfirm: "Adicionar",
       addBack: "Escolher outro",
-      addAdded: ({ name }: { name: string }) => `${name} foi adicionado e está a ser implementado`,
+      addAdded: ({ name }: { name: string }) => `${name} foi adicionado`,
+      addDeploysNow: ({ name, machine }: { name: string; machine: string }) => `Adiciona ${name} a este ambiente e implanta imediatamente em ${machine}.`,
       addFirstRunTitle: "Cria já o teu administrador",
       addFirstRunBody: "A primeira pessoa a abri-lo torna-se administradora.",
       addRefused: "Não foi possível adicionar",
@@ -18880,6 +18878,10 @@ settingsSession: {
       databaseBackupsDescription: "Cópias desta base no teu armazenamento de backups.",
       databaseLastBackup: "Último backup bem-sucedido",
       databaseNoBackupYet: "Nenhum ainda",
+      databasePassword: "Senha",
+      databaseUsername: "Usuário",
+      databaseShare: "Compartilhar",
+      databaseBackupsUnprotected: "Se esta máquina for perdida, este banco de dados se perde com ela. Um backup é como ele volta.",
       databaseDestinationDetail: "Para onde vão os backups e quantos ficam",
       databaseHistoryTitle: "Backups recentes",
       databaseHistoryBackup: "Backup",
@@ -19052,8 +19054,6 @@ settingsSession: {
         whatRunsTitle: "O que roda",
         whatRunsDescription: "O arquivo Compose no repositório deste projeto, no branch que você escolher.",
         composeFile: "Arquivo Compose",
-        imageName: "Imagem",
-        imagePort: "Porta",
         branch: "Branch",
         branchDefault: ({ ref }: { ref: string }) => `${ref} (padrão)`,
         branchChoose: "Escolher um branch",
@@ -19079,7 +19079,6 @@ settingsSession: {
           versionStored: ({ revision }: { revision: number }) => `Arquivo Compose, revisão ${revision}`,
           replaces: "Substitui",
           replacesNothing: "Nada em serviço ainda",
-          replacesSame: `A mesma versão em execução`,
           secrets: "Segredos",
           ingressTunnel: "Cloudflare Tunnel",
           reachedThrough: "Acessível por",
@@ -19095,7 +19094,6 @@ settingsSession: {
           portLocal: ({ port }: { port: string }) => `Porta ${port}, apenas esta máquina`,
           noHealthCheck: "Sem verificação de integridade",
           risksTitle: "Verifique antes de aprovar",
-          risksNotedTitle: "Assinalado nesta revisão",
           risksOn: ({ machine }: { machine: string }) => `Verifique antes de aprovar em ${machine}`,
           risk: {
             privileged: "Executa com todos os privilégios na máquina",

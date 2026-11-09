@@ -37,6 +37,8 @@ export type AgentActionButtonProps = Readonly<{
   disabled?: boolean;
   /** A phone's band: the main face gives up width first and ends in "…". */
   compact?: boolean;
+  /** `secondary` where the page already has a primary action (Deploy on an Environment); an action stays one control either way. */
+  emphasis?: 'primary' | 'secondary';
 }>;
 
 const START_ID = 'agent-action:start';
@@ -56,6 +58,7 @@ export function AgentActionButton(
   const text = usePluginTranslation();
   const theme = usePluginTheme();
   const [open, setOpen] = React.useState(false);
+  const face = props.emphasis ?? 'primary';
   const { onMenuOpenChange } = props;
   const setMenuOpen = React.useCallback(
     (next: boolean) => {
@@ -108,7 +111,7 @@ export function AgentActionButton(
       <Button
         {...(props.titleKey === undefined ? {} : { titleKey: props.titleKey })}
         title={props.title}
-        variant="primary"
+        variant={face}
         size="small"
         joinedEdge="end"
         {...(props.compact === true ? { singleLine: true } : {})}
@@ -122,14 +125,14 @@ export function AgentActionButton(
         onOpenChange={setMenuOpen}
         trigger={optionsLabel}
         triggerAccessibilityLabel={optionsLabel}
-        triggerAppearance="primary"
+        triggerAppearance={face === 'primary' ? 'primary' : 'control'}
         triggerSize="small"
         triggerJoinedEdge="start"
         triggerContent={
           <HappierChevron
             direction="down"
             size={12}
-            color={theme.colors.onAccent}
+            color={face === 'primary' ? theme.colors.onAccent : theme.colors.text}
           />
         }
         disabled={props.disabled === true}

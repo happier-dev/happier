@@ -1,3 +1,4 @@
+import { newSessionActionDefaultTranslations } from './newSessionActionDefaultTranslations';
 import { chatLinksTranslations } from './chatLinksTranslations';
 import { deploymentDefaultsTranslations } from './deploymentDefaultsTranslations';
 import { deploymentCopyTranslations } from './deploymentCopyTranslations';
@@ -7833,6 +7834,7 @@ localTailscale: {
     folder: folderlessSessionTranslations.ja.composer,
     ...newSessionMcpTranslationExtension,
     ...acpCatalogTranslationExtension.newSession,
+    actionDefault: newSessionActionDefaultTranslations['ja'],
     // Used by new-session screen and launch flows
     title: "新しいセッションを開始",
     wizardSection: {
@@ -18562,12 +18564,7 @@ settingsSession: {
         noDataToKeep: "保持するデータはありません。",
         factKeeps: "保持するもの",
         factKeepsValue: "デプロイ履歴とバックアップ",
-        factFrees: "解放",
-        factFreesValue: ({ machine }: { machine: string }) => `${machine} のリリースフォルダーとイメージ`,
-        factStopsDomains: ({ domains }: { domains: string }) => `${domains} に到達できなくなります`,
-        removedTitle: "この環境は削除されました",
-        removedBody: "サービス、ルート、リリースフォルダーはなくなりました。過去のデプロイは履歴に残ります。",
-        removedOn: ({ when }: { when: string }) => `${when} に削除`,
+        deleteDomains: ({ domains }: { domains: string }) => `これらのドメインも削除します: ${domains}`,
         healthServers: ({ healthy, count }: { healthy: number; count: number }) => `${healthy}/${count} 台のサーバーが正常`,
         sectionChecks: "チェックとアラート",
         sectionChecksDescription: "この環境のヘルスチェックと、失敗時に通知を受ける人。",
@@ -18648,7 +18645,8 @@ settingsSession: {
       addShortDisk: "ディスク容量が不足しています。追加はできますが、いっぱいになる可能性があります。",
       addConfirm: "追加",
       addBack: "別のものを選ぶ",
-      addAdded: ({ name }: { name: string }) => `${name} を追加し、デプロイしています`,
+      addAdded: ({ name }: { name: string }) => `${name} を追加しました`,
+      addDeploysNow: ({ name, machine }: { name: string; machine: string }) => `${name} をこの環境に追加し、すぐに ${machine} にデプロイします。`,
       addFirstRunTitle: "今すぐ管理者を作成してください",
       addFirstRunBody: "最初に開いた人が管理者になります。",
       addRefused: "追加できませんでした",
@@ -18688,6 +18686,10 @@ settingsSession: {
       databaseBackupsDescription: "バックアップ保存先にあるこのデータベースのコピー。",
       databaseLastBackup: "最後の正常なバックアップ",
       databaseNoBackupYet: "まだありません",
+      databasePassword: "パスワード",
+      databaseUsername: "ユーザー名",
+      databaseShare: "共有",
+      databaseBackupsUnprotected: "このマシンが失われると、このデータベースも失われます。バックアップがあれば元に戻せます。",
       databaseDestinationDetail: "バックアップの保存先と保持数",
       databaseHistoryTitle: "最近のバックアップ",
       databaseHistoryBackup: "バックアップ",
@@ -18860,8 +18862,6 @@ settingsSession: {
         whatRunsTitle: "実行するもの",
         whatRunsDescription: "このプロジェクトのリポジトリにある Compose ファイル（選んだブランチ）。",
         composeFile: "Compose ファイル",
-        imageName: "イメージ",
-        imagePort: "ポート",
         branch: "ブランチ",
         branchDefault: ({ ref }: { ref: string }) => `${ref}（デフォルト）`,
         branchChoose: "ブランチを選択",
@@ -18887,7 +18887,6 @@ settingsSession: {
           versionStored: ({ revision }: { revision: number }) => `Compose ファイル、リビジョン ${revision}`,
           replaces: "置き換え対象",
           replacesNothing: "まだ稼働中のものはありません",
-          replacesSame: `現在稼働中と同じバージョン`,
           secrets: "シークレット",
           ingressTunnel: "Cloudflare Tunnel",
           reachedThrough: "アクセス経路",
@@ -18903,7 +18902,6 @@ settingsSession: {
           portLocal: ({ port }: { port: string }) => `ポート ${port}、このマシンのみ`,
           noHealthCheck: "ヘルスチェックなし",
           risksTitle: "承認前に確認",
-          risksNotedTitle: "このレビューで指摘された内容",
           risksOn: ({ machine }: { machine: string }) => `${machine} で承認前に確認`,
           risk: {
             privileged: "マシン上で完全な権限で実行します",

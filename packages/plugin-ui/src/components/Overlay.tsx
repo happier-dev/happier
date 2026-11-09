@@ -249,7 +249,7 @@ function PopoverPresentation({
   // A labelled trigger is a Button's face, glyph and all: the view's primary, or the small secondary
   // of a toolbar's control row. Both hooks run on every render, whichever appearance draws.
   const primaryFace = useButtonFace('primary', triggerSize, disabled === true, triggerJoinedEdge);
-  const controlFace = useButtonFace('secondary', 'small', disabled === true);
+  const controlFace = useButtonFace('secondary', 'small', disabled === true, triggerJoinedEdge);
   const statusFace = useButtonFace('plain', 'small', disabled === true);
   const statusTrigger = !fieldTrigger && !iconOnly && triggerAppearance === 'status';
   const buttonFace = fieldTrigger ? null

@@ -1,3 +1,4 @@
+import { newSessionActionDefaultTranslations } from './newSessionActionDefaultTranslations';
 import { chatLinksTranslations } from './chatLinksTranslations';
 import { deploymentDefaultsTranslations } from './deploymentDefaultsTranslations';
 import { deploymentCopyTranslations } from './deploymentCopyTranslations';
@@ -7242,6 +7243,7 @@ export const zhHans: TranslationStructure = {
     folder: folderlessSessionTranslations.zhHans.composer,
     ...newSessionMcpTranslationExtension,
     ...acpCatalogTranslationExtension.newSession,
+    actionDefault: newSessionActionDefaultTranslations['zh-Hans'],
     // Used by new-session screen and launch flows
     title: "启动新会话",
     wizardSection: {
@@ -18267,12 +18269,7 @@ settingsSession: {
         noDataToKeep: "没有需要保留的数据。",
         factKeeps: "保留",
         factKeepsValue: "部署历史和备份",
-        factFrees: "释放",
-        factFreesValue: ({ machine }: { machine: string }) => `${machine} 上的发布文件夹和镜像`,
-        factStopsDomains: ({ domains }: { domains: string }) => `${domains} 将无法访问`,
-        removedTitle: "此环境已移除",
-        removedBody: "其服务、路由和发布文件夹已不存在。过去的部署保留在历史记录中。",
-        removedOn: ({ when }: { when: string }) => `已于 ${when} 移除`,
+        deleteDomains: ({ domains }: { domains: string }) => `也会移除这些域名：${domains}`,
         healthServers: ({ healthy, count }: { healthy: number; count: number }) => `${healthy}/${count} 台服务器正常`,
         sectionChecks: "检查和警报",
         sectionChecksDescription: "此环境的健康检查，以及检查失败时谁会收到通知。",
@@ -18353,7 +18350,8 @@ settingsSession: {
       addShortDisk: "磁盘空间不足。仍可添加，但可能会占满。",
       addConfirm: "添加",
       addBack: "选择其他",
-      addAdded: ({ name }: { name: string }) => `已添加 ${name}，正在部署`,
+      addAdded: ({ name }: { name: string }) => `已添加 ${name}`,
+      addDeploysNow: ({ name, machine }: { name: string; machine: string }) => `将 ${name} 添加到此环境，并立即部署到 ${machine}。`,
       addFirstRunTitle: "现在创建你的管理员",
       addFirstRunBody: "第一个打开它的人会成为管理员。",
       addRefused: "无法添加",
@@ -18393,6 +18391,10 @@ settingsSession: {
       databaseBackupsDescription: "此数据库在备份存储中的副本。",
       databaseLastBackup: "最近一次成功备份",
       databaseNoBackupYet: "暂无",
+      databasePassword: "密码",
+      databaseUsername: "用户名",
+      databaseShare: "共享",
+      databaseBackupsUnprotected: "如果这台机器丢失，这个数据库也会一起丢失。备份可以让它恢复。",
       databaseDestinationDetail: "备份存放位置和保留数量",
       databaseHistoryTitle: "最近的备份",
       databaseHistoryBackup: "备份",
@@ -18565,8 +18567,6 @@ settingsSession: {
         whatRunsTitle: "运行内容",
         whatRunsDescription: "此项目仓库中的 Compose 文件，位于你选择的分支。",
         composeFile: "Compose 文件",
-        imageName: "镜像",
-        imagePort: "端口",
         branch: "分支",
         branchDefault: ({ ref }: { ref: string }) => `${ref}（默认）`,
         branchChoose: "选择分支",
@@ -18592,7 +18592,6 @@ settingsSession: {
           versionStored: ({ revision }: { revision: number }) => `Compose 文件，修订 ${revision}`,
           replaces: "替换",
           replacesNothing: "尚无运行中的版本",
-          replacesSame: `与当前运行的版本相同`,
           secrets: "密钥",
           ingressTunnel: "Cloudflare Tunnel",
           reachedThrough: "访问途径",
@@ -18608,7 +18607,6 @@ settingsSession: {
           portLocal: ({ port }: { port: string }) => `端口 ${port}，仅限这台机器`,
           noHealthCheck: "无健康检查",
           risksTitle: "批准前请检查",
-          risksNotedTitle: "此次审查时标记的内容",
           risksOn: ({ machine }: { machine: string }) => `批准前请检查 ${machine}`,
           risk: {
             privileged: "在机器上以完整权限运行",

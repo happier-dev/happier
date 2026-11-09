@@ -1,3 +1,4 @@
+import { newSessionActionDefaultTranslations } from './newSessionActionDefaultTranslations';
 import { chatLinksTranslations } from './chatLinksTranslations';
 import { deploymentDefaultsTranslations } from './deploymentDefaultsTranslations';
 import { BROWSER_LOGIN_APP_BOUND_ENCRYPTION_MESSAGE_V1 } from '@happier-dev/protocol/browser/profile/v1';
@@ -8761,6 +8762,7 @@ const enNewSession = {
   folder: folderlessSessionTranslations.en.composer,
   ...newSessionMcpTranslationExtension,
   ...acpCatalogTranslationExtension.newSession,
+    actionDefault: newSessionActionDefaultTranslations['en'],
   // Used by new-session screen and launch flows
   title: 'Start New Session',
   wizardSection: {
@@ -22081,12 +22083,7 @@ const enProjects = {
       noDataToKeep: "No data to keep.",
       factKeeps: "Keeps",
       factKeepsValue: "The deployment history and backups",
-      factFrees: "Frees",
-      factFreesValue: ({ machine }: { machine: string }) => `Release folders and images on ${machine}`,
-      factStopsDomains: ({ domains }: { domains: string }) => `${domains} no longer reachable`,
-      removedTitle: "This environment was removed",
-      removedBody: "Its services, route and release folders are gone. Past deployments stay in history.",
-      removedOn: ({ when }: { when: string }) => `Removed ${when}`,
+      deleteDomains: ({ domains }: { domains: string }) => `Also removes these Domains: ${domains}`,
       healthServers: ({ healthy, count }: { healthy: number; count: number }) => `${healthy} of ${count} servers healthy`,
       sectionChecks: "Checks & alerts",
       sectionChecksDescription: "Health checks for this environment and who hears when one fails.",
@@ -22184,7 +22181,8 @@ const enProjects = {
       addShortDisk: "Short on disk space. You can still add it; it may fill up.",
       addConfirm: "Add",
       addBack: "Choose another",
-      addAdded: ({ name }: { name: string }) => `${name} is added and deploying`,
+      addAdded: ({ name }: { name: string }) => `${name} is added`,
+      addDeploysNow: ({ name, machine }: { name: string; machine: string }) => `Adds ${name} to this Environment and deploys it on ${machine} right away.`,
       addFirstRunTitle: "Create your admin now",
       addFirstRunBody: "The first person to open it becomes its admin.",
       addRefused: "Couldn’t add it",
@@ -22223,6 +22221,10 @@ const enProjects = {
       databaseBackupsDescription: "Copies of this database in your backup storage.",
       databaseLastBackup: "Last good backup",
       databaseNoBackupYet: "None yet",
+      databasePassword: "Password",
+      databaseUsername: "Username",
+      databaseShare: "Share",
+      databaseBackupsUnprotected: "If this Machine is lost, this database goes with it. A backup is how it comes back.",
       databaseDestinationDetail: "Where backups go and how many are kept",
       databaseHistoryTitle: "Recent backups",
       databaseHistoryBackup: "Backup",
@@ -22395,8 +22397,6 @@ const enProjects = {
       whatRunsTitle: "What runs",
       whatRunsDescription: "The Compose file in this project’s repository, at the branch you choose.",
       composeFile: "Compose file",
-      imageName: "Image",
-      imagePort: "Port",
       branch: "Branch",
       branchDefault: ({ ref }: { ref: string }) => `${ref} (default)`,
       branchChoose: "Choose a branch",
@@ -22422,7 +22422,6 @@ const enProjects = {
         versionStored: ({ revision }: { revision: number }) => `Compose file, revision ${revision}`,
         replaces: "Replaces",
         replacesNothing: "Nothing is serving yet",
-        replacesSame: `Same version that's running now`,
         secrets: "Secrets",
         ingressTunnel: "Cloudflare Tunnel",
         reachedThrough: "Reached through",
@@ -22438,7 +22437,6 @@ const enProjects = {
         portLocal: ({ port }: { port: string }) => `Port ${port}, this Machine only`,
         noHealthCheck: "No health check",
         risksTitle: "Check before approving",
-        risksNotedTitle: "Flagged at this review",
         risksOn: ({ machine }: { machine: string }) => `Check before approving on ${machine}`,
         risk: {
           privileged: "Runs with full privileges on the Machine",

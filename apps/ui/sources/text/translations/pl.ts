@@ -1,3 +1,4 @@
+import { newSessionActionDefaultTranslations } from './newSessionActionDefaultTranslations';
 import { chatLinksTranslations } from './chatLinksTranslations';
 import { deploymentDefaultsTranslations } from './deploymentDefaultsTranslations';
 import { deploymentCopyTranslations } from './deploymentCopyTranslations';
@@ -7375,6 +7376,7 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
     folder: folderlessSessionTranslations.pl.composer,
     ...newSessionMcpTranslationExtension,
     ...acpCatalogTranslationExtension.newSession,
+    actionDefault: newSessionActionDefaultTranslations['pl'],
     // Used by new-session screen and launch flows
     title: "Rozpocznij nową sesję",
     wizardSection: {
@@ -18473,12 +18475,7 @@ settingsSession: {
         noDataToKeep: "Brak danych do zachowania.",
         factKeeps: "Zachowuje",
         factKeepsValue: "Historię wdrożeń i kopie zapasowe",
-        factFrees: "Zwalnia",
-        factFreesValue: ({ machine }: { machine: string }) => `Foldery wydań i obrazy na ${machine}`,
-        factStopsDomains: ({ domains }: { domains: string }) => `${domains} przestaje być dostępne`,
-        removedTitle: "To środowisko zostało usunięte",
-        removedBody: "Jego usługi, trasa i foldery wydań zniknęły. Wcześniejsze wdrożenia pozostają w historii.",
-        removedOn: ({ when }: { when: string }) => `Usunięto ${when}`,
+        deleteDomains: ({ domains }: { domains: string }) => `Usuwa także te domeny: ${domains}`,
         healthServers: ({ healthy, count }: { healthy: number; count: number }) => `${healthy} z ${count} serwerów sprawnych`,
         sectionChecks: "Kontrole i alerty",
         sectionChecksDescription: "Kontrole stanu tego środowiska i kto dowiaduje się o awarii.",
@@ -18559,7 +18556,8 @@ settingsSession: {
       addShortDisk: "Mało miejsca na dysku. Nadal możesz to dodać; dysk może się zapełnić.",
       addConfirm: "Dodaj",
       addBack: "Wybierz inny",
-      addAdded: ({ name }: { name: string }) => `Dodano ${name}, trwa wdrażanie`,
+      addAdded: ({ name }: { name: string }) => `Dodano ${name}`,
+      addDeploysNow: ({ name, machine }: { name: string; machine: string }) => `Dodaje ${name} do tego środowiska i od razu wdraża na ${machine}.`,
       addFirstRunTitle: "Utwórz teraz konto administratora",
       addFirstRunBody: "Pierwsza osoba, która to otworzy, zostanie administratorem.",
       addRefused: "Nie udało się dodać",
@@ -18599,6 +18597,10 @@ settingsSession: {
       databaseBackupsDescription: "Kopie tej bazy w Twoim magazynie kopii.",
       databaseLastBackup: "Ostatnia udana kopia",
       databaseNoBackupYet: "Jeszcze brak",
+      databasePassword: "Hasło",
+      databaseUsername: "Nazwa użytkownika",
+      databaseShare: "Udostępnij",
+      databaseBackupsUnprotected: "Jeśli ta maszyna przepadnie, ta baza danych przepadnie razem z nią. Kopia zapasowa pozwala ją odzyskać.",
       databaseDestinationDetail: "Gdzie trafiają kopie i ile jest przechowywanych",
       databaseHistoryTitle: "Ostatnie kopie",
       databaseHistoryBackup: "Kopia",
@@ -18771,8 +18773,6 @@ settingsSession: {
         whatRunsTitle: "Co działa",
         whatRunsDescription: "Plik Compose w repozytorium tego projektu, na wybranej gałęzi.",
         composeFile: "Plik Compose",
-        imageName: "Obraz",
-        imagePort: "Port",
         branch: "Gałąź",
         branchDefault: ({ ref }: { ref: string }) => `${ref} (domyślna)`,
         branchChoose: "Wybierz gałąź",
@@ -18798,7 +18798,6 @@ settingsSession: {
           versionStored: ({ revision }: { revision: number }) => `Plik Compose, rewizja ${revision}`,
           replaces: "Zastępuje",
           replacesNothing: "Nic jeszcze nie działa",
-          replacesSame: `Ta sama wersja, która działa`,
           secrets: "Sekrety",
           ingressTunnel: "Cloudflare Tunnel",
           reachedThrough: "Dostępne przez",
@@ -18814,7 +18813,6 @@ settingsSession: {
           portLocal: ({ port }: { port: string }) => `Port ${port}, tylko ta maszyna`,
           noHealthCheck: "Brak kontroli stanu",
           risksTitle: "Sprawdź przed zatwierdzeniem",
-          risksNotedTitle: "Oznaczone w tym przeglądzie",
           risksOn: ({ machine }: { machine: string }) => `Sprawdź przed zatwierdzeniem na ${machine}`,
           risk: {
             privileged: "Działa z pełnymi uprawnieniami na maszynie",
