@@ -48,7 +48,8 @@ describe('prepareWorkspaceSyncBetween', () => {
 
   it('requires an admitted worker copy, ignores ordinary linked roots and retains copy custody at dequeue', () => {
     const ordinary = relationship('ab', 'a', 'b', 'keep_synced');
-    const input = { serverId: 's', sourceWorkspaceRefId: 'a', targetMachineId: 'mb', workspaceRefs: refs, relationships: [ordinary] };
+    const input = { serverId: 's', sourceWorkspaceRefId: 'a', targetMachineId: 'mb', workspaceRefs: refs, relationships: [ordinary],
+      relationshipStatuses: [status('ab')] };
     expect(resolveWorkspaceSyncWorkerTarget({ ...input, relationships: [] })).toEqual({ ok: false, errorCode: 'worker_copy_missing' });
     expect(resolveWorkspaceSyncWorkerTarget(input)).toEqual({ ok: false, errorCode: 'worker_copy_missing' });
     const dedicated = workerCopy(ordinary);
@@ -58,6 +59,26 @@ describe('prepareWorkspaceSyncBetween', () => {
     expect(basis).toMatchObject({ ok: true, target: { id: 'b' } });
     if (!basis.ok) throw new Error('Dedicated fixture did not resolve');
     expect(() => assertWorkspaceSyncWorkerTargetCurrent(basis, input)).toThrow(expect.objectContaining({ code: 'relationship_changed' }));
+  });
+  it.each(['paused', 'unavailable', 'watching'] as const)('selects only usable copies for this source workspace when the retained link is %s', retained => {
+    const fresh = { ...refs[1]!, id: 'fresh', rootPath: '/fresh' };
+    const unrelatedSource = { ...refs[0]!, id: 'other-source', rootPath: '/other-source' };
+    const unrelatedTarget = { ...refs[1]!, id: 'other-copy', rootPath: '/other-copy' };
+    const input = { serverId: 's', sourceWorkspaceRefId: 'a', targetMachineId: 'mb',
+      workspaceRefs: [...refs, fresh, unrelatedSource, unrelatedTarget],
+      relationships: [workerCopy(relationship('retained', 'a', 'b')),
+        workerCopy(relationship('fresh', 'a', fresh.id)),
+        workerCopy(relationship('other', unrelatedSource.id, unrelatedTarget.id))],
+      relationshipStatuses: [status('fresh'), status('other'),
+        ...(retained === 'unavailable' ? [] : [{ ...status('retained'), state: retained }])],
+    };
+    expect(resolveWorkspaceSyncWorkerTarget(input)).toMatchObject(retained === 'watching'
+      ? { ok: false, errorCode: 'workspace_sync_target_ambiguous' }
+      : { ok: true, target: { id: fresh.id }, relationships: [{ relationshipId: 'fresh' }] });
+    // Approval carries the selected workspace; a later usable copy cannot
+    // replace it or cause the admitted child to select again.
+    expect(resolveWorkspaceSyncWorkerTarget({ ...input, relationshipStatuses: [],
+      targetWorkspaceRefId: fresh.id })).toMatchObject({ ok: true, target: { id: fresh.id } });
   });
   it('prepares the existing parent relationship from an admitted bind child without changing its execution identity', async () => {
     const child = { id: 'child', serverId: 's', machineId: 'child-machine', rootPath: '/work/custom', createdAtMs: 1 };
@@ -82,12 +103,12 @@ describe('prepareWorkspaceSyncBetween', () => {
     await expect(prepareWorkspaceSyncBetween(input)).resolves.toMatchObject({ ok: true, traversed: [{ relationshipId: 'ab' }] });
     expect(flushed).toEqual(['ab']);
     expect(resolveWorkspaceSyncWorkerTarget({ serverId: 's', sourceWorkspaceRefId: child.id, targetMachineId: 'mb',
-      workspaceRefs: [...refs, child], relationships, childMachines })).toMatchObject({ ok: true,
+      workspaceRefs: [...refs, child], relationships, childMachines, relationshipStatuses: [status('ab')] })).toMatchObject({ ok: true,
       source: { id: 'child', machineId: 'child-machine', rootPath: '/work/custom' }, target: { id: 'b', machineId: 'mb', rootPath: '/b' } });
     expect(resolveWorkspaceSyncWorkerTarget({ serverId: 's', sourceWorkspaceRefId: 'b', targetMachineId: child.machineId,
-      workspaceRefs: [...refs, child], relationships, childMachines })).toEqual({ ok: false, errorCode: 'worker_copy_missing' });
+      workspaceRefs: [...refs, child], relationships, childMachines, relationshipStatuses: [status('ab')] })).toEqual({ ok: false, errorCode: 'worker_copy_missing' });
     const workerBasis = resolveWorkspaceSyncWorkerTarget({ serverId: 's', sourceWorkspaceRefId: child.id, targetMachineId: 'mb',
-      workspaceRefs: [...refs, child], relationships, childMachines });
+      workspaceRefs: [...refs, child], relationships, childMachines, relationshipStatuses: [status('ab')] });
     if (!workerBasis.ok) throw new Error('Bind worker fixture did not resolve');
     const replacement = { ...observation, nativeResourceId: 'replacement-native' };
     expect(() => assertWorkspaceSyncWorkerTargetCurrent(workerBasis, { serverId: 's', workspaceRefs: [...refs, child], relationships,
@@ -116,29 +137,37 @@ describe('prepareWorkspaceSyncBetween', () => {
     })).resolves.toMatchObject({ ok: false, errorCode: 'route_not_found', completed: [] });
     expect(flushed).toEqual([]);
     let reads = 0;
-    await expect(prepareWorkspaceSyncBetween({ ...input,
+    const changedBind = { ...input,
       readCurrent: async () => ({ workspaceRefs: [...refs, child], relationships,
         childMachines: ++reads === 1 ? childMachines : [{ ...childMachines[0]!, managedMachine: {
           ...managedMachine, resource: { ...managedMachine.resource, devcontainerObservation: {
             ...observation, storage: { ...observation.storage, hostPath: '/replacement-bind' } } } } }] }),
-    })).resolves.toMatchObject({ ok: false, errorCode: 'workspace_sync_child_unavailable', completed: [] });
-    expect(flushed).toEqual([]);
+    };
+    await expect(prepareWorkspaceSyncBetween(changedBind)).resolves.toMatchObject({ ok: true });
+    await expect(prepareWorkspaceSyncBetween(changedBind)).resolves.toMatchObject({ ok: false,
+      errorCode: 'workspace_sync_child_unavailable', completed: [] });
+    expect(flushed).toEqual(['ab']);
+    flushed.length = 0;
     await expect(prepareWorkspaceSyncBetween({ ...input,
       readCurrent: async () => ({ workspaceRefs: [...refs, { ...refs[0]!, id: 'duplicate-parent' }, child], relationships, childMachines }),
     })).resolves.toMatchObject({ ok: false, errorCode: 'workspace_sync_child_unavailable', completed: [] });
     expect(flushed).toEqual([]);
     reads = 0;
-    await expect(prepareWorkspaceSyncBetween({ ...input,
+    const replacedChild = { ...input,
       readCurrent: async () => ({ workspaceRefs: [...refs, child], relationships,
         childMachines: ++reads === 1 ? childMachines : [{ ...childMachines[0]!, projection: { ...projection, observation: replacement },
           managedMachine: { ...managedMachine, resource: { ...managedMachine.resource, devcontainerObservation: replacement } } }] }),
-    })).resolves.toMatchObject({ ok: false, errorCode: 'workspace_sync_child_unavailable', completed: [] });
-    expect(flushed).toEqual([]);
+    };
+    await expect(prepareWorkspaceSyncBetween(replacedChild)).resolves.toMatchObject({ ok: true });
+    // The next admission can accept the replacement's consistent current facts.
+    await expect(prepareWorkspaceSyncBetween(replacedChild)).resolves.toMatchObject({ ok: true });
+    expect(flushed).toEqual(['ab', 'ab']);
   });
 
   it('resolves the selected worker from the reviewed source through the canonical star, never another component or first match', () => {
     const relationships = [relationship('ca', 'a', 'c'), workerCopy(relationship('ab', 'a', 'b', 'keep_synced'))];
-    const input = { serverId: 's', sourceWorkspaceRefId: 'c', targetMachineId: 'mb', workspaceRefs: refs, relationships };
+    const input = { serverId: 's', sourceWorkspaceRefId: 'c', targetMachineId: 'mb', workspaceRefs: refs, relationships,
+      relationshipStatuses: [status('ca'), status('ab'), status('a-second')] };
     expect(resolveWorkspaceSyncRelationshipDependencyMachines({ ...input, relationshipId: 'ca' }).sort())
       .toEqual(['ma', 'mb', 'mc']);
     expect(resolveWorkspaceSyncRelationshipDependencyMachines({ ...input, relationshipId: 'ab' }).sort())

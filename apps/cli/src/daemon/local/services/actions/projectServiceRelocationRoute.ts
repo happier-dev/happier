@@ -8,7 +8,7 @@ import { projectServiceMoveInspectionInput } from './projectServiceMoveChildren'
 import { projectServiceMoveStartInput } from './projectServiceMoveChildren';
 import { createHash } from 'node:crypto';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
-import { DaemonLocalServiceLauncherStartResponseV1Schema, LocalServiceLauncherSnapshotV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
+import { DaemonLocalServiceLauncherStartRequestV1Schema, DaemonLocalServiceLauncherStartResponseV1Schema, LocalServiceLauncherSnapshotV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import { createProjectServiceDeclarationTargetIdV1, LocalServiceActionResultV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
 import { ProjectWorkerStatusResultV1Schema } from '@happier-dev/protocol/actions/specs/projectWorkers';
 import { ProjectServicePlacementMutationResultV1Schema } from '@happier-dev/protocol/workspaces/projectServicePlacementV1';
@@ -21,7 +21,7 @@ import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/re
 import type { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import type { WorkspaceSyncHandoffAdapter } from '@/workspaces/sync/workspaceSyncHandoffAdapter';
 import {
-    readWorkspaceSyncWorkerTargetSnapshot,
+    readWorkspaceSyncWorkerTargetSnapshot, readWorkspaceSyncWorkerRouteSnapshot,
     resolveWorkspaceSyncWorkerTarget,
 } from '@/workspaces/sync/workspaceSyncPreparation';
 import { createProjectServiceRelocation } from '@/workspaces/execution/projectServiceRelocation';
@@ -61,7 +61,12 @@ export function createProjectServiceRelocationRoute(input: Readonly<{
         const resolveDestination = async (signal?: AbortSignal) => {
             const targetMachineId = request.selectedTarget.machineId;
             try {
-                const snapshot = await readWorkspaceSyncWorkerTargetSnapshot({
+                const start = context.hostReviewedChild?.preparedChildren
+                    ?.find(child => child.action === 'localServices.launcher.start');
+                const selected = start ? DaemonLocalServiceLauncherStartRequestV1Schema.parse(start.input).workspace?.workspaceId : undefined;
+                const snapshot: Awaited<ReturnType<typeof readWorkspaceSyncWorkerRouteSnapshot>> & Partial<
+                    Pick<Awaited<ReturnType<typeof readWorkspaceSyncWorkerTargetSnapshot>>, 'relationshipStatuses'>
+                > = await (selected ? readWorkspaceSyncWorkerRouteSnapshot : readWorkspaceSyncWorkerTargetSnapshot)({
                     serverId: request.workspace.serverId,
                     serverHttpBaseUrl: input.serverBaseUrl,
                     targetMachineId,
@@ -74,9 +79,11 @@ export function createProjectServiceRelocationRoute(input: Readonly<{
                     serverId: request.workspace.serverId,
                     sourceWorkspaceRefId: request.workspace.refId,
                     targetMachineId,
+                    ...(selected ? { targetWorkspaceRefId: selected } : {}),
                     workspaceRefs: snapshot.workspaceRefs,
                     relationships: snapshot.relationships,
                     childMachines: snapshot.childMachines,
+                    relationshipStatuses: snapshot.relationshipStatuses ?? [],
                 });
                 return basis.ok ? { status: 'resolved' as const, workspace: basis.target }
                     : refusal(basis.errorCode);
@@ -98,7 +105,7 @@ export function createProjectServiceRelocationRoute(input: Readonly<{
                         // The Account ref supplies the exact root; the custodian's complete
                         // managed projection supplies native identity and admitted execution.
                         const target = request.currentTarget;
-                        const refs = await readWorkspaceSyncWorkerTargetSnapshot({
+                        const refs = await readWorkspaceSyncWorkerRouteSnapshot({
                             serverId: request.workspace.serverId, serverHttpBaseUrl: input.serverBaseUrl,
                             sourceWorkspaceRefId: request.workspace.refId, targetMachineId: target.machineId,
                             credentials, authorization: context.externalActionExecutionAuthorization, ...(signal ? { signal } : {}),
@@ -200,7 +207,7 @@ export function createProjectServiceRelocationRoute(input: Readonly<{
             },
             reviewDestinationSetup: async (_request, destination, signal) => {
                 if (!execute) return refusal('project_setup_review_unavailable');
-                const snapshot = await readWorkspaceSyncWorkerTargetSnapshot({ serverId: request.workspace.serverId,
+                const snapshot = await readWorkspaceSyncWorkerRouteSnapshot({ serverId: request.workspace.serverId,
                     serverHttpBaseUrl: input.serverBaseUrl, targetMachineId: destination.machineId,
                     sourceWorkspaceRefId: request.workspace.refId, credentials,
                     authorization: context.externalActionExecutionAuthorization, ...(signal ? { signal } : {}) });

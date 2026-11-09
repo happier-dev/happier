@@ -483,8 +483,8 @@ async function isReviewedServiceMoveChildForInput(input: Parameters<typeof isRev
     && input.actionId !== 'projects.inspect') return true;
   const requester = readRequesterAccountActionContext(input.authorization);
   if (!requester) return false;
-  const { readWorkspaceSyncWorkerTargetSnapshot, resolveWorkspaceSyncWorkerTarget } = await import('@/workspaces/sync/workspaceSyncPreparation');
-  const snapshot = await readWorkspaceSyncWorkerTargetSnapshot({ serverId: move.workspace.serverId,
+  const { readWorkspaceSyncWorkerRouteSnapshot, resolveWorkspaceSyncWorkerTarget } = await import('@/workspaces/sync/workspaceSyncPreparation');
+  const snapshot = await readWorkspaceSyncWorkerRouteSnapshot({ serverId: move.workspace.serverId,
     serverHttpBaseUrl: requester.serverHttpBaseUrl, credentials: requester.credentials, authorization: input.authorization,
     sourceWorkspaceRefId: move.workspace.refId, targetMachineId: input.machineId, signal: input.signal });
   const wrapper = TargetedActionRpcRequestV1Schema.safeParse(input.params);
@@ -498,7 +498,8 @@ async function isReviewedServiceMoveChildForInput(input: Parameters<typeof isRev
     if (!inspection.workspace.workspaceId) return false;
     const destination = resolveWorkspaceSyncWorkerTarget({ serverId: move.workspace.serverId, sourceWorkspaceRefId: move.workspace.refId,
       targetMachineId: move.selectedTarget.machineId, targetWorkspaceRefId: inspection.workspace.workspaceId,
-      workspaceRefs: snapshot.workspaceRefs, relationships: snapshot.relationships, childMachines: snapshot.childMachines });
+      workspaceRefs: snapshot.workspaceRefs, relationships: snapshot.relationships, childMachines: snapshot.childMachines,
+      relationshipStatuses: [] });
     return destination.ok && destination.target.machineId === input.machineId
       && inspection.workspace.rootPath === destination.target.rootPath && !input.signal?.aborted;
   }
@@ -512,7 +513,8 @@ async function isReviewedServiceMoveChildForInput(input: Parameters<typeof isRev
   if (!request.workspace?.workspaceId) return false;
   const destination = resolveWorkspaceSyncWorkerTarget({ serverId: move.workspace.serverId, sourceWorkspaceRefId: move.workspace.refId,
     targetMachineId: move.selectedTarget.machineId, targetWorkspaceRefId: request.workspace.workspaceId,
-    workspaceRefs: snapshot.workspaceRefs, relationships: snapshot.relationships, childMachines: snapshot.childMachines });
+    workspaceRefs: snapshot.workspaceRefs, relationships: snapshot.relationships, childMachines: snapshot.childMachines,
+    relationshipStatuses: [] });
   return destination.ok && request.workspace?.workspaceId === destination.target.id
     && request.workspace.rootPath === destination.target.rootPath && !input.signal?.aborted;
 }

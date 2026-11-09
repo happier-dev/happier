@@ -28,7 +28,7 @@ import { ProjectCommandActionOutputV1Schema } from '@happier-dev/protocol/action
 import { bindExternalActionExecutionAuthorizationHttpPathV1, ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema, ExternalActionMachineBootstrapV1Schema, ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { ProjectWorkerStatusInputV1Schema } from '@happier-dev/protocol/actions/specs/projectWorkers';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { computeWorkspaceSyncPolicyDigest, type WorkspaceSyncRelationshipV1, type WorkspaceRefV1 } from '@happier-dev/protocol';
+import { computeWorkspaceSyncPolicyDigest, type WorkspaceSyncRelationshipV1, type WorkspaceRefV1, type WorkspaceSyncStatusV1 } from '@happier-dev/protocol';
 import { createWorkspaceSyncWorkerPreparation, resolveWorkspaceSyncWorkerTarget, prepareWorkspaceSyncBetween } from '@/workspaces/sync/workspaceSyncPreparation';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { createDaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
@@ -74,6 +74,15 @@ import { executeActionOperationActionV1 } from '../../../../../packages/protocol
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { TerminalStreamReadResponseSchema, decodeTerminalStreamBytesFrame } from '@happier-dev/protocol/terminal/stream';
 import { ACTION_OPERATION_PROGRESS_LABEL_MAX_LENGTH_V1, ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
+
+// Native controller responses are the network boundary; preparation and selection remain real.
+function observedSyncStatuses(relationships: readonly WorkspaceSyncRelationshipV1[]): WorkspaceSyncStatusV1[] {
+    return relationships.map(relationship => ({ relationshipId: relationship.relationshipId,
+        controllerMachineId: relationship.controllerMachineId, mode: relationship.mode, state: 'watching',
+        alphaPath: '/source', betaPath: '/worker', conflictCount: 0, lastCycleObservedAtMs: null,
+        endpointStates: { alpha: { connected: true, scanned: true, scanProblemCount: 0, transitionProblemCount: 0 },
+            beta: { connected: true, scanned: true, scanProblemCount: 0, transitionProblemCount: 0 } } }));
+}
 
 const turn = () => new Promise<void>(resolve => setImmediate(resolve));
 // The Home HTTP boundary publishes this fixture Account identity; it is not caller-supplied Action authority.
@@ -190,7 +199,8 @@ describe('authenticated finite Project Action owner', () => {
                 return { ...inspection.definition, commands: inspection.commands, environmentExecutionInputs: inspection.environmentExecutionInputs };
             },
             resolveWorkerTarget: async ({ source }) => {
-                const resolved = resolveWorkspaceSyncWorkerTarget({ serverId: homeId, sourceWorkspaceRefId: source.id, targetMachineId: 'machine', workspaceRefs, relationships });
+                const resolved = resolveWorkspaceSyncWorkerTarget({ serverId: homeId, sourceWorkspaceRefId: source.id, targetMachineId: 'machine', workspaceRefs, relationships,
+                    relationshipStatuses: observedSyncStatuses(relationships) });
                 if (!resolved.ok) throw Object.assign(new Error(resolved.errorCode), { code: resolved.errorCode });
                 return resolved;
             },
@@ -2071,6 +2081,7 @@ describe('authenticated finite Project Action owner', () => {
             const worker = createProjectWorkerAction({ serverId: 'home', machineId: 'machine', accountId: 'owner',
                 credentials: h.runtime.credentials, serverHttpBaseUrl: h.runtime.serverHttpBaseUrl,
                 admission: h.runtime.workerAdmission, isFiniteExecutionLive: h.isFiniteExecutionLive });
+            vi.spyOn(machineRpcTransport, 'callMachineRpc').mockResolvedValue({ statuses: observedSyncStatuses(h.relationships) });
             vi.spyOn(machineRpcTransport, 'callExactMachineRpc').mockImplementation(async request => {
                 expect(request.machineId).toBe('machine');
                 if (request.method === 'projects.worker.status') return await worker({ actionId: 'projects.worker.status', input: ProjectWorkerStatusInputV1Schema.parse(request.request),
@@ -2273,6 +2284,7 @@ describe('authenticated finite Project Action owner', () => {
         });
         let permitFlush!: () => void;
         const flushAllowed = new Promise<void>(resolve => { permitFlush = resolve; });
+        vi.spyOn(machineRpcTransport, 'callMachineRpc').mockResolvedValue({ statuses: observedSyncStatuses(h.relationships) });
         const workerPreparation = createWorkspaceSyncWorkerPreparation({ serverId: 'home',
             serverHttpBaseUrl: h.runtime.serverHttpBaseUrl, targetMachineId: 'machine', credentials: h.runtime.credentials,
             prepareBetween: async (request, signal) => prepareWorkspaceSyncBetween({ ...request, signal, serverId: 'home',

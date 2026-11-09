@@ -1,5 +1,5 @@
 import { areWorkspaceSyncRelationshipDefinitionsEqual, areWorkspaceSyncWorkerCopyProvenancesEqual,
-  getWorkspaceSyncWorkerCopyV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+  getWorkspaceSyncWorkerCopyV1, WorkspaceSyncStatusV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { deriveWorkspaceSyncTopology, resolveWorkspaceSyncEndpoint, resolveWorkspaceSyncTransferRoute,
   type WorkspaceSyncChildMachineFacts } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import { resolveWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
@@ -15,6 +15,7 @@ import { managedDevcontainerChildProjectionsEqualV1 } from '@happier-dev/protoco
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { readWebLatencyTracePoint, timeWebLatencyPhase, withWebLatencyTrace } from '@/daemon/externalActions/webLatencyTrace';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 export { assertWorkspaceSyncRequesterBootstrapSupported, WorkspaceSyncInitialPreparationRefusal } from './workspaceSyncBootstrapAdmission';
 
@@ -26,8 +27,8 @@ export type WorkspaceSyncWorkerTargetBasis = Readonly<{
   childMachines?: readonly WorkspaceSyncChildMachineFacts[];
 }>;
 
-/** Passive status and execution acquire the same current route inputs. */
-export async function readWorkspaceSyncWorkerTargetSnapshot(input: Readonly<{
+/** Graph observations also serve exact routes already selected before approval. */
+export async function readWorkspaceSyncWorkerRouteSnapshot(input: Readonly<{
   serverId: string;
   serverHttpBaseUrl: string;
   targetMachineId: string;
@@ -35,7 +36,9 @@ export async function readWorkspaceSyncWorkerTargetSnapshot(input: Readonly<{
   credentials: StoredCredentials;
   authorization?: ExternalActionExecutionAuthorizationV1;
   signal?: AbortSignal;
-}>): Promise<ActiveProjectAccountRowsSnapshot & Readonly<{ childMachines: readonly WorkspaceSyncChildMachineFacts[] }>> {
+}>): Promise<ActiveProjectAccountRowsSnapshot & Readonly<{
+  childMachines: readonly WorkspaceSyncChildMachineFacts[];
+}>> {
   return await runWithServerHttpBaseUrl(input.serverHttpBaseUrl, async () => {
     const snapshot = await readProjectAccountRows({ serverId: input.serverId, signal: input.signal,
       selection: { kinds: ['workspace-ref', 'relationship-graph'] },
@@ -46,6 +49,43 @@ export async function readWorkspaceSyncWorkerTargetSnapshot(input: Readonly<{
         && (ref.id === input.sourceWorkspaceRefId || ref.machineId === input.targetMachineId)).map(ref => ref.machineId) });
     return { ...snapshot, childMachines };
   });
+}
+
+/** Every new target selection observes native usability, regardless of its entry. */
+export async function readWorkspaceSyncWorkerTargetSnapshot(input: Parameters<typeof readWorkspaceSyncWorkerRouteSnapshot>[0] & Readonly<{
+  readRelationshipStatuses?: (controllerMachineId: string) => Promise<readonly WorkspaceSyncStatusV1[]>;
+}>): Promise<Awaited<ReturnType<typeof readWorkspaceSyncWorkerRouteSnapshot>> & Readonly<{
+  relationshipStatuses: readonly WorkspaceSyncStatusV1[];
+}>> {
+  const snapshot = await readWorkspaceSyncWorkerRouteSnapshot(input);
+  const source = resolveWorkspaceRefV1(snapshot.workspaceRefs, { serverId: input.serverId, id: input.sourceWorkspaceRefId });
+  const endpoint = source.kind === 'resolved'
+    ? resolveWorkspaceSyncEndpoint({ ...snapshot, serverId: input.serverId, workspace: source.ref }) : null;
+  const component = endpoint?.ok ? deriveWorkspaceSyncTopology({ ...snapshot, serverId: input.serverId }).sets.find(set =>
+    set.relationships.some(relationship => relationship.alphaWorkspaceRefId === endpoint.endpoint.id
+      || relationship.betaWorkspaceRefId === endpoint.endpoint.id)) : undefined;
+  const controllers = new Set(source.kind === 'resolved' && source.ref.machineId !== input.targetMachineId
+    ? component?.relationships.map(relationship => relationship.controllerMachineId) : []);
+  const readStatuses = input.readRelationshipStatuses ?? (async (machineId: string) => {
+    const { callMachineRpc } = await import('@/session/transport/rpc/machineRpc');
+    const response = await callMachineRpc({ credentials: input.credentials, serverUrl: input.serverHttpBaseUrl,
+      machineId, method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_LIST, request: {}, signal: input.signal });
+    return typeof response === 'object' && response !== null && 'statuses' in response && Array.isArray(response.statuses)
+      ? response.statuses : [];
+  });
+  const relationshipStatuses = (await Promise.all([...controllers].map(async machineId => {
+    try {
+      const statuses = await readStatuses(machineId);
+      return statuses.flatMap(value => {
+        const parsed = WorkspaceSyncStatusV1Schema.safeParse(value);
+        return parsed.success && parsed.data.controllerMachineId === machineId ? [parsed.data] : [];
+      });
+    } catch {
+      input.signal?.throwIfAborted();
+      return [];
+    }
+  }))).flat();
+  return { ...snapshot, relationshipStatuses };
 }
 
 /** Installed finite and service consumers share the same exact route and clean preparation. */
@@ -69,7 +109,8 @@ export function createWorkspaceSyncWorkerPreparation(input: Readonly<{
       const snapshot = await readCurrent(signal, source);
       const basis = resolveWorkspaceSyncWorkerTarget({ serverId: source.serverId,
         sourceWorkspaceRefId: source.id, targetMachineId: input.targetMachineId,
-        workspaceRefs: snapshot.workspaceRefs, relationships: snapshot.relationships, childMachines: snapshot.childMachines });
+        workspaceRefs: snapshot.workspaceRefs, relationships: snapshot.relationships, childMachines: snapshot.childMachines,
+        relationshipStatuses: snapshot.relationshipStatuses });
       if (!basis.ok) return fail(basis.errorCode);
       if (basis.source.machineId !== source.machineId || basis.source.rootPath !== source.rootPath
         || basis.source.projectKey !== source.projectKey || basis.target.projectKey !== source.projectKey) fail('project_workspace_changed');
@@ -100,9 +141,12 @@ export function resolveWorkspaceSyncWorkerTarget(input: Readonly<{
   serverId: string;
   sourceWorkspaceRefId: string;
   targetMachineId: string;
+  /** An exact workspace already chosen by the parent's admitted child plan. */
+  targetWorkspaceRefId?: string;
   workspaceRefs: readonly WorkspaceRefV1[];
   relationships: readonly WorkspaceSyncRelationshipV1[];
   childMachines?: readonly WorkspaceSyncChildMachineFacts[];
+  relationshipStatuses: readonly WorkspaceSyncStatusV1[];
 }>): (WorkspaceSyncWorkerTargetBasis & Readonly<{ ok: true }>) | Readonly<{ ok: false; errorCode: string }> {
   const source = resolveWorkspaceRefV1(input.workspaceRefs, { serverId: input.serverId, id: input.sourceWorkspaceRefId });
   if (source.kind !== 'resolved') return { ok: false, errorCode: 'workspace_ref_not_ready' };
@@ -118,11 +162,22 @@ export function resolveWorkspaceSyncWorkerTarget(input: Readonly<{
   const component = topology.sets.find(set => set.relationships.some(relationship =>
     relationship.alphaWorkspaceRefId === sourceEndpoint.endpoint.id || relationship.betaWorkspaceRefId === sourceEndpoint.endpoint.id));
   if (!component) return { ok: false, errorCode: 'worker_copy_missing' };
+  const statuses = new Map(input.relationshipStatuses.map(status => [status.relationshipId, status]));
   const targets = input.workspaceRefs.filter(ref => ref.serverId === input.serverId
+    && (input.targetWorkspaceRefId === undefined || ref.id === input.targetWorkspaceRefId)
     && ref.machineId === input.targetMachineId && (() => {
       const resolved = resolveWorkspaceSyncEndpoint({ ...input, workspace: ref });
-      return resolved.ok && component.relationships.some(relationship =>
-          getWorkspaceSyncWorkerCopyV1(relationship)?.targetWorkspaceRefId === resolved.endpoint.id);
+      if (!resolved.ok || !component.relationships.some(relationship =>
+        relationship.enabled && getWorkspaceSyncWorkerCopyV1(relationship)?.targetWorkspaceRefId === resolved.endpoint.id)) return false;
+      // The parent already admitted this exact copy; replay consumes its route.
+      if (input.targetWorkspaceRefId !== undefined) return true;
+      const route = resolveWorkspaceSyncTransferRoute({ ...input, targetWorkspaceRefId: ref.id });
+      if (!route.ok) return route.code !== 'relationship_paused';
+      return route.relationships.every(relationship => {
+        const status = statuses.get(relationship.relationshipId);
+        return status?.controllerMachineId === relationship.controllerMachineId
+          && (status.state === 'starting' || status.state === 'watching' || status.state === 'flushing');
+      });
     })());
   if (targets.length !== 1) return { ok: false,
     errorCode: targets.length ? 'workspace_sync_target_ambiguous' : 'worker_copy_missing' };

@@ -1,5 +1,8 @@
 import * as z from 'zod/mini';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+import { readHostAdmittedReviewedChildV1, readHostReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { sameStrictJsonValue, projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
+import { isProjectServiceMoveChildInputV1 } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
 import { ProjectWorkerActionInputSchemasV1 } from '@happier-dev/protocol/actions/specs/projectWorkers';
 import type { ProjectWorkerStatusResultV1 } from '@happier-dev/protocol';
 import { ProjectWorkerDependencyV1Schema } from '@happier-dev/protocol/workspaces/projectWorkerExecutionV1';
@@ -9,9 +12,6 @@ import { resolveWorkspaceRefById } from '@/workspaces/workspaceRefsV1';
 import { readWorkspaceSyncRootObjectIdentity } from '@/workspaces/sync/workspaceSyncRootIdentity';
 import { readWorkspaceSyncWorkerTargetSnapshot, resolveWorkspaceSyncWorkerTarget } from '@/workspaces/sync/workspaceSyncPreparation';
 import type { createProjectWorkerAdmission } from './projectWorkerAdmission';
-import { callMachineRpc } from '@/session/transport/rpc/machineRpc';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { WorkspaceSyncStatusV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
 import { refuseExternalActionPhase, runTracedExternalActionStage } from '@/daemon/externalActions/externalActionPhase';
@@ -66,49 +66,45 @@ export function createProjectWorkerAction(options: Readonly<{
         const requesterContext = readRequesterAccountActionContext(context.externalActionExecutionAuthorization);
         if (context.externalActionExecutionAuthorization && (!requesterContext
           || !await trace('requester_currentness', () => (requesterContext.isCustodyCurrent ?? requesterContext.isCurrent)()))) return refused('unavailable');
-        // Retain private custody so requester rows cannot replace the daemon's
-        // Account projection; native observations still use requester material.
-        const credentials = requesterContext?.credentials ?? options.credentials;
-        const snapshot = await trace('snapshot', () => readWorkspaceSyncWorkerTargetSnapshot({ ...options, credentials, serverId: request.workspace.serverId, signal,
-          authorization: context.externalActionExecutionAuthorization,
-          sourceWorkspaceRefId: request.workspace.refId, targetMachineId: options.machineId })).catch(error => {
-            if (process.env.HAPPIER_WEB_LATENCY_TRACE === '1') refuseExternalActionPhase('worker_status_snapshot', options.machineId, error);
-            return null;
-          });
-        // A missing Home observation is unknown, not proof that this copy is absent.
-        if (!snapshot) return refused('unavailable');
-        const basis = await trace('topology', () => resolveWorkspaceSyncWorkerTarget({ serverId: request.workspace.serverId,
-          sourceWorkspaceRefId: request.workspace.refId, targetMachineId: options.machineId,
-          workspaceRefs: snapshot.workspaceRefs, relationships: snapshot.relationships, childMachines: snapshot.childMachines }));
-        if (!basis.ok) {
-          if (basis.errorCode === 'worker_copy_missing') {
-            const source = resolveWorkspaceRefById(snapshot.workspaceRefs, request.workspace.refId, request.workspace.serverId);
-            if (source) return { ...refused('worker_copy_missing'), workerCopy: {
-              serverId: source.serverId, sourceWorkspaceRefId: source.id,
-              sourceMachineId: source.machineId, targetMachineId: options.machineId,
-            } };
-          }
-          return refused('workspace_unavailable');
-        }
-        try { await trace('root_identity', () => readWorkspaceSyncRootObjectIdentity(basis.target.rootPath)); }
-        catch { return refused('workspace_unavailable'); }
-        const targetEdge = basis.relationships.at(-1);
-        if (targetEdge) {
-          try {
-            const response = await trace('controller', () => callMachineRpc({ credentials,
-              machineId: targetEdge.controllerMachineId, serverUrl: options.serverHttpBaseUrl,
-              method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_GET,
-              request: { relationshipId: targetEdge.relationshipId }, ...(signal ? { signal } : {}) }));
-            const status = WorkspaceSyncStatusV1Schema.safeParse(
-              typeof response === 'object' && response !== null && 'status' in response ? response.status : undefined);
-            if (status.success && status.data.relationshipId === targetEdge.relationshipId
-              && status.data.controllerMachineId === targetEdge.controllerMachineId) {
-              lastCleanSyncAtMs = status.data.lastCleanSyncAtMs;
+        const child = readHostAdmittedReviewedChildV1(context);
+        const parent = readHostReviewedParentV1(context);
+        const admittedMoveStatus = child?.actionId === actionId && parent?.actionId === 'projects.service.relocate'
+          && sameStrictJsonValue(child.input, projectNativeJsonValueForTransport(request))
+          && isProjectServiceMoveChildInputV1(parent.input, actionId, options.machineId, request);
+        // SOURCE already selected the exact copy before review. This admitted
+        // child observes host capacity; the exact Start child owns its effect.
+        if (!admittedMoveStatus) {
+          // Retain private custody so requester rows cannot replace the daemon's
+          // Account projection; native observations still use requester material.
+          const credentials = requesterContext?.credentials ?? options.credentials;
+          const snapshot = await trace('snapshot', () => readWorkspaceSyncWorkerTargetSnapshot({ ...options, credentials, serverId: request.workspace.serverId, signal,
+            authorization: context.externalActionExecutionAuthorization,
+            sourceWorkspaceRefId: request.workspace.refId, targetMachineId: options.machineId })).catch(error => {
+              if (process.env.HAPPIER_WEB_LATENCY_TRACE === '1') refuseExternalActionPhase('worker_status_snapshot', options.machineId, error);
+              return null;
+            });
+          // A missing Home observation is unknown, not proof that this copy is absent.
+          if (!snapshot) return refused('unavailable');
+          const basis = await trace('topology', () => resolveWorkspaceSyncWorkerTarget({ serverId: request.workspace.serverId,
+            sourceWorkspaceRefId: request.workspace.refId, targetMachineId: options.machineId,
+            workspaceRefs: snapshot.workspaceRefs, relationships: snapshot.relationships, childMachines: snapshot.childMachines,
+            relationshipStatuses: snapshot.relationshipStatuses }));
+          if (!basis.ok) {
+            if (basis.errorCode === 'worker_copy_missing') {
+              const source = resolveWorkspaceRefById(snapshot.workspaceRefs, request.workspace.refId, request.workspace.serverId);
+              if (source) return { ...refused('worker_copy_missing'), workerCopy: {
+                serverId: source.serverId, sourceWorkspaceRefId: source.id,
+                sourceMachineId: source.machineId, targetMachineId: options.machineId,
+              } };
             }
-          } catch {
-            // An unavailable controller observation does not alter current
-            // worker eligibility or turn this read into a Sync barrier.
-            signal?.throwIfAborted();
+            return refused('workspace_unavailable');
+          }
+          try { await trace('root_identity', () => readWorkspaceSyncRootObjectIdentity(basis.target.rootPath)); }
+          catch { return refused('workspace_unavailable'); }
+          const targetEdge = basis.relationships.at(-1);
+          if (targetEdge) {
+            lastCleanSyncAtMs = snapshot.relationshipStatuses.find(status => status.relationshipId === targetEdge.relationshipId
+              && status.controllerMachineId === targetEdge.controllerMachineId)?.lastCleanSyncAtMs;
           }
         }
         const observation = service

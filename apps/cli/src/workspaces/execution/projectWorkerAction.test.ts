@@ -10,7 +10,8 @@ import { createProjectWorkerAdmission, type ProjectWorkerMemoryObservation } fro
 import { createProjectWorkerAction } from './projectWorkerAction';
 import { createProjectAccountSnapshotMutation, readProjectAccountRows } from '@/workspaces/projectAccountRows';
 import { createWorkspaceSyncRelationshipOwner } from '@/workspaces/sync/workspaceSyncRelationshipOwner';
-import { computeWorkspaceSyncPolicyDigest, type ProjectWorkerStatusInputV1 } from '@happier-dev/protocol';
+import { computeWorkspaceSyncPolicyDigest, type ProjectWorkerStatusInputV1,
+  type WorkspaceSyncRelationshipV1, type WorkspaceSyncStatusV1 } from '@happier-dev/protocol';
 import { ProjectAccountRowMutationRequestV1Schema, ProjectAccountRowMutationResponseV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import * as machineRpcTransport from '@/session/transport/rpc/machineRpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -38,7 +39,65 @@ function workerHomeGetData(url: string) {
   return { mode: 'plain', updatedAt: 0 };
 }
 
+function workerControllerStatus(relationship: Pick<WorkspaceSyncRelationshipV1, 'relationshipId' | 'controllerMachineId' | 'mode'>): WorkspaceSyncStatusV1 {
+  return { relationshipId: relationship.relationshipId, controllerMachineId: relationship.controllerMachineId,
+    state: 'watching', alphaPath: '/source', betaPath: '/target', mode: relationship.mode, conflictCount: 0,
+    lastCycleObservedAtMs: null, endpointStates: {
+      alpha: { connected: true, scanned: true, scanProblemCount: 0, transitionProblemCount: 0 },
+      beta: { connected: true, scanned: true, scanProblemCount: 0, transitionProblemCount: 0 } } };
+}
+
 describe('exact target worker status Action', () => {
+  it.each(['paused', 'unavailable', 'watching'] as const)(
+    'uses native copy readiness at the standalone status Action when the retained copy is %s', async retained => {
+      await withTempDir('worker-usable-copy-', async rootPath => {
+        const credentials = { token: 'worker-usable-copy-owner', encryption: null };
+        const source = { id: 'source', serverId: 'home', machineId: 'source', rootPath: '/source', createdAtMs: 1 };
+        const fresh = { ...source, id: 'fresh', machineId: 'target', rootPath };
+        const old = { ...fresh, id: 'retained', rootPath: join(rootPath, 'retained') };
+        const policy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+        const relationships = [fresh, old].map(target => ({ v: 1 as const, relationshipId: target.id,
+          controllerMachineId: source.machineId, alphaWorkspaceRefId: source.id, betaWorkspaceRefId: target.id,
+          mode: 'keep_synced' as const, enabled: true, createdAtMs: 1, updatedAtMs: 1,
+          contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) },
+          provenance: { kind: 'worker_clean_copy' as const, sourceWorkspaceRefId: source.id, targetWorkspaceRefId: target.id } }));
+        const graphKey = { kind: 'relationship-graph' };
+        vi.spyOn(axios, 'get').mockImplementation(async url => ({ status: 200, data: workerHomeGetData(url) }));
+        vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { status: 'listed', coverage: 'complete', rows: [
+          ...[source, fresh, old].map(value => { const key = { kind: 'workspace-ref', serverId: 'home', id: value.id };
+            return { key, revision: 0, content: { t: 'plain', v: { key, value } } }; }),
+          { key: graphKey, revision: 0, content: { t: 'plain', v: { key: graphKey, value: { relationships } } } },
+        ] } });
+        const status = (id: string, state: 'watching' | 'paused') => ({ relationshipId: id,
+          controllerMachineId: source.machineId, state, alphaPath: source.rootPath, betaPath: rootPath,
+          mode: 'keep_synced', conflictCount: 0, lastCycleObservedAtMs: 1, lastCleanSyncAtMs: null,
+          endpointStates: { alpha: { connected: true, scanned: true, scanProblemCount: 0, transitionProblemCount: 0 },
+            beta: { connected: true, scanned: true, scanProblemCount: 0, transitionProblemCount: 0 } } });
+        // Authenticated controller RPC is the network boundary; all selection and admission stay real.
+        const controller = vi.spyOn(machineRpcTransport, 'callMachineRpc').mockImplementation(async request => {
+          expect(request.machineId).toBe(source.machineId);
+          if (request.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_LIST) return { statuses: [status(fresh.id, 'watching'),
+            ...(retained === 'unavailable' ? [] : [status(old.id, retained)])] };
+          expect(request.method).toBe(RPC_METHODS.DAEMON_WORKSPACE_SYNC_GET);
+          expect(request.request).toEqual({ relationshipId: fresh.id });
+          return { status: status(fresh.id, 'watching') };
+        });
+        const admission = createProjectWorkerAdmission({ machineId: fresh.machineId, admissionDrain: createDaemonAdmissionDrain(),
+          readPolicy: async () => ({ status: 'ready', policy: { accepting: true, runAtMost: 1 }, source: 'stored', metadataVersion: 1 }),
+          readMemory: () => ({ totalBytes: 100, availableBytes: 100 }) });
+        const executor = createCliActionExecutorFromCredentials({ credentials, serverId: 'home', serverApiUrl: 'https://home.invalid',
+          pluginActionExecutionOwner: 'current_process', projectWorkerAction: createProjectWorkerAction({ machineId: fresh.machineId,
+            serverId: 'home', serverHttpBaseUrl: 'https://home.invalid', credentials, admission, isFiniteExecutionLive: () => true }) });
+        const result = await executor.execute('projects.worker.status', { workspace: { serverId: 'home', refId: source.id },
+          destination: { kind: 'machine', machineId: fresh.machineId }, purpose: 'finite' },
+        { surface: 'cli', authority: 'account_automation', serverId: 'home' });
+        expect(result).toMatchObject({ ok: true, result: retained === 'watching'
+          ? { eligible: false, explanation: 'workspace_unavailable' } : { eligible: true, explanation: 'eligible' } });
+        // One current native observation per real controller, independent of candidate count.
+        expect(controller.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_LIST)).toHaveLength(1);
+        expect(admission.dependencies()).toEqual([]);
+      });
+    });
   it.each(['eligible', 'memory_insufficient', 'policy_unavailable', 'worker_copy_missing'] as const)(
     'emits the registered status contract from real row/placement/admission owners (%s)', async observation => {
     await withTempDir('worker-output-contract-', async rootPath => {
@@ -46,8 +105,8 @@ describe('exact target worker status Action', () => {
       const source = { id: 'source-世界', serverId: 'home', machineId: 'source', rootPath: '/source/世界', createdAtMs: 1 };
       const target = { ...source, id: 'copy-世界', machineId: 'target', rootPath };
       const policy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
-      const relationship = { v: 1, relationshipId: 'source-copy', controllerMachineId: 'source',
-        alphaWorkspaceRefId: source.id, betaWorkspaceRefId: target.id, mode: 'keep_synced', enabled: true,
+      const relationship = { v: 1 as const, relationshipId: 'source-copy', controllerMachineId: 'source',
+        alphaWorkspaceRefId: source.id, betaWorkspaceRefId: target.id, mode: 'keep_synced' as const, enabled: true,
         contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) }, createdAtMs: 1, updatedAtMs: 1,
         provenance: { kind: 'worker_clean_copy', sourceWorkspaceRefId: source.id, targetWorkspaceRefId: target.id } };
       const rows = (observation === 'worker_copy_missing' ? [source] : [source, target]).map(value => {
@@ -61,8 +120,8 @@ describe('exact target worker status Action', () => {
           key: graphKey, value: { relationships: observation === 'worker_copy_missing' ? [] : [relationship] },
         } } },
       ] } });
-      // The controller's missing clean-time observation is a network boundary.
-      vi.spyOn(machineRpcTransport, 'callMachineRpc').mockRejectedValue(new Error('controller offline'));
+      // Native usability and an absent optional clean timestamp are independent.
+      vi.spyOn(machineRpcTransport, 'callMachineRpc').mockResolvedValue({ statuses: [workerControllerStatus(relationship)] });
       const admission = createProjectWorkerAdmission({ machineId: 'target', admissionDrain: createDaemonAdmissionDrain(),
         readPolicy: async () => observation === 'policy_unavailable' ? { status: 'unavailable' }
           : { status: 'ready', policy: { accepting: true, runAtMost: 1 }, source: 'stored', metadataVersion: 1 },
@@ -239,13 +298,13 @@ describe('exact target worker status Action', () => {
     // The authenticated controller Machine RPC is the external network boundary.
     const controllerRead = vi.spyOn(machineRpcTransport, 'callMachineRpc').mockImplementation(async request => {
       expect(request).toMatchObject({ credentials, machineId: hub.machineId, serverUrl: 'https://home.invalid',
-        method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_GET, request: { relationshipId: 'hub-target' } });
-      return { status: { relationshipId: 'hub-target', controllerMachineId: hub.machineId, state: 'watching',
+        method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_LIST, request: {} });
+      return { statuses: [workerControllerStatus(relationships[0]!), { relationshipId: 'hub-target', controllerMachineId: hub.machineId, state: 'watching',
         alphaPath: hub.rootPath, betaPath: target.rootPath, mode: 'keep_synced',
         endpointStates: {
           alpha: { connected: true, scanned: true, scanProblemCount: 0, transitionProblemCount: 0 },
           beta: { connected: true, scanned: true, scanProblemCount: 0, transitionProblemCount: 0 },
-        }, conflictCount: 0, lastCycleObservedAtMs: 999, lastCleanSyncAtMs: cleanAt } };
+        }, conflictCount: 0, lastCycleObservedAtMs: 999, lastCleanSyncAtMs: cleanAt }] };
     });
     let availableBytes = 0;
     const admission = createProjectWorkerAdmission({ machineId: target.machineId, admissionDrain: createDaemonAdmissionDrain(),
@@ -278,20 +337,20 @@ describe('exact target worker status Action', () => {
       cleanAt = 450;
       expect(await executor.execute('projects.worker.status', input, context)).toMatchObject({ ok: true,
         result: { eligible: true, lastCleanSyncAtMs: 450, load: { kind: 'known', running: 0, queued: 1 } } });
-      controllerRead.mockResolvedValueOnce({ status: { relationshipId: 'source-hub', controllerMachineId: hub.machineId,
+      controllerRead.mockResolvedValueOnce({ statuses: [{ relationshipId: 'source-hub', controllerMachineId: hub.machineId,
         state: 'watching', alphaPath: hub.rootPath, betaPath: source.rootPath, mode: 'keep_both_in_sync',
         endpointStates: {
           alpha: { connected: true, scanned: true, scanProblemCount: 0, transitionProblemCount: 0 },
           beta: { connected: true, scanned: true, scanProblemCount: 0, transitionProblemCount: 0 },
-        }, conflictCount: 0, lastCycleObservedAtMs: 999, lastCleanSyncAtMs: 222 } });
+        }, conflictCount: 0, lastCycleObservedAtMs: 999, lastCleanSyncAtMs: 222 }] });
       const wrongEdge = await executor.execute('projects.worker.status', input, context);
       expect(wrongEdge).toMatchObject({ ok: true,
-        result: { eligible: true, load: { kind: 'known', running: 0, queued: 1 } } });
+        result: { eligible: false, explanation: 'worker_copy_missing' } });
       expect(wrongEdge).not.toHaveProperty('result.lastCleanSyncAtMs');
       controllerRead.mockRejectedValueOnce(new Error('External controller observation unavailable'));
       const unavailable = await executor.execute('projects.worker.status', input, context);
       expect(unavailable).toMatchObject({ ok: true,
-        result: { eligible: true, load: { kind: 'known', running: 0, queued: 1 } } });
+        result: { eligible: false, explanation: 'worker_copy_missing' } });
       expect(unavailable).not.toHaveProperty('result.lastCleanSyncAtMs');
       expect(launched).toBe(false);
       expect(admission.dependencies()).toMatchObject([{ operationId: 'queued-clean-work', state: 'queued' }]);
@@ -413,6 +472,7 @@ describe('exact target worker status Action', () => {
     vi.spyOn(axios, 'get').mockImplementation(async url => ({ status: 200,
       data: workerHomeGetData(url),
     }));
+    vi.spyOn(machineRpcTransport, 'callMachineRpc').mockResolvedValue({ statuses: [workerControllerStatus(relationship)] });
     let rowsAvailable = true;
     vi.spyOn(axios, 'post').mockImplementation(async () => {
       if (!rowsAvailable) throw new Error('Home row observation unavailable');

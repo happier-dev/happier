@@ -56,6 +56,7 @@ export async function prepareProjectServiceMoveChildren(input: Readonly<{
     context: ActionExecutorContext;
     credentials?: StoredCredentials;
     serverBaseUrl: string;
+    readRelationshipStatuses?: Parameters<typeof readWorkspaceSyncWorkerTargetSnapshot>[0]['readRelationshipStatuses'];
 }>) {
     const fail = (code: string) => ({ ok: false as const, errorCode: code, error: code });
     const { request, context } = input;
@@ -63,15 +64,21 @@ export async function prepareProjectServiceMoveChildren(input: Readonly<{
     if (context.externalActionExecutionAuthorization && !requester) return fail('project_requester_authority_unavailable');
     const credentials = requester?.credentials ?? input.credentials;
     if (!credentials || requester && !await requester.isCurrent()) return fail('project_requester_authority_unavailable');
+    // The approval owner retained this exact parent plan. Replay consumes its
+    // selected copy; it must not select again from native availability.
+    const retained = context.approvedActionReplay?.hostReviewedChildren;
+    if (retained) return retained;
     if (!request.currentTarget.declaration) return fail('service_inputs_changed');
     const snapshot = await readWorkspaceSyncWorkerTargetSnapshot({ serverId: request.workspace.serverId,
         serverHttpBaseUrl: input.serverBaseUrl, sourceWorkspaceRefId: request.workspace.refId,
         targetMachineId: request.selectedTarget.machineId, credentials,
+        readRelationshipStatuses: input.readRelationshipStatuses,
         ...(context.externalActionExecutionAuthorization ? { authorization: context.externalActionExecutionAuthorization } : {}),
         ...(context.signal ? { signal: context.signal } : {}) });
     const basis = resolveWorkspaceSyncWorkerTarget({ serverId: request.workspace.serverId,
         sourceWorkspaceRefId: request.workspace.refId, targetMachineId: request.selectedTarget.machineId,
-        workspaceRefs: snapshot.workspaceRefs, relationships: snapshot.relationships, childMachines: snapshot.childMachines });
+        workspaceRefs: snapshot.workspaceRefs, relationships: snapshot.relationships, childMachines: snapshot.childMachines,
+        relationshipStatuses: snapshot.relationshipStatuses });
     if (!basis.ok) return fail(basis.errorCode);
     const incumbent = snapshot.workspaceRefs.find(workspace => workspace.serverId === request.workspace.serverId
         && workspace.machineId === request.currentTarget.machineId && workspace.id === request.currentTarget.workspaceId);
