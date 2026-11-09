@@ -2,6 +2,7 @@ import { act, Component, useEffect, useState, type ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { mountThroughReactNativeWeb } from '../rnwMount.testSupport.js';
 import { createHostApiStub, createSurfaceContext } from '../surfaceFixture.testSupport.js';
+import { View } from 'react-native';
 import { Tabs } from './Tabs.js';
 import { Text } from './Text.js';
 import { PluginUiProvider } from './PluginUiProvider.js';
@@ -244,5 +245,46 @@ describe('page Tabs host projection', () => {
       expect(publish.mock.calls.at(-1)?.[0]).toMatchObject({ value: 'files' });
       expect(publish.mock.calls.filter(([descriptor]) => descriptor?.items.some((item: {value: string}) => item.value === 'source'))).toHaveLength(0);
     } finally { mount.unmount(); }
+  });
+});
+
+describe('Tabs lead (what leads the page above its tabs)', () => {
+  const lead = <Text testID="page-lead" value="Move cart totals to server-side rounding" />;
+  const render = (tabList: 'shown' | 'host', nested = false) => {
+    const panel = <View testID="story"><Tabs.Lead /><Text value="Overview body" /></View>;
+    return <PluginUiProvider hostApi={createHostApiStub(createSurfaceContext())} context={createSurfaceContext()}>
+      <Tabs value="overview" onValueChange={() => {}} ariaLabel="Entry" tabList={tabList} lead={lead}>
+        <Tabs.Item value="overview" title="Overview">
+          {nested ? <Tabs value="inner" onValueChange={() => {}} ariaLabel="" tabList="host">
+            <Tabs.Item value="inner" title="">{panel}</Tabs.Item>
+          </Tabs> : panel}
+        </Tabs.Item>
+        <Tabs.Item value="files" title="Files"><Text value="Files body" /></Tabs.Item>
+      </Tabs>
+    </PluginUiProvider>;
+  };
+
+  it('stands above the tab row where the tabs draw it, and the panel does not repeat it', async () => {
+    const mount = mountThroughReactNativeWeb(render('shown'));
+    try {
+      await act(async () => {});
+      const leads = mount.container.querySelectorAll('[data-testid="page-lead"]');
+      expect(leads).toHaveLength(1);
+      const tablist = mount.container.querySelector('[role="tablist"]')!;
+      expect(leads[0]!.compareDocumentPosition(tablist) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(leads[0]!.closest('[data-testid="story"]')).toBeNull();
+    } finally { mount.unmount(); }
+  });
+
+  it('leads the selected panel where the tab row is drawn elsewhere, through nested Tabs', async () => {
+    for (const nested of [false, true]) {
+      const mount = mountThroughReactNativeWeb(render('host', nested));
+      try {
+        await act(async () => {});
+        const leads = mount.container.querySelectorAll('[data-testid="page-lead"]');
+        expect(leads).toHaveLength(1);
+        expect(leads[0]!.closest('[data-testid="story"]')).not.toBeNull();
+      } finally { mount.unmount(); }
+    }
   });
 });

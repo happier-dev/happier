@@ -4,6 +4,7 @@ import { isPluginError, readPluginErrorRequestIdV1 } from '@happier-dev/plugin-s
 
 import {
   HappierTabs,
+  HappierTabsLead,
   useHappierTabPanelActivity,
   useOptionalHappierTabPanelActivityInternal,
   type HappierTabPanelActivity,
@@ -99,6 +100,12 @@ export type TabsProps = Readonly<{
    * technology. It applies only when every tab has an `icon`; otherwise every label stays. Default `all`.
    */
   labels?: 'all' | 'none';
+  /**
+   * What leads the page above its tabs (an item's title and facts). Above the tab row while the row is drawn here;
+   * where the row is drawn elsewhere (the host's navigation, `tabList="host"`) the selected panel places it where
+   * its story starts with `<Tabs.Lead />`, so it scrolls away with the story.
+   */
+  lead?: ReactNode;
   children?: ReactNode;
 }> & (Readonly<{ presentation?: 'tabs'; pageKind?: never }> | Readonly<{
   presentation: 'page';
@@ -232,4 +239,4 @@ function TabsRoot(props: TabsProps): ReactElement {
   </ListCollectionControlContext.Provider>;
 }
 
-export const Tabs = Object.assign(TabsRoot, { Item: TabsItem });
+export const Tabs = Object.assign(TabsRoot, { Item: TabsItem, Lead: HappierTabsLead });

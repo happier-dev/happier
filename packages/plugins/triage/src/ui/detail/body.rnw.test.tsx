@@ -687,8 +687,11 @@ describe('the tabbed detail body (r0.42)', () => {
       });
       await expect(body.getByText(PANEL_BODY)).resolves.toBeDefined();
       expect(leafScroller(PANEL_BODY)).not.toBeNull();
-      // The title and facts lead that same story, so they scroll away with it (UI refinements 2026-11-08).
-      expect(leafScroller('Entry title and facts')).toBe(leafScroller(PANEL_BODY));
+      // With the tab row drawn in the page (a Session's details tab) the title and facts stand above it, as in the lab
+      // (merged-detail-pr phone); where the row is the host's navigation they lead the story (Tabs `lead`).
+      const title = [...document.querySelectorAll('*')].find((node) => node.textContent === 'Entry title and facts' && node.children.length === 0)!;
+      expect(title.compareDocumentPosition(document.querySelector('[role="tablist"]')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(leafScroller('Entry title and facts')).not.toBe(leafScroller(PANEL_BODY));
     } finally { pushed = false; pageLead = null; }
   });
 

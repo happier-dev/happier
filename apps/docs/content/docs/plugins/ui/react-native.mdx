@@ -1773,6 +1773,12 @@ Pass `phonePresented` from the Collection detail's `pushed` state when the
 detail is presented beside, or over, its collection. Nested source Tabs stay
 `tabList="host"` so they cannot replace the outer navigation.
 
+Pass `lead` for what leads the page above its tabs, such as a pushed detail's
+title and facts. Tabs draws it above the tab row while the row is in the page.
+When the row is the host's navigation (phone Bottom, or `tabList="host"`), the
+selected panel places `<Tabs.Lead />` where its story starts, so the lead
+scrolls away with it. Nested Tabs without a `lead` pass the outer one through.
+
 The strip's **More → Customize** opens Happier's shared navigation customizer
 for that page kind. Phone Top keeps the strip beside its content; phone Bottom
 uses the host bar. Both use the single host More menu for phone overflow.

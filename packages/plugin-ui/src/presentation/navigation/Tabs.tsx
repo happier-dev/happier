@@ -273,6 +273,17 @@ export function resolveHappierTabKeySelection<T extends object>(input: Readonly<
   return null;
 }
 
+/** What leads a page above its tabs, handed to the selected panel while the tab row is drawn elsewhere. */
+const HappierTabsLeadContext = createContext<ReactNode>(null);
+
+/**
+ * Where a panel's story starts: the page's lead (`HappierTabs` `lead`) while its tab row is drawn elsewhere (the host's
+ * navigation, or no row), so the lead scrolls away with the story; nothing while the lead stands above the tab row.
+ */
+export function HappierTabsLead(): ReactElement {
+  return <>{useContext(HappierTabsLeadContext)}</>;
+}
+
 export function HappierTabs(props: Readonly<{
   value: string;
   onValueChange: (value: string) => void;
@@ -291,6 +302,11 @@ export function HappierTabs(props: Readonly<{
   stripValues?: readonly string[];
   /** Hide host-placed chrome without replacing the mounted panel tree. */
   hideStrip?: boolean;
+  /**
+   * What leads the page above its tabs (an item's title and facts, lab merged-detail-pr phone). Drawn above the tab
+   * row while the row is drawn here; while it is drawn elsewhere the selected panel places it with `HappierTabsLead`.
+   */
+  lead?: ReactNode;
   /**
    * `page`: a destination's page tabs in the host's page-tab presentation (no track, glyph beside label,
    * the chosen tab on the ink selection fill), the same strip built-in detail pages draw. `underline`
@@ -446,8 +462,13 @@ export function HappierTabs(props: Readonly<{
 
   const hideStrip = props.tabList === 'host' || props.hideStrip === true;
   const trailingBeforeTabs = props.sharedPanel !== null;
+  // Nested Tabs without a lead of their own pass the enclosing page's lead through to their panels.
+  const enclosingLead = useContext(HappierTabsLeadContext);
+  const panelLead = props.lead === undefined ? enclosingLead : hideStrip ? props.lead : null;
   return (
+    <HappierTabsLeadContext.Provider value={panelLead}>
     <View testID={props.testID} style={fill ? { ...fillStyle, gap: props.theme.spacing.medium } : { gap: props.theme.spacing.medium }}>
+      {hideStrip || props.lead === undefined ? null : props.lead}
       {hideStrip ? null : <View style={props.trailing === undefined ? undefined : { flexDirection: trailingBeforeTabs ? 'row-reverse' : 'row', alignItems: 'center', gap: props.theme.spacing.xsmall }}>
       {/* The strip's one hairline across the full width; the selected tab's underline lands on it (lab `.tabs`). */}
       {pageStrip ? null : <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 1, backgroundColor: props.theme.colors.divider }} />}
@@ -575,5 +596,6 @@ export function HappierTabs(props: Readonly<{
         </HappierTabPanel>
       ) : null))}
     </View>
+    </HappierTabsLeadContext.Provider>
   );
 }

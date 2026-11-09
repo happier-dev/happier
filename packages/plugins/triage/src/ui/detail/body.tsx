@@ -38,7 +38,7 @@ const FILL_STYLE = Object.freeze({ flex: 1, minWidth: 0, minHeight: 0 });
 
 /**
  * A pushed (phone) detail's title and facts, led into the story that scrolls so they scroll away with the page
- * (UI refinements 2026-11-08, lab `merged-detail-*-phone`). The region provides it; the active source panel draws it.
+ * (UI refinements 2026-11-08, lab `merged-detail-*-phone`). The region provides it; the page Tabs place it (`lead`).
  */
 const TriageDetailPageLeadContext = React.createContext<React.ReactNode>(null);
 
@@ -110,7 +110,6 @@ function SourceDetailInstance(props: Readonly<{
   const overview = panel === 'overview';
   const pageScroll = props.pageScroll === true;
   const ownsScroller = !pageScroll && triageDetailPanelOwnsScrollerV1(scrollOwner);
-  const pageLead = React.useContext(TriageDetailPageLeadContext);
   const navigation = React.useMemo(() => ({ ...props.navigation,
     publishVisiblePanels: props.publishVisiblePanels }), [props.navigation, props.publishVisiblePanels]);
   // The source declares whether its List owns scrolling. Keep ancestry stable across ownership changes so
@@ -124,7 +123,7 @@ function SourceDetailInstance(props: Readonly<{
       contentContainerStyle={ownsScroller ? FILL_STYLE : undefined}
     >
       <Stack gap={ownsScroller ? undefined : overview ? 'large' : 'medium'} style={ownsScroller ? FILL_STYLE : undefined}>
-        {pageScroll && props.panel !== null ? pageLead : null}
+        {pageScroll && props.panel !== null ? <Tabs.Lead /> : null}
         {overview ? props.overviewLead : null}
         <TriageDetailPanelMount mount={props.mount} panel={panel} scrollOwner={scrollOwner} fallback={props.fallback} />
         {overview ? props.overviewTail : null}
@@ -215,6 +214,8 @@ export function TriageDetailTabbedBody(props: Readonly<{
       <Tabs
         presentation="page"
         pageKind={TRIAGE_DETAIL_PAGE_KIND_V1}
+        // The pushed detail's title and facts: above the tab row where it is drawn here, else leading the story.
+        {...(pageLead === null ? {} : { lead: pageLead })}
         phonePresented={props.pushed}
         value={selected}
         onValueChange={setSelected}
@@ -266,7 +267,7 @@ export function TriageDetailTabbedBody(props: Readonly<{
               <Tabs.Item value="session" title="" retention="discard">{props.session}</Tabs.Item>
               <Tabs.Item value="none" title="">
                 <ScrollArea style={FILL_STYLE}>
-                  <Stack gap="large">{props.pushed === true && slot === 'none' ? pageLead : null}{props.overviewLead}{props.overviewTail}</Stack>
+                  <Stack gap="large">{props.pushed === true && slot === 'none' ? <Tabs.Lead /> : null}{props.overviewLead}{props.overviewTail}</Stack>
                 </ScrollArea>
               </Tabs.Item>
               <Tabs.Item value="unavailable" title="">{props.fallback}</Tabs.Item>
