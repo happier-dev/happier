@@ -1,12 +1,56 @@
 import * as React from 'react';
+import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 
+import { IconButton } from '@/components/ui/buttons/IconButton';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 import type { TextInputDictation, TextInputDictationNotice } from '@/voice/dictation/useTextInputDictation';
 import { resolveVoiceDictationFailureTranslationKey, voiceDictationFailureNeedsSetup } from '@/voice/dictation/voiceDictationErrorCopy';
+import { AGENT_INPUT_QUIET_ICON_SIZE_PX } from './agentInputChromeStyles';
 
 type RetainedDictationFailure = NonNullable<TextInputDictation['failure']>;
+
+type DictationRecoveryActions = Pick<TextInputDictation, 'status' | 'onRetry' | 'onDiscard' | 'onOpenSetup'> & Readonly<{
+  failure: RetainedDictationFailure;
+  testID: string;
+}>;
+
+/** Both field layouts consume the same recovery actions and their availability. */
+function projectDictationRecovery(props: DictationRecoveryActions) {
+  const transcribing = props.status === 'transcribing';
+  return {
+    reason: t(resolveVoiceDictationFailureTranslationKey(props.failure.reason)),
+    setup: voiceDictationFailureNeedsSetup(props.failure.reason)
+      ? { label: t('voicePresence.recovery.setUp'), onPress: props.onOpenSetup, testID: `${props.testID}-setup` }
+      : null,
+    retry: { label: t('common.retry'), testID: `${props.testID}-retry`,
+      disabled: props.failure.canRetry !== true || transcribing, busy: transcribing, onPress: props.onRetry },
+    discard: { label: t('common.discard'), testID: `${props.testID}-discard`,
+      disabled: transcribing, onPress: props.onDiscard },
+  };
+}
+
+/** The same kept-recording recovery in a plugin field's accessory slot. */
+export function DictationRecoveryAccessory(props: DictationRecoveryActions): React.ReactElement {
+  const recovery = projectDictationRecovery(props);
+  return <View style={accessoryStyles.recovery}>
+    {recovery.setup ? <IconButton testID={recovery.setup.testID} iconName="gear" variant="plain"
+      size={AGENT_INPUT_QUIET_ICON_SIZE_PX} iconSize={16} accessibilityLabel={recovery.setup.label}
+      tooltip={recovery.setup.label} tooltipPlacement="bottom" onPress={recovery.setup.onPress} /> : null}
+    <IconButton testID={recovery.retry.testID} iconName="arrow-clockwise" variant="plain" tone="danger" size={AGENT_INPUT_QUIET_ICON_SIZE_PX} iconSize={16}
+      accessibilityLabel={`${recovery.retry.label}. ${recovery.reason}`} tooltip={recovery.reason} tooltipPlacement="bottom"
+      disabled={recovery.retry.disabled} onPress={() => { void recovery.retry.onPress(); }} />
+    <IconButton testID={recovery.discard.testID} iconName="x" variant="plain" size={AGENT_INPUT_QUIET_ICON_SIZE_PX} iconSize={14}
+      accessibilityLabel={recovery.discard.label} tooltip={recovery.discard.label} tooltipPlacement="bottom"
+      disabled={recovery.discard.disabled} onPress={() => { void recovery.discard.onPress(); }} />
+  </View>;
+}
+
+const accessoryStyles = StyleSheet.create((theme) => ({
+  recovery: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s2 },
+}));
 
 /**
  * The failure the recovery line shows. The controller drops its failure while a Retry transcribes the
@@ -63,33 +107,20 @@ export function AgentInputDictationRecovery(
       />
     );
   }
-  const transcribing = props.status === 'transcribing';
+  const recovery = projectDictationRecovery({ ...props, failure: props.failure, testID });
   return (
     <SurfaceStateCard
       testID={testID}
       size="line"
       kind="error"
       accessibilitySemantics="alert"
-      title={t(
-        resolveVoiceDictationFailureTranslationKey(props.failure.reason),
-      )}
-      reasonContent={voiceDictationFailureNeedsSetup(props.failure.reason) ? (
-        <TextLinkButton testID={`${testID}-setup`} size="meta" label={t('voicePresence.recovery.setUp')} onPress={props.onOpenSetup} />
+      title={recovery.reason}
+      reasonContent={recovery.setup ? (
+        <TextLinkButton testID={recovery.setup.testID} size="meta" label={recovery.setup.label} onPress={recovery.setup.onPress} />
       ) : undefined}
-      reason={voiceDictationFailureNeedsSetup(props.failure.reason) ? t('voicePresence.recovery.setUp') : undefined}
-      action={{
-        label: t('common.retry'),
-        testID: `${testID}-retry`,
-        disabled: props.failure.canRetry !== true || transcribing,
-        busy: transcribing,
-        onPress: props.onRetry,
-      }}
-      secondaryAction={{
-        label: t('common.discard'),
-        testID: `${testID}-discard`,
-        disabled: transcribing,
-        onPress: props.onDiscard,
-      }}
+      reason={recovery.setup?.label}
+      action={recovery.retry}
+      secondaryAction={recovery.discard}
     />
   );
 }

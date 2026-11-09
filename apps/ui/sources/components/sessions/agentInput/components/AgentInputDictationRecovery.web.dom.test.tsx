@@ -5,7 +5,7 @@ import * as React from 'react';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AgentInputDictationRecovery, useDictationRecoveryFailure } from './AgentInputDictationRecovery';
+import { AgentInputDictationRecovery, DictationRecoveryAccessory, useDictationRecoveryFailure } from './AgentInputDictationRecovery';
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -85,6 +85,29 @@ function isDisabled(element: HTMLElement): boolean {
 }
 
 describe('AgentInputDictationRecovery', () => {
+  it.each(['transcription_credentials_required', 'transcription_machine_unavailable'] as const)(
+    'keeps Retry and Discard alongside Set up for a plugin accessory with %s', async reason => {
+      container = document.createElement('div');
+      document.body.appendChild(container);
+      root = createRoot(container);
+      const onOpenSetup = vi.fn();
+      const onRetry = vi.fn(async () => ({ ok: true, result: { status: 'completed' } }) as never);
+      const onDiscard = vi.fn(async () => ({ ok: true, result: { status: 'completed' } }) as never);
+      const props = { failure: { id: 1, sessionId: 'plugin-field', kind: 'provider_error' as const, reason, canRetry: true },
+        status: 'idle' as const, testID: 'plugin-field', onOpenSetup, onRetry, onDiscard };
+      act(() => root!.render(<DictationRecoveryAccessory {...props} />));
+      await act(async () => { button(container!, 'plugin-field-setup').click(); });
+      await act(async () => { button(container!, 'plugin-field-retry').click(); });
+      await act(async () => { button(container!, 'plugin-field-discard').click(); });
+      expect(onOpenSetup).toHaveBeenCalledOnce();
+      expect(onRetry).toHaveBeenCalledOnce();
+      expect(onDiscard).toHaveBeenCalledOnce();
+      act(() => root!.render(<DictationRecoveryAccessory {...props} status="transcribing" />));
+      expect(isDisabled(button(container!, 'plugin-field-retry'))).toBe(true);
+      expect(isDisabled(button(container!, 'plugin-field-discard'))).toBe(true);
+      expect(button(container!, 'plugin-field-setup')).toBeDefined();
+    },
+  );
   it('names the cause and offers Retry then Discard while the recording is kept', async () => {
     const onRetry = vi.fn(
       async () => ({ ok: true, result: { status: 'completed' } }) as never,
