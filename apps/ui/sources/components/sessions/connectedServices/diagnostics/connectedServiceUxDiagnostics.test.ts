@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import {
     CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS,
     CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES,
-    ConnectedServiceUxDiagnosticCodeV1Schema,
     type ConnectedServiceUxDiagnosticV1,
 } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 
@@ -113,7 +112,7 @@ describe('resolveConnectedServiceUxDiagnosticPresentation', () => {
         });
     });
 
-    it.each(ConnectedServiceUxDiagnosticCodeV1Schema.options)('maps %s without falling back to another diagnostic code', (code) => {
+    it.each(Object.values(CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES))('maps %s without falling back to another diagnostic code', (code) => {
         const diagnostic: ConnectedServiceUxDiagnosticV1 = {
             code,
             failurePhase: code === CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.recoveryRetryScheduled
