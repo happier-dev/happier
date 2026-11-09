@@ -16,7 +16,9 @@ export type LastUsedBackendTargetSettingsDelta = Readonly<{
 
 /**
  * One writer for the UI-local durable selection. Runtime backend ids stay derived;
- * Oh My Pi persists only its qualified contribution identity.
+ * Oh My Pi persists only its qualified contribution identity. New-Session
+ * backend selection and successful creation both consume this owner, retaining
+ * the device-local predecessor import without a new Account preference.
  */
 export function buildLastUsedBackendTargetSettings(params: Readonly<{
     backendTarget: PersistedBackendTargetRefV2;

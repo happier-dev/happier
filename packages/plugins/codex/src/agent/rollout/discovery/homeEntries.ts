@@ -9,7 +9,7 @@ import {
   resolveVerifiedNativeHomePath,
   listConnectedServiceNativeHomes,
 } from '@happier-dev/plugin-sdk/fs';
-import { CODEX_NATIVE_HOME, CODEX_CONNECTED_SERVICE_HOME_DIRECTORY_NAME } from '@happier-dev/protocol/agents/codex/native-home-policy';
+import { CODEX_NATIVE_HOME, CODEX_CONNECTED_SERVICE_HOME_DIRECTORY_NAME } from '../../nativeHome.js';
 
 import {
   throwIfCodexExternalSessionInvocationStopped,

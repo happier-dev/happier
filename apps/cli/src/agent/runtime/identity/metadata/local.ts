@@ -6,6 +6,11 @@ import type { AgentNativeResumeIdentityV1, RuntimeDescriptorV1 } from '@happier-
 
 type MetadataRecord = Record<string, unknown>;
 
+/**
+ * session/handoff/metadata/runtimeLocalSessionHandoffMetadata preserves released
+ * flat native ids while reading/merging local Session patch/snapshot carriers. Current identity writes use runtimeDescriptorV1 and
+ * nativeResumeIdentityV1; this bounded carrier is not a new-Agent writer seam.
+ */
 export type SessionRuntimeLocalMetadata = Readonly<{
   runtimeDescriptorV1?: RuntimeDescriptorV1;
   nativeResumeIdentityV1?: AgentNativeResumeIdentityV1;

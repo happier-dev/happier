@@ -16,6 +16,28 @@ import type {
   ProtocolExternalSessionSourceProjectionDescriptor,
 } from './projectionFacts.ts';
 
+/** Static roots remain available to Protocol/SDK consumers without plugin activation. */
+export function renderProtocolCodexNativeHomePolicyTs(nativeHome: Readonly<{
+  environmentKey: string;
+  defaultRelativePath: string;
+  materializedDirectoryName: string;
+}>): string {
+  return [
+    '/**',
+    ' * GENERATED FILE. DO NOT EDIT.',
+    ' * Codex owns these facts in its static Agent declaration. Protocol retains',
+    ' * data-only exports for pet-root discovery and released SDK consumers.',
+    ' */',
+    'export const CODEX_NATIVE_HOME = Object.freeze({',
+    `  environmentKey: ${JSON.stringify(nativeHome.environmentKey)},`,
+    `  defaultRelativePath: ${JSON.stringify(nativeHome.defaultRelativePath)},`,
+    '});',
+    '',
+    `export const CODEX_CONNECTED_SERVICE_HOME_DIRECTORY_NAME = ${JSON.stringify(nativeHome.materializedDirectoryName)};`,
+    '',
+  ].join('\n');
+}
+
 export function renderProtocolBuiltInLegacyConnectedAccountCompatibilityTs(
   entries: readonly BuiltInLegacyConnectedAccountCompatibilityProjection[],
 ): string {
@@ -25,6 +47,8 @@ export function renderProtocolBuiltInLegacyConnectedAccountCompatibilityTs(
     ' *',
     ' * Built-in-only host-private compatibility for supported legacy Connected Service ids.',
     ' * Public manifests and external plugins cannot add or claim entries in this projection.',
+    ' * legacyConnectedServiceCompatibility and connected-service bindings consume these',
+    ' * frozen peer-operation/authentication mappings at their released-data ingress.',
     ' *',
     ' * Immutable released bases: server-v0.2.1 at 4913c1e533c872a0712ba1c25b3104fd470aacc2',
     ' * and cli-v0.2.1 at b1d15a8a9c241737d1ca9b167459901e6259173a.',

@@ -16,7 +16,10 @@ const RELEASED_DEVICE_AUTH_USER_CODE_MAX_LEN = 160;
 /**
  * The `deviceAuthId` response/poll shape adapts exact UI/server-v0.2.1 at
  * 4913c1e533c872a0712ba1c25b3104fd470aacc2 to the current transaction owner.
- * Remove that legacy shape when exact 0.2.1 leaves the supported predecessor window.
+ * connectConnectedServicesV2Routes registers it for those released clients;
+ * current qualified authentication uses the existing attempt owner instead of
+ * adding vendor routes. Remove that legacy shape when exact 0.2.1 leaves the
+ * supported predecessor window.
  */
 export function registerConnectedServiceOpenAiCodexDeviceAuthRoutes(app: Fastify): void {
   app.post("/v2/connect/openai-codex/oauth/device/start", {

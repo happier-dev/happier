@@ -84,7 +84,10 @@ function resolveNonEmptyEnv(raw: string | undefined, fallback: string): string {
 /**
  * The generated projection is the only legacy-id eligibility owner. These
  * handwritten provider details merely refine the two OAuth modes admitted by
- * the revisioned V2/V3 operation table.
+ * the revisioned V2/V3 operation table. ConnectedServiceRefreshCoordinator calls
+ * this adapter for released scalar/stored credentials; qualified plugin refresh
+ * uses the selected service runtime. Endpoints, client ids and response/profile
+ * mappings here are frozen predecessor recipes, not current plugin defaults.
  * Delete this adapter when that window no longer includes a V2/V3 server or a
  * persisted legacy OAuth credential requiring client-side rotation.
  */

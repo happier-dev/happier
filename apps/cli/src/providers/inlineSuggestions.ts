@@ -50,7 +50,11 @@ function selectedModel(record: ResolvedProviderConnectionRecord, modelId: string
   return projectProviderModelGenerationSettings(model, record.connection.modelSettings?.[modelId]);
 }
 
-/** A source descriptor is evidence, not an Agent binding or a catalog probe ticket. */
+/**
+ * Wire-format codec for the languageIntelligence RPC's admitted Provider request.
+ * Protocol names below describe external request/response shapes; the selected
+ * contribution supplies them, without selecting an Agent or service here.
+ */
 function encodeRequest(operation: ProviderInlineCompletionOperationV1, model: ProviderModelDescriptorV1,
   context: Readonly<{ prefix: string; suffix: string }> | Readonly<{ prompt: string; stop: readonly string[] }>) {
   if (operation.mode === 'next-edit-codec') {

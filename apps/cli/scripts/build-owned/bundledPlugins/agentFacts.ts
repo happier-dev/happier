@@ -152,6 +152,8 @@ export function renderAgentRuntimeDescriptorReadersTs(
   lines.push(' *');
   lines.push(' * This bounded registry reads provider-specific metadata written by released');
   lines.push(' * CLI 0.2.0/0.2.1 builds. It is not a current descriptor or plugin-authoring seam.');
+  lines.push(' * runtime/identity/runtimeDescriptorReaderRegistry consumes these codecs when retained');
+  lines.push(' * Session metadata lacks the current runtimeDescriptorV1 projection.');
   lines.push(' *');
   lines.push(' * This file is emitted by:');
   lines.push(' * - `apps/cli/scripts/build-owned/generateBundledPluginEntries.ts`');

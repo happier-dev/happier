@@ -15,6 +15,11 @@ function resolveRefreshLeaseMaxMs(env: NodeJS.ProcessEnv): number {
     return parseIntEnv(env.CONNECTED_SERVICE_REFRESH_LEASE_MAX_MS, 5 * 60_000, { min: 5_000, max: 60 * 60_000 });
 }
 
+/**
+ * The connect route registrar retains released v0.2.1 service-keyed routes here.
+ * Their handlers adapt to the existing credential/transaction owners; new
+ * service contributions use qualified account routes rather than this frontier.
+ */
 export function connectConnectedServicesV2Routes(app: Fastify) {
     const refreshLeaseMaxMs = resolveRefreshLeaseMaxMs(process.env);
     const credentialMaxLen = resolveCredentialMaxLen(process.env);

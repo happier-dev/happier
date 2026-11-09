@@ -7,6 +7,7 @@ import {
 
 import { getAgentCliRuntimeSpec, type AgentCliRuntimeSpec } from './runtime.js';
 
+/** Released configured-backend lookup only; current ids use the Agent CLI catalog. */
 export function getAgentCliRuntimeSpecForLookupId(
   id: LegacyConfiguredBackendLookupId,
 ): AgentCliRuntimeSpec | LegacyConfiguredBackendAgentCliRuntimeSpec | null {

@@ -15,6 +15,8 @@ import type { ProviderRequestCostParser } from '@happier-dev/plugin-sdk/provider
  * which the terminal report carries as `measurement: 'unavailable'`.
  * A declared Provider decoder may preserve its charged request USD from that
  * same terminal usage block; the host never derives it from token prices.
+ * providerBrokerRequestHandler consumes this external wire decoder. Its protocol
+ * vocabulary is independent of the selected Agent/Connected Account identity.
  */
 export type ExternalProviderTerminalTokenObservation = Readonly<{
     outcome: 'succeeded' | 'failed';

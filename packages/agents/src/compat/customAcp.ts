@@ -6,6 +6,12 @@ import type { AgentCore, BundledAgentId } from '../types.js';
 import { isBundledAgentId } from '../types.js';
 import { readLegacyConfiguredAcpBackendId } from '@happier-dev/protocol/backends/targets/compat/customAcp';
 
+/**
+ * Released customAcp flavor/metadata ingress. Agent flavor/Session resolution,
+ * existingSessionAutomationPolicy and cli/runtimeLookup consume these frozen
+ * sentinel facts to retain configured backend identity. Current configured
+ * contributions use their qualified target, not this predecessor declaration.
+ */
 export const LEGACY_CUSTOM_ACP_AGENT_ID = 'customAcp' as const;
 
 export function isLegacyCustomAcpAgentId(value: unknown): value is typeof LEGACY_CUSTOM_ACP_AGENT_ID {

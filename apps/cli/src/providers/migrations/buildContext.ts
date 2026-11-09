@@ -88,6 +88,10 @@ function exactSecretBinding(
   return isCanonicalProviderSavedSecretIdV1(value) ? value : null;
 }
 
+// Historical default-profile vocabulary consumed by migrations/coordinator and migrations/runtime
+// through buildLegacyProfileMigrationContext. Together with each contribution's
+// legacyProfileMigrations it decodes prior profile intent; it is not a current
+// Agent roster and must not grow from current plugin declarations.
 const DEFAULT_ENVIRONMENT_PROFILE_IDS = Object.freeze(['anthropic', 'codex', 'gemini']);
 
 export function buildLegacyProfileMigrationContext(input: Readonly<{

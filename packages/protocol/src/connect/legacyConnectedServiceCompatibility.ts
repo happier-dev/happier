@@ -1,3 +1,11 @@
+/**
+ * Released credential/usage codecs, not current service declarations. CLI API,
+ * credential import/storage and exact-v0.2.1 materialization, UI credential
+ * resealing/quota readers, and server V3/qualified usage routes consume these
+ * translations. Preserve historical Claude identity/plan and Antigravity project
+ * metadata until their supported records/peers retire; current plugins supply
+ * normalized facts through the qualified account owner.
+ */
 import * as z from 'zod/mini';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 

@@ -23,6 +23,10 @@ export type TeamCredentialRequestPolicyEvaluationV1 =
     }>
     | Readonly<{ ok: false; reasonCode: TeamCredentialRequestPolicyFailureCodeV1 }>;
 
+// providerBrokerRequestHandler, externalRequestPolicy, managed Provider consumer
+// application and nativeCredentialComposer share this admitted external-wire
+// policy. Route/header spellings are protocol/security facts, not vendor or
+// Agent membership and not a second connected-account selection authority.
 type JsonObject = Record<string, unknown>;
 
 const HEADER_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/u;

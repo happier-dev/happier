@@ -1,5 +1,5 @@
 import { codexStateSharingDescriptor } from './auth/services/state/sharing/descriptor.js';
-import { CODEX_NATIVE_HOME, CODEX_CONNECTED_SERVICE_HOME_DIRECTORY_NAME } from '@happier-dev/protocol/agents/codex/native-home-policy';
+import { CODEX_NATIVE_HOME, CODEX_CONNECTED_SERVICE_HOME_DIRECTORY_NAME } from './nativeHome.js';
 import type { PluginCustomAgentDeclaration } from '@happier-dev/plugin-sdk/agents';
 import type { AgentSessionCompactionCapability } from '@happier-dev/plugin-sdk/agents/runtime';
 

@@ -11,6 +11,10 @@ import { configuration } from '@/configuration';
  * (526aa0db60a36db0f05ba4566ea443e397486424). This reader/writer preserves that
  * exact on-disk startup-seed direction. Remove it only after supported releases no
  * longer require the V1 Codex resume contract and its contraction is approved.
+ * The plugin Session host in plugins/runtime/runtimeCore/plugin/session.ts
+ * consumes its compatibility read/write interface at startup and resume. Keep
+ * its existing path, aging and best-effort write semantics; new Agents use the
+ * descriptor/native resume identity rather than another flat cache entry.
  */
 export type ReleasedCodexStartupOverridesCacheEntryV1 = Readonly<{
   permissionMode: PermissionMode;

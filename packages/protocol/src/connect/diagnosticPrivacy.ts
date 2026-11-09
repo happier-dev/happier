@@ -1,3 +1,6 @@
+// connectedServiceSchemas and providerAccountUsageDiagnostic use these security
+// redaction patterns before diagnostics leave their owner. Vendor token shapes
+// detect secrets only; they never select an Agent, service or authentication mode.
 const SECRET_FIELD_VALUE_PATTERN =
     /\b(?:api[_-]?key|client[_-]?secret|access[_-]?token|refresh[_-]?token|id[_-]?token|jwt|password|token|secret)\s*[:=]\s*['"]?[A-Za-z0-9._~+/=-]{12,}/i;
 const AUTHORIZATION_BEARER_VALUE_PATTERN = /\bauthorization\s*:\s*bearer\s+\S+/i;
