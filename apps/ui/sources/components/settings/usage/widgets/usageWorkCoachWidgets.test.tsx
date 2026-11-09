@@ -293,20 +293,47 @@ describe('Work and Coach widget bodies', () => {
     expect(first.length).toBeGreaterThan(t('session.untitled').length);
     await hook.unmount();
   });
-  it('names Sessions with the same unsuffixed machine place as Projects', async () => {
-    const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+  it('keeps same-folder Projects on same-hostname Machines distinct with the canonical Machine labels (R138)', async () => {
+    const { resolveMachineDisplayNames } = await import('@/utils/sessions/machineDisplayNames');
+    const { WorkspaceRefV1Schema } = await import('@/sync/domains/workspaces/workspaceRefModel');
     const previous = storage.getState();
-    const machine = (id: string) => {
+    const scope = { serverId: actionHome!.homes.work!.id, accountId: 'work-account' };
+    const projectKeys = ['b3d3f1ffe98f8b9cbf3cecc7609fc50a7206a003692eadede40ee8c082df19c1',
+      'bfec72540e0d393604c67d121a6911335c2e875c0d9836adddb942a1941fb73c'];
+    const machines = ['3ca2700f-c0a8-440f-be06-cb4f3f51cb01', 'eadc2422-b42b-478d-97b1-af9b530d5f08'].map(id => {
       const row = createMachineFixture({ id });
       return { ...row, metadata: row.metadata && { ...row.metadata, host: 'Shared host', displayName: 'Shared host' } };
-    };
-    storage.getState().applyMachines([machine('machine-a'), machine('machine-b')]);
+    });
+    const names = resolveMachineDisplayNames(machines);
+    expect(new Set(names.values()).size).toBe(2);
     try {
-      const rows = ['a', 'b'].map(id => ({ ...contribution(id, `session-${id}`, 't'), machineId: `machine-${id}` }));
+      storage.getState().applyMachines(machines);
+      storage.setState({ profileScope: scope, projectAccountRows: { scope, status: 'ready', coverage: 'complete',
+        workspaceRefs: machines.map((machine, index) => WorkspaceRefV1Schema.parse({ id: `r138-checkout-${index}`,
+          projectKey: projectKeys[index], serverId: scope.serverId, machineId: machine.id,
+          rootPath: '/home/happier', createdAtMs: 0 })), relationships: [], revisionsByPhysicalKey: {}, organizations: [] } });
+      const rows = machines.map((machine, index) => ({ ...contribution(`usage-${index}`, `session-${index}`, 't'),
+        machineId: machine.id, projectKey: projectKeys[index]! }));
       const work = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: rows, evidence: [] }));
-      const hook = await renderHook(() => useUsageWork({ ...slice, work }, query, 'home'));
-      expect(hook.getCurrent().sessionLabel('session-a')).toContain('Shared host');
-      expect(hook.getCurrent().sessionLabel('session-a')).not.toContain(' · mach');
+      const workSlice = { ...slice, work };
+      const Wrapper = ({ children }: React.PropsWithChildren) => <CommandWrapper>{children}
+        <UsageProjectLedgerWidget {...props} serverId={scope.serverId} slice={workSlice}
+          id="usage_project_ledger" testID="same-folder-ledger" />
+      </CommandWrapper>;
+      const hook = await renderHook(() => useUsageWork(workSlice, query, scope.serverId), { wrapper: Wrapper });
+      const { projectLabel, projectPlace, sessionLabel, summary } = hook.getCurrent();
+      expect(summary?.projects.map(row => [row.projectKey, row.amount])).toEqual(projectKeys.map(key => [key, 3]));
+      expect(projectLabel(projectKeys[0]!)).toBe(projectLabel(projectKeys[1]!));
+      for (const [index, machine] of machines.entries()) {
+        expect(projectPlace(projectKeys[index]!)).toBe(names.get(machine.id));
+        expect(sessionLabel(`session-${index}`)).toContain(names.get(machine.id)!);
+      }
+      expect(projectPlace(projectKeys[0]!)).not.toBe(projectPlace(projectKeys[1]!));
+      const ledger = hook.tree.root.findByType(HappierDataRows);
+      expect(ledger.props.rowIds).toEqual(projectKeys);
+      for (const [index, machine] of machines.entries()) expect(ledger.props.rows[index][2]).toContain(names.get(machine.id)!);
+      const text = JSON.stringify(ledger.props.rows);
+      for (const key of [...projectKeys, ...machines.map(machine => machine.id)]) expect(text).not.toContain(key);
       await hook.unmount();
     } finally { storage.setState(previous, true); }
   });
@@ -338,14 +365,27 @@ describe('Work and Coach widget bodies', () => {
     const refs = ['/work/customer/apps/happier', '/work/personal/apps/happier'].map((rootPath, index) =>
       WorkspaceRefV1Schema.parse({ id: `checkout-${index}`, projectKey: keys[index], serverId: scope.serverId,
         machineId: 'machine-a', rootPath, createdAtMs: 0 }));
+    const cipher = createProjectAccountRowCipherV1({ mode: 'plain', material: null });
+    const rows = [...refs.map(ref => {
+      const key = { kind: 'workspace-ref' as const, serverId: scope.serverId, id: ref.id };
+      return { key, revision: 1, content: cipher.seal({ key, value: ref }) };
+    }), ...keys.map(projectKey => {
+      const key = { kind: 'project-organization' as const, serverId: scope.serverId, projectKey };
+      return { key, revision: 1, content: cipher.seal({ key, value: { label: 'happier' } }) };
+    })];
+    const owner = createProjectAccountRowsSync({ scope, cipher, isCurrent: () => true,
+      transport: { read: async () => { throw new Error('Project fixture uses its census'); },
+        list: async () => ({ status: 'listed', coverage: 'complete', rows }),
+        mutate: async () => { throw new Error('Project names must not mutate rows'); } },
+      apply: (...args) => storage.getState().applyProjectAccountRowsForScope(scope, ...args) });
     try {
-      storage.setState({ profileScope: scope, projectAccountRows: { scope, status: 'ready', coverage: 'complete',
-        workspaceRefs: refs, relationships: [], revisionsByPhysicalKey: {},
-        organizations: keys.map(projectKey => ({ key: { kind: 'project-organization', serverId: scope.serverId, projectKey },
-          revision: 1, value: { label: 'happier' } })) } });
+      storage.setState({ profileScope: scope });
+      storage.getState().activateProjectAccountRowsScope(scope);
       const work = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: keys.map((projectKey, index) =>
         ({ ...contribution(`human-${index}`, `session-${index}`, null), projectKey })), evidence: [] }));
       const hook = await renderHook(() => useUsageWork({ ...slice, work }, query, scope.serverId));
+      // Deliver protected facts after the mounted Account finishes acquisition.
+      await act(async () => { await owner.refresh(); });
       const names = keys.map(key => hook.getCurrent().projectLabel(key));
       expect(names[0]).toContain('customer');
       expect(names[1]).toContain('personal');

@@ -7,7 +7,7 @@ import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRec
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { useSessionListRowsByServerId } from '@/sync/store/hooks';
 import { useAllMachines } from '@/sync/domains/state/storage';
-import { getMachineDisplayName, resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
+import { resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
 import { formatUsageCalendarDate } from '@/sync/domains/usage/usageCalendarPresentation';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { formatTokenCount, formatUsageCost } from '@/utils/format/usageNumbers';
@@ -100,12 +100,11 @@ export function useUsageWork(
     ...(summary?.projects ?? []).flatMap(row => row.machineIds).concat((summary?.sessions ?? []).flatMap(row => row.machineIds))
       .filter(id => !machines.some(machine => machine.id === id)).map(id => ({ id, absence: 'unlisted' as const }))])), [summary]));
   const machineNames = React.useMemo(() => new Map(Object.entries(selectedMachineNames)), [selectedMachineNames]);
-  // A row names where it ran by the machine's own name; the suffix that tells two same-named machines apart stays out of a line about a project.
-  const selectedOwnMachineNames = useAllMachines(React.useCallback(machines => Object.fromEntries(machines.map(machine => [machine.id, getMachineDisplayName(machine)])), []));
+  // Fact lines retain the Machine owner's distinction between same-named registrations.
   const machinePlace = React.useCallback((ids: readonly string[]) => {
-    const names = [...new Set(ids.map(id => selectedOwnMachineNames[id] ?? machineNames.get(id) ?? id))];
+    const names = [...new Set(ids.map(id => machineNames.get(id)).filter((name): name is string => name !== undefined))];
     return names.length > 2 ? t('usage.board.page.machinesCount', { count: names.length }) : names.join(', ');
-  }, [selectedOwnMachineNames, machineNames]);
+  }, [machineNames]);
   // Two rows never read alike: a Project name several share keeps its name whole; where it ran is a separate fact the
   // row carries on its own line, so a narrow screen never truncates the part that tells the rows apart.
   const projectName = React.useCallback((projectKey: string | null) => projectKey === null
