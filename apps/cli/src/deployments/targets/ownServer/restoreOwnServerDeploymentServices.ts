@@ -86,42 +86,50 @@ export async function restoreOwnServerDeploymentServices(input: RestoreOwnServer
         // source alone never manufactures an executable service generation.
         if (!generation) return;
         const { projectName, targets } = generation;
-        const target = targets.find(value => value !== null);
-        if (targets.some(value => value && (value.sourcePath !== target?.sourcePath || value.project !== target?.project))) {
-            throw Object.assign(new Error('Native service generation is ambiguous'), { code: 'deployment_conflict' });
+        // Compose may retain an unchanged service from an earlier source while
+        // creating another service from the current one. Each source is proven
+        // by the same retained-receipt custody owner before it is observed.
+        const servicesBySource = new Map<string, string[]>();
+        for (const [index, service] of projection.services.entries()) {
+            const target = targets[index];
+            if (!target) continue;
+            const services = servicesBySource.get(target.sourcePath) ?? [];
+            services.push(service);
+            servicesBySource.set(target.sourcePath, services);
         }
-        const sourcePath = target!.sourcePath;
-        const source = await custody(sourcePath);
-        if (!source) throw Object.assign(new Error('Retained source is unavailable'), { code: 'deployment_source_unavailable' });
-        const releaseSource = observeRetainedDeploymentSourceForHost({ environmentId: identity.environmentId,
-            environmentInstanceId: identity.environmentInstanceId, deploymentId: receipt.deployment.id,
-            machineId: input.machineId, installationId: input.installationId, rootPath: source.rootPath,
-            manifestFingerprint: projection.manifestFingerprint, manifest: source.manifest,
-            async assertCurrent() {
-                await assertCurrent();
-                if (!await custody(sourcePath)) throw Object.assign(new Error('Retained source is unavailable'), { code: 'deployment_source_unavailable' });
-            } });
-        const composeArgs = ['compose', '--project-name', projectName];
-        await produceEnvironmentProjectServices({ owner: input.owner, serverId: identity.homeServerIdentityId,
-            release: releaseSource, specIdentity: receipt.deployment.id, signal: input.signal, isCurrent: input.isCurrent,
-            nativeEffects: { keys: [{ kind: 'composeProject', dockerEndpoint: engine.id, projectName }], settleNative: runtime.settleNative },
-            io: runtime.nativeIo, project: { composeArgs,
-                services: projection.services.filter((_, index) => targets[index] !== null),
-                nativeIdsForService: service => targets[projection.services.indexOf(service)]?.containerIds ?? [],
-                // Retain structural facts from the exact cold native read,
-                // without reconstructing the secret-bearing activation render.
-                nativeFactsForService(service) {
-                    const configuration = targets[projection.services.indexOf(service)]?.configuration;
-                    return configuration ? { configuration, containerImages: [] } : undefined;
-                },
-                authorizeServiceObserver() {
-                    references += 1;
-                    let released = false;
-                    return { ...tuple, args: [...tuple.args, ...composeArgs], async release() {
-                        if (released) return;
-                        released = true;
-                        await release();
-                    } };
-                } } });
+        for (const [sourcePath, services] of servicesBySource) {
+            const source = await custody(sourcePath);
+            if (!source) throw Object.assign(new Error('Retained source is unavailable'), { code: 'deployment_source_unavailable' });
+            const releaseSource = observeRetainedDeploymentSourceForHost({ environmentId: identity.environmentId,
+                environmentInstanceId: identity.environmentInstanceId, deploymentId: receipt.deployment.id,
+                machineId: input.machineId, installationId: input.installationId, rootPath: source.rootPath,
+                manifestFingerprint: projection.manifestFingerprint, manifest: source.manifest,
+                async assertCurrent() {
+                    await assertCurrent();
+                    if (!await custody(sourcePath)) throw Object.assign(new Error('Retained source is unavailable'), { code: 'deployment_source_unavailable' });
+                } });
+            const composeArgs = ['compose', '--project-name', projectName];
+            await produceEnvironmentProjectServices({ owner: input.owner, serverId: identity.homeServerIdentityId,
+                release: releaseSource, specIdentity: receipt.deployment.id, signal: input.signal, isCurrent: input.isCurrent,
+                nativeEffects: { keys: [{ kind: 'composeProject', dockerEndpoint: engine.id, projectName }], settleNative: runtime.settleNative },
+                io: runtime.nativeIo, project: { composeArgs,
+                    services,
+                    nativeIdsForService: service => targets[projection.services.indexOf(service)]?.containerIds ?? [],
+                    // Retain structural facts from the exact cold native read,
+                    // without reconstructing the secret-bearing activation render.
+                    nativeFactsForService(service) {
+                        const configuration = targets[projection.services.indexOf(service)]?.configuration;
+                        return configuration ? { configuration, containerImages: [] } : undefined;
+                    },
+                    authorizeServiceObserver() {
+                        references += 1;
+                        let released = false;
+                        return { ...tuple, args: [...tuple.args, ...composeArgs], async release() {
+                            if (released) return;
+                            released = true;
+                            await release();
+                        } };
+                    } } });
+        }
     } finally { await release(); }
 }

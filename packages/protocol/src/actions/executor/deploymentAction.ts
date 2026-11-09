@@ -11,6 +11,7 @@ export async function executeDeploymentAction(
   context: ActionExecutorContext,
   deps: ActionExecutorDeps,
   review?: DeploymentEnvironmentCreationReviewV1,
+  retireRemovedEnvironmentApprovals?: (environmentId: string) => Promise<void>,
 ): Promise<ActionExecuteResult> {
   if (!deps.deploymentAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
   const result = await deps.deploymentAction(actionId, input, context, review);
@@ -18,6 +19,10 @@ export async function executeDeploymentAction(
   if ('kind' in result) return { ok: true, result };
   if (!result.ok) return { ok: false, errorCode: result.error, error: result.error, details: result,
     ...('effectAttempted' in result && result.effectAttempted === false ? { effectAttempted: false } : {}) };
+  if (actionId === 'deployments.environments.delete'
+    || (actionId === 'deployments.teardown' && 'environmentRemoved' in result && result.environmentRemoved === true)) {
+    if ('environmentId' in input) await retireRemovedEnvironmentApprovals?.(input.environmentId);
+  }
   if (actionId === 'deployments.environments.list' && deps.deploymentReadArtifactHeaders) {
     const page = DeploymentEnvironmentListResultV1Schema.parse(result);
     if (!page.ok) return { ok: false, errorCode: page.error, error: page.error };

@@ -639,7 +639,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     return deps.executionRunStart(sessionId, current
       ? stampAgentStartSelectionV1(request, { workDepth: context.agentStartWorkDepth ?? 0 }, 'execution_run', current) : request, opts);
   };
-  const retireOpenManagedDeleteApprovals = async (input: Readonly<{ homeId: string; managedId: string }>,
+  const retireOpenSubjectApprovals = async (subject: Readonly<
+    { kind: 'managedMachine'; homeId: string; managedId: string }
+    | { kind: 'deploymentEnvironment'; serverId: string; environmentId: string }>,
     ctx: ActionExecutorContext): Promise<void> => {
     if (!deps.approvalsList || !deps.approvalsGet || !deps.approvalsUpdate) return;
     const warn = async (warning: Readonly<{ artifactId?: string; code: string }>) => {
@@ -654,8 +656,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     do {
       let page: Awaited<ReturnType<NonNullable<ActionExecutorDeps['approvalsList']>>>;
       try {
-        page = await deps.approvalsList({ status: 'open', actionId: 'machines.managed.delete',
-          subjectKey: deriveManagedDeleteApprovalSubjectKeyV1(input), cursor,
+        page = await deps.approvalsList({ status: 'open',
+          ...(subject.kind === 'managedMachine' ? { actionId: 'machines.managed.delete',
+            subjectKey: deriveManagedDeleteApprovalSubjectKeyV1(subject) } : {}), cursor,
           limit: 100, serverId: normalizeId(ctx.serverId) || null });
       } catch (error) {
         await warn({ code: failureCode(error, 'list_failed') });
@@ -671,14 +674,18 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           continue;
         }
         const parsed = StoredApprovalRequestSchema.safeParse(stored);
-        if (!parsed.success || parsed.data.status !== 'open' || parsed.data.actionId !== 'machines.managed.delete') continue;
+        if (!parsed.success || parsed.data.status !== 'open') continue;
         const actionArgs = readRecord(parsed.data.actionArgs);
-        if (actionArgs.homeId !== input.homeId || actionArgs.managedId !== input.managedId) continue;
+        if (subject.kind === 'managedMachine') {
+          if (parsed.data.actionId !== 'machines.managed.delete'
+            || actionArgs.homeId !== subject.homeId || actionArgs.managedId !== subject.managedId) continue;
+        } else if (!isDeploymentActionIdV1(parsed.data.actionId) || actionArgs.environmentId !== subject.environmentId
+          || typeof actionArgs.serverId !== 'string' || !isSameHome(actionArgs.serverId, subject.serverId, ctx)) continue;
         const now = Date.now();
         const canceled: ApprovalRequest = { ...settleApprovalRequestReplayInputs(parsed.data), status: 'canceled',
           updatedAtMs: Math.max(now, parsed.data.updatedAtMs) };
         try {
-          const updated = await deps.approvalsUpdate({ artifactId: item.artifactId, request: canceled,
+          const updated = await deps.approvalsUpdate({ artifactId: item.artifactId, request: canceled, expectedStatus: 'open',
             serverId: normalizeId(ctx.serverId) || null });
           if (!updated.ok) {
             await warn({ artifactId: item.artifactId, code: updated.errorCode });
@@ -2838,6 +2845,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       if (directoryPreflight.type === 'error') {
         return completeSpawnActionResult(directoryPreflight.result);
       }
+      // Reuse this invocation's target-owner read for spawn. Deferred approval
+      // stores only its proof; replay starts a new execution and prepares again.
+      ctx = { ...ctx, sessionCreationPreparedTarget: directoryPreflight.preparedTarget };
       if (directoryPreflight.type === 'approval_required') {
         const replayedApproval = SessionCreationDirectoryApprovalV1Schema.safeParse(
           ctx.sessionCreationDirectoryApproval,
@@ -4917,7 +4927,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
         return { ok: true, result };
       }
-      const dispatchMachineManagedResult = await dispatchMachineManaged({ actionId, deps, admittedInput, ctx, isDeferredApprovalResult, retireOpenManagedDeleteApprovals });
+      const dispatchMachineManagedResult = await dispatchMachineManaged({ actionId, deps, admittedInput, ctx, isDeferredApprovalResult,
+        retireOpenManagedDeleteApprovals: (input, context) => retireOpenSubjectApprovals({ kind: 'managedMachine', ...input }, context) });
       if (dispatchMachineManagedResult !== null) return dispatchMachineManagedResult;
 
       const machinePoolActionId = isActionFamilyId(actionId, MachinePoolActionIdV1Schema) ? actionId : null;
@@ -5936,7 +5947,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if (isDeploymentActionIdV1(actionId)) {
           return executeDeploymentAction(actionId, data as z.infer<(typeof DeploymentActionInputSchemasV1)[typeof actionId]>,
             ctx, deps, actionId === 'deployments.environments.create' && deploymentReview !== undefined
-              ? DeploymentEnvironmentCreationReviewV1Schema.parse(deploymentReview) : undefined);
+              ? DeploymentEnvironmentCreationReviewV1Schema.parse(deploymentReview) : undefined,
+            environmentId => retireOpenSubjectApprovals({ kind: 'deploymentEnvironment',
+              serverId: normalizeId(readRecord(data).serverId), environmentId }, ctx));
         }
         const dispatchProjectsDispatch3Result = await dispatchProjectsDispatch3({ actionId, deps, data, ctx });
         if (dispatchProjectsDispatch3Result !== null) return dispatchProjectsDispatch3Result;

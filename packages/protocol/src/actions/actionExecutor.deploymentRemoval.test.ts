@@ -8,7 +8,7 @@ it.each(['delete', 'teardown', 'stop-only', 'failed'] as const)(
   'settles only pending approvals for a confirmed removed Environment: %s', async scenario => {
     const input = { serverId: 'home', environmentId: 'environment', expectedRevision: 3, requestKey: 'remove',
       ...(scenario === 'delete' ? {} : { targetLinkId: 'link', expectedTargetLinkRevision: 2,
-        reason: 'manual', removeEnvironment: scenario !== 'stop-only', volumes: [] }) };
+        reason: 'manual', ...(scenario !== 'stop-only' ? { removeEnvironment: true } : {}), volumes: [] }) };
     const approval = (environmentId: string, serverId = 'home') => ApprovalRequestV1Schema.parse({
       v: 1, status: 'open', createdAtMs: 1, updatedAtMs: 1, createdBy: { surface: 'agent' }, requestedSurface: 'agent',
       actionId: 'deployments.deploy', actionArgs: { serverId, environmentId, expectedRevision: 2,

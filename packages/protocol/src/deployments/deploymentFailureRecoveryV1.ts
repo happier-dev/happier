@@ -226,6 +226,9 @@ export function projectDeploymentFailureRecoveryV1<T extends Record<string, unkn
     const failure = isRecord(details.failure) ? details.failure : undefined;
     const sourceAdmission = isRecord(details.sourceAdmission) ? details.sourceAdmission
         : isRecord(failure?.sourceAdmission) ? failure.sourceAdmission : undefined;
+    const authoredRemedy = typeof details.remedy === 'string' && details.remedy !== legacyGenericRemedy ? details.remedy
+        : typeof failure?.remedy === 'string' ? failure.remedy
+            : typeof sourceAdmission?.remedy === 'string' ? sourceAdmission.remedy : undefined;
     return projectActionFailureRecoveryV1({ ...details,
         requiredFact: typeof details.requiredFact === 'string'
             && !(details.step === 'native_execution'
@@ -233,11 +236,8 @@ export function projectDeploymentFailureRecoveryV1<T extends Record<string, unkn
             : typeof failure?.requiredFact === 'string' ? failure.requiredFact
                 : typeof sourceAdmission?.requiredFact === 'string' ? sourceAdmission.requiredFact
                     : undefined,
-        remedy: typeof details.remedy === 'string' && details.remedy !== legacyGenericRemedy
-            && !(recovery === nativeConflictRecovery && details.remedy === recoveries.deployment_conflict.remedy) ? details.remedy
-            : typeof failure?.remedy === 'string' ? failure.remedy
-                : typeof sourceAdmission?.remedy === 'string' ? sourceAdmission.remedy
-                    : undefined,
+        remedy: recovery === nativeConflictRecovery && authoredRemedy === recoveries.deployment_conflict.remedy
+            ? undefined : authoredRemedy,
     }, {
         requiredFact: details.step === 'native_execution' ? 'nativeExecutionResult' : 'deploymentActionResult',
         remedy: recovery.remedy,

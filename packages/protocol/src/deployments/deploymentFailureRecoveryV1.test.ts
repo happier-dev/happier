@@ -7,9 +7,11 @@ it.each([
     { step: 'native_execution' },
     { failureCause: { phase: 'deployment.domain.native_execution', errorCode: 'deployment_conflict' } },
     { step: 'native_execution', remedy: readDeploymentFailureRecoveryV1('deployment_conflict').remedy },
+    { failure: { step: 'native_execution', remedy: readDeploymentFailureRecoveryV1('deployment_conflict').remedy } },
 ])('routes a native conflict to the running services rather than a nonexistent review: %j', details => {
     const result = readDeploymentFailureRecoveryV1('deployment_conflict', details);
     expect(result.nextAction.destination).toBe('machines');
+    expect(result.remedy).toBe(readDeploymentFailureRecoveryV1('deployment_conflict', { step: 'native_execution' }).remedy);
     expect(readDeploymentFailureRecoveryV1('deployment_conflict').nextAction.destination).toBe('review');
 });
 
