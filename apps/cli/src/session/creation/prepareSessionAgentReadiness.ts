@@ -19,8 +19,8 @@ export async function prepareSessionAgentReadiness(input: Readonly<{
   invoke: SpawnArgs['invokeAgentReadinessAction'];
   signal?: AbortSignal;
 }>): Promise<Readonly<{ result: ReadinessResult }> | Readonly<{ agentUpdate: SessionAgentUpdateNoticeV1 }> | null> {
-  const refusal = (missing = false): Readonly<{ result: ReadinessResult }> => ({ result: { type: 'error',
-    code: missing ? 'agent_cli_missing' : 'agent_cli_not_ready', agentId: input.agentId, retryable: false } });
+  const refusal = (): Readonly<{ result: ReadinessResult }> => ({ result: { type: 'error',
+    code: 'agent_cli_not_ready', agentId: input.agentId, retryable: false } });
   const cancelled = (): Readonly<{ result: ReadinessResult }> => ({ result: { type: 'error', code: 'cancelled', retryable: true } });
   if (input.signal?.aborted) return cancelled();
   if (!input.invoke) return refusal();
@@ -53,7 +53,7 @@ export async function prepareSessionAgentReadiness(input: Readonly<{
   const acquired = await input.invoke(children.acquire.action, { ...selection, intent,
     ...(input.consent === undefined ? {} : { consent: input.consent }) });
   if (input.signal?.aborted) return cancelled();
-  if (!acquired.ok) return refusal(!agent.installed);
+  if (!acquired.ok) return { result: acquired };
   const deferred = ActionApprovalRequestCreatedResultSchema.safeParse(acquired.result);
   if (deferred.success) return { result: deferred.data };
   const started = DaemonAgentInstallStartResponseSchema.safeParse(acquired.result);
@@ -62,7 +62,7 @@ export async function prepareSessionAgentReadiness(input: Readonly<{
     machineId: input.machineId, jobId: started.data.jobId, waitForTerminal: true,
   });
   if (input.signal?.aborted) return cancelled();
-  if (!observed.ok) return refusal();
+  if (!observed.ok) return { result: observed };
   const terminal = DaemonAgentInstallReadResponseSchema.safeParse(observed.result);
   return terminal.success && terminal.data.ok && terminal.data.done && terminal.data.outcome?.kind === 'succeeded'
     ? null : refusal();

@@ -1245,14 +1245,6 @@ export class RpcHandlerManager {
                 // Both forms were admitted above; finite work retains only local cancellation.
                 ...(machineAdmission?.success || isServerOriginRequest && serverOriginFamily?.bindsManagedInstallation ? {
                     ...(machineAdmission?.success ? { machineAdmission: machineAdmission.data } : {}),
-                    verifyMachineAuthorityCurrent: async () => {
-                        try {
-                            // Accepted daemon-owned work outlives the caller's transport lifetime.
-                            // Access is still re-derived through the canonical live admission owner.
-                            return this.authorizeRequest !== undefined
-                                && (await this.authorizeRequest({ ...authorizationRequest, signal: undefined })).ok;
-                        } catch { return false; }
-                    },
                     verifyMachineAdmissionCurrent: async () => !controller.signal.aborted,
                 } : {}),
             });

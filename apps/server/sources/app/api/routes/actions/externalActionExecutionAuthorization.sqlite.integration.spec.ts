@@ -16,6 +16,7 @@ import type { FastifyRequest, InjectOptions } from 'fastify';
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from "fastify-type-provider-zod";
 import tweetnacl from "tweetnacl";
 import { decodeBase64, encodeBase64 } from 'privacy-kit';
+import { encodeBase64 as encodeProtocolBase64 } from '@happier-dev/protocol/crypto/base64';
 import type { Server, Socket } from "socket.io";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import * as cliPersistence from '../../../../../../cli/src/persistence';
@@ -8204,7 +8205,9 @@ describe("external Action execution authorization", () => {
         } finally { restoreFetch?.(); restoreEnv(envBefore); await app.close(); }
     });
 
-    it.each(['Home', 'Socket'] as const)('authenticates B-only physical writer release across custodians after the chosen child retires without a Root bearer through %s', async boundary => {
+    it.each([
+        ['Home', 'release'], ['Socket', 'release'], ['Home', 'inspect'], ['Socket', 'inspect'],
+    ] as const)('authenticates B-only physical writer cleanup across custodians after the chosen child retires without a Root bearer through %s (%s)', async (boundary, phase) => {
         const fixture = await createFixture({ qualifiedPat: false });
         const callerInputConstraints = { models: [{ agentTargetKey: 'agent:codex', providerConnectionId: null, modelId: 'allowed-model' }],
             permissionModes: ['default' as const] };
@@ -8259,7 +8262,8 @@ describe("external Action execution authorization", () => {
         const publisher = { data: {} };
         expect((await presence.registerPublisher({ socket: publisher, binding: { accountId: fixture.account.id, machineId: child.id, sessionId: session.id },
             completeActivitySnapshot: { state: 'active', activeCount: 1 } })).status).toBe('registered');
-        const method = `${parent.id}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE}`;
+        const method = `${parent.id}:${phase === 'inspect'
+            ? RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT : RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE}`;
         // Home/socket own authentication and forwarding, not the receiver's loan.
         // The real RetainedBootstrap tests decide exact snapshot/op matching and
         // root-fence release; this mock replaces only network delivery/reply.
@@ -8284,7 +8288,7 @@ describe("external Action execution authorization", () => {
                     sourceMachineId: child.id, sourceSessionId: session.id, sourceRootPath: '/child/source',
                     sourceContext: { machineAdmission: originalSourceAdmission, callerAuthority: 'account_automation', callerInputConstraints } },
                 sourceWriter: { machineId: writer.id, installationId: writer.installationId! },
-                target: { v: 1, phase: 'release', operationId: crypto.randomUUID(), accountServerId: homeId,
+                target: { v: 1, phase, operationId: crypto.randomUUID(), accountServerId: homeId,
                     targetMachineId: target.id, targetRootPath: '/child/target' } });
             await db.managedMachine.update({ where: { id: targetRow.id }, data: { enrolledMachineId: null,
                 resource: { contributionRef: { pluginId: 'happier.devcontainer', localId: 'devcontainer' }, schemaVersion: 1, value: {} } } });
@@ -8307,6 +8311,23 @@ describe("external Action execution authorization", () => {
                 expect(verified.json()).toEqual({ v: 1, ok: true });
                 expect((await verify(routing, writerKey.secretKey)).statusCode).toBe(403);
                 expect((await verify({ ...routing, sourceWriter: { machineId: stranger.id, installationId: stranger.installationId! } })).statusCode).toBe(403);
+                const sourceToken = await auth.createToken(sourceCustodian.id, undefined, { kind: 'account', authority: 'present_user' });
+                const discover = (signer = writer, privateKey = writerKey.secretKey) => {
+                    const rpcAdmission = { context: transportAdmission, method, workspaceSyncSourceWriterTargetRouting: routing };
+                    const payload = MachineInstallationProofPayloadV1Schema.parse({ version: 1, machineId: signer.id,
+                        installationId: signer.installationId, accountId: sourceCustodian.id, rpcAdmission });
+                    return app.inject({ method: 'POST', url: `/v1/machines/${signer.id}/admission/verify`,
+                        headers: { authorization: `Bearer ${sourceToken}`, ...currentAccountStoredContentCompatibilityHeaders },
+                        payload: { v: 1, ...rpcAdmission, proof: signMachineInstallationProof({ payload, privateKey }) } });
+                };
+                const discovered = await discover();
+                expect(discovered.statusCode, discovered.body).toBe(phase === 'inspect' ? 200 : 403);
+                if (phase === 'inspect') {
+                    expect(discovered.json()).toEqual({ v: 1, ok: true, destinationInstallation: { machineId: parent.id,
+                        installationId: parent.installationId, installationPublicKey: encodeProtocolBase64(parentKey.publicKey, 'base64url') } });
+                    expect((await discover(writer, strangerKey.secretKey)).statusCode).toBe(403);
+                    expect((await discover(stranger, strangerKey.secretKey)).statusCode).toBe(403);
+                }
                 const rpcAdmission = { context: transportAdmission, method, workspaceSyncSourceWriterTargetRouting: routing };
                 const payload = MachineInstallationProofPayloadV1Schema.parse({ version: 1, machineId: parent.id,
                     installationId: retainedTarget.parentInstallationId, accountId: targetCustodian.id, rpcAdmission });
@@ -10750,6 +10771,7 @@ describe("external Action execution authorization", () => {
             { id: 'bootstrap', inputSchema: roles.bootstrapInput.jsonSchema, resultSchema: MachineProvisionerBootstrapCarrierV1Schema.jsonSchema },
             { id: 'inspect', inputSchema: roles.resourceInput.jsonSchema, resultSchema: MachineProvisionerObservationV1Schema.jsonSchema },
             { id: 'destroy', inputSchema: reconciliation.destroyInput.jsonSchema, resultSchema: MachineProvisionerPowerResultV1Schema.jsonSchema },
+            { id: 'power', inputSchema: roles.powerInput.jsonSchema, resultSchema: MachineProvisionerPowerResultV1Schema.jsonSchema },
             { id: 'reconcile', inputSchema: reconciliation.input.jsonSchema, resultSchema: reconciliation.result.jsonSchema },
             ...(rebuild ? [{ id: 'rebuild', inputSchema: roles.rebuildInput.jsonSchema, resultSchema: roles.rebuildResult.jsonSchema }] : []),
         ];
@@ -10757,8 +10779,8 @@ describe("external Action execution authorization", () => {
             displayName: 'Pending native authentication fixture', engines: { happier: '^1.0.0' }, runtime: { apiVersion: 1 }, contributes: {
                 machineProvisioners: [{ id: 'compute', title: 'Guest', icon: 'machine', resourceKind: rebuild ? 'devcontainer' : 'vm', schemaVersion: 1,
                     launchSchema: native.jsonSchema, resourceSchema: native.jsonSchema, platforms: ['linux'], prerequisites: [],
-                    billing: { location: 'local', stoppedBilling: 'not-billed' }, retention: { supportedIntents: rebuild ? ['delete', 'rebuild'] : ['delete'] },
-                    actions: { check: 'check', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', destroy: 'destroy', ...(rebuild ? { rebuild: 'rebuild' } : {}) },
+                    billing: { location: 'local', stoppedBilling: 'not-billed' }, retention: { supportedIntents: rebuild ? ['delete', 'rebuild'] : ['start', 'stop', 'delete'] },
+                    actions: { check: 'check', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', destroy: 'destroy', power: 'power', ...(rebuild ? { rebuild: 'rebuild' } : {}) },
                     reconciliation: { action: 'reconcile', nativeOperationSchema: nativeOperation.jsonSchema } }],
                 actions: definitions.map(action => ({ ...action, title: action.id, execution: { target: 'daemon' },
                     surfaces: ['plugin'], scopes: ['global'], dangerLevel: 'safe' })),
@@ -10832,6 +10854,70 @@ describe("external Action execution authorization", () => {
             expect(executed.statusCode, executed.body).toBe(200);
             expect(executed.json()).toMatchObject({ execution: { ok: true, result: receipt } });
             expect(dispatchedPrincipals).toHaveLength(1);
+        } finally { await app.close(); }
+    });
+
+    it.each((['account', 'api_token', 'machine_grant'] as const).flatMap(credential =>
+        (['stop', 'delete'] as const).map(intent => ({ credential, intent }))))(
+        'records the exact submitted $intent result after $credential revocation and refuses a new admission', async ({ credential, intent }) => {
+        const { fixture, homeId, controller, input } = await createManagedNativeAuthFixture();
+        const creationRequestId = crypto.randomUUID();
+        const created = await admitManagedAcquire({ requesterAccountId: fixture.account.id, custodianAccountId: fixture.account.id,
+            requestEnvelopeDigest: 'submitted-control-creation', input: { input, requestId: creationRequestId, continuationPresent: false } });
+        const creation = { homeId, managedId: created.machine.id, expectedIntentRevision: 0, requestId: creationRequestId, controller };
+        await submitManagedAcquire(creation);
+        await reportManagedAcquire({ ...creation, result: { kind: 'bound', resource: {
+            contributionRef: input.selection.launch.provider, schemaVersion: 1, value: { id: 'native-control-resource' },
+        } } });
+        const actionId = intent === 'delete' ? 'machines.managed.delete' : 'machines.managed.power.set';
+        const requestId = crypto.randomUUID();
+        const control = { homeId, managedId: created.machine.id, expectedRevision: 0, when: 'now', intent,
+            ...(intent === 'delete' ? { reviewedDependencies: true } : {}) };
+        const actor = credential === 'machine_grant' ? await createFixture({ qualifiedPat: false }) : fixture;
+        if (credential === 'machine_grant') await inTx(tx => setEligibleMachineAccessGrantInTx(tx, {
+            actorAccountId: fixture.account.id, machineId: controller.machineId,
+            principal: { kind: 'account', accountId: actor.account.id }, level: 'admin' }));
+        const token = credential === 'api_token' ? fixture.pat.token
+            : await auth.createToken(actor.account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId,
+            target: { kind: 'machine', machineId: controller.machineId }, input: control });
+        const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>() as unknown as import('@/app/api/types').Fastify;
+        app.setValidatorCompiler(validatorCompiler);
+        app.setSerializerCompiler(serializerCompiler);
+        enableAuthentication(app);
+        registerExternalActionRoutes(app, { dispatch: async () => ({ kind: 'placement_error', code: 'target_unavailable' }) });
+        registerManagedMachineRoutes(app);
+        try {
+            const authorization = await mint(app, fixture, actionId, envelope, token);
+            const post = (path: string, body: InjectOptions['payload']) => app.inject({ method: 'POST', url: path, payload: body,
+                headers: machineHeaders({ authorizationToken: authorization.token, effectActionId: actionId,
+                    method: 'POST', path, body, privateKey: fixture.keyPair.secretKey }) });
+            const admitted = await post('/v1/machines/managed/controller/admit-control', { action: actionId, requestId, input: control });
+            expect(admitted.statusCode, admitted.body).toBe(200);
+            const correlation = { homeId, managedId: created.machine.id, expectedIntentRevision: 1, requestId, controller };
+            const submitted = await post('/v1/machines/managed/controller/submit-intent', correlation);
+            expect(submitted.statusCode, submitted.body).toBe(200);
+            expect(submitted.json()).toMatchObject({ submitted: true });
+            if (credential === 'api_token') await auth.revokeApiToken({ accountId: fixture.account.id, tokenId: fixture.pat.tokenId });
+            else if (credential === 'machine_grant') await inTx(tx => removeMachineAccessGrantInTx(tx, {
+                actorAccountId: fixture.account.id, machineId: controller.machineId,
+                principal: { kind: 'account', accountId: actor.account.id } }));
+            else await db.account.update({ where: { id: fixture.account.id }, data: { tokenEpoch: { increment: 1 } } });
+            const observation = intent === 'delete' ? { observedAt: 30, availability: 'absent' }
+                : { observedAt: 30, availability: 'present', power: 'stopped' };
+            const report = { ...correlation, result: { kind: 'confirmed' }, observation };
+            for (const mismatch of [{ requestId: crypto.randomUUID() }, { expectedIntentRevision: 2 },
+                { controller: { ...controller, installationId: crypto.randomUUID() } }]) {
+                expect((await post('/v1/machines/managed/controller/report-intent', { ...report, ...mismatch })).statusCode).toBe(401);
+            }
+            const settled = await post('/v1/machines/managed/controller/report-intent', report);
+            expect(settled.statusCode, settled.body).toBe(200);
+            expect(settled.json()).toMatchObject({ machine: { observation } });
+            expect(settled.json().machine).not.toHaveProperty('submittedNativeEffect');
+            const next = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
+                headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: controller.machineId,
+                    envelope: { ...envelope, requestId: crypto.randomUUID() } } });
+            expect(next.statusCode, next.body).toBe(credential === 'machine_grant' ? 409 : 401);
         } finally { await app.close(); }
     });
 

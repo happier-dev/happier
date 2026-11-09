@@ -70,7 +70,7 @@ import { resolveCredentialActionAdmissionV1 } from '@happier-dev/protocol/action
 import { MachineSetupResolveInputV1Schema,
     MachineSetupReportInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachineActionIdV1Schema, ManagedMachineActionInputSchemasV1, managedMachineActionEndpointPathV1, ManagedControllerReportV1Schema, ManagedControllerIntentReportV1Schema, ManagedControllerCredentialDeliveryReportV1Schema, isMachineSetupPlanRpcChildV1, readMachineSetupPlanChildInputV1, type ManagedControllerReportV1, type ManagedControllerIntentReportV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { isOrdinaryMachineSetupNativeActionIdV1, isMachineSetupPlanOrApplyActionIdV1, isManagedEnrollmentRecoveryChildV1, readSessionAgentReadinessRoleV1, SESSION_AGENT_READINESS_ROOT_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { isOrdinaryMachineSetupNativeActionIdV1, isMachineSetupPlanOrApplyActionIdV1, isManagedEnrollmentRecoveryChildV1, isManagedPowerOrDeleteActionIdV1, readSessionAgentReadinessRoleV1, SESSION_AGENT_READINESS_ROOT_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { type AuthTokenAuthenticationEvidenceV1 } from '@happier-dev/protocol/auth/authToken';
 import { ActionOperationGetV2RequestSchema } from '@happier-dev/protocol/actions/operations/v1';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
@@ -591,7 +591,7 @@ async function isRetainedDiscussionPublicationSourceCurrentInTx(reader: Tx,
 /** Retirement closes effects, not reports of the one already-submitted native tuple. */
 async function isIssuedIntentNativeFactReportInTx(reader: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
     report: ManagedControllerIntentReportV1): Promise<boolean> {
-    if (!binding.workflowActionOrigin || !['machines.managed.power.set', 'machines.managed.delete'].includes(binding.actionId)
+    if (!isManagedPowerOrDeleteActionIdV1(binding.actionId)
         || binding.serverIdentityId !== report.homeId || binding.requestId !== report.requestId
         || (report.controller !== undefined && (binding.machineId !== report.controller.machineId
             || binding.installationId !== report.controller.installationId))) return false;
@@ -1028,7 +1028,7 @@ function isPublicProfilePreparationEffect(rootActionId: string, effectActionId: 
 export async function readCurrentManagedGuestActivityInTx(reader: Tx,
     binding: ExternalActionExecutionAuthorizationBindingV1, machineId: string,
     target?: ManagedActivityRpcRequestV1): Promise<VerifiedExternalActionExecutionRequest['managedGuestActivity'] | null> {
-    if (binding.actionId !== 'machines.managed.power.set' && binding.actionId !== 'machines.managed.delete'
+    if (!isManagedPowerOrDeleteActionIdV1(binding.actionId)
         || binding.target.kind !== 'machine' || binding.target.machineId !== binding.machineId) return null;
     try {
         if (!await verifyCurrentExternalActionPrincipalInTx(reader, binding)) return null;
@@ -1057,7 +1057,7 @@ export async function readCurrentManagedGuestActivityInTx(reader: Tx,
             || !row.resource || row.desiredWhen !== 'after-idle'
             || !(accountExecutor || row.controllerMachineId === binding.machineId && row.controllerInstallationId === binding.installationId)
             || admission?.kind !== 'control' || admission.request.action !== binding.actionId
-            || admission.request.action !== 'machines.managed.power.set' && admission.request.action !== 'machines.managed.delete'
+            || !isManagedPowerOrDeleteActionIdV1(admission.request.action)
             || admission.request.requestId !== binding.requestId
             || admission.request.input.homeId !== row.homeId || admission.request.input.managedId !== row.id
             || admission.request.input.when !== 'after-idle'
@@ -1431,7 +1431,7 @@ async function verifyCommon(
     // Target currentness and the captured source both sign the exact destination
     // tuple. Only the accepted continuation survives its publisher stopping.
     const managedGuestMetadata = proof.method.toUpperCase() === 'GET'
-        && (binding.actionId === 'machines.managed.power.set' || binding.actionId === 'machines.managed.delete')
+        && isManagedPowerOrDeleteActionIdV1(binding.actionId)
         && /^\/v1\/machines\/[^/]+$/u.test(proof.path.split('?')[0]);
     const nativeControllerPurpose = binding.actionId === 'machines.managed.credentials.install'
         && proof.path.split('?')[0].startsWith('/v1/machines/managed/controller/');
@@ -1575,9 +1575,9 @@ async function verifyCommon(
         ...(linkReviewedSetupRead ? { deploymentLinkReviewedSetupRead: true as const } : {}),
     };
 
-    // The exact submitted purchase already admitted its requester. Its signed
+    // The exact submitted native effect already admitted its requester. Its signed
     // native result must remain recordable after that credential is withdrawn.
-    if (purpose?.kind === 'issued-managed-acquire-native-fact') {
+    if (purpose?.kind === 'issued-managed-acquire-native-fact' || purpose?.kind === 'issued-managed-intent-native-fact') {
         const principal = projectAcceptedDeploymentPrincipal(binding);
         return principal ? { binding, signedChildPurpose, effectActionId: effectActionId.data, target, principal,
             effectiveAuthority: principal.authority, ...reviewedAdmission }

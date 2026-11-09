@@ -79,11 +79,17 @@ export function isManagedEnrollmentRecoveryChildV1(rootActionId: string, childAc
     || rootActionId === 'machines.managed.inspect' && isolation;
 }
 
+/** Power and Delete share the admitted native-control lifecycle. */
+export function isManagedPowerOrDeleteActionIdV1(actionId: string): actionId is
+  'machines.managed.power.set' | 'machines.managed.delete' {
+  return actionId === 'machines.managed.power.set' || actionId === 'machines.managed.delete';
+}
+
 /** Executor location only; Home owns authorization for each invocation. */
 export function isManagedRetainedControlInvocation(actionId: string, input: unknown): actionId is
   'machines.managed.inspect' | 'machines.managed.bootstrap.retry' | 'machines.managed.power.set' | 'machines.managed.delete' {
   return actionId === 'machines.managed.inspect' || actionId === 'machines.managed.bootstrap.retry'
-    || (actionId === 'machines.managed.power.set' || actionId === 'machines.managed.delete') && readRecord(input).when === 'now';
+    || isManagedPowerOrDeleteActionIdV1(actionId) && readRecord(input).when === 'now';
 }
 
 /** Reviewed combined setup reads retain the parent root, never a generic child permission. */
