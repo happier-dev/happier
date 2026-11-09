@@ -12,7 +12,7 @@ beforeAll(async () => {
 }, 120_000);
 afterAll(async () => { await stop?.(); }, 120_000);
 
-it('lists an own fresh Account Sync through normal CLI admission without a raw Machine stamp', async () => {
+it('admits an own fresh Account Sync list through normal CLI without a raw Machine stamp', async () => {
   const executor = createCliActionExecutorFromCredentials({ credentials: h.ownerCredentials,
     serverId: h.serverId, serverIdentityId: h.home.homeId, serverApiUrl: h.home.baseUrl,
     machineId: h.machineId, externalActionClient: true });
@@ -30,8 +30,12 @@ it('lists an own fresh Account Sync through normal CLI admission without a raw M
       readCredentialsFn: async () => h.ownerCredentials,
       createExecutorFn: async () => executor,
     });
-    expect(JSON.parse(output)).toMatchObject({ ok: true, kind: 'actions_invoke',
-      data: { relationships: [], sets: [], remoteRelationships: [] } });
+    const result: unknown = JSON.parse(output);
+    // The installed fixture deliberately refuses native acquisition. The owner
+    // must admit this requester before listing reaches that real engine boundary;
+    // missing requester custody used to refuse it before the engine was reached.
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: false, kind: 'actions_invoke',
+      error: { code: 'engine_unavailable', failureCause: { phase: 'rpc.handler', errorCode: 'engine_unavailable' } } });
   } finally {
     stdout.mockRestore();
     process.exitCode = originalExitCode;
