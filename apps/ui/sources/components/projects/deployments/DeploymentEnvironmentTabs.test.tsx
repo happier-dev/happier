@@ -915,9 +915,15 @@ describe('Environment → Settings: checks, backups, previews', () => {
           : actionId === 'deployments.backups.test' ? { kind: 'failed', step: 'repository', reason: 'repository_password_incorrect',
             nativeExitCode: 12, remedy: 'review_credentials' }
           : actionId === 'deployments.backups.history' ? { kind: 'history', environmentId: detail.environment.id, configRevision: 1,
-            history: { entries: [{ operationId: 'nightly-failed', action: 'backup', state: 'failed', configRevision: 1,
+            ...(effects.some(effect => effect.actionId === 'deployments.backups.run') ? {
+              lastSuccessfulBackup: { operationId: 'backup-operation', completedAt: Date.parse('2026-11-06T10:01:00Z'),
+                configRevision: 1, snapshotIds: [snapshot.snapshotId] },
+              history: { entries: [{ operationId: 'backup-operation', action: 'backup', state: 'succeeded', configRevision: 1,
+                startedAt: Date.parse('2026-11-06T10:00:00Z'), completedAt: Date.parse('2026-11-06T10:01:00Z'),
+                snapshotIds: [snapshot.snapshotId] }] },
+            } : { history: { entries: [{ operationId: 'nightly-failed', action: 'backup', state: 'failed', configRevision: 1,
               startedAt: Date.parse('2026-11-06T02:00:00Z'), completedAt: Date.parse('2026-11-06T02:01:00Z'), snapshotIds: [],
-              code: 'backup_failed', step: 'backup' }] } }
+              code: 'backup_failed', step: 'backup' }] } }) }
           : actionId === 'deployments.backups.prune' ? { kind: 'pruned', environmentId: detail.environment.id, configRevision: 1,
             forgottenSnapshotIds: ['f'.repeat(64), 'e'.repeat(64)] }
           : actionId === 'deployments.backups.inventory' ? { kind: 'inventory', environmentId: detail.environment.id,
@@ -954,6 +960,10 @@ describe('Environment → Settings: checks, backups, previews', () => {
         serverId: serverIdentityId, environmentId: detail.environment.id, expectedRevision: 1, configRevision: 1,
         machineId: 'machine-a', installationId: 'installation-a', targetLinkId: 'target-link', deploymentId: 'deployment-a',
       } });
+      const { formatAsOfTime } = await import('@/utils/time/formatAsOfTime');
+      await vi.waitFor(() => expect(screen.findByTestId(`${id}.status`)?.props.detail)
+        .toBe(formatAsOfTime(Date.parse('2026-11-06T10:01:00Z'))));
+      expect(effects.filter(effect => effect.actionId === 'deployments.backups.history')).toHaveLength(2);
       await screen.pressByTestIdAsync(`${id}.verify`);
       expect(await settle(`${id}.snapshot.${snapshot.snapshotId}.manifestReadBack`)).not.toBeNull();
       await screen.pressByTestIdAsync(`${id}.snapshot.${snapshot.snapshotId}.manifestReadBack`);
@@ -1224,7 +1234,7 @@ describe('Environment → Settings: checks, backups, previews', () => {
     } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
   });
 
-  it('uses one data card for a template database and opens the in-place Add sheet', async () => {
+  it('keeps both template databases addressable and opens the in-place Add sheet', async () => {
     await homes.reset();
     const serverId = await homes.addHome({ name: 'Data', serverUrl: 'https://data-card.test',
       accountId: 'account-owner', currentAccount: true });
@@ -1233,7 +1243,10 @@ describe('Environment → Settings: checks, backups, previews', () => {
     const detail = createDeploymentEnvironmentDetailV1({ content: { ...base.content, template: {
       templateRef: { sourceId: 'apps', itemId: 'postgres', version: '17', ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } },
       definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'b'.repeat(64)}` },
-      services: ['database'], data: { engine: 'postgres', version: '17', service: 'database', port: 5432 },
+      services: ['database', 'mysql'], data: [
+        { engine: 'postgres', version: '17', service: 'database', port: 5432 },
+        { engine: 'mysql', version: '8.4', service: 'mysql', port: 3306 },
+      ],
     } } });
     const { screen, controller, settle } = await renderTab('overview', detail, {}, {
       serverId, lifetime: account.accountLifetime,
@@ -1242,6 +1255,9 @@ describe('Environment → Settings: checks, backups, previews', () => {
       expect(await settle('project-deployments.environment.data')).not.toBeNull();
       expect(screen.getTextContent()).toContain('PostgreSQL');
       expect(screen.getTextContent()).toContain('5432');
+      expect(screen.getTextContent()).toContain('MySQL');
+      expect(screen.findByTestId('project-deployments.environment.data.database.database')).not.toBeNull();
+      expect(screen.findByTestId('project-deployments.environment.data.database.mysql')).not.toBeNull();
       routerMock.spies.push.mockClear();
       const { Modal } = await import('@/modal');
       vi.mocked(Modal.show).mockClear();

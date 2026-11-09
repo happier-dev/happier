@@ -896,6 +896,7 @@ export const DeploymentEnvironmentDetail = React.memo(
                 onBackups={() => openTab('settings', 'backups')}
                 // P10: the Add sheet opens over the Environment, in place; it never leaves for Store.
                 onAdd={() => { if (lifetime) showDeploymentAddSheet({ detail, lifetime, review: props.review, machineName, catalogFilters: DEPLOYMENT_DATABASE_CATALOG_FILTER,
+                  onNavigate: (destination) => openTab(destination.tab),
                   ...(props.onOpenRecoveryDestination ? { onOpenRecovery: props.onOpenRecoveryDestination } : {}) }); }} />
               {triggerSubject ? (
                 <SubjectTriggersSection subject={triggerSubject}

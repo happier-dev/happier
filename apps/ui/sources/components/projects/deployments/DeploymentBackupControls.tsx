@@ -33,6 +33,7 @@ export function DeploymentBackupControls(props: Readonly<{
   configuration: DeploymentBackupConfigurationV1;
   lifetime: ServerAccountScopeLifetime;
   review: DeploymentReviewHandle;
+  onBackupCompleted: () => void;
   machineName: (machineId: string) => string;
   testID: string;
 }>) {
@@ -56,6 +57,7 @@ export function DeploymentBackupControls(props: Readonly<{
       totalBytesProcessed: manifest.totalBytesProcessed, source: { sourceId: manifest.sourceId, kind: manifest.kind },
       verification: { kind: 'verified', backupOperationId: capture.operationId, configRevision: manifest.configRevision } })));
     setResult(t('projects.deployments.backupCompleted', { count: capture.manifests.length }));
+    props.onBackupCompleted();
     return { ok: true };
   });
   const inspect = async () => {
@@ -425,7 +427,7 @@ export function DeploymentBackupSetup(props: Readonly<{
   const start = () => {
     if (!destination) return;
     setFields({ ...Object.fromEntries(configFields.map((field) => [field.key, ''])),
-      service: props.detail.content.template?.data?.service ?? '' });
+      service: props.detail.content.template?.data?.[0]?.service ?? '' });
   };
   const save = async () => {
     if (!fields || !destination || !retention || !complete || saving) return;

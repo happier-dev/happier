@@ -643,6 +643,7 @@ function BackupRows(props: SectionProps) {
           key={`${props.lifetime.scope.serverId}:${props.lifetime.scope.accountId}:${props.detail.environment.id}:${props.detail.environment.revision}:${props.detail.runtimeTargetLink?.activeDeploymentId}:${backup.configRevision}`}
           detail={props.detail} configuration={backup} lifetime={props.lifetime}
           review={props.review}
+          onBackupCompleted={backupFacts.reload}
           machineName={props.machineName} testID={props.testID}
         />
       ) : null}

@@ -106,6 +106,7 @@ function manifest(environmentId: string, id: string, time: string) {
 
 type Answers = Readonly<{
   history?: unknown;
+  bindingRefusal?: string;
 }>;
 
 /** A Postgres Environment opened on its Database page; the receipt keeps a pre-migration backup when asked. */
@@ -174,13 +175,13 @@ async function renderDatabase(
           contentRevision: 1,
           composeDigest: `sha256:${'b'.repeat(64)}`,
         },
-        services: ['postgres'],
-        data: {
+        services: ['postgres', 'mysql'],
+        data: [{
           engine: 'postgres',
           version: '17',
           service: 'postgres',
           port: 5432,
-        },
+        }, { engine: 'mysql', service: 'mysql', port: 3306 }],
       },
     },
   });
@@ -280,7 +281,14 @@ async function renderDatabase(
                   ),
                 ],
               }
-            : (input.answers?.history ?? {
+            : (effects.some((effect) => effect.actionId === 'deployments.backups.run') ? {
+                kind: 'history', environmentId, configRevision: 1,
+                lastSuccessfulBackup: { operationId: 'manual-backup', completedAt: Date.parse('2026-11-07T10:01:00Z'),
+                  configRevision: 1, snapshotIds: ['e'.repeat(64)] },
+                history: { entries: [{ operationId: 'manual-backup', action: 'backup', state: 'succeeded',
+                  startedAt: Date.parse('2026-11-07T10:00:00Z'), completedAt: Date.parse('2026-11-07T10:01:00Z'),
+                  configRevision: 1, snapshotIds: ['e'.repeat(64)] }] },
+              } : input.answers?.history ?? {
                 kind: 'history',
                 environmentId,
                 configRevision: 1,
@@ -288,6 +296,19 @@ async function renderDatabase(
               });
       },
     });
+  }
+  let setBindings = input.setBindings ?? null;
+  if (input.answers?.bindingRefusal) {
+    const code = input.answers.bindingRefusal;
+    await answerExternalActionAccountForHome(homes, serverId, {
+      machineId, installationId: 'installation-a', actionId: 'deployments.bindings.set', tokenEpoch: 0,
+      execute: () => DeploymentActionOutputSchemasV1['deployments.bindings.set'].parse({ ok: false, error: code }),
+    });
+    homes.answer(serverId, '/v1/deployments/environments/environment-web', { body: {
+      ok: true, environment: { ...detail.environment, id: 'environment-web', revision: 4, controllerMachineId: machineId }, targetLinks: [],
+    } });
+    const { createDeploymentActions } = await import('./deploymentActions');
+    setBindings = createDeploymentActions(account.accountLifetime, detail.environment.projectSourceId).setBindings;
   }
   const controller = createDeploymentReadControllerV1({
     // The read controller is scoped to the Environment header's own Home id.
@@ -325,7 +346,7 @@ async function renderDatabase(
         lifetime={account.accountLifetime}
         review={noReview}
         restore={input.restore ?? null}
-        setBindings={input.setBindings ?? null}
+        setBindings={setBindings}
         onBack={back}
         onNavigate={navigate}
       />
@@ -362,7 +383,7 @@ async function renderDatabase(
 }
 
 describe('Environment → Data → Add (P10)', () => {
-  it.each(['applied', 'template_service_conflict'] as const)('applies the reviewed database from the Add button through the confirmed Action front door (%s)', async outcome => {
+  it.each(['applied', 'template_service_conflict', 'partial'] as const)('applies the reviewed database from the Add button through the confirmed Action front door (%s)', async outcome => {
     const { showDeploymentAddSheet } = await import('./DeploymentDatabasePage');
     const { createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
     const serverUrl = `https://database-add-${outcome}.test`;
@@ -407,6 +428,12 @@ describe('Environment → Data → Add (P10)', () => {
             generatedSecrets: app.generatedSecrets.map(secret => ({ name: secret.key, phase: 'runtime', key: secret.key, profile: secret.profile })),
             domains: [], ...(input.deploy ? { deploy: input.deploy } : {}) } });
         applied.push(input);
+        if (outcome === 'partial') return DeploymentTemplateInstantiateResultV1Schema.parse({ kind: 'partial',
+          environmentId: detail.environment.id, revision: 2, targetLinkId: link.id,
+          definition: { kind: 'stored', contentRevision: 2, composeDigest: `sha256:${'c'.repeat(64)}` },
+          savedSecrets: [{ name: 'DB_PASSWORD', phase: 'runtime', source: {
+            kind: 'secret', ref: 'happier:shared-secret:v1:database-password', resourceRevision: 7,
+          } }], phase: 'deploy', errorCode: 'deployment_access_denied' });
         if (outcome !== 'applied') return ActionExecuteFailureSchema.parse({ ok: false, errorCode: outcome, error: outcome });
         return DeploymentTemplateInstantiateResultV1Schema.parse({ kind: 'applied', environmentId: detail.environment.id,
           revision: 2, targetLinkId: link.id, savedSecrets: [], definition: { kind: 'stored', contentRevision: 2,
@@ -424,7 +451,7 @@ describe('Environment → Data → Add (P10)', () => {
           children: input.deploy ? [{ action: 'deployments.deploy' as const, role: 'template.deploy' }] : [],
           executeAdmittedAction: async () => {
             const result = templateHost(input);
-            return 'errorCode' in result ? result : { ok: true as const, result };
+            return 'ok' in result ? result : { ok: true as const, result };
           },
         } };
       },
@@ -455,19 +482,22 @@ describe('Environment → Data → Add (P10)', () => {
         return result.ok ? result.result : result;
       } });
     const opened: string[] = [];
+    const navigate = vi.fn();
     const review = { ...noReview, request: vi.fn() };
     const screen = await renderScreen(<ModalProvider />);
     try {
       await act(async () => showDeploymentAddSheet({ detail, review, machineName: () => 'vps-2',
-        catalogFilters: {}, lifetime: account.accountLifetime, onOpenRecovery: destination => opened.push(destination) }));
+        catalogFilters: {}, lifetime: account.accountLifetime, onOpenRecovery: destination => opened.push(destination), onNavigate: navigate }));
       const rowId = `store.kind.app.row.app|${sourceId}|postgresql`;
       await waitForHomeGovernance(() => expect(screen.findByTestId(rowId)).not.toBeNull());
       await screen.pressByTestIdAsync(rowId);
       await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.add.confirm')?.props.disabled).toBe(false));
       await screen.pressByTestIdAsync('project-deployments.add.confirm');
       await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.add.added')
-        ?? screen.findByTestId('project-deployments.add.refused')).not.toBeNull());
-      expect(receivedApplyResults).toEqual([outcome === 'applied' ? { ok: true } : { ok: false, errorCode: outcome }]);
+        ?? screen.findByTestId('project-deployments.add.refused')
+        ?? screen.findByTestId('project-deployments.add.progress')).not.toBeNull());
+      expect(receivedApplyResults).toEqual([outcome === 'applied' ? { ok: true }
+        : { ok: false, errorCode: outcome === 'partial' ? 'deployment_access_denied' : outcome }]);
       expect(applied).toEqual([expect.objectContaining({ mode: 'apply', environment: { kind: 'existing',
         environmentId: detail.environment.id, expectedRevision: detail.environment.revision },
         templateRef: expect.objectContaining({ sourceId, itemId: 'postgresql' }),
@@ -476,7 +506,23 @@ describe('Environment → Data → Add (P10)', () => {
       expect(review.request).not.toHaveBeenCalled();
       expect(homes.artifacts(serverId).list()).toEqual([]);
       if (outcome === 'applied') expect(screen.findByTestId('project-deployments.add.refused')).toBeNull();
-      else {
+      else if (outcome === 'partial') {
+        expect(screen.findByTestId('project-deployments.add.progress')).not.toBeNull();
+        expect(screen.findByTestId('project-deployments.add.added')).toBeNull();
+        expect(screen.findByTestId('project-deployments.add.confirm')).toBeNull();
+        expect(screen.findByTestId('project-deployments.add.back')).toBeNull();
+        expect(screen.findByTestId('project-deployments.add.done')).not.toBeNull();
+        expect(screen.getTextContent()).toContain('DB_PASSWORD');
+        const { DeploymentPartialProgress } = await import('./DeploymentPartialProgress');
+        expect(screen.findByType(DeploymentPartialProgress)?.props.progress).toMatchObject({
+          environmentId: detail.environment.id, revision: 2, targetLinkId: link.id,
+          definition: { contentRevision: 2 }, phase: 'deploy',
+          savedSecrets: [{ name: 'DB_PASSWORD', source: { resourceRevision: 7 } }],
+        });
+        await screen.pressByTestIdAsync('project-deployments.add.done');
+        expect(navigate).toHaveBeenCalledWith({ tab: 'overview' });
+        expect(applied).toHaveLength(1);
+      } else {
         const { readDeploymentRefusalRecoveryV1 } = await import('@happier-dev/protocol/deployments/deploymentFailureRecoveryV1');
         expect(screen.getTextContent()).toContain(readDeploymentRefusalRecoveryV1(outcome)!.remedy);
         expect(screen.findByTestId('project-deployments.add.added')).toBeNull();
@@ -551,6 +597,15 @@ describe('Environment → Data → Add (P10)', () => {
 });
 
 describe('Environment → Data → Database page (P9)', () => {
+  it('resolves each retained database by its service after a second database was added', async () => {
+    const view = await renderDatabase({ database: 'mysql' });
+    try {
+      expect(await view.settle('project-deployments.database.connect')).not.toBeNull();
+      expect(view.screen.getTextContent()).toContain('MySQL');
+      expect(view.screen.getTextContent()).toContain('3306');
+    } finally { await view.dispose(); }
+  });
+
   it('reads backup history once on open, shows it, and Back up now runs the same Action an agent uses', async () => {
     const view = await renderDatabase({
       answers: {
@@ -609,6 +664,11 @@ describe('Environment → Data → Database page (P9)', () => {
       await view.screen.pressByTestIdAsync(`${page}.controls.run`);
       await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); });
       expect(view.effects.find((effect) => effect.actionId === 'deployments.backups.run')?.input).toEqual(history);
+      expect(await view.settle(`${page}.history.manual-backup`)).not.toBeNull();
+      const { formatAsOfTime } = await import('@/utils/time/formatAsOfTime');
+      expect(view.screen.findByTestId(`${page}.lastGood`)?.props.detail)
+        .toBe(formatAsOfTime(Date.parse('2026-11-07T10:01:00Z')));
+      expect(view.effects.filter((effect) => effect.actionId === 'deployments.backups.history')).toHaveLength(2);
     } finally {
       await view.dispose();
     }
@@ -618,7 +678,9 @@ describe('Environment → Data → Database page (P9)', () => {
     const sets: unknown[] = [];
     const view = await renderDatabase({ shared: true, setBindings: async (input) => {
       sets.push(DeploymentActionInputSchemasV1['deployments.bindings.set'].parse({ ...input, serverId: 'home' }));
-      return { ok: true };
+      return DeploymentActionOutputSchemasV1['deployments.bindings.set'].parse({
+        ok: true, environmentId: input.environmentId, revision: input.expectedRevision + 1,
+      });
     } });
     try {
       // Opening reads the backup history; let it settle so no native read outlives this case.
@@ -638,8 +700,25 @@ describe('Environment → Data → Database page (P9)', () => {
     } finally { await view.dispose(); }
   });
 
+  it('keeps the binding writer revision refusal visible instead of reporting Connected', async () => {
+    const view = await renderDatabase({ shared: true, answers: { bindingRefusal: 'deployment_conflict' } });
+    try {
+      await view.settle(`${page}.history.empty`);
+      await view.screen.pressByTestIdAsync(`${page}.connect`);
+      await view.settle('project-deployments.connect.destination:environment-web');
+      await view.screen.pressByTestIdAsync('project-deployments.connect.destination:environment-web');
+      await view.screen.pressByTestIdAsync('project-deployments.connect.confirm');
+      await waitForHomeGovernance(() => expect(view.screen.findByTestId('project-deployments.connect.refused')
+        ?? view.screen.findByTestId('project-deployments.connect.connected')).not.toBeNull());
+      expect(view.screen.findByTestId('project-deployments.connect.connected')).toBeNull();
+      expect(view.screen.findByTestId('project-deployments.connect.refused')?.props.diagnosticCode).toBe('deployment_conflict');
+    } finally { await view.dispose(); }
+  });
+
   it('says what Connect needs when the database is not shared with other Environments', async () => {
-    const view = await renderDatabase({ setBindings: async () => ({ ok: true }) });
+    const view = await renderDatabase({ setBindings: async input => DeploymentActionOutputSchemasV1['deployments.bindings.set'].parse({
+      ok: true, environmentId: input.environmentId, revision: input.expectedRevision + 1,
+    }) });
     try {
       // Opening reads the backup history; let it settle so no native read outlives this case.
       expect(await view.settle(`${page}.history.empty`)).not.toBeNull();

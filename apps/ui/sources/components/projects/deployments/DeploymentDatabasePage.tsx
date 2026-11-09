@@ -54,7 +54,8 @@ import { DeploymentEnvironmentChooser } from './DeploymentEnvironmentCollection'
 import { deploymentActionRefusalRemedy } from './deploymentPresentation';
 import { readDeploymentRefusalRecoveryV1, type DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
-import { readDeploymentActionError, useDeploymentChangePress } from './deploymentActionOutcome';
+import { deploymentPartialRecoveryTab, readDeploymentActionError, useDeploymentChangePress } from './deploymentActionOutcome';
+import { DeploymentPartialProgress } from './DeploymentPartialProgress';
 import { createDeploymentActions } from './deploymentActions';
 import { buildCatalogAppTemplateBindings } from '@/sync/ops/actions/deploymentPublishActions';
 import {
@@ -75,7 +76,7 @@ import {
 type Detail = DeploymentEnvironmentReadDetailV1;
 type TemplateData = NonNullable<
   NonNullable<Detail['content']['template']>['data']
->;
+>[number];
 type DataLink = Detail['targetLinks'][number];
 
 /** The database a page address names: the template's data service, or one linked data target. */
@@ -84,8 +85,8 @@ type Database =
   | Readonly<{ kind: 'managed'; key: string; link: DataLink }>;
 
 function resolveDatabase(detail: Detail, key: string): Database | null {
-  const data = detail.content.template?.data;
-  if (data && data.service === key) return { kind: 'selfHosted', key, data };
+  const data = detail.content.template?.data?.find(entry => entry.service === key);
+  if (data) return { kind: 'selfHosted', key, data };
   const link = detail.targetLinks.find(
     (entry) => entry.targetLink.role === 'data' && entry.targetLink.id === key,
   );
@@ -114,7 +115,7 @@ export function DeploymentDatabasePage(
     review: DeploymentReviewHandle;
     restore: DeploymentRestoreSheetInput['restore'] | null;
     /** Adds the reference binding on the chosen app's Environment (Connect to an app). */
-    setBindings: ((input: Parameters<DeploymentSetBindings>[0]) => Promise<unknown>) | null;
+    setBindings: DeploymentSetBindings | null;
     onBack: () => void;
     onNavigate: (destination: DeploymentEnvironmentDestinationV1) => void;
   }>,
@@ -455,6 +456,7 @@ export function DeploymentDatabasePage(
                   configuration={backupConfiguration}
                   lifetime={lifetime}
                   review={props.review}
+                  onBackupCompleted={backup.reload}
                   machineName={machineName}
                   testID={`${id}.controls`}
                 />
@@ -544,6 +546,7 @@ export type DeploymentAddSheetInput = Readonly<{
   catalogFilters: SettingsCollectionFilter;
   /** Opens the editor a refusal's recovery names (Domains for a required address). */
   onOpenRecovery?: (destination: DeploymentFailureRecoveryDestinationV1) => void;
+  onNavigate?: (destination: DeploymentEnvironmentDestinationV1) => void;
   lifetime: ServerAccountScopeLifetime;
   review: DeploymentReviewHandle;
   machineName: (machineId: string) => string;
@@ -601,6 +604,7 @@ function DeploymentAddSheet(props: DeploymentAddSheetInput & CustomModalInjected
     <DeploymentAddReview item={chosen} detail={detail} lifetime={props.lifetime} review={props.review}
       machine={props.machineName(member.machineId)} onBack={back!} onClose={onClose} setChrome={setChrome}
       {...(props.onOpenRecovery ? { onOpenRecovery: props.onOpenRecovery } : {})}
+      {...(props.onNavigate ? { onNavigate: props.onNavigate } : {})}
       operands={{ machineId: member.machineId, projectSourceId: detail.environment.projectSourceId,
         environment: { kind: 'existing', environmentId: detail.environment.id, expectedRevision: detail.environment.revision },
         target: { kind: 'existing', targetLinkId: link.id, expectedRevision: link.revision, installationId: member.installationId },
@@ -625,6 +629,7 @@ function DeploymentAddReview(props: Readonly<{
   onBack: () => void;
   onClose: () => void;
   onOpenRecovery?: (destination: DeploymentFailureRecoveryDestinationV1) => void;
+  onNavigate?: (destination: DeploymentEnvironmentDestinationV1) => void;
   setChrome: CustomModalInjectedProps['setChrome'];
 }>) {
   const read = useRegistryItem({ kind: 'app', sourceId: props.item.sourceId, itemId: props.item.itemId,
@@ -663,17 +668,23 @@ function DeploymentAddReview(props: Readonly<{
     () => setAdded(true));
   const refusalCode = press.outcome?.kind === 'refused' ? press.outcome.code
     : preflight.status === 'failed' ? preflight.code : null;
+  const partial = press.outcome?.kind === 'refused' ? press.outcome.progress : undefined;
   const add = () => {
     if (!templateRef || !operands) return;
     void press.press(async () => {
-      await actions.instantiateTemplate({ ...operands, mode: 'apply', templateRef, deploy: { requestKey: randomUUID() } }, { confirmed: true });
-      return { ok: true };
+      const result = await actions.instantiateTemplate({ ...operands, mode: 'apply', templateRef, deploy: { requestKey: randomUUID() } }, { confirmed: true });
+      return result.kind === 'partial' ? { ok: false, error: result.errorCode, details: result } : { ok: true };
     });
   };
   const title = props.item.title;
-  const footer = added ? (
+  const footer = added || partial ? (
     <ModalCardFooterActions>
-      <RoundButton testID="project-deployments.add.done" size="normal" title={t('common.done')} onPress={props.onClose} />
+      <RoundButton testID="project-deployments.add.done" size="normal"
+        title={t(partial && props.onNavigate ? 'projects.deployments.openEnvironment' : 'common.done')}
+        onPress={() => {
+          props.onClose();
+          if (partial) props.onNavigate?.({ tab: deploymentPartialRecoveryTab(partial) });
+        }} />
     </ModalCardFooterActions>
   ) : (
     <ModalCardFooterActions cancel={{ onPress: props.onClose, testID: 'project-deployments.add.cancel', disabled: press.running }}>
@@ -717,8 +728,11 @@ function DeploymentAddReview(props: Readonly<{
             </ItemGroup>
             {needsReview ? <SurfaceStateCard testID="project-deployments.add.needsReview" size="line" kind="unavailable"
               title={t('projects.deployments.addNeedsReview')} /> : null}
-            {/* One refusal, preview or Add: the recovery owner's sentence beside its one next step. */}
-            {refusalCode ? <DeploymentAddRefusal testID="project-deployments.add.refused" code={refusalCode}
+            {partial && press.outcome?.kind === 'refused' && press.outcome.failure ? (
+              <DeploymentPartialProgress testID="project-deployments.add.progress" progress={partial} failure={press.outcome.failure} />
+            ) : null}
+            {/* Partial results keep the failed step and saved work together in their existing presenter. */}
+            {!partial && refusalCode ? <DeploymentAddRefusal testID="project-deployments.add.refused" code={refusalCode}
               {...(props.onOpenRecovery ? { onOpenRecovery: (destination: DeploymentFailureRecoveryDestinationV1) => {
                 props.onClose(); props.onOpenRecovery?.(destination);
               } } : {})} /> : null}
@@ -762,7 +776,7 @@ function DeploymentConnectSheet(props: Readonly<{
   controller: DeploymentReadControllerV1;
   sourceEnvironmentId: string;
   exports: readonly ConnectExport[];
-  setBindings: (input: Parameters<DeploymentSetBindings>[0]) => Promise<unknown>;
+  setBindings: DeploymentSetBindings;
   review: DeploymentReviewHandle;
 }> & CustomModalInjectedProps) {
   const [destination, setDestination] = React.useState<Readonly<{ id: string; revision: number; title: string }> | null>(null);
@@ -776,12 +790,9 @@ function DeploymentConnectSheet(props: Readonly<{
   const busy = press.running;
   const connect = () => {
     if (!valid || !destination || !exportKey) return;
-    void press.press(async () => {
-      await props.setBindings({ environmentId: destination.id, expectedRevision: destination.revision, remove: [],
+    void press.press(() => props.setBindings({ environmentId: destination.id, expectedRevision: destination.revision, remove: [],
         set: [{ purpose: 'variable', name: variable, phase: 'runtime',
-          source: { kind: 'reference', environmentId: props.sourceEnvironmentId, export: exportKey, via: 'auto' } }] });
-      return { ok: true };
-    });
+          source: { kind: 'reference', environmentId: props.sourceEnvironmentId, export: exportKey, via: 'auto' } }] }));
   };
   const footer = done ? (
     <ModalCardFooterActions>
