@@ -3,7 +3,8 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import type { DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
-import type { DeploymentBackupConfigurationV1 } from '@happier-dev/deployment-protocol';
+import { DeploymentBackupConfigurationV1Schema, validateDeploymentBackupDestinationConfigurationV1,
+  type DeploymentBackupConfigurationV1 } from '@happier-dev/deployment-protocol';
 import type { DeploymentBackupInventoryResultV1, DeploymentBackupVerifyInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 
 import { Item } from '@/components/ui/lists/Item';
@@ -22,7 +23,10 @@ import { presentSavedSecretReferencePicker } from '@/components/ui/forms/valueRe
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
-import type { PluginUiBackupDestinationProjection } from '@/sync/domains/plugins/ui/projection';
+import { deriveActionInputHints } from '@happier-dev/protocol/actions/schemaInputHints';
+import { resolveEffectiveInputFields } from '@happier-dev/protocol/inputs/inputFieldRuntime';
+import { ActionInputFields } from '@/components/sessions/actions/ActionInputFields';
+import { buildSessionActionFieldOptionsResolver } from '@/components/sessions/actions/sessionActionFieldOptions';
 
 const noop = () => {};
 type Snapshot = DeploymentBackupInventoryResultV1['snapshots'][number];
@@ -379,25 +383,9 @@ const CREDENTIAL_LABEL: Readonly<Record<string, 'credentialAccessKeyId' | 'crede
   accessKeyId: 'credentialAccessKeyId', secretAccessKey: 'credentialSecretAccessKey',
   repositoryPassword: 'credentialRepositoryPassword', sessionToken: 'credentialSessionToken',
 };
-/** Friendlier names for common destination fields; any other field the descriptor declares shows its own key. */
-const CONFIG_LABEL: Readonly<Record<string, 'setupEndpoint' | 'setupBucket' | 'setupPrefix' | 'setupRegion'>> = {
-  endpoint: 'setupEndpoint', bucket: 'setupBucket', prefix: 'setupPrefix', region: 'setupRegion',
-};
-type DestinationEntry = PluginUiBackupDestinationProjection;
 /** A search seed for the Store, not an identity: it only finds the plugins that add backup storage. */
 const STORE_BACKUP_QUERY = 'backup';
-type ConfigField = Readonly<{ key: string; required: boolean; minLength: number }>;
-
-/** The text fields a destination's own configuration schema declares, in its order. */
-function destinationConfigFields(entry: DestinationEntry): readonly ConfigField[] {
-  const schema = entry.definition.configSchema as Readonly<{ properties?: Record<string, unknown>; required?: unknown }>;
-  const required = Array.isArray(schema.required) ? schema.required : [];
-  return Object.entries(schema.properties ?? {}).flatMap(([key, property]) => {
-    const declared = property as Readonly<{ type?: unknown; minLength?: unknown }> | null;
-    return declared?.type === 'string' ? [{ key, required: required.includes(key),
-      minLength: typeof declared.minLength === 'number' ? declared.minLength : 0 }] : [];
-  });
-}
+const destinationFieldOptions = buildSessionActionFieldOptionsResolver({});
 
 /**
  * Settings › Backups before anything is set up (JOURNEY-OPUS-85 F1): an S3-transport destination the backup-destinations
@@ -414,26 +402,32 @@ export function DeploymentBackupSetup(props: Readonly<{
   const destinations = useAppShellPluginUiProjection((value) => value.pluginUiProjection?.backupDestinationsById);
   const destination = React.useMemo(() => Object.values(destinations ?? {})
     .find((entry) => entry.definition.resticTransport === 's3') ?? null, [destinations]);
-  const configFields = React.useMemo(() => destination ? destinationConfigFields(destination) : [], [destination]);
-  const [fields, setFields] = React.useState<Record<string, string> | null>(null);
+  const [fields, setFields] = React.useState<Record<string, unknown> | null>(null);
+  const inputHints = React.useMemo(() => deriveActionInputHints(destination?.definition.configSchema, undefined), [destination]);
+  const [service, setService] = React.useState('');
   const [keep, setKeep] = React.useState<Record<KeepField, string>>({ last: '', daily: '7', weekly: '4', monthly: '' });
   const [saving, setSaving] = React.useState(false);
   const id = `${props.testID}.setup`;
   const retention = retentionFromDraft(keep);
-  const value = (key: string) => (fields?.[key] ?? '').trim();
-  const complete = fields !== null && destination !== null && retention !== null && value('service') !== ''
-    && configFields.every((field) => !field.required || value(field.key).length >= field.minLength)
-    && configFields.every((field) => value(field.key) === '' || value(field.key).length >= field.minLength);
+  const config = React.useMemo(() => {
+    if (!fields || !destination) return null;
+    const parsed = DeploymentBackupConfigurationV1Schema.shape.config.safeParse(
+      Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined)));
+    return parsed.success && validateDeploymentBackupDestinationConfigurationV1({ descriptor: destination.definition, config: parsed.data })
+      ? parsed.data : null;
+  }, [fields, destination]);
+  const complete = fields !== null && destination !== null && retention !== null && service.trim() !== ''
+    && config !== null;
+  const configFields = resolveEffectiveInputFields({ inputHints }, fields ?? {});
   const start = () => {
     if (!destination) return;
-    setFields({ ...Object.fromEntries(configFields.map((field) => [field.key, ''])),
-      service: props.detail.content.template?.data?.[0]?.service ?? '' });
+    setFields(Object.fromEntries(configFields.filter(field => field.required && (field.widget === 'text' || field.widget === 'url'))
+      .map(field => [field.path, ''])));
+    setService(props.detail.content.template?.data?.[0]?.service ?? '');
   };
   const save = async () => {
-    if (!fields || !destination || !retention || !complete || saving) return;
-    const service = value('service');
-    const config = Object.fromEntries(configFields.flatMap((field) =>
-      value(field.key) !== '' || field.required ? [[field.key, value(field.key)]] : []));
+    if (!fields || !destination || !retention || !complete || !config || saving) return;
+    const selectedService = service.trim();
     setSaving(true);
     const saved = await props.onSave({
       configRevision: 1, destinationRef: { pluginId: destination.pluginId, localId: destination.definition.id },
@@ -443,14 +437,13 @@ export function DeploymentBackupSetup(props: Readonly<{
       // Required roles must be bound before backups run; optional roles stay out until the storage needs them.
       credentialBindings: destination.definition.credentialRoles.filter((entry) => entry.optional !== true).map((entry) => entry.role)
         .map((role) => ({ purpose: 'backupDestination' as const, configKey: 'destination' as const, role })),
-      sources: [{ kind: 'dump', sourceId: service, service, consistency: 'logical' }],
-      ownership: { environmentId: props.detail.environment.id, prefix: value('prefix') },
+      sources: [{ kind: 'dump', sourceId: selectedService, service: selectedService, consistency: 'logical' }],
+      ownership: { environmentId: props.detail.environment.id, prefix: typeof config.prefix === 'string' ? config.prefix : '' },
       retention,
     });
     setSaving(false);
     if (saved) setFields(null);
   };
-  const setField = (key: string) => (text: string) => setFields((current) => current ? { ...current, [key]: text } : current);
   const setKeepField = (field: KeepField) => (text: string) => setKeep((current) => ({ ...current, [field]: text }));
   if (!destination) {
     // No storage is installed for backups yet: the next step is the Store, searched for backup storage.
@@ -488,23 +481,23 @@ export function DeploymentBackupSetup(props: Readonly<{
             icon="plus" onPress={start} />
         )}
       />
-      {fields ? [...configFields.map((field) => field.key), 'service'].map((key) => (
+      {fields ? <>
+        <ActionInputFields fields={configFields} input={fields} editable={!saving} busy={saving}
+          resolveFieldOptions={destinationFieldOptions} resolveFieldTestID={field => `${id}.${field.path}.input`}
+          onPatch={patch => setFields(current => current ? { ...current, ...patch } : current)} />
         <FieldValueItem
-          key={key}
-          testID={`${id}.${key}`}
-          fieldTestID={`${id}.${key}.input`}
-          title={key === 'service' ? t('projects.deployments.settingsSections.setupService')
-            : CONFIG_LABEL[key] ? t(`projects.deployments.settingsSections.${CONFIG_LABEL[key]}`) : key}
+          testID={`${id}.service`}
+          fieldTestID={`${id}.service.input`}
+          title={t('projects.deployments.settingsSections.setupService')}
           accessoryLayout="stacked"
           autoCapitalize="none"
-          monospace={key !== 'service'}
-          value={fields[key] ?? ''}
+          value={service}
           allowEmpty
           disabled={saving}
-          onDraftChange={setField(key)}
-          onCommit={(text) => { setField(key)(text); return text; }}
+          onDraftChange={setService}
+          onCommit={(text) => { setService(text); return text; }}
         />
-      )) : null}
+      </> : null}
       {fields && destination ? destination.definition.credentialRoles.map(({ role, optional }) => (
         <Item
           key={role}

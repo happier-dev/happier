@@ -1,6 +1,7 @@
 import type { ActionSpec } from './actionSpecs.js';
 import { ActionInputPathSchema, type ActionInputFieldHint, type ActionInputHints } from './actionInputHints.js';
 import { zodSchemaToJsonSchemaObject, type JsonSchemaObject } from './actionInputJsonSchema.js';
+import { readActionSchemaTopLevelFieldNames } from './actionCliProjection.js';
 
 function isSchema(value: unknown): value is JsonSchemaObject {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -19,6 +20,12 @@ function fieldTitle(path: string): string {
 }
 
 function fieldPresentation(schema: JsonSchemaObject): Pick<ActionInputFieldHint, 'widget' | 'options' | 'listSeparator'> {
+  // Composable literal unions declare the same choices as a string enum.
+  const alternatives = schema.anyOf ?? schema.oneOf;
+  if (!schema.$ref && !schema.allOf && Array.isArray(alternatives) && alternatives.length > 0
+    && alternatives.every(arm => isSchema(arm) && typeof arm.const === 'string' && arm.const.length > 0)) {
+    return { widget: 'select', options: alternatives.map(arm => ({ value: arm.const as string, label: arm.const as string })) };
+  }
   // The full input parser still owns constraints, branches and opaque values.
   if (schema.$ref || schema.anyOf || schema.oneOf || schema.allOf || Array.isArray(schema.type)) return { widget: 'json' };
   const choices = Array.isArray(schema.enum) && schema.enum.length > 0
@@ -86,7 +93,10 @@ export function deriveActionInputHints(
   return fields.length === authoredFields.length ? authored : { ...authored, fields };
 }
 
-function withDerivedHints<T extends Readonly<{ inputSchema: ActionSpec['inputSchema']; inputHints?: ActionInputHints }>>(spec: T): T {
+function withDerivedHints<T extends Readonly<{ inputSchema: ActionSpec['inputSchema']; inputHints?: ActionInputHints }>>(
+  spec: T,
+  readAuthoredHints = () => spec.inputHints,
+): T {
   const projected = { ...spec };
   Object.defineProperty(projected, 'inputHints', {
     configurable: true,
@@ -94,7 +104,7 @@ function withDerivedHints<T extends Readonly<{ inputSchema: ActionSpec['inputSch
     get() {
       // Prepare once on demand for this immutable catalog row, never eagerly
       // project the complete Action schema graph during Protocol module load.
-      const value = deriveActionInputHints(zodSchemaToJsonSchemaObject(spec.inputSchema, { unrepresentable: 'any' }), spec.inputHints);
+      const value = deriveActionInputHints(zodSchemaToJsonSchemaObject(spec.inputSchema, { unrepresentable: 'any' }), readAuthoredHints());
       Object.defineProperty(projected, 'inputHints', { value, enumerable: true });
       return value;
     },
@@ -105,14 +115,25 @@ function withDerivedHints<T extends Readonly<{ inputSchema: ActionSpec['inputSch
 /** Complete the canonical and distinct caller-shape facets at their single owner. */
 export function completeActionInputHints(spec: ActionSpec): ActionSpec {
   const api = spec.surfaceBindings?.api;
+  const agent = spec.surfaceBindings?.agent;
+  const mcp = spec.surfaceBindings?.mcp;
+  const toolHints = (binding: NonNullable<NonNullable<ActionSpec['surfaceBindings']>['agent']>) => withDerivedHints(binding, () => {
+    const fields = readActionSchemaTopLevelFieldNames(binding.inputSchema);
+    const authored = binding.inputHints ?? spec.inputHints;
+    return fields && authored
+      ? { ...authored, fields: authored.fields.filter(field => fields.has(field.path.split('.')[0]!)) }
+      : authored;
+  });
   return withDerivedHints({
     ...spec,
     ...(spec.cli ? { cli: withDerivedHints({ ...spec.cli,
       inputSchema: spec.cli.inputSchema ?? spec.inputSchema,
       inputHints: spec.cli.inputHints ?? spec.inputHints,
     }) } : {}),
-    ...(api ? { surfaceBindings: { ...spec.surfaceBindings,
-      api: withDerivedHints({ ...api, inputHints: api.inputHints ?? spec.inputHints }),
+    ...(spec.surfaceBindings ? { surfaceBindings: { ...spec.surfaceBindings,
+      ...(agent ? { agent: toolHints(agent) } : {}),
+      ...(mcp ? { mcp: toolHints(mcp) } : {}),
+      ...(api ? { api: withDerivedHints({ ...api, inputHints: api.inputHints ?? spec.inputHints }) } : {}),
     } } : {}),
   });
 }

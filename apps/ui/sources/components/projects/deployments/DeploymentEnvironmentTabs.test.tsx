@@ -1150,7 +1150,11 @@ describe('Environment → Settings: checks, backups, previews', () => {
           { role: 'sessionToken', optional: true }],
         configSchema: { type: 'object', additionalProperties: false, required: ['endpoint', 'bucket', 'prefix'],
           properties: { endpoint: { type: 'string', minLength: 1 }, bucket: { type: 'string', minLength: 1 },
-            prefix: { type: 'string' }, region: { type: 'string', minLength: 1 } } },
+            prefix: { type: 'string' }, region: { type: 'string', minLength: 1 },
+            // Recorded bundled S3 shape: the composable union has no top-level type.
+            addressing: { anyOf: [{ const: 'auto', type: 'string' }, { const: 'dns', type: 'string' }, { const: 'path', type: 'string' }] },
+            enabled: { type: 'boolean' }, attempts: { type: 'integer' },
+            advanced: { type: 'object', additionalProperties: false, properties: { label: { type: 'string' } } } } },
         actions: { test: { kind: 'hostAction', actionId: 'deployments.backups.test' },
           open: { pluginId: 'example.storage', localId: 'bucket-store/open' } } } };
     const { screen, controller, settle } = await renderTab('settings', detail, {}, { lifetime: account.accountLifetime,
@@ -1162,21 +1166,35 @@ describe('Environment → Settings: checks, backups, previews', () => {
       expect(await settle(id)).not.toBeNull();
       await screen.pressByTestIdAsync(`${id}.start`);
       const { FieldValueItem } = await import('@/components/ui/forms/FieldValueItem');
-      const field = (name: string) => screen.findAllByType(FieldValueItem).find((node) => node.props.testID === `${id}.${name}`)!;
+      const { HappierInputField } = await import('@happier-dev/plugin-ui/presentation');
+      const { SectionActionButton } = await import('@/components/ui/lists/SectionActionButton');
+      const field = (name: string) => screen.findAllByType(HappierInputField).find((node) => node.props.field.path === name)!;
+      expect(field('addressing')?.props.options.map((option: { value: string }) => option.value)).toEqual(['auto', 'dns', 'path']);
       await act(async () => {
-        field('endpoint').props.onDraftChange('https://s3.eu-central-1.amazonaws.com');
-        field('bucket').props.onDraftChange('acme-backups');
-        field('prefix').props.onDraftChange('shop/');
-        field('region').props.onDraftChange('eu-central-1');
-        field('service').props.onDraftChange('postgres');
+        field('endpoint').props.onChange('http://minio.internal:9000');
+      });
+      await act(async () => { field('bucket').props.onChange('acme-backups'); });
+      await act(async () => { field('prefix').props.onChange('shop/'); });
+      await act(async () => { field('region').props.onChange('eu-central-1'); });
+      await act(async () => { field('addressing').props.onChange('path'); });
+      await act(async () => { field('enabled').props.onChange(false); });
+      await act(async () => { field('attempts').props.onChange(3); });
+      await act(async () => { field('advanced').props.onChange({ label: 'QA' }); });
+      await act(async () => {
+        screen.findAllByType(FieldValueItem).find((node) => node.props.testID === `${id}.service`)!.props.onDraftChange('postgres');
       });
       // The descriptor marks the session token optional: it is labeled so and left out of the required bindings.
       expect(screen.findByTestId(`${id}.role.sessionToken`)).not.toBeNull();
       expect(screen.getTextContent()).toContain('Optional');
+      await act(async () => { field('attempts').props.onChange('invalid integer'); });
+      expect(screen.findAllByType(SectionActionButton).find(node => node.props.testID === `${id}.save`)?.props.disabled).toBe(true);
+      expect(updateEnvironment).not.toHaveBeenCalled();
+      await act(async () => { field('attempts').props.onChange(3); });
       await screen.pressByTestIdAsync(`${id}.save`);
       expect(updateEnvironment).toHaveBeenCalledExactlyOnceWith(detail.environment, { backup: expect.objectContaining({
         destinationRef: { pluginId: 'example.storage', localId: 'bucket-store' },
-        config: { endpoint: 'https://s3.eu-central-1.amazonaws.com', bucket: 'acme-backups', prefix: 'shop/', region: 'eu-central-1' },
+        config: { endpoint: 'http://minio.internal:9000', bucket: 'acme-backups', prefix: 'shop/', region: 'eu-central-1',
+          addressing: 'path', enabled: false, attempts: 3, advanced: { label: 'QA' } },
         credentialBindings: [
           { purpose: 'backupDestination', configKey: 'destination', role: 'repositoryPassword' },
           { purpose: 'backupDestination', configKey: 'destination', role: 'accessKeyId' },
