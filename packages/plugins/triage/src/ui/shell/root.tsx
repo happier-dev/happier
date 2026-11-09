@@ -2470,8 +2470,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
         }}
         onClose={dismissDetail}
       />
-    ) : unobservedSelection !== null ? (
-      readFailed ? <Stack gap="small"><ErrorState
+    ) : readFailed ? <Stack gap="small"><ErrorState
         titleKey="plugins.triage.surface.detail.accountError.title" title="These details could not be read"
         descriptionKey="plugins.triage.surface.detail.accountError.description"
         description="This entry's details are unavailable right now. Try again when the connection is available."
@@ -2480,30 +2479,6 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
         codes={[selectedReadFailure?.code, ...(selectedReadFailure?.diagnostics?.map(diagnostic => diagnostic.code) ?? [])]}
         requestId={readPluginErrorRequestIdV1(selectedReadFailure)}
       /></Stack> : <LoadingState titleKey="plugins.triage.surface.detail.reading" title="Reading this entry" />
-    ) : (
-      // Keep the selection visible without inferring source absence or a
-      // filter exclusion from details this page has not loaded.
-      <Stack gap="small">
-        {headerHosted ? null : <Row justify="space-between" align="center">
-          <Heading
-            level={2}
-            value={text('plugins.triage.surface.entryNotLoaded.heading', 'These details are not loaded')}
-          />
-          <IconButton
-            icon={<Icon name="close" tone="secondary" />}
-            accessibilityLabel={text('plugins.triage.surface.close', 'Close')}
-            onPress={dismissDetail}
-          />
-        </Row>}
-
-        <EmptyState
-          titleKey="plugins.triage.surface.entryNotLoaded.heading"
-          title="These details are not loaded"
-          descriptionKey="plugins.triage.surface.entryNotLoaded.description"
-          description="This page has not loaded details for this entry."
-        />
-      </Stack>
-    )
   );
 
   /** The one detail composition, in whichever container the Collection holds it. */
@@ -2531,9 +2506,9 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   });
   const detailHeader = (key: string) => {
     if (key === TRIAGE_TASK_DRAFT_KEY_V1) return { title: text('plugins.triage.tasks.new', 'New task') };
-    if (selectedHeader === null && unobservedSelection !== null) {
+    if (selectedHeader === null && surface.selection !== null) {
       // A pin already knows its title; the read failure belongs to the body below, not to the page title.
-      const pinnedTitle = pinsByEntry.get(triageEntryRowKey(unobservedSelection.entryRef))?.displayAtMark.title;
+      const pinnedTitle = pinsByEntry.get(triageEntryRowKey(surface.selection.entryRef))?.displayAtMark.title;
       if (pinnedTitle !== undefined) return { title: pinnedTitle };
       return { title: readFailed
         ? text('plugins.triage.surface.detail.accountError.title', 'These details could not be read')

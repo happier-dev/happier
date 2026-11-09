@@ -5,7 +5,8 @@ import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { formatTriageTimestampV1, INTERNAL_TASK_SOURCE_V1, TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
-    TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1, TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1 } from '@happier-dev/triage-protocol/v1';
+    TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1, TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
+    type TriageScanInputV1, type TriageScanResultV1 } from '@happier-dev/triage-protocol/v1';
 
 import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 
@@ -16,6 +17,7 @@ import {
     TriageListEntriesResultV1Schema,
     type TriageListEntriesResultV1,
 } from '../../actions/listEntriesProtocol.js';
+import { listTriageEntries, type TriageAdmittedSourceV1 } from '../../actions/listEntries.js';
 import { TRIAGE_READ_SAVED_VIEWS_ACTION_LOCAL_ID_V1 } from '../../actions/savedViewsProtocol.js';
 import { TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1 } from '../../actions/userMarksProtocol.js';
 import {
@@ -24,6 +26,7 @@ import {
     testkitViewer,
 } from '../../corpus/testkit/observations.test-support.js';
 import { renderSurface as renderShellSurface } from '../surface.js';
+import { triageListRowTestId } from '../list/rows.js';
 import { acquireTriageListWindow, refreshTriageListWindow, readTriageListWindowReadOwner } from '../window/mountedWindow.js';
 import { reobserveTriagePostMutationRow } from '../detail/postMutationReobservation.js';
 import { triageEntryRowKey, TRIAGE_LIST_DEFAULT_LENS_V1, MAX_TRIAGE_LIST_WINDOW_ROWS_V1 } from '../../projection/listWindow.js';
@@ -38,6 +41,9 @@ import * as listSections from '../list/sections.js';
 import { reduceTriageSurfaceV1, TRIAGE_SURFACE_INITIAL_STATE_V1 } from '../state/surface.js';
 import { readTriageWindowLensV1 } from './lens.js';
 import { buildTriageRouteSubPathV1, TRIAGE_ROUTE_DEFAULT_LENS_V1 } from '../navigation/location.js';
+import { createTestkitCorpusCollections } from '../../corpus/testkit/corpusCollections.test-support.js';
+import { administerConfiguredSourceInstance } from '../../corpus/configuration/administerConfiguredSourceInstance.js';
+import { testkitSourceInstanceDraft } from '../../sessions/testkit/entrySessionTestkit.test-support.js';
 
 // Install the real accepted-render probe before ReactDOM registers its renderer.
 // The browser and composed regression therefore count the same committed work.
@@ -146,16 +152,27 @@ let listsTheEntry = true;
 let sourceAvailable = true;
 let exactTitle = ENTRY_TITLE;
 let exactReads = 0;
+let lastExactRoutingToken: string | undefined;
 let exactNeedsReview = true;
 let exactFailure: PluginError | null = null;
 let publishedContext: unknown;
+let listProducerOverride: ((input: JsonValue | undefined) => Promise<JsonValue>) | null = null;
 
-async function executeAction(action: string): Promise<JsonValue> {
+async function executeAction(action: string, input?: JsonValue): Promise<JsonValue> {
     if (action === TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1) {
         exactReads += 1;
+        lastExactRoutingToken = (input as { lastKnownLocator?: { routingToken?: string } } | undefined)
+            ?.lastKnownLocator?.routingToken;
         if (exactFailure !== null) throw exactFailure;
         // Reject an unexpected recursive transport sequence rather than leaving the test running forever.
         if (exactReads > 6) throw new Error('Unexpected recursive exact reread');
+        if (listProducerOverride !== null
+            && (input === undefined || (input as { lastKnownLocator?: { routingToken?: string } }).lastKnownLocator?.routingToken !== 'example/repository')) {
+            return { kind: 'observed', entryRef: ENTRY_REF, observation: {
+                sourceInstanceId: INSTANCE, observedAtMs: 1_760_000_100_020,
+                outcome: { kind: 'unresolved', failure: { class: 'unsupportedContract', code: 'locator-routing-token-invalid' } },
+            } } as unknown as JsonValue;
+        }
         const row = listResult(true).window.rows[0]!;
         return { kind: 'observed', entryRef: ENTRY_REF, observation: {
             ...row.observation, observedAtMs: row.observation.observedAtMs + exactReads,
@@ -164,6 +181,7 @@ async function executeAction(action: string): Promise<JsonValue> {
         } } as unknown as JsonValue;
     }
     if (action === TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1) {
+        if (listProducerOverride !== null) return await listProducerOverride(input);
         return listResult(listsTheEntry) as unknown as JsonValue;
     }
     if (action === TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1) {
@@ -188,6 +206,7 @@ async function mountShell(hosted = false, options: Readonly<{ pinned?: boolean; 
     sourceAvailable = true;
     exactTitle = ENTRY_TITLE;
     exactReads = 0;
+    lastExactRoutingToken = undefined;
     exactNeedsReview = true;
     exactFailure = null;
     const ephemeralSharedScope = createTriageEphemeralSharedScopeFixture();
@@ -209,10 +228,10 @@ async function mountShell(hosted = false, options: Readonly<{ pinned?: boolean; 
             adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope, ...(hosted ? { detailsPane: { available: true } } : {}) }),
             handlers: {
                 publishCurrentUiContext: value => { publishedContext = value; },
-                executeAction: async ({ action }) => action === TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1 && options.pinned
+                executeAction: async ({ action, input }) => action === TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1 && options.pinned
                     ? { v: 1, pins: [{ entryRef: ENTRY_REF, markedAtMs: 1_760_000_100_000,
                         displayAtMark: { title: 'Pinned before reading', scopeLabel: ENTRY_REF.collisionScope } }] }
-                    : await executeAction(action),
+                    : await executeAction(action, input),
                 replacePageLocation: ({ subPath }) => subPath,
             },
         });
@@ -235,6 +254,16 @@ async function openTheRow(shell: PluginUiTestkit): Promise<void> {
     await act(async () => { await Promise.resolve(); });
 }
 
+async function activateProducedRow(): Promise<void> {
+    const row = document.querySelector<HTMLElement>(
+        `[data-testid="${triageListRowTestId(triageEntryRowKey(ENTRY_REF))}"]`,
+    );
+    if (row === null) throw new Error('The produced entry row is not mounted');
+    await act(async () => { row.click(); });
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { await Promise.resolve(); });
+}
+
 /** The next settled pass enumerates nothing, so the selected row is evicted. */
 async function evictTheRow(
     shell: PluginUiTestkit,
@@ -250,6 +279,7 @@ async function evictTheRow(
 
 afterEach(async () => {
     for (const fixture of mounted.splice(0)) await fixture.dispose();
+    listProducerOverride = null;
 });
 
 describe('the selected entry once the window stops holding it', () => {
@@ -292,32 +322,61 @@ describe('the selected entry once the window stops holding it', () => {
         await expect(shell.getByRole('heading', { name: ENTRY_TITLE })).resolves.toBeDefined();
         expect(exactReads).toBe(2);
     });
-    it('reopens a retained failed row through its active source and recovers its observation', async () => {
+    it('reopens an exact-read failure after list refresh and recovers its observation', async () => {
+        const { collections } = createTestkitCorpusCollections();
+        expect(await administerConfiguredSourceInstance({
+            collections,
+            source: SOURCE,
+            declaredPurpose: 'triage-source',
+            request: { kind: 'create', draft: testkitSourceInstanceDraft() },
+            nowMs: 1,
+            mintSourceInstanceId: () => INSTANCE,
+        })).toEqual({ kind: 'active', sourceInstanceId: INSTANCE });
+        const scanHandle = {};
+        const admitted = [{
+            contributor: { pluginId: SOURCE.pluginId, contributionId: SOURCE.localId,
+                immutableGenerationId: 'generation-1' },
+            protocol: { id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
+                version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1 },
+            descriptor: { v: 1, purpose: 'triage-source', displayName: 'Example forge',
+                kinds: [{ id: 'pull-request', workflowSubject: 'pullRequest', displayName: 'Pull request' }] },
+            operations: { listInstances: {}, scan: scanHandle, get: {} }, surfaces: { detail: {} },
+        } as unknown as TriageAdmittedSourceV1];
+        let assembledAtMs = 1_760_000_100_000;
+        listProducerOverride = async input => await listTriageEntries(
+            TriageListEntriesInputV1Schema.parse(input), {
+                sourceInstances: collections.sourceInstances,
+                readAdmittedSources: async () => admitted,
+                executeScan: async (_operation, _scanInput: TriageScanInputV1): Promise<TriageScanResultV1> => ({
+                    kind: 'complete',
+                    observations: [{ kind: 'present', localRef: { kindId: 'pull-request', collisionScope: ENTRY_REF.collisionScope,
+                        entryId: ENTRY_REF.entryId }, locator: testkitLocator({ routingToken: 'example/repository' }),
+                        snapshot: testkitSnapshot({ title: ENTRY_TITLE }), viewer: testkitViewer({ involvement: ['reviewRequested'] }) }],
+                    evidence: { kind: 'walkFinished' },
+                }),
+                nowMs: () => ++assembledAtMs,
+            }) as unknown as JsonValue;
         const { shell, ephemeralSharedScope } = await mountShell(true);
+        expect(readTriageListWindowReadOwner(shell.context.hostApi, ephemeralSharedScope)
+            ?.getRow(triageEntryRowKey(ENTRY_REF))?.content?.outcome).toMatchObject({
+                kind: 'present', snapshot: { title: ENTRY_TITLE },
+            });
         exactFailure = new PluginError({ code: 'forbidden', retryable: false });
-        await openTheRow(shell);
+        await activateProducedRow();
         await expect(shell.getByText('These details could not be read')).resolves.toBeDefined();
 
         const store = readTriageListWindowReadOwner(shell.context.hostApi, ephemeralSharedScope)!;
-        const retained = store.getRow(triageEntryRowKey(ENTRY_REF))!;
-        let failed: ReturnType<typeof store.publishObservation> = null;
-        await act(async () => {
-            failed = store.publishObservation({
-                entryRef: retained.entryRef,
-                sourceInstanceId: INSTANCE,
-                observedAtMs: 1_760_000_100_010,
-                outcome: { kind: 'unresolved', failure: { class: 'permission', code: 'forbidden' } },
-            });
-        });
-        if (failed === null) throw new Error('Failed observation must retain its row');
-        expect(failed.content?.outcome.snapshot.title).toBe(ENTRY_TITLE);
-        expect(failed.selected).toEqual({ kind: 'none', reason: 'noPresentObservation' });
-
         await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Close details' })); });
+        await act(async () => { await refreshTriageListWindow('manual', shell.context.hostApi, ephemeralSharedScope); });
+        await act(async () => { await Promise.resolve(); });
+        const refreshed = store.getRow(triageEntryRowKey(ENTRY_REF));
+        expect(refreshed?.content).toMatchObject({ sourceInstanceId: INSTANCE,
+            outcome: { kind: 'present', locator: { routingToken: 'example/repository' } } });
         exactFailure = null;
-        await openTheRow(shell);
+        await activateProducedRow();
 
         expect(exactReads).toBe(2);
+        expect(lastExactRoutingToken).toBe('example/repository');
         const recovered = readTriageListWindowReadOwner(shell.context.hostApi, ephemeralSharedScope)!
             .getRow(triageEntryRowKey(ENTRY_REF))!;
         expect(recovered.selected).toMatchObject({ kind: 'selected', sourceInstanceId: INSTANCE });
