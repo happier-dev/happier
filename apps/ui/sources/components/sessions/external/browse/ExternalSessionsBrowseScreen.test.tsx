@@ -3,6 +3,7 @@ import { createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixture
 import * as React from 'react';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { UpdateContainerSchema } from '@happier-dev/protocol/updates';
 import { resolveServerProfileForPortableIdentity, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { serveExternalSessionBrowseHome } from '@/dev/testkit/harness/externalSessionBrowseHome';
 import { act } from 'react-test-renderer';
@@ -673,7 +674,7 @@ describe('ExternalSessionsBrowseScreen', () => {
         expect(candidatesListSpy).toHaveBeenCalledTimes(1);
     });
 
-    it.each(['unlocked', 'same-home-profile', 'foreign-home-profile'] as const)('offers source consent only for the successful Account Home (%s)', async (placement) => {
+    it.each(['unlocked', 'same-home-profile', 'foreign-home-profile', 'settings-action-policy'] as const)('offers source consent only for the successful Account Home (%s)', async (placement) => {
         httpHomes.answer(home.homes.focused!.id, CONNECTED_PRESENTATION_ROWS_ROUTE_V1, {
             body: ConnectedPresentationRowReadResponseV1Schema.parse({ status: 'present', revision: 1,
                 content: { t: 'plain', v: { v: 1, entries: [{ v: 1, label: 'Work Profile', subject: { kind: 'account',
@@ -706,7 +707,7 @@ describe('ExternalSessionsBrowseScreen', () => {
         const lockedHome = placement === 'foreign-home-profile' ? home.homes.other : home.homes.focused;
         let commits = 0;
         const screen = await renderScreen(<React.Profiler id="settings-locality" onRender={() => { commits++; }}><ExternalSessionsBrowseScreen
-            {...(placement === 'unlocked' ? {} : { lockScope: {
+            {...((placement === 'unlocked' || placement === 'settings-action-policy') ? {} : { lockScope: {
                 serverId: lockedHome!.id, machineId: placement === 'foreign-home-profile' ? 'machine-2' : 'machine-1',
                 providerId: 'codex' as const, source: { kind: 'codexHome' as const, home: 'connectedService' as const,
                     connectedServiceId: 'openai-codex', connectedServiceProfileId: 'work' },
@@ -741,30 +742,52 @@ describe('ExternalSessionsBrowseScreen', () => {
         await flushHookEffects();
         const before = commits;
         const select = menu.props.onSelect;
+        let settingsReadVersion = 7;
         httpHomes.answer(home.homes.focused!.id, 'GET /v2/account/settings', { select: () => ({
-            body: { content: { t: 'plain', v: accountSettingsState.current }, version: 7 },
+            body: { content: { t: 'plain', v: accountSettingsState.current }, version: settingsReadVersion },
         }) });
         await act(async () => { fixtureStorage.getState().applySettings(fixtureStorage.getState().settings, 7); });
-        expect(commits).toBe(before);
-        const { settingsParse } = await import('@/sync/domains/settings/settings');
-        await act(async () => {
-            accountSettingsState.current = { ...accountSettingsState.current,
-                actionsSettingsV1: { v: 1, actions: { 'settings.set': { disabledSurfaces: ['ui'] } } },
-            };
-            fixtureStorage.getState().applySettings(settingsParse(accountSettingsState.current), 7);
-        });
-        await act(async () => { await select('auto-link'); });
-        expect(settingsPostSpy).not.toHaveBeenCalled();
-        expect(accountSettingsState.current.externalSessionsSettingsV1).toBeUndefined();
+        if (placement !== 'settings-action-policy') expect(commits).toBe(before);
+        const publishSettings = async () => {
+            const update = UpdateContainerSchema.parse({
+                id: `browse-settings-${settingsReadVersion}`, seq: settingsReadVersion, createdAt: settingsReadVersion,
+                body: { t: 'update-account', id: 'browse-account',
+                    settingsV2: { content: { t: 'plain', v: accountSettingsState.current }, version: settingsReadVersion },
+                    encryptionCurrentness: { mode: 'plain', version: settingsReadVersion, settingsVersion: settingsReadVersion,
+                        updatedAt: settingsReadVersion, signingKeyFingerprint: null, contentKeyFingerprint: null } },
+            });
+            await act(async () => {
+                for (const boundary of socketBoundaries()) {
+                    if (boundary.serverUrl === home.homes.focused!.serverUrl) boundary.trigger('update', update);
+                }
+            });
+            await vi.waitFor(() => expect(fixtureStorage.getState().settingsVersion).toBe(settingsReadVersion));
+        };
+        if (placement === 'settings-action-policy') {
+            settingsReadVersion = 8;
+            await act(async () => {
+                accountSettingsState.current = { ...accountSettingsState.current,
+                    actionsSettingsV1: { v: 1, actions: { 'settings.set': { disabledSurfaces: ['ui'] } } },
+                };
+
+            });
+            await publishSettings();
+            expect(fixtureStorage.getState().settings.actionsSettingsV1.actions['settings.set']?.disabledSurfaces).toContain('ui');
+            await act(async () => { await select('auto-link'); });
+            expect(settingsPostSpy).not.toHaveBeenCalled();
+            expect(accountSettingsState.current.externalSessionsSettingsV1).toBeUndefined();
+        }
+        settingsReadVersion = 9;
         await act(async () => {
             accountSettingsState.current = { ...accountSettingsState.current,
                 actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'settings.set': ['ui'] } },
             };
-            fixtureStorage.getState().applySettings(settingsParse(accountSettingsState.current), 7);
+
         });
+        await publishSettings();
         await act(async () => { await select('auto-link'); });
         await vi.waitFor(() => expect(settingsPostSpy).toHaveBeenCalledTimes(1));
-        expect(settingsPostSpy.mock.calls[0]?.[0]).toMatchObject({ expectedVersion: 7 });
+        expect(settingsPostSpy.mock.calls[0]?.[0]).toMatchObject({ expectedVersion: 9 });
         expect(linkEnsureSpy).not.toHaveBeenCalled();
         expect(accountSettingsState.current.externalSessionsSettingsV1).toEqual(
             expect.objectContaining({

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { openChatWithFindSeed } from '@/components/appShell/panes/fileFindSeedHandoff';
 import { View } from 'react-native';
-import { readExternalSessionsSettingsV1, removeExternalSessionsAutoLinkSourcePolicyV1, upsertExternalSessionsAutoLinkSourcePolicyV1 } from '@happier-dev/protocol/sessions/external/followLifecycleV1';
+import { readExternalSessionsSettingsV1 } from '@happier-dev/protocol/sessions/external/followLifecycleV1';
 import type { ExternalSessionsAgentId, ExternalSessionsSource } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useOptionalAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
@@ -40,7 +40,8 @@ import {
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { areServerProfileIdentifiersEquivalent, resolveServerProfileForPortableIdentity } from '@/sync/domains/server/serverProfiles';
 import { useProfile, useActiveServerAccountScope } from '@/sync/store/hooks';
-import { requireOneShotAccountSettingsMutationApplied } from '@/sync/engine/settings/syncSettings';
+import { useSettingActionWriter } from '@/components/settings/catalog/useSettingActionWriter';
+import { requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { selectConnectedMetadataLabels, useConnectedMetadataCatalog } from '@/hooks/server/connectedServices/useConnectedMetadataCatalog';
 import type { Theme } from '@/theme';
@@ -140,6 +141,7 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
     const profile = useProfile();
     const profileScope = useActiveServerAccountScope();
     const expectedSettingsScope = useAccountSettingsScope();
+    const writeSetting = useSettingActionWriter();
     const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey');
     const labelsByKey = useConnectedMetadataCatalog(props.accountLifetime
         ? props.accountLifetime.isCurrent() ? props.accountLifetime.scope : null : undefined, selectConnectedMetadataLabels);
@@ -586,40 +588,14 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
         autoLinkMutationPendingRef.current = true;
         setAutoLinkMutationPending(true);
         try {
-            const enabledAtMs = Date.now();
-            const { sync } = await import('@/sync/sync');
             const settingsVersion = storage.getState().settingsVersion;
             if (settingsVersion === null) throw new Error('Account settings version is unavailable');
-            requireOneShotAccountSettingsMutationApplied(
-                await sync.mutateAccountSettingsOnce({
-                    expectedSettingsScope,
-                    expectedSettingsVersion: settingsVersion,
-                    mutate: (raw) => ({
-                        settings: {
-                            ...raw,
-                            externalSessionsSettingsV1: enabled
-                                ? upsertExternalSessionsAutoLinkSourcePolicyV1(
-                                    raw.externalSessionsSettingsV1,
-                                    {
-                                        machineId: currentTarget.machineId,
-                                        qualifiedIdentity: autoLinkPolicyScope.qualifiedIdentity,
-                                        sourcePolicyId: autoLinkPolicyScope.sourcePolicyId,
-                                        enabledAtMs,
-                                    },
-                                )
-                                : removeExternalSessionsAutoLinkSourcePolicyV1(
-                                    raw.externalSessionsSettingsV1,
-                                    {
-                                        machineId: currentTarget.machineId,
-                                        qualifiedIdentity: autoLinkPolicyScope.qualifiedIdentity,
-                                        sourcePolicyId: autoLinkPolicyScope.sourcePolicyId,
-                                    },
-                                ),
-                        },
-                        value: undefined,
-                    }),
-                }),
-            );
+            requireActionSuccess(await writeSetting({ anchor: 'externalSessions.autoLinkSources' }, {
+                machineId: currentTarget.machineId,
+                qualifiedIdentity: autoLinkPolicyScope.qualifiedIdentity,
+                sourcePolicyId: autoLinkPolicyScope.sourcePolicyId,
+                ...(enabled ? { enabledAtMs: Date.now() } : {}),
+            }, { expectedSettingsVersion: settingsVersion }));
         } catch {
             await Modal.alert(
                 t('common.error'),
@@ -629,7 +605,7 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
             autoLinkMutationPendingRef.current = false;
             setAutoLinkMutationPending(false);
         }
-    }, [accountSettingsTargetAvailable, autoLinkPolicyScope, expectedSettingsScope, resolveCurrentOperationTarget]);
+    }, [accountSettingsTargetAvailable, autoLinkPolicyScope, resolveCurrentOperationTarget, writeSetting]);
     const selectedMachinePresence = useMachinePresenceSummary(effectiveSelectedServerId, effectiveSelectedMachineId);
     const selectedMachineIsOffline = selectedMachinePresence.reachability === 'unreachable';
     const selectedMachineLabel = React.useMemo(() => {
