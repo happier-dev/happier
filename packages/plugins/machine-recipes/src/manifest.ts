@@ -15,6 +15,7 @@ import { sshHardening } from './sshHardening.js';
 import { sshFail2ban } from './sshFail2ban.js';
 import { auditLogging } from './auditLogging.js';
 import { boundedJournal } from './boundedJournal.js';
+import { tailscaleServer } from './tailscaleServer.js';
 
 /** Cold recipe declarations; native support and effects remain host-owned. */
 export const MACHINE_RECIPES_PLUGIN = definePlugin({
@@ -28,6 +29,7 @@ export const MACHINE_RECIPES_PLUGIN = definePlugin({
     'ssh-fail2ban': sshFail2ban,
     'audit-logging': auditLogging,
     'bounded-journal': boundedJournal,
+    'tailscale-server': tailscaleServer,
     [DOCKER_ENGINE_RECIPE_REF_V1.recipeId]: dockerEngine,
     coolify,
     dokploy,

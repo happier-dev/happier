@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { AccessProviderSelectionV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { computeCanonicalDomainSeparatedHexDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
@@ -11,6 +12,7 @@ import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettin
 import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { createAccountPluginSecretCustodyRouter } from '@/plugins/runtime/context/accountPluginSecretCustody';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { logger } from '@/ui/logger';
 import { writeMachineConnectorSecretGrantForHost, prepareMachineConnectorSecretGrantRemovalForHost,
   type MachineConnectorSecretGrantHostRequest } from '@/deployments/secrets/readEnvironmentSecretLaunchAdmissionForHost';
 
@@ -95,7 +97,15 @@ export async function withReachabilityJoinCredential<T>(input: Readonly<{
         } finally { bytes.fill(0); }
         if (grant.grantRef !== machineSecretGrantSubjectKey(subject)) return refuse('invalid_action_output');
         return await consume({ grantRef: grant.grantRef, contentDigest, grantRequest: admittedRequest });
-      } finally { await remove(); }
+      } finally {
+        try { await remove(); }
+        catch (error) {
+          // The encrypted Home grant may remain; preserve the native outcome,
+          // especially uncertainty that prevents replaying an admitted effect.
+          logger.warn('[Machine credential] Home grant cleanup failed',
+            projectActionFailureCauseV1(error, 'machines.credential_cleanup'));
+        }
+      }
     });
   } finally { localContext?.withdrawCatalog(); }
 }

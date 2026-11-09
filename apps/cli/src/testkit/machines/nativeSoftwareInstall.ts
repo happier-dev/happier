@@ -334,7 +334,7 @@ export async function createNativeSoftwareInstallFixture(options: Readonly<{
   } };
   const nativeDeps: NativeSoftwareActionDeps = {
     ...createUnavailableActionTransportDeps(), runActionOperation: operations.runActionOperation,
-    machineSetupPlan: createMachineSetupPlanAction({ apiMachine: client, machineId, homeId, runNative }),
+    machineSetupPlan: createMachineSetupPlanAction({ apiMachine: client, machineId, homeId, runNative, installation }),
     machineSetupApply: async (request: Parameters<NonNullable<import('@happier-dev/protocol').ActionExecutorDeps['machineSetupApply']>>[0]) =>
       apply({ ...request, input: request.input.targets[0]!, context: request.context }),
     machineSetupRemove: createMachineSetupRemoveAction({ apiMachine: client, machineId, homeId, installation }),

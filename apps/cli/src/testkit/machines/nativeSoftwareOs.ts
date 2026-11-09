@@ -19,6 +19,9 @@ const nativeTerminal = vi.hoisted(() => ({
   autoExit: false,
 }));
 const packageOs = vi.hoisted(() => ({ prefix: '', sudoersDirectory: '',
+  connectorCredentialsDirectory: '',
+  connectorOwnership: new Map<string, { uid: number; gid: number }>(),
+  runNative: null as ((command: import('@happier-dev/cli-common/machineSetup').MachineSetupNativeCommand) => Promise<import('@happier-dev/cli-common/machineSetup').MachineSetupNativeCommandResult | null>) | null,
   spawnElevation: null as import('@/machines/adminAccess/runElevatedEffect').MachineElevationSpawn | null,
   spawnProcess: null as ((...args: Parameters<typeof import('node:child_process')['spawn']>) => import('node:child_process').ChildProcess | null) | null,
 }));
@@ -45,20 +48,53 @@ vi.mock('node:child_process', async importOriginal => {
 vi.mock('node:fs/promises', async importOriginal => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
   const { redirectSudoersFileSystem } = await import('@/machines/adminAccess/sudoersFileSystem.testkit');
+  const { machineConnectorCredentialDirectory: { path: connectorDirectory } } = await import('@happier-dev/cli-common/machineSetup/credentialFile');
   const redirected = redirectSudoersFileSystem(actual, () => packageOs.sudoersDirectory);
+  const connectorPath = <T,>(value: T): T => typeof value === 'string' && (value === connectorDirectory
+    || value.startsWith(`${connectorDirectory}/`))
+    ? (() => {
+      if (!packageOs.connectorCredentialsDirectory) throw new Error('Connector filesystem fixture is not active');
+      return (packageOs.connectorCredentialsDirectory + value.slice(connectorDirectory.length)) as T;
+    })() : value;
+  const connectorTarget = (value: unknown) => typeof value === 'string' && (value === connectorDirectory
+    || value.startsWith(`${connectorDirectory}/`));
   const sudoersPath = (value: unknown) => typeof value === 'string' && (value === '/etc/sudoers.d'
     || value.startsWith('/etc/sudoers.d/') || packageOs.sudoersDirectory !== ''
       && (value === packageOs.sudoersDirectory || value.startsWith(`${packageOs.sudoersDirectory}/`)));
   return { ...redirected, async lstat(path: Parameters<typeof actual.lstat>[0], options?: Parameters<typeof actual.lstat>[1]) {
-    const stat = await redirected.lstat(path, options);
+    const stat = await redirected.lstat(connectorPath(path), options);
+    if (connectorTarget(path)) {
+      const owner = packageOs.connectorOwnership.get(stat.ino.toString()) ?? (stat.isDirectory() ? { uid: 0, gid: 0 } : undefined);
+      if (owner) return Object.assign(stat, { uid: typeof stat.uid === 'bigint' ? BigInt(owner.uid) : owner.uid,
+        gid: typeof stat.gid === 'bigint' ? BigInt(owner.gid) : owner.gid });
+    }
     if (sudoersPath(path)) return Object.assign(stat, { uid: typeof stat.uid === 'bigint' ? 0n : 0,
       gid: typeof stat.gid === 'bigint' ? 0n : 0 });
     return String(path) === packageOs.prefix ? Object.assign(stat, { uid: typeof stat.uid === 'bigint' ? 1001n : 1001 }) : stat;
-  }, chown: (...args: Parameters<typeof actual.chown>) => {
+  }, chown: async (...args: Parameters<typeof actual.chown>) => {
     // Simulate root ownership only inside the physical fixture namespace.
-    if (packageOs.sudoersDirectory && sudoersPath(args[0]) && args[1] === 0 && args[2] === 0) return Promise.resolve();
+    if (connectorTarget(args[0])) {
+      const stat = await actual.lstat(connectorPath(args[0]));
+      packageOs.connectorOwnership.set(stat.ino.toString(), { uid: args[1], gid: args[2] });
+      return;
+    }
+    if (packageOs.sudoersDirectory && sudoersPath(args[0]) && args[1] === 0 && args[2] === 0) return;
     return redirected.chown(...args);
-  } };
+  },
+    readFile: (...args: Parameters<typeof actual.readFile>) => String(args[0]) === '/proc/1/comm' && packageOs.connectorCredentialsDirectory
+      ? Promise.resolve('systemd\n') : redirected.readFile(connectorPath(args[0]), args[1]),
+    writeFile: (...args: Parameters<typeof actual.writeFile>) => redirected.writeFile(connectorPath(args[0]), args[1], args[2]),
+    mkdir: (...args: Parameters<typeof actual.mkdir>) => actual.mkdir(connectorPath(args[0]), args[1]),
+    chmod: (...args: Parameters<typeof actual.chmod>) => redirected.chmod(connectorPath(args[0]), args[1]),
+    mkdtemp: async (...args: Parameters<typeof actual.mkdtemp>) => {
+      const directory = await redirected.mkdtemp(connectorPath(args[0]), args[1]);
+      return connectorTarget(args[0]) && typeof directory === 'string'
+        ? connectorDirectory + directory.slice(packageOs.connectorCredentialsDirectory.length) : directory;
+    },
+    rename: (...args: Parameters<typeof actual.rename>) => redirected.rename(connectorPath(args[0]), connectorPath(args[1])),
+    unlink: (...args: Parameters<typeof actual.unlink>) => redirected.unlink(connectorPath(args[0])),
+    rm: (...args: Parameters<typeof actual.rm>) => redirected.rm(connectorPath(args[0]), args[1]),
+  };
 });
 // Only native module loading is substituted; terminal registration and its
 // finite process owner remain real in either host composition.
@@ -103,7 +139,9 @@ export async function createNativeSoftwareOsFixture(options: Readonly<{
         await process.settled;
         return true;
       } });
-    packageOs.prefix = ''; packageOs.sudoersDirectory = ''; packageOs.spawnElevation = null; packageOs.spawnProcess = null;
+    packageOs.prefix = ''; packageOs.sudoersDirectory = ''; packageOs.connectorCredentialsDirectory = ''; packageOs.runNative = null;
+    packageOs.connectorOwnership.clear();
+    packageOs.spawnElevation = null; packageOs.spawnProcess = null;
     env.restore();
     await rm(directory, { recursive: true, force: true });
   };
@@ -157,7 +195,7 @@ export async function createNativeSoftwareOsFixture(options: Readonly<{
     const runNative: typeof runMachineSetupNativeCommand = async command => {
       const observation = { executable: command.executable, settled: false };
       nativeCommands.push(observation);
-      try { return await runMachineSetupNativeCommand(command); }
+      try { return await packageOs.runNative?.(command) ?? await runMachineSetupNativeCommand(command); }
       finally { observation.settled = true; }
     };
     const rootLaunches: Array<{ executable: string; args: readonly string[] }> = [];
@@ -173,8 +211,8 @@ export async function createNativeSoftwareOsFixture(options: Readonly<{
           output += bytes.toString('utf8');
           let end: number;
           while ((end = output.indexOf('\n')) !== -1) {
-            const record = MachineEffectInternalRecordSchema.parse(JSON.parse(output.slice(0, end)));
-            if (record.type === 'result') rootResults.push(record.result);
+            const record = MachineEffectInternalRecordSchema.safeParse(JSON.parse(output.slice(0, end)));
+            if (record.success && record.data.type === 'result') rootResults.push(record.data.result);
             output = output.slice(end + 1);
           }
           callback(null, bytes);
@@ -185,7 +223,11 @@ export async function createNativeSoftwareOsFixture(options: Readonly<{
       let pending = '';
       const observeFrame = (line: string) => {
         if (!line.trim()) return;
-        const frame = MachineEffectInternalRequestSchema.parse(JSON.parse(line));
+        const parsed = MachineEffectInternalRequestSchema.safeParse(JSON.parse(line));
+        // Private credential dialogue frames are validated by the interpreter;
+        // retain only reviewable request frames in the fixture's observations.
+        if (!parsed.success) return;
+        const frame = parsed.data;
         if (frame.mode === 'apply' && 'plans' in frame) rootPlans.push(frame.plans);
       };
       stdin.on('data', (bytes: Buffer) => {
@@ -202,7 +244,8 @@ export async function createNativeSoftwareOsFixture(options: Readonly<{
         runNative: async command => {
           expect(rootLaunches).toHaveLength(launchOrdinal);
           if (command.executable === 'apt-get' && command.args[0] === 'install') await options.beforeInstall?.();
-          return runMachineSetupNativeCommand({ ...command, env: { ...command.env, HAPPIER_FIXTURE_NATIVE_ROOT: '1' } });
+          return await packageOs.runNative?.(command)
+            ?? await runMachineSetupNativeCommand({ ...command, env: { ...command.env, HAPPIER_FIXTURE_NATIVE_ROOT: '1' } });
         },
       }).then(code => { stdout.end(); stderr.end(); return { code, signal: null }; });
       const operationId = launch.args.find(value => value.startsWith('--operation-id='))?.slice('--operation-id='.length);
