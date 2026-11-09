@@ -3355,10 +3355,11 @@ export async function resolveExecutablePluginRuntimeRegistry(
             serverApiUrl: resolveServerHttpBaseUrl(),
             ...(pluginActionMachineId ? { machineId: pluginActionMachineId } : {}),
             ...params?.externalActionHomeBinding,
+            ...(runtimeRegistryController || params?.accountExecution
+                ? { pluginActionExecutionOwner: 'current_process' as const } : {}),
             ...(params?.accountExecution ? {
                 // This runtime already owns Account admission and any explicit
                 // nested Machine dispatch; do not re-enter daemon placement.
-                pluginActionExecutionOwner: 'current_process' as const,
                 serverId: params.accountExecution.serverId ?? configuration.activeServerId,
                 serverApiUrl: params.accountExecution.serverUrl,
                 ...(params.accountExecution.serverIdentityId
@@ -3492,6 +3493,15 @@ export async function resolveExecutablePluginRuntimeRegistry(
             enrollHeartbeat: heartbeatClient.enroll,
             readHeartbeatReceipt: heartbeatClient.read,
             onDomainResult: value => currentDomainEdgeObservation.publish(value),
+            onServiceResult: value => {
+                const handles = [...projectManagedServicesOwner.listMachineServices(), ...projectManagedServicesOwner.listProjectServices()];
+                const handle = handles.find(candidate => {
+                    const target = candidate.kind === 'workspace' ? candidate.workspace : candidate;
+                    return target.serverId === value.serverId && target.machineId === value.subject.machineId
+                        && candidate.serviceId === value.subject.serviceId && candidate.instanceId === value.generation;
+                });
+                if (handle) projectManagedServicesOwner.machineServiceRows.publishHealthResult(handle, value);
+            },
             openDomainArtifact: async (artifactId, signal) => {
                 const current = await readHealthCheckCredentials();
                 if (!current) return null;
@@ -3875,14 +3885,23 @@ export async function resolveExecutablePluginRuntimeRegistry(
     const domainSourceInvalidation = !params?.accountExecution ? invocationServiceOwners.stableEventsBroker.subscribeHost({
         target: { eventId: '@happier/automation/event-sources-invalidated', scope: { kind: 'account' } },
         isCurrent: () => consumerAssembly.isOccurrenceCurrent(),
-        listener: () => currentDomainEdgeObservation.reconcile(entry => {
-            const batch = readAdoptedHealthCheckBatch({ resolveAdoptedDefinitionSet: resolveAutomationEventAdoptedDefinitionSet,
-                caller: entry.caller, occurrenceId: entry.occurrenceId,
-                sourceInstanceId: entry.sourceInstanceId, signal: consumerAssembly.allRetirementSignal });
-            return batch.kind === 'available' && batch.source.subject.kind === 'environment'
-                && batch.source.subject.environmentId === entry.environmentId
-                && isDeepStrictEqual(batch.source.checks.find(check => check.checkId === entry.checkId), entry.check);
-        }),
+        listener: () => {
+            currentDomainEdgeObservation.reconcile(entry => {
+                const batch = readAdoptedHealthCheckBatch({ resolveAdoptedDefinitionSet: resolveAutomationEventAdoptedDefinitionSet,
+                    caller: entry.caller, occurrenceId: entry.occurrenceId,
+                    sourceInstanceId: entry.sourceInstanceId, signal: consumerAssembly.allRetirementSignal });
+                return batch.kind === 'available' && batch.source.subject.kind === 'environment'
+                    && batch.source.subject.environmentId === entry.environmentId
+                    && isDeepStrictEqual(batch.source.checks.find(check => check.checkId === entry.checkId), entry.check);
+            });
+            projectManagedServicesOwner.machineServiceRows.reconcileHealthResults(entry => {
+                const batch = readAdoptedHealthCheckBatch({ resolveAdoptedDefinitionSet: resolveAutomationEventAdoptedDefinitionSet,
+                    caller: entry.caller, occurrenceId: entry.occurrenceId,
+                    sourceInstanceId: entry.sourceInstanceId, signal: consumerAssembly.allRetirementSignal });
+                return batch.kind === 'available' && isDeepStrictEqual(batch.source.subject, entry.subject)
+                    && isDeepStrictEqual(batch.source.checks.find(check => check.checkId === entry.check.checkId), entry.check);
+            });
+        },
     }) : null;
     disposeInvocationServiceOwners = async () => {
         await domainSourceInvalidation?.dispose();
@@ -6229,8 +6248,6 @@ export async function resolveExecutablePluginRuntimeRegistry(
         const binding = invocationServiceOwners.createOrdinaryServiceBinding(
             seed.occurrenceId,
             `${seed.contribution.qualifiedId}:${seed.correlationId}:binding`,
-            [],
-            seed.contribution.qualifiedId,
         );
         return invocationServiceOwners.createServices(seed, binding);
     };
@@ -6990,8 +7007,8 @@ export async function resolveExecutablePluginRuntimeRegistry(
                     accountScoped: true,
                     accountSettingsRecordAdapter: settingsParams.accountSettingsRecordAdapter,
                     broker: createStablePluginEventsBroker(),
-                })((authoritativeContributes.settings ?? []).filter(entry => entry.definition.scope === 'account')
-                    .map(entry => ({ pluginId: entry.pluginId, contribution: entry.definition })));
+                })((authoritativeContributes.settings ?? []).flatMap(entry => entry.pluginId && entry.definition.scope === 'account'
+                    ? [{ pluginId: entry.pluginId, contribution: entry.definition }] : []));
                 return host.bind(seed)?.forScope(settingsParams.scope) ?? null;
             }
             const services = createProjectionPluginServices(settingsParams);
@@ -7032,8 +7049,6 @@ export async function resolveExecutablePluginRuntimeRegistry(
             const binding = invocationServiceOwners.createOrdinaryServiceBinding(
                 seed.occurrenceId,
                 `${seed.contribution.qualifiedId}:${seed.correlationId}:binding`,
-                [],
-                seed.contribution.qualifiedId,
             );
             const services = invocationServiceOwners.createServices(seed, binding);
             return services.availability('events').status === 'available' ? services.events.plugin : null;
@@ -7211,8 +7226,6 @@ export async function resolveExecutablePluginRuntimeRegistry(
                     .createOrdinaryServiceBinding(
                         seed.occurrenceId,
                         `${seed.contribution.qualifiedId}:${seed.correlationId}:current-global-actions`,
-                        [],
-                        seed.contribution.qualifiedId,
                     );
             return invocationServiceOwners.createServices(seed, binding).actions;
         },

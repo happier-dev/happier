@@ -11,7 +11,7 @@ import { admitScmCommitPolicy, admitScmCommitUndoLast } from '@happier-dev/proto
 import { ScmBackendDescribeResponseSchema, ScmRemoteRequestSchema, ScmCommitCreateRequestSchema } from '@happier-dev/protocol/scm';
 import type { ScmCapabilities } from '@happier-dev/protocol/scm';
 import { ScmPullRequestOpenOrReuseResponseSchema } from '@happier-dev/protocol/scm/pullRequests';
-import type { SessionPullRequestBindingInputV1 } from '@happier-dev/channels-protocol/v1';
+import type { ResolvedSessionPullRequestBindingInputV1 } from '@/session/actions/createCliActionDeps';
 import { createTargetedActionRpcRequestV1 } from '@happier-dev/protocol/actions/actionRpcTransport';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import type { resolveFilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
@@ -26,6 +26,9 @@ import { parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/
 import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { isOriginalOwnAccountActionCustody } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
+import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
+import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import type { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
 import type { indexAgentRoutingIdsByContributionIdentity, readAgentRoutingIdForContributionIdentity } from '@/plugins/projection/registry/agentRoutingIdentity';
 import type { resolveSessionMachineWorkspacePath } from '@/session/machineControlLocality';
@@ -54,11 +57,11 @@ type ResolvedSessionTransport = Extract<
   >;
 
 export function createSessionBoundScmAction(
-  params: Pick<CliActionDepsParams, 'credentials' | 'machineActionDirectTargetTransport' | 'scmFilesystemAccessPolicy' | 'serverHttpBaseUrl' | 'serverId' | 'token' | 'sessionId' | 'rawSession'>,
+  params: Pick<CliActionDepsParams, 'credentials' | 'machineActionDirectTargetTransport' | 'scmFilesystemAccessPolicy' | 'serverHttpBaseUrl' | 'serverId' | 'serverIdentityId' | 'externalActionMachineInstallationId' | 'token' | 'sessionId' | 'rawSession'>,
   { callMachineAction, isMachineActionServerScopeCurrent, invokeSessionPullRequestBinding, normalizeStringValue, readCurrentMachineControlIdentity, readTransportSessionOwnerMetadata, resolveServerRequestHeaders, resolveTransportForSession }: Readonly<{
     callMachineAction: CliMachineActionCall;
     isMachineActionServerScopeCurrent: CliMachineActionServerScopeCurrent;
-    invokeSessionPullRequestBinding: (input: SessionPullRequestBindingInputV1, caller?: ActionExecutorContext) => Promise<SessionPullRequestBindingResultV1>;
+    invokeSessionPullRequestBinding: (input: ResolvedSessionPullRequestBindingInputV1, caller?: ActionExecutorContext) => Promise<SessionPullRequestBindingResultV1>;
     normalizeStringValue: (value: unknown) => string | null;
     readCurrentMachineControlIdentity: () => Promise<CurrentMachineControlIdentity>;
     readTransportSessionOwnerMetadata: (transport: ResolvedSessionTransport) => ReturnType<typeof tryDecryptSessionOwnerMetadataView>;
@@ -226,7 +229,7 @@ export function createSessionBoundScmAction(
         ? inputRecord.destinationParentPath
         : inputRecord.cwd);
       const method = getActionSpec(actionId).bindings?.rpcMethod;
-      if (!machineId || (!machineInventory && !cwd) || !method || actionId === 'scm.reviewWorkspace.materializePrepared') {
+      if (!machineId || (!machineInventory && !cwd) || !method) {
         return { ok: false, errorCode: 'invalid_input', error: 'invalid_input' };
       }
       if (!params.credentials && params.machineActionDirectTargetTransport?.machineId !== machineId) {
@@ -348,17 +351,27 @@ export function createSessionBoundScmAction(
         return { success: false, errorCode: 'COMMAND_OUTCOME_UNKNOWN', error: 'The Machine discard outcome could not be established' };
       }
     };
-    if (context.externalActionTarget?.kind === 'machine') {
-      return await executeMachineScmAction(normalizeStringValue(context.externalActionTarget.machineId), inputRecord);
-    }
-    if (!params.credentials) {
-      return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
-    }
     if (actionId === 'scm.reviewWorkspace.materializePrepared') {
+      if (!params.credentials) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
       const selectedRoot = normalizeStringValue(inputRecord.cwd);
       if (!selectedRoot) {
         return { ok: false, errorCode: 'invalid_input', error: 'invalid_input' };
       }
+      const currentMachine = await readCurrentMachineControlIdentity();
+      if (context.externalActionTarget?.kind === 'machine'
+        && context.externalActionTarget.machineId !== currentMachine.machineId) {
+        return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+      }
+      if (!await localReviewHomeCurrent()) return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
+      const custodianAccountId = readAccountIdFromToken(params.credentials.token);
+      const installationId = params.externalActionMachineInstallationId;
+      const admission = createFilesystemEffectAdmission({
+        resolveHomeServerIdentityId: async () => params.serverIdentityId ?? null,
+        resolveHostIdentity: async () => custodianAccountId && currentMachine.machineId && installationId
+          ? { custodianAccountId, machineId: currentMachine.machineId, installationId } : null,
+      });
+      const failure = await admission.action(context as RpcActionExecutorContext);
+      if (failure) return { ok: false, ...failure };
       const { executeScmActionOperation } = await import("@/scm/actions/executeScmActionOperation");
       return await executeScmActionOperation({
         actionId,
@@ -368,6 +381,12 @@ export function createSessionBoundScmAction(
         accessPolicy: { kind: 'restrictedRoots', roots: [selectedRoot] },
         ...(context.signal ? { signal: context.signal } : {}),
       });
+    }
+    if (context.externalActionTarget?.kind === 'machine') {
+      return await executeMachineScmAction(normalizeStringValue(context.externalActionTarget.machineId), inputRecord);
+    }
+    if (!params.credentials) {
+      return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
     }
     const sessionId = normalizeStringValue(context.defaultSessionId);
     if (!sessionId) {

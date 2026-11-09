@@ -46,6 +46,7 @@ import { observeContributedActionRead } from './resourceActions';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { validateActionSessionAddressV1 } from '@happier-dev/protocol/actions/executor/sessionTargets';
 import { areServerProfileIdentifiersEquivalent } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
+import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 
 export type PluginActionsServiceSeed = Readonly<{
     requesterAccount?: PluginInvocationServicesSeed['requesterAccount'];
@@ -694,7 +695,7 @@ export function createPluginInvocationActionsService(params: Readonly<{
                 return null;
             }
         };
-        const source = readApprovalContext();
+        const source: RpcActionExecutorContext | undefined = readApprovalContext();
         // A Discussion publication or an Event occurrence admission belongs to
         // this invocation through approval and native settlement, even without
         // local upload sources. Returning only an approval receipt makes a
@@ -725,6 +726,11 @@ export function createPluginInvocationActionsService(params: Readonly<{
             ...(source?.expectedAccountId ? { expectedAccountId: source.expectedAccountId } : {}),
             ...(source?.serverId ? { serverId: source.serverId } : {}),
             ...(source?.serverIdentityId ? { serverIdentityId: source.serverIdentityId } : {}),
+            ...(source?.machineAdmission ? { machineAdmission: source.machineAdmission } : {}),
+            ...(source?.verifyMachineAdmissionCurrent ? { verifyMachineAdmissionCurrent: source.verifyMachineAdmissionCurrent } : {}),
+            ...(source?.callerInputAuthorization ? { callerInputAuthorization: source.callerInputAuthorization } : {}),
+            ...(source?.sessionActionOrigin ? { sessionActionOrigin: source.sessionActionOrigin } : {}),
+            ...(source?.requesterSessionBootstrap ? { requesterSessionBootstrap: source.requesterSessionBootstrap } : {}),
             ...(source?.externalActionExecutionAuthorization
                 ? { externalActionExecutionAuthorization: source.externalActionExecutionAuthorization } : {}),
             ...(source?.externalActionCredential ? { externalActionCredential: source.externalActionCredential } : {}),
@@ -777,7 +783,7 @@ export function createPluginInvocationActionsService(params: Readonly<{
             ...(params.seed.bypassActionInterception === true
                 ? { bypassActionInterception: true }
                 : {}),
-        } satisfies ActionExecutorContext & Readonly<{ actionCaller: ActionPluginCaller; signal: AbortSignal }>;
+        } satisfies RpcActionExecutorContext & Readonly<{ actionCaller: ActionPluginCaller; signal: AbortSignal }>;
         const execute = () => params.seed.reviewedParent ? invokeHostReviewedChildV1({
             parent: params.seed.reviewedParent,
             context: executionContext,

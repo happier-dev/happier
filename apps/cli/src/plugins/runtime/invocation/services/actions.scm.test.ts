@@ -21,6 +21,8 @@ import { createLocalScmRepositoryFixture, runScmExecutable } from '@/testkit/scm
 import { createRegisteredScmBackendAdapter } from '@/scm/pluginBackends/registeredScmBackendAdapter';
 import { createGitScmBackendRuntimeRegistration } from '../../../../../../../packages/plugins/scm-git/src/backend';
 import { createScmHostingProviderRuntimeServicesForTest } from '../../../../../../../packages/plugins/scm-git/src/testkit/scmRuntime.test-support';
+import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
+import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 
 const SCM_ACTION_INPUTS = Object.freeze([
     ['scm.pullRequest.list', { cwd: '/workspace' }],
@@ -90,6 +92,40 @@ const SCM_ACTION_INPUTS = Object.freeze([
 const scmMaterialization = createPluginActionCallerMaterializationFixture('acme.scm');
 
 describe('plugin invocation SCM actions', () => {
+    it('retains the admitted Machine requester when a source invokes its local workspace child', async () => {
+        let requester: ReturnType<typeof selectHostRequesterExecutionIdentity> | undefined;
+        const approvalContext: RpcActionExecutorContext = {
+            surface: 'ui', authority: 'present_user',
+            machineAdmission: { actorAccountId: 'reviewer', custodianAccountId: 'reviewer',
+                machineId: 'machine-1', installationId: 'installation-1', role: 'manage', encryptionMode: 'plain' },
+            verifyMachineAdmissionCurrent: async () => true,
+            externalActionTarget: { kind: 'machine', machineId: 'machine-1' },
+        };
+        const service = createPluginInvocationActionsService({
+            seed: { plugin: { id: 'acme.scm', version: '1.0.0' },
+                resolveCurrentPluginMaterializationRef: scmMaterialization.resolveCurrentPluginMaterializationRef,
+                occurrenceId: 'occurrenceId-1', surface: 'plugin', approvalContext,
+                signal: new AbortController().signal, isOccurrenceCurrent: () => true },
+            actionExecutor: createActionExecutor({ ...createUnavailableActionTransportDeps(),
+                isActionApprovalRequired: () => false,
+                scmActionExecute: async ({ context }) => {
+                    requester = selectHostRequesterExecutionIdentity({ actionContext: context as RpcActionExecutorContext,
+                        hostHomeServerIdentityId: 'home-1', hostCustodianAccountId: 'reviewer',
+                        hostExecutionTarget: { machineId: 'machine-1', installationId: 'installation-1' } });
+                    return { success: true, verification: { targetPath: '/workspace',
+                        sourceHeadSha: '0123456789abcdef0123456789abcdef01234567' } };
+                },
+            }), invokeContributedAction: vi.fn(),
+        });
+        await expect(service.execute('scm.reviewWorkspace.materializePrepared', SCM_ACTION_INPUTS[6][1])).resolves.toEqual({
+            success: true, verification: { targetPath: '/workspace', sourceHeadSha: '0123456789abcdef0123456789abcdef01234567' },
+        });
+        expect(requester).toEqual({
+            kind: 'isolated', separationRequired: false, accountAutomation: true,
+            requester: { serverId: 'home-1', accountId: 'reviewer', machineId: 'machine-1', installationId: 'installation-1' },
+        });
+    });
+
     it.each(['materialize', 'verify', 'refuse'] as const)('settles the %s result through the real prepared-workspace Action', async (operation) => {
         const fixture = createLocalScmRepositoryFixture({
             executable: 'git', repoMode: '.git', prefix: 'happier-plugin-review-root-',
