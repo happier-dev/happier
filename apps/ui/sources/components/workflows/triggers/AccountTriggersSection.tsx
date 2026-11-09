@@ -36,11 +36,13 @@ import {
     reviewWorkflowTriggerSet,
     updateWorkflowTrigger,
 } from '@/sync/domains/workflows/workflowTriggerActions';
+import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { accountTriggerRemoval, projectAccountTriggerRows, type AccountTriggerRow } from './accountTriggerRows';
+import { isWorkflowTriggerSourceGone } from './sessionTriggerGroups';
 import { TriggerPopover } from './TriggerPopover';
 import { TriggerRow } from './TriggerRow';
 import { TriggerRunsOnRow } from './TriggerRunsOnRow';
@@ -101,6 +103,10 @@ export function useAccountWorkflowEditor(props: Readonly<{ accountLifetime?: Ser
         const set = sets.find((candidate) => candidate.automationId === row.automationId);
         if (!set) return;
         setHistory(null);
+        if (isWorkflowTriggerSourceGone(set)) {
+            void remove(row);
+            return;
+        }
         if (set.legacy?.lockedReason === 'review_required') {
             if (pending.has(set.automationId)) return;
             const lifetime = captureLifetime();
@@ -125,6 +131,22 @@ export function useAccountWorkflowEditor(props: Readonly<{ accountLifetime?: Ser
             return;
         }
         setOpen({ set, triggerId: row.triggerId, anchor });
+    });
+    /** A trigger whose Workflow is gone offers only this; `triggerId: null` is the whole retained set. */
+    const remove = useEventCallback(async (row: Pick<AccountTriggerRow, 'automationId' | 'triggerId'>) => {
+        const set = sets.find((candidate) => candidate.automationId === row.automationId);
+        if (!set || pending.has(set.automationId)) return;
+        setPending((current) => new Set(current).add(set.automationId));
+        try {
+            // The Action owns the confirmation; declining it leaves the row and says nothing.
+            await removeWorkflowTrigger(accountTriggerRemoval(set, row.triggerId), actionOptions);
+            refresh();
+        } catch (error) {
+            if (error instanceof WorkflowActionError && error.rawCode === 'approval_canceled') return;
+            void Modal.alert(t('workflows.triggers.section.saveFailed'), formatWorkflowProblemMessage(error));
+        } finally {
+            setPending((current) => { const next = new Set(current); next.delete(set.automationId); return next; });
+        }
     });
     const toggle = useEventCallback(async (row: Pick<AccountTriggerRow, 'automationId' | 'triggerId'>, next: boolean) => {
         const set = sets.find((candidate) => candidate.automationId === row.automationId);
@@ -180,8 +202,8 @@ export function useAccountWorkflowEditor(props: Readonly<{ accountLifetime?: Ser
             })}
         />
     );
-    return React.useMemo(() => ({ pending, open: openRow, toggle, popover, resolveWorkflowTitle: thenOptions.resolveWorkflowTitle }),
-        [pending, openRow, toggle, popover, thenOptions.resolveWorkflowTitle]);
+    return React.useMemo(() => ({ pending, open: openRow, remove, toggle, popover, resolveWorkflowTitle: thenOptions.resolveWorkflowTitle }),
+        [pending, openRow, remove, toggle, popover, thenOptions.resolveWorkflowTitle]);
 }
 
 function AccountTriggersReadContent(props: Readonly<{ first?: boolean; accountLifetime?: ServerAccountScopeLifetime | null;
@@ -275,7 +297,7 @@ const AccountTriggerRowView = React.memo(function AccountTriggerRowView(props: R
                 enabled={!row.off}
                 multiline={!!row.legacy}
                 attention={props.reviewRequired ? t('workflows.triggers.legacy.reviewRequired') : undefined}
-                toggleDisabled={props.pending || props.reviewRequired}
+                toggleDisabled={props.pending || props.reviewRequired || props.row.sourceGone === true}
                 onToggle={props.onToggle}
                 onPress={() => props.onOpen(anchorRef)}
             />

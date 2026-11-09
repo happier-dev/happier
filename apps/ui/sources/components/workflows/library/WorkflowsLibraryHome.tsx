@@ -5,6 +5,7 @@ import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointe
 import { View } from 'react-native';
 import { WorkspaceDestinationRow } from '@/components/appShell/workspace/WorkspaceDestinationRow';
 import { useEntityComposerMention } from '@/components/ui/treeDragDrop/useEntityComposerMention';
+import { useEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDragDropHooks';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
     Collection,
@@ -61,6 +62,7 @@ import { WorkflowBuiltinsSection } from './WorkflowBuiltinsSection';
 import { useWorkflowAgentAuthoring } from '../authoring/useWorkflowAgentAuthoring';
 import { buildWorkflowAgentAuthoringSeed } from '@/sync/domains/workflows/workflowAgentAuthoringSeed';
 import { formatNextScheduledRun, formatTriggerSetSummary } from '../triggers/formatTriggerSummary';
+import { isWorkflowTriggerSourceGone } from '../triggers/sessionTriggerGroups';
 import { formatWorkflowDefinitionContentUnavailableReason, formatWorkflowDefinitionLibraryTitle } from '../presentation/workflowProblemPresentation';
 import { AccountTriggersSection, useAccountWorkflowEditor } from '../triggers/AccountTriggersSection';
 import { readSessionRouteServerId } from '@/hooks/session/sessionRouteServerScope';
@@ -207,6 +209,16 @@ export function WorkflowsLibraryHome(): React.ReactElement {
     const importWorkflow = () => router.pushRetainingCurrent(WORKFLOWS_IMPORT_ROUTE as never);
     const createWithAgent = () => openAgent(buildWorkflowAgentAuthoringSeed({ kind: 'create' }));
 
+    // A `?trigger=` link opens its row's popover, so that row stays mounted wherever the page is scrolled.
+    const deepLinkedRowKey = accountRows.deepLinkAutomationId === null ? null
+        : rows.find((row) => isAccountRow(row) && row.accountTrigger.automationId === accountRows.deepLinkAutomationId)?.key ?? null;
+    // A carried row's node is its drag source: unmounting it mid-drag would cancel the carry.
+    const carriedRowKey = useCarriedWorkflowRowKey(rows);
+    const retainedRowKeys = React.useMemo(() => {
+        const keys = [deepLinkedRowKey, carriedRowKey].filter((key): key is string => key !== null);
+        return keys.length === 0 ? undefined : keys;
+    }, [carriedRowKey, deepLinkedRowKey]);
+
     const firstVisit = libraryIsEmpty && history.status === 'loaded' && history.rows.length === 0;
     if (firstVisit && !deleted) return <WorkflowsFirstVisit onNewWorkflow={newWorkflow} onImport={importWorkflow} onCreateWithAgent={createWithAgent} />;
 
@@ -289,73 +301,52 @@ export function WorkflowsLibraryHome(): React.ReactElement {
         </ListPresentationProvider>
     );
 
+    // The page's scroller stands above the Collection, so the library's rows window in it (`page-virtualized`).
     return (
         <LibraryRowCommandsContext.Provider value={commands}>
-            <LibraryPageHeaderContext.Provider value={header}>
             <AccountWorkflowRowsContext.Provider value={accountRows}>
-            <LibraryBuiltinVisibilityContext.Provider value={libraryView.isVisible}>
-            <CoreCollectionScope renderPageScroller={renderLibraryPageScroller}>
-                <Collection<LibraryRow>
-                    testID="workflows-home:collection"
-                    model={model}
-                    anatomy={anatomy}
-                    accessibilityLabel={t('workflows.title')}
-                    presentation="list"
-                    detail="none"
-                    scroll="page"
-                    minListWidth={LIBRARY_MIN_WIDTH_PX}
-                    minDetailWidth={LIBRARY_MIN_WIDTH_PX}
-                    preferredListRatio={1}
-                    useRowActions={useLibraryRowActions}
-                    {...(focusRequest === undefined ? {} : { selection: { focusRequest } })}
-                    empty={empty}
-                />
-            </CoreCollectionScope>
-            </LibraryBuiltinVisibilityContext.Provider>
-            {accountEditor.popover}
+                <ItemList pageColumn="wide">
+                    {/* The content column sits inside the Collection scope, so its sections and the rows take one inset. */}
+                    <CoreCollectionScope renderPageScroller={passThroughPageScroller}>
+                    <PageContentColumn>
+                        {header}
+                            <Collection<LibraryRow>
+                                testID="workflows-home:collection"
+                                model={model}
+                                anatomy={anatomy}
+                                accessibilityLabel={t('workflows.title')}
+                                presentation="list"
+                                detail="none"
+                                scroll="page-virtualized"
+                                minListWidth={LIBRARY_MIN_WIDTH_PX}
+                                minDetailWidth={LIBRARY_MIN_WIDTH_PX}
+                                preferredListRatio={1}
+                                useRowActions={useLibraryRowActions}
+                                {...(focusRequest === undefined ? {} : { selection: { focusRequest } })}
+                                {...(retainedRowKeys === undefined ? {} : { retainedRowKeys })}
+                                empty={empty}
+                            />
+                        <AddressedAccountTriggersSlot />
+                        <WorkflowBuiltinsSection isVisible={libraryView.isVisible} />
+                        {/* Secondary on a returning library: one compact row, the whole catalog one press away. */}
+                        <WorkflowExamplesSection presentation="strip" />
+                    </PageContentColumn>
+                    </CoreCollectionScope>
+                </ItemList>
+                {accountEditor.popover}
             </AccountWorkflowRowsContext.Provider>
-            </LibraryPageHeaderContext.Provider>
         </LibraryRowCommandsContext.Provider>
     );
 }
 
-/** The page's content column, so the header and the rows share one edge. */
-/**
- * The page header is drawn by the page scroller; Collection owns its page-list inset, sharing
- * the content edge with the sections below it (07 S2: one edge for every section).
- */
-const LIBRARY_LOADING: ItemLoadState = { kind: 'loading' };
-const LibraryPageHeaderContext = React.createContext<React.ReactNode>(null);
-const LibraryBuiltinVisibilityContext = React.createContext<(key: string) => boolean>(() => true);
+const passThroughPageScroller = (children: React.ReactNode) => children;
 
-function LibraryBuiltinsSlot() {
-    return <WorkflowBuiltinsSection isVisible={React.useContext(LibraryBuiltinVisibilityContext)} />;
-}
+const LIBRARY_LOADING: ItemLoadState = { kind: 'loading' };
 
 /** A retained link to another Home's trigger keeps that Home's own list and editor. */
 function AddressedAccountTriggersSlot() {
     const params = useGlobalSearchParams<{ serverId?: string | string[] }>();
     return readSessionRouteServerId(params) ? <AccountTriggersSection /> : null;
-}
-
-function LibraryPageHeaderSlot() {
-    return <>{React.useContext(LibraryPageHeaderContext)}</>;
-}
-
-/** A library with run strips and example maps is a collection page: the wide column (lab `nav-N1`). */
-function renderLibraryPageScroller(children: React.ReactNode): React.ReactNode {
-    return (
-        <ItemList pageColumn="wide">
-            <PageContentColumn>
-                <LibraryPageHeaderSlot />
-                {children}
-                <AddressedAccountTriggersSlot />
-                <LibraryBuiltinsSlot />
-                {/* Secondary on a returning library: one compact row, the whole catalog one press away. */}
-                <WorkflowExamplesSection presentation="strip" />
-            </PageContentColumn>
-        </ItemList>
-    );
 }
 
 function useLibraryAnatomy(): CollectionAnatomy<LibraryRow> {
@@ -411,6 +402,14 @@ function useLibraryRowActions(row: LibraryRow): CollectionRowActions {
     // An Account Workflow's menu turns it on or off; its other settings are its row's own press.
     const off = isAccountWorkflowOff(row);
     const target = row.openTarget;
+    if (isWorkflowTriggerSourceGone(row.accountTrigger)) return {
+        busy: accountRows?.editor.pending.has(row.accountTrigger.automationId) === true,
+        secondaryActionAccessibilityLabel: t('workflows.destination.rowMenu.accessibility'),
+        secondaryActions: [{ id: 'remove', label: t('workflows.triggers.row.removeTrigger'), destructive: true }],
+        onSecondaryAction: (id) => {
+            if (id === 'remove') void accountRows?.editor.remove(target);
+        },
+    };
     return {
         busy: accountRows?.editor.pending.has(row.accountTrigger.automationId) === true,
         secondaryActionAccessibilityLabel: t('workflows.destination.rowMenu.accessibility'),
@@ -495,6 +494,17 @@ function AccountWorkflowHomeRow(props: Readonly<{ row: AccountWorkflowLibraryRow
         deepLink={accountRows.deepLinkAutomationId === props.row.accountTrigger.automationId}>
         {() => props.children}
     </AccountWorkflowRowAnchor>;
+}
+
+/** The saved row now being carried. Reads only that row's key, so pointer frames and other drags publish nothing here. */
+function useCarriedWorkflowRowKey(rows: readonly LibraryRow[]): string | null {
+    const runtime = useEntityDragDropRuntime();
+    const workflowId = React.useSyncExternalStore(runtime.subscribe, () => {
+        const { phase, item } = runtime.getSnapshot();
+        return (phase === 'carrying' || phase === 'pending') && item?.kind === 'workflow' ? item.workflowId : null;
+    }, () => null);
+    if (workflowId === null) return null;
+    return rows.find(row => !isAccountRow(row) && row.group !== 'fromPlugins' && row.definition.definitionId === workflowId)?.key ?? null;
 }
 
 function WorkflowDefinitionDragRow(props: Readonly<{ row: Exclude<LibraryRow, AccountWorkflowLibraryRow>; children: React.ReactNode }>) {

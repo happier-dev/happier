@@ -50,7 +50,7 @@ describe('projectAccountTriggerRows', () => {
         expect(rows[0]?.subtitle).toContain('Review release\nInclude changelog');
         expect(rows[0]?.subtitle).toContain('workflows.triggers.row.legacyCreated');
         expect(rows[0]?.subtitle).toContain('workflows.triggers.row.machines(count=0)');
-        expect(rows[1]?.subtitle).not.toContain('workflows.triggers.row.workflowDeleted');
+        expect(rows[1]?.subtitle).not.toContain('workflows.triggers.row.workflowUnavailable');
         expect(rows[1]?.off).toBe(false);
     });
     it('reads each Account inline set as "{when}" over what it runs, from the trigger owner\'s list', () => {
@@ -76,7 +76,7 @@ describe('projectAccountTriggerRows', () => {
             expect.objectContaining({ automationId: 'digest', triggerId: 't2', title: `workflows.triggers.summary.everyDayAt(time=${formatClockTime({ hour: 19, minute: 0 })})` }),
             // Off when every trigger of the set is off, not only when the set is.
             expect.objectContaining({ automationId: 'off', off: true }),
-            expect.objectContaining({ automationId: 'gone', subtitle: 'workflows.triggers.row.workflowDeleted' }),
+            expect.objectContaining({ automationId: 'gone', subtitle: 'workflows.triggers.row.workflowUnavailable' }),
         ]);
     });
 });

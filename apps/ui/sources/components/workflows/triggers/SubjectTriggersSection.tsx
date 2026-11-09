@@ -230,7 +230,7 @@ const SubjectTriggerRowView = React.memo(function SubjectTriggerRowView(
         qualifier={row.legacy?.qualifier ?? (manual ? row.subtitle : row.title)}
         enabled={!row.off}
         multiline={!!row.legacy}
-        toggleDisabled={props.pending}
+        toggleDisabled={props.pending || props.row.sourceGone === true}
         onToggle={props.onToggle}
         onPress={() => props.onOpen(anchorRef)}
       />

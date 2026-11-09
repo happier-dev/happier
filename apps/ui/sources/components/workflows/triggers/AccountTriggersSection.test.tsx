@@ -693,6 +693,30 @@ describe('Account Workflow Library and settings', () => {
         expect(screen.findByType(TriggerPopover).props.initial).toMatchObject({ when: { kind: 'schedule' } });
         expect(mutations).toEqual([]);
     });
+    it('lists a retained trigger whose Workflow is gone and removes it through the existing Action', async () => {
+        const set = fixture();
+        serve(set);
+        // The source lookup answers the same not-found for a deleted and a revoked Workflow.
+        rows = [AutomationDefinitionDetailSchema.parse({ ...rows[0]!, id: 'gone', workflowDefinitionId: '22222222-2222-4222-8222-222222222222', updatedAt: 9 })];
+        installRow('gone');
+        const library = await renderHook(() => {
+            const view = useWorkflowLibraryView(true);
+            return { ...view, editor: useAccountWorkflowEditor({ read: view.accountWorkflows }) };
+        });
+        await waitForHomeGovernance(() => expect(library.getCurrent().libraryRows.map(row => row.key)).toEqual(['account-trigger:gone']));
+        const row = library.getCurrent().libraryRows[0]!;
+        expect(workflowLibraryRowTitle(row)).toBe('workflows.triggers.row.workflowUnavailable');
+        if (row.openTarget.kind !== 'accountTrigger') throw new Error('Expected the retained trigger target');
+        const target = row.openTarget;
+        const screen = await renderAccountScreen(<></>);
+        void library.getCurrent().editor.open(target, { current: null });
+        // Exactly one confirmation: the Action's own.
+        await waitForHomeGovernance(() => expect(screen.findAllByType(WebAlertModal)).toHaveLength(1));
+        expect(library.getCurrent().editor.popover).toBeNull();
+        await screen.pressByTestIdAsync('web-modal-confirm');
+        await waitForHomeGovernance(() => expect(rows).toHaveLength(0));
+        await waitForHomeGovernance(() => expect(library.getCurrent().libraryRows).toHaveLength(0));
+    });
     it('turns a Library Workflow off from its settings through the selected trigger and closes them (Q7: no row switch)', async () => {
         const set = fixture(false, [trigger('t1'), trigger('t2', 19)]); serve(set);
         const library = await renderHook(() => {

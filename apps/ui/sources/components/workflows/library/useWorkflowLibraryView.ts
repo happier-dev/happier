@@ -4,7 +4,7 @@ import { getBuiltinWorkflowCatalogV1, type BuiltinWorkflowCatalogEntryV1 } from 
 import { hasWorkingWorkflowLibraryRun } from './workflowRunStrip';
 import { useWorkflowDefinitionLibrary, type WorkflowLibraryDefinition } from './workflowLibraryReads';
 import { useWorkflowLibrarySummaries, useWorkflowAutomationSummaries, type WorkflowLibraryRunSummary } from './useWorkflowLibrarySummaries';
-import { projectWorkflowLibraryRecords, type WorkflowLibraryRecordRow } from './workflowLibraryCollection';
+import { projectWorkflowLibraryRecords, selectRetainedSourceGoneSets, type WorkflowLibraryRecordRow } from './workflowLibraryCollection';
 import { useWorkflowTriggerSets } from '../triggers/useWorkflowTriggerSets';
 import { splitLibraryDefinitions } from '../column/workflowsColumnModel';
 import type { WorkflowLibraryView } from '@happier-dev/protocol/actions/scopeActionFamily';
@@ -55,6 +55,8 @@ function resolveLibraryViews(rows: readonly WorkflowLibraryRow[], summaries: Rea
     return ['all', ...(triggered ? ['triggered' as const] : []), ...(running ? ['running' as const] : [])] satisfies WorkflowLibraryView[];
 }
 
+const ACCOUNT_CENSUS = { scope: 'account_all' } as const;
+
 /** The one Workflow draft every mounted library list narrows through (column and library home, R8-7). */
 const workflowLibraryDraft = createCollectionSpaceDraftStore<'workflow'>();
 
@@ -66,7 +68,14 @@ const workflowLibraryDraft = createCollectionSpaceDraftStore<'workflow'>();
 export function useWorkflowLibraryView(focused: boolean) {
     const language = usePreferredLanguage();
     const library = useWorkflowDefinitionLibrary({ enabled: focused });
-    const accountWorkflows = useWorkflowTriggerSets(focused ? { scope: 'account_inline' } : null);
+    const accountInline = useWorkflowTriggerSets(focused ? { scope: 'account_inline' } : null);
+    // Its failure leaves these additive cleanup rows absent, never the Library partial.
+    const accountCensus = useWorkflowTriggerSets(focused ? ACCOUNT_CENSUS : null);
+    const accountWorkflows = React.useMemo(() => {
+        const retained = selectRetainedSourceGoneSets(accountCensus.sets, accountInline.sets);
+        return { ...accountInline, sets: retained.length ? [...accountInline.sets, ...retained] : accountInline.sets,
+            retry: () => { accountInline.retry(); accountCensus.retry(); } };
+    }, [accountInline.sets, accountInline.status, accountInline.retry, accountInline.acknowledge, accountCensus.sets, accountCensus.retry]);
     const split = React.useMemo(() => splitLibraryDefinitions(library.definitions, library.pluginWorkflows), [library.definitions, library.pluginWorkflows]);
     // The same per-definition summary read for every reader (one request owner, shared demand).
     const summaryIds = React.useMemo(() => focused

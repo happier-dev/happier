@@ -1,14 +1,15 @@
-import type { TriggerTargetV1, WorkflowTriggerSetV1, WorkflowRunSummaryV1 } from '@happier-dev/protocol';
+import type { TriggerTargetV1} from '@happier-dev/protocol/workflows/triggers/triggerTargetV1';
+import type { WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import { workflowTriggerDisplayNameV1 } from '@happier-dev/protocol/workflows/workflowStepLabel';
 
 import { t } from '@/text';
 
 import type { TriggerRowOutcome } from './TriggerRow';
-import { readTriggerThen } from './sessionTriggerForm';
 import { resolveTriggerEventGroup, type TriggerEventGroup } from './triggerEventGroups';
 import { formatTriggerSetSummary, formatNextScheduledRun, formatNextScheduledRunAccessibilityLabel, formatTriggerLastOutcome, type ScheduledRunQualifierTime } from './formatTriggerSummary';
 import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
-import { describeWorkflowRunState } from '@/components/workflows/presentation/workflowLifecyclePresentation';
 import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
+import { readWorkflowRunWorkStatusFacts, type WorkflowRunWorkStatusSummary } from '@/components/work/status/workflowWorkStatusFacts';
 
 export type SessionTriggerRowModel = Readonly<{
     /** Row identity: the trigger set and the trigger. */
@@ -26,6 +27,8 @@ export type SessionTriggerRowModel = Readonly<{
     qualifier?: string;
     qualifierTime?: ScheduledRunQualifierTime;
     qualifierAccessibilityLabel?: string;
+    sourceSavedBy?: WorkflowTriggerSetV1['sourceSavedBy'];
+    sourceSavedAt?: WorkflowTriggerSetV1['sourceSavedAt'];
 }>;
 
 export type SessionTriggerGroupModel = TriggerEventGroup & Readonly<{ rows: readonly SessionTriggerRowModel[] }>;
@@ -43,25 +46,23 @@ function groupRank(group: TriggerEventGroup): number {
     return 5;
 }
 
+/**
+ * The one reading of the source-lookup result. The lookup answers the same not-found for a deleted Workflow
+ * and for access withdrawn from it, so what a surface draws for this state stays neutral and identical
+ * for both. A retained 0.2 automation keeps its own locked copy.
+ */
+export function isWorkflowTriggerSourceGone(set: Pick<WorkflowTriggerSetV1, 'health' | 'legacy'>): boolean {
+    return set.health === 'source_unavailable' && set.legacy === undefined;
+}
+
 /** A row is named by what it runs (07 S16 presentation item 4). */
 export function describeTriggerTarget(target: TriggerTargetV1 | undefined, resolveWorkflowTitle: (ref: string) => string | null): string {
-    if (target === undefined) return t('workflows.triggers.row.workflowDeleted');
-    const then = readTriggerThen(target);
-    const firstBlock = target.kind === 'inline' ? target.definition.blocks[0] : undefined;
-    switch (then.kind) {
-        case 'runWorkflow':
-            return (then.ref === null ? null : resolveWorkflowTitle(then.ref)) ?? t('workflows.triggers.then.runWorkflow');
-        case 'sendPrompt':
-            return firstBlock ? workflowBlockReferenceLabel(firstBlock, t('workflows.triggers.then.sendPrompt'))
-                : t('workflows.triggers.then.sendPrompt');
-        case 'notifyMe':
-            return t('workflows.triggers.then.notifyMe');
-        case 'doAction':
-            return t('workflows.triggers.then.doAction');
-        case 'kept':
-            return firstBlock ? workflowBlockReferenceLabel(firstBlock)
-                : t('workflows.triggers.row.steps', { count: 0 });
-    }
+    return workflowTriggerDisplayNameV1({ target }, {
+        then: { runWorkflow: t('workflows.triggers.then.runWorkflow'), sendPrompt: t('workflows.triggers.then.sendPrompt'),
+            notifyMe: t('workflows.triggers.then.notifyMe'), doAction: t('workflows.triggers.then.doAction') },
+        block: workflowBlockReferenceLabel, resolveWorkflowTitle,
+        empty: t('workflows.triggers.row.steps', { count: 0 }),
+    }) ?? t('workflows.triggers.row.workflowUnavailable');
 }
 
 /** Read-only predecessor presentation shared by the column, session and editor. Never write authority. */
@@ -102,7 +103,7 @@ export function describeLegacyTriggerSet(set: WorkflowTriggerSetV1, resolveMachi
 export function projectSessionTriggerGroups(params: Readonly<{
     sets: readonly WorkflowTriggerSetV1[];
     lastRunAtByAutomationId: Readonly<Record<string, number | null>>;
-    lastRunsByAutomationId?: Readonly<Record<string, Pick<WorkflowRunSummaryV1, 'state' | 'workflowCustodyState' | 'attentionRequired'>>>;
+    lastRunsByAutomationId?: Readonly<Record<string, WorkflowRunWorkStatusSummary>>;
     resolveWorkflowTitle: (ref: string) => string | null;
     resolveMachineTitle?: (id: string) => string | null;
     formatAge: (at: number) => string;
@@ -110,26 +111,22 @@ export function projectSessionTriggerGroups(params: Readonly<{
     const groups = new Map<string, TriggerEventGroup & { rows: SessionTriggerRowModel[] }>();
     for (const set of params.sets) {
         const legacy = describeLegacyTriggerSet(set, params.resolveMachineTitle);
-        const sourceUnavailable = set.health === 'source_unavailable';
+        const sourceUnavailable = isWorkflowTriggerSourceGone(set);
         const title = legacy?.title ?? (sourceUnavailable
-            ? t('workflows.triggers.row.workflowDeleted')
+            ? t('workflows.triggers.row.workflowUnavailable')
             : describeTriggerTarget(set.target, params.resolveWorkflowTitle));
         const lastRunAt = params.lastRunAtByAutomationId[set.automationId] ?? null;
         const lastRun = params.lastRunsByAutomationId?.[set.automationId];
-        const lastState = lastRun ? describeWorkflowRunState(lastRun.state, { workflowCustodyState: lastRun.workflowCustodyState }) : null;
-        const lastTone = lastRun && lastState ? resolveWorkStatusTone({ kind: 'workflow_run', facts: {
-            state: lastRun.state, word: lastState.label, inAttentionWindow: lastRun.attentionRequired === true,
-            workflowCustodyState: lastRun.workflowCustodyState,
-        } }).tone : null;
+        const lastStatus = lastRun ? resolveWorkStatusTone({ kind: 'workflow_run', facts: readWorkflowRunWorkStatusFacts(lastRun) }) : null;
         for (const trigger of set.triggers) {
             const group = resolveTriggerEventGroup(trigger);
             const running = trigger.kind === 'sessionLifecycle'
                 && (trigger.status.state === 'running' || trigger.status.state === 'triggered');
             const outcome: TriggerRowOutcome | null = running
                 ? { text: t('workflows.triggers.row.running'), tone: 'neutral' }
-                : lastState !== null
-                    ? { text: lastRunAt === null ? lastState.label : formatTriggerLastOutcome(params.formatAge(lastRunAt), lastState.label), tone: lastTone ?? 'neutral',
-                        ...(lastRunAt === null ? {} : { relativeAge: { atMs: lastRunAt, state: lastState.label } }) }
+                : lastStatus !== null
+                    ? { text: lastRunAt === null ? lastStatus.word : formatTriggerLastOutcome(params.formatAge(lastRunAt), lastStatus.word), tone: lastStatus.tone,
+                        ...(lastRunAt === null ? {} : { relativeAge: { atMs: lastRunAt, state: lastStatus.word } }) }
                     : lastRunAt !== null
                     ? { text: formatTriggerLastOutcome(params.formatAge(lastRunAt)), tone: 'neutral', relativeAge: { atMs: lastRunAt } }
                     : null;
@@ -142,6 +139,8 @@ export function projectSessionTriggerGroups(params: Readonly<{
                 enabled: set.enabled && trigger.enabled,
                 outcome,
                 sourceUnavailable,
+                ...(set.sourceSavedBy ? { sourceSavedBy: set.sourceSavedBy } : {}),
+                ...(set.sourceSavedAt === undefined ? {} : { sourceSavedAt: set.sourceSavedAt }),
                 ...(legacy ? { legacy: true, qualifier: legacy.qualifier,
                     ...(legacy.qualifierTime ? { qualifierTime: legacy.qualifierTime } : {}) } : trigger.kind === 'schedule' ? {
                     qualifier: formatNextScheduledRun(trigger.nextRunAt, set.enabled && trigger.enabled),

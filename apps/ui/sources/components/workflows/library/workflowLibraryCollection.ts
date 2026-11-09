@@ -3,7 +3,7 @@ import type { WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/trigg
 import { createWorkflowDefinitionRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { formatWorkflowDefinitionLibraryTitle } from '../presentation/workflowProblemPresentation';
 import { formatTriggerSetSummary } from '../triggers/formatTriggerSummary';
-import { describeLegacyTriggerSet, describeTriggerTarget } from '../triggers/sessionTriggerGroups';
+import { describeLegacyTriggerSet, describeTriggerTarget, isWorkflowTriggerSourceGone } from '../triggers/sessionTriggerGroups';
 import type { WorkflowLibraryDefinition } from './workflowLibraryReads';
 import type { WorkflowAutomationRunSummary, WorkflowLibraryRunSummary } from './useWorkflowLibrarySummaries';
 import { t } from '@/text';
@@ -35,6 +35,16 @@ export type WorkflowLibraryRecordRow = LibraryRecordFacts & (Readonly<{
     triggerOpenTargets: readonly AccountWorkflowOpenTarget[];
 }>);
 
+/**
+ * Account triggers whose Workflow is gone (deleted, or access withdrawn; the lookup cannot tell). They hold a
+ * saved Workflow reference, so `account_inline` omits them and only the whole census shows the cleanup path.
+ * A Session's triggers stay in that Session.
+ */
+export function selectRetainedSourceGoneSets(census: readonly WorkflowTriggerSetV1[], inline: readonly WorkflowTriggerSetV1[]): readonly WorkflowTriggerSetV1[] {
+    const listed = new Set(inline.map(set => set.automationId));
+    return census.filter(set => !set.scopeSessionId && isWorkflowTriggerSourceGone(set) && !listed.has(set.automationId));
+}
+
 /** One projection and ordering for saved definitions and standalone Account Workflows. No reads. */
 export function projectWorkflowLibraryRecords(input: Readonly<{
     definitions: Readonly<{ library: readonly WorkflowLibraryDefinition[]; sharedWithYou: readonly WorkflowLibraryDefinition[] }>;
@@ -58,12 +68,15 @@ export function projectWorkflowLibraryRecords(input: Readonly<{
         ...input.definitions.sharedWithYou.map(definition => projectDefinition(definition, 'sharedWithYou')),
     ];
     const triggers = input.accountTriggers.map((set): WorkflowLibraryRecordRow => {
-        const triggerOpenTargets = (set.triggers.length ? set.triggers.map(trigger => trigger.id) : [null]).map(triggerId => ({
+        const sourceGone = isWorkflowTriggerSourceGone(set);
+        // Nothing of a gone source is editable, so its row is one press: remove the retained set.
+        const triggerOpenTargets = (set.triggers.length && !sourceGone ? set.triggers.map(trigger => trigger.id) : [null]).map(triggerId => ({
             kind: 'accountTrigger' as const, automationId: set.automationId, triggerId,
         }));
         return {
             key: `account-trigger:${set.automationId}`, group: 'library', accountTrigger: set,
-            name: set.name ?? describeLegacyTriggerSet(set)?.title ?? describeTriggerTarget(set.target, () => null),
+            name: sourceGone ? t('workflows.triggers.row.workflowUnavailable')
+                : set.name ?? describeLegacyTriggerSet(set)?.title ?? describeTriggerTarget(set.target, () => null),
             triggerSummary: formatTriggerSetSummary(set.triggers), updatedAt: set.updatedAt ?? 0,
             lastRunSummary: input.automationSummaries?.get(set.automationId),
             openTarget: triggerOpenTargets[0]!, triggerOpenTargets,

@@ -237,15 +237,22 @@ it('windows expensive trigger History rows across appended pages without moving 
     expect(onePage.findByTestId('session-work-trigger-history:one-page-loadMore')).toBeNull();
 });
 
-it('opens the Team-visible trigger History from the canonical shared library without an owned trigger set', async () => {
+it.each(['later-schedule', 'disabled-schedule', 'event', 'older-summary'] as const)('shows only the exact shared trigger occurrence in History (%s)', async kind => {
     await saved();
-    const nextRunAt = Date.now() + 3_600_000;
+    const workflowNextRunAt = Date.now() + 3_600_000;
+    const triggerNextRunAt = kind === 'later-schedule' ? workflowNextRunAt + 7 * 86_400_000 : null;
     home.answer(serverId, 'POST /v3/automations/query', { body: {
         automations: [], nextCursor: null,
-        sharedWorkflowSummaries: [{ workflowDefinitionId: definitionId, nextRunAt, triggers: [{
-            automationId: 'team-owner-automation', triggerId: 'team-schedule', kind: 'schedule',
-            schedule: { kind: 'cron', scheduleExpr: '0 9 * * *', everyMs: null, timezone: 'UTC' },
-        }] }],
+        sharedWorkflowSummaries: [{ workflowDefinitionId: definitionId, nextRunAt: workflowNextRunAt, triggers: [
+            kind === 'event' ? {
+                automationId: 'team-owner-automation', triggerId: 'team-schedule', kind: 'pluginEvent',
+                eventRef: { pluginId: 'test-events', localId: 'changed' },
+            } : {
+                automationId: 'team-owner-automation', triggerId: 'team-schedule', kind: 'schedule',
+                schedule: { kind: 'cron', scheduleExpr: '0 9 * * *', everyMs: null, timezone: 'UTC' },
+                ...(kind === 'older-summary' ? {} : { nextRunAt: triggerNextRunAt }),
+            },
+        ] }],
     } });
     home.answer(serverId, route, { select: input => {
         const operation = input && typeof input === 'object' && 'operation' in input ? input.operation : null;
@@ -266,11 +273,71 @@ it('opens the Team-visible trigger History from the canonical shared library wit
     expect(home.requestsFor(route)[0]?.input).toMatchObject({ operation: 'list', request: { triggerId: 'team-schedule' } });
     await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(t('workflows.empty.runsTitle')));
     const { formatNextScheduledRun } = await import('../triggers/formatTriggerSummary');
-    expect(screen.getTextContent()).toContain(formatNextScheduledRun(nextRunAt));
+    expect(screen.getTextContent()).not.toContain(formatNextScheduledRun(workflowNextRunAt));
+    if (triggerNextRunAt !== null) expect(screen.getTextContent()).toContain(formatNextScheduledRun(triggerNextRunAt));
 });
 
 const artifactInventoryReads = () => home.requests.filter(request => request.input === null
     && new URL(request.path, request.serverUrl).pathname === '/v1/artifacts');
+
+it('refreshes only changed saved Flow children and retains their unchanged siblings and last good preview', async () => {
+    await saved(); await saved(secondId, 'Second');
+    const { useWorkflowFlowChildren } = await import('../flow/useWorkflowFlowChildren');
+    const parent = createWorkflowDefinitionFixture({ blocks: [definitionId, secondId].map((workflowRef, index) => ({
+        kind: 'workflow' as const, id: `child-${index}`, workflowRef, input: {},
+    })) });
+    const hook = await renderHook(() => useWorkflowFlowChildren(parent, true));
+    await waitForHomeGovernance(() => expect(Object.keys(hook.getCurrent().children)).toHaveLength(2));
+    const initial = hook.getCurrent().children;
+    const bodyReads = () => home.requests.filter(request => [definitionId, secondId]
+        .some(id => new URL(request.path, request.serverUrl).pathname === `/v1/artifacts/${id}`));
+    const before = bodyReads().length;
+    await act(async () => {
+        for (const id of ['unrelated-a', 'unrelated-b', 'unrelated-c']) {
+            publishHomeAccountChange(serverId, [id], { changeKinds: ['artifact'], feedPageConsumed: true });
+        }
+    });
+    expect(bodyReads()).toHaveLength(before);
+    expect(hook.getCurrent().children).toBe(initial);
+    const changed = createWorkflowDefinitionFixture({ blocks: [{ kind: 'wait', id: 'changed',
+        document: { text: 'Changed', references: [], attachments: [] } }] });
+    const stored = home.artifacts(serverId).read(definitionId)!;
+    const revision = { headerVersion: stored.headerVersion + 1, bodyVersion: stored.bodyVersion! + 1 };
+    home.artifacts(serverId).replaceStoredRow({ ...stored, ...revision,
+        header: encodePlainArtifactStoredContent({ kind: 'workflow-definition.v1', definitionId, revision, metadata: { title: 'Saved' } }),
+        body: encodePlainArtifactStoredContent({ body: JSON.stringify({ kind: 'workflow-definition.v1', definition: changed }) }) });
+    const beforeRelevant = bodyReads().length;
+    await act(async () => publishHomeAccountChange(serverId, [definitionId], { changeKinds: ['artifact'], feedPageConsumed: true }));
+    await waitForHomeGovernance(() => expect(hook.getCurrent().children[definitionId]).toEqual(changed));
+    expect(bodyReads()).toHaveLength(beforeRelevant + 1);
+    expect(hook.getCurrent().children[secondId]).toBe(initial[secondId]);
+    const good = hook.getCurrent().children;
+    home.answer(serverId, `/v1/artifacts/${definitionId}`, { status: 503, body: { error: 'storage_unavailable' } });
+    await act(async () => publishHomeAccountChange(serverId, [definitionId], { changeKinds: ['artifact'], feedPageConsumed: true }));
+    await waitForHomeGovernance(() => expect(hook.getCurrent().problem).not.toBeNull());
+    expect(hook.getCurrent().children).toBe(good);
+});
+
+it('ignores unclassified Artifact deletion receipts and keeps explicit Workflow deletion landing feedback before a list', async () => {
+    const { deleteWorkflowDefinition } = await import('@/sync/domains/workflows/workflowDefinitionActions');
+    await saved();
+    // The Workflow domain follows acknowledgements before the library's first demand.
+    publishHomeAccountChange(serverId, ['ordinary-document'], { source: 'socket', changeKinds: ['artifact'],
+        workflowDefinitionsAffect: false });
+    const hook = await renderHook(() => useWorkflowDefinitionLibrary());
+    await waitLoaded(hook);
+    expect(hook.getCurrent().deletedDefinitionId).toBeNull();
+    await hook.unmount();
+    resetWorkflowLibraryReadsForTests();
+    const { Modal } = await import('@/modal');
+    const confirmation = vi.spyOn(Modal, 'confirm').mockResolvedValue(true);
+    try {
+        await act(async () => { await deleteWorkflowDefinition({ definitionId, title: 'Saved' }); });
+        const landed = await renderHook(() => useWorkflowDefinitionLibrary());
+        expect(landed.getCurrent().deletedDefinitionId).toBe(definitionId);
+        expect(landed.getCurrent().deletedDefinitionTitle).toBe('Saved');
+    } finally { confirmation.mockRestore(); }
+});
 const artifactHeaderRoute = '/v1/artifacts?limit=500&kinds=%5B%22workflow-definition.v1%22%5D';
 
 function pluginMachine(id: string, owningAccountId = accountId) {
@@ -453,12 +520,12 @@ describe('unified Workflow Library', () => {
         expect(hook.getCurrent().editor.popover).toBeNull();
         const inventories = () => home.requests.filter(request => request.path.startsWith('/v1/artifacts?') || request.path.startsWith('/v3/automations?') || request.path === '/v3/automations/query');
         expect(artifactInventoryReads()).toHaveLength(1);
-        expect(inventories()).toHaveLength(3); // One definition page, its existing enrichment, and the selected Account-inline page.
+        expect(inventories()).toHaveLength(4); // One definition page, its existing enrichment, the selected Account-inline page and the Account census for retained triggers.
         expect(home.requestsFor(route)).toHaveLength(2); // Existing source and Automation summary batches, never per row.
         const recordReads = home.requests.slice(readStart).filter(request => request.path.startsWith('/v1/artifacts') || request.path.startsWith('/v3/automations'));
         // Every record read is counted, so N singleton detail reads cannot hide. The list is
         // header-only (rows carry `previewSteps`), so it opens no definition bodies.
-        expect(recordReads).toHaveLength(5);
+        expect(recordReads).toHaveLength(6);
         expect(recordReads.filter(request => request.path === '/v1/artifacts/read')).toHaveLength(0);
         const before = home.requests.length;
         await act(async () => hook.getCurrent().setView('running'));

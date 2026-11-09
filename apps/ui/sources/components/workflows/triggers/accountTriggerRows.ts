@@ -4,7 +4,7 @@ import type { WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/trigg
 import type { IconName } from '@/components/ui/icons/Icon';
 
 import { formatTriggerSetSummary } from './formatTriggerSummary';
-import { describeLegacyTriggerSet, describeTriggerTarget } from './sessionTriggerGroups';
+import { describeLegacyTriggerSet, describeTriggerTarget, isWorkflowTriggerSourceGone } from './sessionTriggerGroups';
 import { resolveTriggerEventGroup } from './triggerEventGroups';
 
 export type AccountTriggerRow = Readonly<{
@@ -14,10 +14,12 @@ export type AccountTriggerRow = Readonly<{
     title: string;
     /** The event's glyph, as every trigger list draws it; a manual set reads as the Manual row's play. */
     glyph: IconName;
-    /** "{then}": what it runs, or "Workflow deleted" when its source is gone. */
+    /** "{then}": what it runs, or the neutral unavailable line when its source is gone. */
     subtitle: string;
     /** Turned off: the row says "Off". */
     off: boolean;
+    /** Its Workflow can no longer be opened: the row offers only Remove trigger. */
+    sourceGone?: true;
     legacy?: NonNullable<ReturnType<typeof describeLegacyTriggerSet>>;
 }>;
 
@@ -72,6 +74,7 @@ export function projectAccountTriggerRows(params: Readonly<{
             glyph: trigger ? resolveTriggerEventGroup(trigger).glyph : 'play',
             subtitle: leadsWithThen ? when : then,
             off: !set.enabled || trigger?.enabled === false,
+            ...(isWorkflowTriggerSourceGone(set) ? { sourceGone: true as const } : {}),
             ...(legacy ? { legacy } : {}),
         };
         });
