@@ -58,6 +58,7 @@ export function createServerScopedRelaySocket<TPayload>(params: Readonly<{
     /** Borrow the source's admitted authority; never resolve another Account here. */
     accountLifetime?: ServerAccountScopeLifetime | null;
     timeoutMs?: number;
+    signal?: AbortSignal;
     missingScopeUserProfileErrorMessage?: string;
     createActiveTransport: ScopedTransportConfig<TPayload>;
     createScopedTransport: (socket: {
@@ -86,6 +87,7 @@ export function createServerScopedRelaySocket<TPayload>(params: Readonly<{
         serverId: params.serverId,
         accountLifetime: params.accountLifetime,
         timeoutMs: params.timeoutMs,
+        signal: params.signal,
         missingScopeUserProfileErrorMessage: params.missingScopeUserProfileErrorMessage,
         activeTransport: params.createActiveTransport,
         scopedTransport: (socket, context) => params.createScopedTransport(socket, context),
@@ -100,6 +102,7 @@ export async function resolveServerScopedRelaySocket<TPayload>(params: Readonly<
     serverId?: string | null;
     accountLifetime?: ServerAccountScopeLifetime | null;
     timeoutMs?: number;
+    signal?: AbortSignal;
     missingScopeUserProfileErrorMessage?: string;
     activeTransport: ScopedTransportConfig<TPayload>;
     scopedTransport: ScopedTransportConfig<TPayload> & {
@@ -150,12 +153,13 @@ export async function resolveServerScopedRelaySocket<TPayload>(params: Readonly<
         if (!isSourceCurrent() || (accountLifetime && scopeUserId !== accountLifetime.scope.accountId)) {
             throw new StaleServerGenerationError();
         }
-        socket = await createEphemeralServerSocketClient(
-            createScopedSocketConnectParams(context, () => {
+        socket = await createEphemeralServerSocketClient({
+            ...createScopedSocketConnectParams(context, () => {
                 carrierCustodyTransferred = true;
                 return context.release;
             }),
-        );
+            signal: params.signal,
+        });
         if (!carrierCustodyTransferred) {
             await context.release?.();
             redundantCarrierReleased = true;

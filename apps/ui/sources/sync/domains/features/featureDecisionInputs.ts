@@ -30,6 +30,7 @@ export type ResolveRuntimeFeatureDecisionParams = Readonly<{
     serverId?: string;
     scope?: RuntimeFeatureDecisionSpawnScope;
     timeoutMs?: number;
+    signal?: AbortSignal;
     force?: boolean;
 }>;
 
@@ -70,6 +71,7 @@ export async function loadRuntimeFeatureDecisionInputs(
     const snapshot: ServerFeaturesRuntimeSnapshot = snapshotStrategy.runtimeEnabled || snapshotStrategy.spawnEnabled
         ? await getServerFeaturesSnapshot({
             timeoutMs: params.timeoutMs,
+            signal: params.signal,
             force: params.force,
             serverId: requestContext.serverId,
         })

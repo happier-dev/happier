@@ -51,9 +51,6 @@ import type {
 } from './DaemonVoiceInferenceClient';
 import type { DaemonSpeechStreamTransport } from './DaemonSpeechStreamSender';
 
-export const VOICE_MEDIA_TUNNEL_REQUEST_TIMEOUT_MS = 5_000;
-const VOICE_STT_TUNNEL_FETCH_TIMEOUT_MS = VOICE_MEDIA_TUNNEL_REQUEST_TIMEOUT_MS;
-
 // The server mints voice-media route grants behind these same bits (`resolvePeerRouteFeatureId`
 // is the single owner), so attempting a route this client is allowed to use is exactly the set
 // the server will authorize.
@@ -149,40 +146,17 @@ function readTunnelCapabilities(serverFeatures: unknown): MachineTunnelCapabilit
 async function fetchJson(params: Readonly<{
   url: string;
   init: RequestInit;
-  timeoutMs?: number;
   signal?: AbortSignal | null;
 }>): Promise<Readonly<{ ok: boolean; status: number; body: unknown }>> {
-  const timeoutMs = typeof params.timeoutMs === 'number' && params.timeoutMs > 0
-    ? params.timeoutMs
-    : null;
-  const controller = timeoutMs !== null && typeof AbortController !== 'undefined' ? new AbortController() : null;
-  const timeoutId = controller && timeoutMs !== null ? setTimeout(() => controller.abort(), timeoutMs) : null;
-  const externalSignal = params.signal ?? null;
-  const abort = controller && externalSignal ? () => controller.abort() : null;
-  if (controller && externalSignal && abort) {
-    if (externalSignal.aborted) {
-      controller.abort();
-    } else {
-      externalSignal.addEventListener('abort', abort, { once: true });
-    }
-  }
-  try {
-    const signal = controller?.signal ?? externalSignal;
-    const response = await fetchWithCredentialRedirectRefusal(params.url, {
-      ...params.init,
-      ...(signal ? { signal } : {}),
-    }, runtimeFetchManualResponse);
-    return {
-      ok: response.ok,
-      status: response.status,
-      body: await response.json().catch(() => null),
-    };
-  } finally {
-    if (timeoutId) clearTimeout(timeoutId);
-    if (externalSignal && abort) {
-      externalSignal.removeEventListener('abort', abort);
-    }
-  }
+  const response = await fetchWithCredentialRedirectRefusal(params.url, {
+    ...params.init,
+    ...(params.signal ? { signal: params.signal } : {}),
+  }, runtimeFetchManualResponse);
+  return {
+    ok: response.ok,
+    status: response.status,
+    body: await response.json().catch(() => null),
+  };
 }
 
 
@@ -295,12 +269,10 @@ async function requestTcpTunnelRelayAuthorization(input: Readonly<{
 async function postTcpTunnelOpen(input: Readonly<{
   endpoint: PeerLoopbackEndpointCandidateV1;
   open: PeerTcpTunnelOpenV1 | PeerTcpTunnelOpenV2;
-  timeoutMs?: number;
   signal?: AbortSignal | null;
 }>) {
   const response = await fetchJson({
     url: resolveEndpointPath(input.endpoint.url, input.open.v === 2 ? PEER_TCP_TUNNEL_OPEN_PATH_V2 : PEER_TCP_TUNNEL_OPEN_PATH),
-    timeoutMs: input.timeoutMs,
     signal: input.signal,
     init: {
       method: 'POST',
@@ -481,7 +453,7 @@ async function tryOpenDirectTunnel(
   const directDecision = await resolveRuntimeFeatureDecision({
     featureId: VOICE_MEDIA_DIRECT_ROUTE_FEATURE_ID,
     serverId: params.server.serverId,
-    timeoutMs: VOICE_STT_TUNNEL_FETCH_TIMEOUT_MS,
+    signal: params.input.signal ?? undefined,
   }).catch(() => null);
   const open: PeerTcpTunnelOpenV2 = {
         v: 2,
@@ -504,7 +476,6 @@ async function tryOpenDirectTunnel(
     postOpen: async ({ open: selectedOpen }) => await postTcpTunnelOpen({
       endpoint: params.direct.endpoint,
       open: selectedOpen,
-      timeoutMs: VOICE_STT_TUNNEL_FETCH_TIMEOUT_MS,
       signal: params.input.signal,
     }),
     loopbackEndpointUrl: params.direct.endpoint.url,
@@ -550,7 +521,7 @@ async function tryOpenServerRelayTunnel(
   const serverRoutedDecision = await resolveRuntimeFeatureDecision({
     featureId: VOICE_MEDIA_SERVER_RELAY_FEATURE_ID,
     serverId: params.server.serverId,
-    timeoutMs: VOICE_STT_TUNNEL_FETCH_TIMEOUT_MS,
+    signal: params.input.signal ?? undefined,
   }).catch(() => null);
   const voiceRelayCaps = readMachineLiveStreamRelayCaps(params.serverFeatures);
   const voiceRelayPolicy = resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_CHUNK);
@@ -565,7 +536,7 @@ async function tryOpenServerRelayTunnel(
   const relaySocket = await createServerScopedRelaySocket<PeerTcpTunnelRelayEnvelope>({
     machineId: params.input.machineTarget.machineId,
     serverId: params.server.serverId,
-    timeoutMs: VOICE_STT_TUNNEL_FETCH_TIMEOUT_MS,
+    signal: params.input.signal ?? undefined,
     missingScopeUserProfileErrorMessage: 'Active account profile id is unavailable for daemon speech tunnel relay',
     createActiveTransport: {
       send: (payload) => {
@@ -691,7 +662,7 @@ export async function openProductionVoiceMediaTunnel(
   const [serverFeatures, credentials] = await Promise.all([
     getReadyServerFeatures({
       serverId: server.serverId,
-      timeoutMs: VOICE_STT_TUNNEL_FETCH_TIMEOUT_MS,
+      signal: input.signal ?? undefined,
     }).catch(() => null),
     TokenStorage.getCredentialsForServerUrl(server.serverUrl, {
       serverId: server.serverId,

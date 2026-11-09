@@ -67,6 +67,9 @@ let closeFailure = false;
 let relayDenial = false;
 let grantFailure = false;
 let holdGrantResponse: ((signal: AbortSignal | null) => Promise<void>) | null = null;
+let holdOpenResponse: ((signal: AbortSignal | null, response: Response) => Promise<Response>) | null = null;
+let holdFeaturesResponse: ((signal: AbortSignal | null) => Promise<void>) | null = null;
+let holdRelayConnect: ((boundary: typeof network.socketBoundaries[number]) => void) | null = null;
 let authorization: PeerTcpTunnelRelayAuthorizationV2 | null = null;
 /**
  * Plain Accounts only: this harness has no E2EE Machine-row fixture, so keyed
@@ -161,8 +164,9 @@ async function mint(input: RequestInfo | URL, init?: RequestInit) {
     const open: unknown = JSON.parse(String(init?.body));
     opens.push(open);
     const tunnelId = (open as { tunnelId: string }).tunnelId;
-    return Response.json({ v: 1, tunnelId, streamPath: PEER_TCP_TUNNEL_STREAM_PATH,
+    const response = Response.json({ v: 1, tunnelId, streamPath: PEER_TCP_TUNNEL_STREAM_PATH,
       encoding: PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2, initialWindowBytes: 1_048_576, maxFrameBytes: 65_536 });
+    return holdOpenResponse ? await holdOpenResponse(init?.signal ?? null, response) : response;
   }
   if (!url.pathname.endsWith('/route-grants')) throw new Error('Unexpected peer HTTP path: ' + url.pathname);
   if (grantFailure) return Response.json({ ok: false, reasonCode: 'grant_missing' }, { status: 503 });
@@ -221,7 +225,7 @@ describe('DaemonSpeechStreamProductionTunnelTransport real producers', () => {
     direct = true; relay = true; mintVersions = [2]; applicationCaps = {};
     startFailure = null; finishFailure = false; cancelFailure = null; closeFailure = false;
     grantFailure = false; accountE2ee = e2eeKind !== null;
-    holdGrantResponse = null;
+    holdGrantResponse = null; holdOpenResponse = null; holdFeaturesResponse = null; holdRelayConnect = null;
     authorization = null; highestAcknowledgedInput = -1;
     grants.length = 0; opens.length = 0; receivedPcm.length = 0;
     NativeWebSocket.instances.length = 0;
@@ -233,7 +237,10 @@ describe('DaemonSpeechStreamProductionTunnelTransport real producers', () => {
       credentialScope: 'restored-home', request: async (input, init) => {
         const path = new URL(String(input)).pathname;
         if (path === '/health') return new Response(null, { status: 200 });
-        if (path === '/v1/features') return Response.json(features());
+        if (path === '/v1/features') {
+          await holdFeaturesResponse?.(init?.signal ?? null);
+          return Response.json(features());
+        }
         if (path === '/v1/account/encryption') return Response.json({ mode: e2eeKind ? 'e2ee' : 'plain', updatedAt: 0 });
         if (path === '/v1/account/encryption/currentness') return Response.json(materialSnapshot ? {
           mode: 'e2ee', version: 0, signingKeyFingerprint: null,
@@ -281,6 +288,7 @@ describe('DaemonSpeechStreamProductionTunnelTransport real producers', () => {
     const configure: Parameters<typeof network.setSocketConfigurator>[0] = boundary => {
       if (!physicalSockets.includes(boundary)) physicalSockets.push(boundary);
       boundary.socket.id = 'socket-test';
+      if (holdRelayConnect) boundary.socket.connect.mockImplementation(() => { holdRelayConnect?.(boundary); });
       boundary.socket.emit.mockImplementation((event, raw) => {
         if (event !== PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT) return;
         const envelope = PeerTcpTunnelRelayEnvelopeSchema.parse(raw);
@@ -318,6 +326,7 @@ describe('DaemonSpeechStreamProductionTunnelTransport real producers', () => {
   afterEach(async () => {
     vi.useRealTimers();
     holdGrantResponse = null;
+    holdOpenResponse = null; holdFeaturesResponse = null; holdRelayConnect = null;
     holdPcmResponse = null;
     relayDenial = false;
     await account?.dispose();
@@ -381,6 +390,78 @@ describe('DaemonSpeechStreamProductionTunnelTransport real producers', () => {
     } finally {
       attempt.abort(); release?.();
       await opening;
+    }
+  });
+  it.each(['open', 'body', 'features', 'relay'] as const)('keeps slow %s setup under the attempt lifecycle through completion and cancellation', async phase => {
+    for (const cancel of [false, true]) {
+      const attempt = new AbortController();
+      let entered!: () => void;
+      const requested = new Promise<void>(resolve => { entered = resolve; });
+      let release = () => {};
+      let requestSignal: AbortSignal | null = null;
+      const hold = (signal: AbortSignal | null) => {
+        requestSignal = signal;
+        entered();
+        return new Promise<void>((resolve, reject) => {
+          const abort = () => { signal?.removeEventListener('abort', abort); reject(new DOMException('Voice attempt ended', 'AbortError')); };
+          release = () => { signal?.removeEventListener('abort', abort); resolve(); };
+          if (signal?.aborted) abort();
+          else signal?.addEventListener('abort', abort, { once: true });
+        });
+      };
+      direct = phase !== 'relay'; publishFeatures();
+      if (phase === 'features') {
+        holdFeaturesResponse = hold;
+        resetServerFeaturesClientForTests();
+      } else if (phase === 'relay') {
+        const { disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
+        const { serverScopedRpcSocketPool } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool');
+        await disconnectActiveServerConnection();
+        await serverScopedRpcSocketPool.stopAll();
+        selectMachine(false); publishFeatures();
+        holdRelayConnect = boundary => {
+          entered();
+          release = () => boundary.trigger('connect');
+        };
+      } else if (phase === 'open') {
+        holdOpenResponse = async (signal, response) => { await hold(signal); return response; };
+      } else {
+        holdOpenResponse = async (signal, response) => {
+          const bytes = new TextEncoder().encode(await response.text());
+          return new Response(new ReadableStream<Uint8Array>({ start(controller) {
+            void hold(signal).then(() => { controller.enqueue(bytes); controller.close(); }, error => controller.error(error));
+          } }), { headers: { 'Content-Type': 'application/json' } });
+        };
+      }
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+      let settled = false;
+      const opening = openProductionVoiceMediaTunnel({ machineTarget: { machineId: 'machine-1' },
+        requestId: 'request-1', signal: attempt.signal,
+        ...(direct ? {} : { requiredRouteKind: 'server_relay' as const }),
+        authority: { v: 1, applicationKind: 'speech_transcription', applicationAttemptId: 'request-1',
+          applicationAuthorityDigest: createSpeechTranscriptionApplicationAuthorityDigestV1('request-1') },
+      }).then(result => { settled = true; return result; });
+      try {
+        await requested;
+        await vi.advanceTimersByTimeAsync(6_000);
+        expect(attempt.signal.aborted).toBe(false);
+        expect(settled).toBe(false);
+        if (cancel) {
+          attempt.abort();
+          await expect(opening).resolves.toBeNull();
+          if (phase !== 'relay') expect(requestSignal).toMatchObject({ aborted: true });
+        } else {
+          release();
+          const tunnel = await opening;
+          expect(tunnel?.routeKind).toBe(direct ? 'loopback_direct' : 'server_relay');
+          await tunnel?.close();
+        }
+      } finally {
+        attempt.abort(); release();
+        await opening;
+        vi.useRealTimers();
+        holdOpenResponse = null; holdFeaturesResponse = null; holdRelayConnect = null;
+      }
     }
   });
   it('admits direct voice without TCP port quotas and retires failed start before retry', async () => {
@@ -570,8 +651,9 @@ describe('DaemonSpeechStreamProductionTunnelTransport real producers', () => {
     await stream.start();
     await expect(stream.pushChunk(new Uint8Array(640).fill(1))).rejects.toThrow();
     expect(receivedPcm).toEqual([]);
-    // The sender's own failure path retires the daemon stream and closes the tunnel.
-    await vi.waitFor(() => expect(receipt()).toMatchObject({ relayEvidence: 'pending', localTransport: 'closed' }));
+    // Start establishes the Plain Account mode before the denied first packet;
+    // the sender's failure path still retires the stream and closes the tunnel.
+    await vi.waitFor(() => expect(receipt()).toMatchObject({ relayEvidence: 'plain_account', localTransport: 'closed' }));
     expect(network.requests.some(request => request.method.endsWith('.cancel'))).toBe(true);
   });
   it('fails closed before Socket/grant admission when relay mint V2 is not advertised', async () => {
