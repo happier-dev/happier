@@ -5,8 +5,23 @@ vi.mock('@/text', () => createTextModuleMock());
 
 import { resolveSessionPermissionChoices, selectSessionPermissionChoiceForDecision } from './sessionPermissionChoices';
 import { answerSessionPermission, resolveSessionPermissionBehavior } from './sessionPermissionAnswers';
+import { createClaudePermissionEngine, type ClaudePermissionContext } from '../../../../../packages/plugins/claude/src/agent/permissions/createClaudePermissionEngine';
 
 describe('Session permission offered choices', () => {
+    it('keeps the existing catalog consent reachable for a live external Claude MCP request', async () => {
+        // The plugin's host permission service is the external SDK boundary.
+        const requestDecision = vi.fn(async (_request: Parameters<ClaudePermissionContext['sessions']['current']['permissions']['requestDecision']>[0]) => ({ decision: 'approved' as const }));
+        const context = { sessions: { current: { permissions: { requestDecision } } } } as ClaudePermissionContext;
+        await createClaudePermissionEngine(context).canCallTool('mcp__docs__mutate', { page: 'draft' }, { requestId: 'live-mcp' });
+        const request = requestDecision.mock.calls[0]![0];
+        const choices = resolveSessionPermissionChoices({ toolName: request.toolName, toolInput: request.input,
+            nativeChoices: request.nativeChoices, canWriteCatalog: true,
+            permissionBehavior: resolveSessionPermissionBehavior({ agentId: 'claude', metadata: { flavor: 'claude' }, accountScope: null }),
+            mcpTool: { server: 'docs', tool: 'mutate', serverTitle: 'Docs', item: { serverId: 'docs-id' },
+                decision: { exposed: true, approval: 'ask', effectClass: 'write', source: 'server_default' } },
+        });
+        expect(choices.some(choice => choice.id === 'mcp_always_allow')).toBe(true);
+    });
     it.each([
         { label: 'available once', allowed: true, omitOnce: false, expected: 'opaque:once' },
         { label: 'unavailable once', allowed: false, omitOnce: false, expected: undefined },

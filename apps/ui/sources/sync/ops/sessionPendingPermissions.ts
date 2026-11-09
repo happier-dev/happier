@@ -7,6 +7,7 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 import { deriveTranscriptInteractionFromSession } from '@/utils/sessions/deriveTranscriptInteraction';
 import { listPendingPermissionRequests } from '@/utils/sessions/sessionUtils';
 import type { SessionPendingRequest } from '@happier-dev/session-core/pending';
+import type { NativePermissionChoicesV1, NativePermissionChoiceAvailabilityV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 
 import {
     resolveSessionPermissionAnswerPolicy,
@@ -30,6 +31,10 @@ export type SessionPendingPermission = Readonly<{
     toolName: string;
     turnId?: string;
     source?: string;
+    nativeChoices?: NativePermissionChoicesV1;
+    nativeChoiceAvailability?: readonly NativePermissionChoiceAvailabilityV1[];
+    permissionOwnerLabel?: string;
+    canApprove: boolean;
     /** The canonical one-line summary of the ask ("Run yarn test:ui"). */
     summary: string;
     command?: string;
@@ -50,7 +55,8 @@ export function listSessionPendingPermissions(
     }).canApprovePermissions;
     const metadata = session.metadata as Readonly<{ flavor?: string | null }> | null | undefined;
     return permissionRequests.map((request): SessionPendingPermission => {
-        const policy = resolveSessionPermissionAnswerPolicy({
+        const hasNativeChoices = request.nativeChoices !== undefined;
+        const policy: SessionPermissionAnswerPolicy = hasNativeChoices ? { protocol: 'unavailable', usePermissionUpdates: false } : resolveSessionPermissionAnswerPolicy({
             permissionBehavior: resolveSessionPermissionBehavior({
                 agentId: resolveAgentIdForPermissionUi({
                     metadata: session.metadata,
@@ -68,13 +74,17 @@ export function listSessionPendingPermissions(
             toolName: request.tool,
             ...(request.turnId ? { turnId: request.turnId } : {}),
             ...(request.source ? { source: request.source } : {}),
+            ...(hasNativeChoices ? { nativeChoices: request.nativeChoices } : {}),
+            ...(request.nativeChoiceAvailability ? { nativeChoiceAvailability: request.nativeChoiceAvailability } : {}),
+            ...(request.permissionOwnerLabel ? { permissionOwnerLabel: request.permissionOwnerLabel } : {}),
+            canApprove,
             summary: formatPermissionRequestSummary({ toolName: request.tool, toolInput: request.arguments }),
             ...(command ? { command } : {}),
             ...(typeof request.createdAt === 'number' && request.createdAt >= 0
                 ? { createdAtMs: Math.trunc(request.createdAt) }
                 : {}),
             policy,
-            answers: canApprove
+            answers: canApprove && !hasNativeChoices
                 ? resolveSessionPermissionAnswers({ toolName: request.tool, protocol: policy.protocol, source: request.source })
                 : [],
         });

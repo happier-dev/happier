@@ -1,10 +1,22 @@
 import { describe, expect, it } from 'vitest';
+import { buildPermissionPromptModel } from './buildPermissionPromptModel';
 
 import type { PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
+import { resolveSessionPermissionBehavior } from '@/sync/ops/sessionPermissionAnswers';
+import { resolveSessionPermissionChoices } from '@/sync/ops/sessionPermissionChoices';
 
 describe('buildPermissionPromptModel', () => {
+    it('keeps malformed retained native offers from becoming generic grants in the prompt', async () => {
+        const request: PendingPermissionRequest = { id: 'malformed', kind: 'permission', tool: 'Bash', arguments: {} };
+        // Retained external content can violate the current schema; presentation owns decoding it.
+        Object.assign(request, { nativeChoices: null });
+        const model = buildPermissionPromptModel({ request, metadata: null, nowMs: 1 });
+        expect(resolveSessionPermissionChoices({ toolName: request.tool,
+            nativeChoices: model.tool.permission.nativeChoices,
+            permissionBehavior: resolveSessionPermissionBehavior({ agentId: 'claude', metadata: null, accountScope: null }),
+        })).toEqual([]);
+    });
     it('retains catalog identity and facts without guessing a server from its wire name', async () => {
-        const { buildPermissionPromptModel } = await import('./buildPermissionPromptModel');
         const request = {
             id: 'mcp-delete', tool: 'mcp__github__delete_file', kind: 'permission' as const,
             createdAt: 1, arguments: { file_path: 'src/index.ts', recursive: true },
@@ -23,7 +35,6 @@ describe('buildPermissionPromptModel', () => {
         expect(buildPermissionPromptModel({ request: { ...request, mcpTool: { ...request.mcpTool, server: 'happier' } }, metadata: null, nowMs: 1 }).mcp).toBeUndefined();
     });
     it('creates a pending ToolCall stub from the request', async () => {
-        const { buildPermissionPromptModel } = await import('./buildPermissionPromptModel');
 
         const request: PendingPermissionRequest = {
             id: 'perm-1',
@@ -49,7 +60,6 @@ describe('buildPermissionPromptModel', () => {
     });
 
     it('falls back to nowMs when request.createdAt is missing', async () => {
-        const { buildPermissionPromptModel } = await import('./buildPermissionPromptModel');
 
         const request: PendingPermissionRequest = {
             id: 'perm-2',

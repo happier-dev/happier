@@ -3,23 +3,14 @@ import { getPermissionFooterCopy } from '@/agents/catalog/permissionUiCopy';
 import { parseParenIdentifier } from "@happier-dev/session-core/tools";
 import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import type { SessionPermissionRespondRpcParamsV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
+import type { NativePermissionChoiceAnswerV1, SessionPermissionRespondRpcParamsV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 import { NATIVE_TOOL_APPROVAL_ONCE_REQUEST_SOURCE } from '@happier-dev/protocol/sessions/permissions/v1';
 
-/**
- * The three answers every surface may give one pending Session permission
- * request: the Session UI's primary footer decisions and the plugin UI Host API
- * (`respondToSessionPermission`) both go through this one owner, so an answer
- * means the same provider decision wherever the user gave it.
- *
- * Richer request choices (all edits, shell sub-command rules, exec-policy
- * amendments, stop) are projected by sessionPermissionChoices for the
- * transcript and notch; they are not part of this three-answer API vocabulary.
- */
+/** Legacy vocabulary retained for stored requests and producers awaiting migration. */
 export type SessionPermissionAnswer = 'allowOnce' | 'allowForSession' | 'deny';
 
 /**
- * How the live Agent expects an answer to be expressed. `codexDecision` answers
+ * Historical answer encoding. `codexDecision` answers
  * carry an explicit provider decision; `standard` answers express a session
  * allowance as a tool rule (optionally as provider permission updates). An Agent
  * that declares no known prompt protocol (`unavailable`) can only be refused.
@@ -32,15 +23,25 @@ export type SessionPermissionAnswerPolicy = Readonly<{
 type SessionPermissionBehavior = ReturnType<typeof getAgentBehavior>['permissions'];
 
 /**
- * The owning Agent's permission behavior, read on the machine that owns the
- * Session: an installed Agent's descriptor is a per-machine fact, so projected
- * external behavior requires an owning machine and otherwise fails closed.
+ * Legacy request interpretation. Claude/Codex predecessors are frozen below;
+ * other installed Agent descriptors remain scoped to the owning machine.
  */
 export function resolveSessionPermissionBehavior(input: Readonly<{
     agentId: string | null;
     metadata: unknown;
     accountScope: ServerAccountScope | null | undefined;
 }>): SessionPermissionBehavior | undefined {
+    // C6: old Claude/Codex occurrences did not save their policy. Freeze their
+    // predecessor interpretation here so removing live declarations cannot
+    // reinterpret retained requests. Native offers bypass this reader entirely.
+    if (input.agentId === 'claude') return { promptProtocol: 'claude', footer: {
+        usePermissionUpdates: true, forceReadOnlyAfterStop: true,
+        supportsExecPolicyAmendment: false, stopHandling: 'denyAndAbortRun',
+    } };
+    if (input.agentId === 'codex') return { promptProtocol: 'codexDecision', footer: {
+        usePermissionUpdates: false, forceReadOnlyAfterStop: false,
+        supportsExecPolicyAmendment: true, stopHandling: 'denyOnly',
+    } };
     const owningMachineId = resolveSessionMachineId(input.metadata);
     return input.agentId && (isBundledAgentId(input.agentId) || owningMachineId !== null)
         ? getAgentBehavior(input.agentId, owningMachineId, input.accountScope).permissions
@@ -95,18 +96,27 @@ export function resolveSessionPermissionAnswers(input: Readonly<{
         : ['allowOnce', 'deny'];
 }
 
-export type AnswerSessionPermissionInput = Readonly<{
+type PermissionAnswerDelivery = Readonly<{
     requestId: string;
     turnId?: string;
+    respondToPermission(params: Omit<SessionPermissionRespondRpcParamsV1, 'answers'>): Promise<void>;
+}>;
+
+export type AnswerSessionPermissionInput = PermissionAnswerDelivery & (Readonly<{
+    nativeChoice: NativePermissionChoiceAnswerV1;
+}> | Readonly<{
     source?: string;
     toolName: string;
     answer: SessionPermissionAnswer;
     policy: SessionPermissionAnswerPolicy;
-    /** The source owns delivery and scope; this owner retains provider decision policy. */
-    respondToPermission(params: Omit<SessionPermissionRespondRpcParamsV1, 'answers'>): Promise<void>;
-}>;
+}>);
 
 export async function answerSessionPermission(input: AnswerSessionPermissionInput): Promise<void> {
+    if ('nativeChoice' in input) {
+        await input.respondToPermission({ id: input.requestId,
+            ...(input.turnId !== undefined ? { turnId: input.turnId } : {}), nativeChoice: input.nativeChoice });
+        return;
+    }
     if (input.answer === 'allowForSession' && !supportsSessionPermissionPersistence(input.source)) {
         throw Object.assign(new Error('Permission answer is unavailable for this request'), { code: 'permission_answer_unavailable' });
     }

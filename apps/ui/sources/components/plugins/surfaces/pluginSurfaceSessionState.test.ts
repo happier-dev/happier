@@ -7,7 +7,6 @@ import { SessionCreationCorrespondenceV1Schema } from '@happier-dev/protocol/ses
 import { deriveSessionCreationTagV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
-import { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { SessionMessageV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 import { router } from 'expo-router';
@@ -40,18 +39,19 @@ const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 installDisconnectedServerSocketBoundary();
 await loadSyncSingletonForTests();
+const { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
 const { listPendingRequestListsFromSession } = await import('@/sync/domains/session/pending/listPendingSessionRequests');
 const { listSessionPendingPermissions } = await import('@/sync/ops/sessionPendingPermissions');
 const { projectSessionSummaryCard } = await import('@/components/sessions/companion/summary/sessionSummaryProjection');
 const { projectUiSessionAwareness } = await import('@/sync/domains/session/awareness/sessionAwareness');
 const { createCanonicalPluginReactNativeHostApiAdapter } = await import('@/components/plugins/reactNative/hostApi');
 const { createPluginSurfaceContextFixture } = await import('@/dev/testkit/fixtures/pluginSurfaceContextFixture');
-import { createSessionAccessFixture, createSessionFixture, createSessionViewerFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+const { createSessionAccessFixture, createSessionFixture, createSessionViewerFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
 const { storage } = await import('@/sync/domains/state/storage');
 const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
 const { publishMachineContributionRegistryProjectionInvalidation } = await import('@/sync/ops/machineContributionRegistryProjectionRevision');
 import type { Session } from '@/sync/domains/state/storageTypes';
-import { buildSessionListRenderableFromSession, deriveSessionListRenderableHasUnreadMessagesFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
+const { buildSessionListRenderableFromSession, deriveSessionListRenderableHasUnreadMessagesFromSession } = await import('@/sync/domains/session/listing/sessionListRenderable');
 import { UNSUPPORTED_AGENT_SESSION_CAPABILITIES } from '@happier-dev/agents';
 
 const { createBoundPluginSurfaceController } = await import('./boundPluginSurfaceController');
@@ -298,6 +298,7 @@ describe('mounted plugin UI linked-Session state (r0.42)', () => {
     ] as const)('exposes manual compact evidence through the public plugin Session reader: %s', async (publication, status) => {
         const base = waitingSession();
         storage.getState().applySessions([{ ...base, metadata: { ...base.metadata!, flavor: 'external/agent',
+            runtimeDescriptorV1: { v: 1, agentId: 'external/agent', agent: {} },
             ...(publication ? { agentRuntimeCapabilitiesV1: publication } : {}) } }]);
         const mounted = mountSurface();
         try {
@@ -664,14 +665,15 @@ describe('mounted plugin UI linked-Session state (r0.42)', () => {
     });
 
     it('reads and answers an opaque offered permission through the real plugin UI bridge', async () => {
+        const serverId = await homes.addHome({ name: 'Native approval Home', serverUrl: 'https://native-approval.test', accountId: 'account-a' });
         const nativeChoices = { requirementId: 'native-requirement', source: 'native-test', choices: [{
             id: 'grant:opaque', label: 'Grant the workspace', decision: 'approved_for_session' as const,
             scope: 'session' as const, response: { approved: true as const, decision: 'approved_for_session' as const },
         }] };
-        storage.getState().applySessions([waitingSession({ agentState: { requests: {
+        installSessionActionFixture({ homes, storage, serverId, session: waitingSession({ agentState: { requests: {
             'req-1': { tool: 'Bash', arguments: { command: 'pwd' }, createdAt: NOW, turnId: 'native-turn', nativeChoices },
-        } } })]);
-        const mounted = mountSurface();
+        } } }) });
+        const mounted = mountSurface({ serverId, accountId: 'account-a' });
         try {
             await expect(mounted.api.readSession('linked-1')).resolves.toMatchObject({ pendingPermissions: [{
                 requestId: 'req-1', nativeChoices, answers: [],
