@@ -778,8 +778,13 @@ It receives only that operation's Connected Accounts service and sanitized launc
 ordinary catalog callbacks continue to receive environment presence facts. The host removes
 prepared assets before retiring account materialization. Its complete prepared environment also
 retains explicit key removals; the daemon cannot reintroduce a removed native home. OpenCode,
-Pi and Oh My Pi use the same qualified-account preparer for this path and Session launch, so
+Pi use the same qualified-account preparer for this path and Session launch, so
 pre-start discovery sees the selected account's native configuration and request-auth assets.
+Oh My Pi declares its native credential environment destinations from its Connected Account
+purposes. Catalog probes and daemon launch prerequisites consume the same qualified launch
+materializer before running `omp models --json`; neither path performs separate account
+preparation or model discovery. Direct Session and execution-run opens retain their qualified
+account preparation and lifecycle subscriptions.
 An unavailable catalog preserves an Agent's declared freeform selection capability, allowing
 an explicit model choice without treating discovery failure as proof that selection is unsupported.
 Explicit CLI model probes, including configured ACP definitions, run on the selected Machine.
