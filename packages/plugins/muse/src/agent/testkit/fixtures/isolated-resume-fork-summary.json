@@ -1,0 +1,31 @@
+{
+  "evidence": {
+    "kind": "observed-native-isolated-characterization",
+    "source": "/tmp/happier-muse-isolated-resume-fork-hdzx073b/summary.json",
+    "log": "/tmp/happier-L-MUSE-AGENT/native-resume-fork-characterization.log",
+    "nativeVersion": "1.4.14",
+    "envelopeVersion": 1,
+    "note": "Observed native resume then next turn, fork at actual first-turn cut, and fork turn. No pending-request/listPending characterization.",
+    "sanitization": "Temporary root replaced with [TEMP]/isolated-resume-fork; native UUID identities replaced consistently across companion fixtures with fixture UUIDv7 values; direction labels normalized to send/recv. Native message fields, cursor structure and provenance relations otherwise preserved."
+  },
+  "summary": {
+    "root": "[TEMP]/isolated-resume-fork",
+    "sourceSessionId": "00000000-0000-7000-8000-000000000002",
+    "resumedSessionId": "00000000-0000-7000-8000-000000000002",
+    "resumeTurnCount": 1,
+    "resumedHistoryMode": "inline",
+    "firstCompletedTurnId": "00000000-0000-7000-8000-000000000003",
+    "forkSessionId": "00000000-0000-7000-8000-00000000002c",
+    "forkedFrom": {
+      "commandId": "00000000-0000-7000-8000-00000000002b",
+      "cutCursor": "session:00000000-0000-7000-8000-000000000002:turn:1",
+      "cutExplicit": true,
+      "sessionId": "00000000-0000-7000-8000-000000000002"
+    },
+    "forkTurnCountBefore": 1,
+    "forkTurnCountAfter": 2,
+    "parentTurnCount": 2,
+    "forkHistoryItems": 7,
+    "parentHistoryItems": 10
+  }
+}

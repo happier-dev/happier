@@ -29,6 +29,6 @@ export const museAccountDescriptor = {
 } as const satisfies Omit<PluginConnectedAccountDescriptorContributionV2, 'id'>;
 
 export const museNativeConnectedAccountPurpose = {
-  purpose: MUSE_NATIVE_PURPOSE, service: MUSE_ACCOUNT_SERVICE,
+  purpose: MUSE_NATIVE_PURPOSE, service: MUSE_ACCOUNT_SERVICE_ID,
   materializationKinds: ['files', 'environment'], credentialKinds: ['oauth', 'token'],
 } as const satisfies ConnectedAccountPurposeDeclaration;

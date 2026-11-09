@@ -1,0 +1,83 @@
+{
+  "evidence": {
+    "kind": "observed-native-no-turn-policy",
+    "source": "/tmp/happier-muse-isolated-skill-6ltylhm1/recording.json",
+    "log": "/tmp/happier-L-MUSE-AGENT/native-profile-characterization.log",
+    "nativeVersion": "1.4.14",
+    "envelopeVersion": 1,
+    "sanitization": "Temporary root replaced with [TEMP]/isolated-permission-profiles; native UUID identities replaced consistently with fixture UUIDv7 values; direction labels normalized to send/recv. Native message fields otherwise preserved."
+  },
+  "rows": [
+    {
+      "direction": "send",
+      "message": {
+        "jsonrpc": "2.0",
+        "method": "initialize",
+        "params": {
+          "clientInfo": {
+            "name": "happier_muse",
+            "version": "0.3.0"
+          }
+        },
+        "id": 1
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "id": 1,
+        "jsonrpc": "2.0",
+        "result": {
+          "experimentalApi": false,
+          "grantedCapabilities": [],
+          "museHome": "[TEMP]/isolated-permission-profiles/data/muse",
+          "platformFamily": "unix",
+          "platformOs": "linux",
+          "sandboxAvailability": "available",
+          "schema": {
+            "fingerprint": "sha256:c94c3d1f2f51e6424074b9ec43eac3eedcf532d3dcd77351ec1383a87d3049c6",
+            "version": 1
+          },
+          "serverInfo": {
+            "name": "muse",
+            "version": "1.4.14"
+          },
+          "sessionDurability": "durable",
+          "userAgent": "muse-build/1.4.14 (serve; linux-x86_64; build dec7d7497fecdad135ec5835a8161dbc92e55b58)"
+        }
+      }
+    },
+    {
+      "direction": "send",
+      "message": {
+        "jsonrpc": "2.0",
+        "method": "initialized",
+        "params": {}
+      }
+    },
+    {
+      "direction": "send",
+      "message": {
+        "jsonrpc": "2.0",
+        "method": "permissionProfile/list",
+        "params": {},
+        "id": 3
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "error": {
+          "code": -32601,
+          "data": {
+            "descriptor": "permissionProfile/list",
+            "kind": "experimentalRequired"
+          },
+          "message": "permissionProfile/list requires experimentalApi capability"
+        },
+        "id": 3,
+        "jsonrpc": "2.0"
+      }
+    }
+  ]
+}

@@ -10,6 +10,9 @@ export const museStateSharingDescriptor = {
       { path: 'muse/trust.json', mode: 'linked_or_copied' },
     ],
   },
-  state: { supported: false },
+  state: {
+    supported: false, modes: ['isolated'], entries: [],
+    symlinkUnavailableDegradePolicy: 'block_continuity',
+  },
   authIsolation: { mode: 'materialized_home', secretEntries: ['muse/auth.json'] },
 } as const;

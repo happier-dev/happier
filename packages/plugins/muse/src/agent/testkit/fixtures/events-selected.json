@@ -1,0 +1,961 @@
+{
+  "login-smoke": [
+    {
+      "row": 26,
+      "method": "session/tokenUsage",
+      "params": {
+        "cumulative": {
+          "outputTokens": 22,
+          "promptTokens": 28177,
+          "totalTokens": 28199
+        },
+        "durationMs": 3120,
+        "modelId": "muse-wonder-1.0",
+        "promptTokens": 28177,
+        "sessionId": "01a1bf87-da7f-7ce0-a4ff-bab34925049f",
+        "sourceRange": {
+          "first": {
+            "id": "01a1bf87-f12b-7c92-a12c-f7febbac37e5",
+            "sequence": 52
+          },
+          "last": {
+            "id": "01a1bf87-f12b-7c92-a12c-f7febbac37e5",
+            "sequence": 52
+          },
+          "stream": {
+            "id": "01a1bf87-da7f-7ce0-a4ff-bab34925049f",
+            "kind": "session"
+          }
+        },
+        "totalTokens": 28199,
+        "turnId": "01a1bf87-e037-7cc3-ad73-d6ffffa47b13",
+        "usage": {
+          "cacheReadTokens": 0,
+          "cacheWriteTokens": 0,
+          "cachedTokens": 0,
+          "inputTokens": 28177,
+          "outputTokens": 22,
+          "reasoningTokens": 10
+        },
+        "viewCursor": "v4:01a1bf87-da7f-7ce0-a4ff-bab34925049f:8"
+      }
+    },
+    {
+      "row": 27,
+      "method": "session/contextUsage",
+      "params": {
+        "pressure": "normal",
+        "sessionId": "01a1bf87-da7f-7ce0-a4ff-bab34925049f",
+        "sourceRange": {
+          "first": {
+            "id": "01a1bf87-f12b-7c92-a12c-f7febbac37e5",
+            "sequence": 52
+          },
+          "last": {
+            "id": "01a1bf87-f12b-7c92-a12c-f7febbac37e5",
+            "sequence": 52
+          },
+          "stream": {
+            "id": "01a1bf87-da7f-7ce0-a4ff-bab34925049f",
+            "kind": "session"
+          }
+        },
+        "usedTokens": 28446,
+        "viewCursor": "v4:01a1bf87-da7f-7ce0-a4ff-bab34925049f:9",
+        "windowTokens": 1007997
+      }
+    },
+    {
+      "row": 37,
+      "method": "session/closed",
+      "params": {
+        "reason": "hostShutdown",
+        "sessionId": "01a1bf87-da7f-7ce0-a4ff-bab34925049f",
+        "viewCursor": "v4:01a1bf87-da7f-7ce0-a4ff-bab34925049f:16"
+      }
+    }
+  ],
+  "advanced": [
+    {
+      "row": 18,
+      "method": "session/tokenUsage",
+      "params": {
+        "cumulative": {
+          "outputTokens": 153,
+          "promptTokens": 28209,
+          "totalTokens": 28362
+        },
+        "durationMs": 3687,
+        "finishReason": "tool_calls",
+        "modelId": "muse-wonder-1.0",
+        "promptTokens": 28209,
+        "sessionId": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+        "sourceRange": {
+          "first": {
+            "id": "01a1bf8b-7178-7e02-97c2-6efd5f8772c7",
+            "sequence": 52
+          },
+          "last": {
+            "id": "01a1bf8b-7178-7e02-97c2-6efd5f8772c7",
+            "sequence": 52
+          },
+          "stream": {
+            "id": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+            "kind": "session"
+          }
+        },
+        "totalTokens": 28362,
+        "turnId": "01a1bf8b-619c-7e78-b4c4-8d1f92adfbc6",
+        "usage": {
+          "cacheReadTokens": 0,
+          "cacheWriteTokens": 0,
+          "cachedTokens": 0,
+          "inputTokens": 28209,
+          "outputTokens": 153,
+          "reasoningTokens": 42
+        },
+        "viewCursor": "v4:01a1bf8b-6078-7723-9930-4a3deea65f9e:7"
+      }
+    },
+    {
+      "row": 19,
+      "method": "session/contextUsage",
+      "params": {
+        "pressure": "normal",
+        "sessionId": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+        "sourceRange": {
+          "first": {
+            "id": "01a1bf8b-7178-7e02-97c2-6efd5f8772c7",
+            "sequence": 52
+          },
+          "last": {
+            "id": "01a1bf8b-7178-7e02-97c2-6efd5f8772c7",
+            "sequence": 52
+          },
+          "stream": {
+            "id": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+            "kind": "session"
+          }
+        },
+        "usedTokens": 28721,
+        "viewCursor": "v4:01a1bf8b-6078-7723-9930-4a3deea65f9e:8",
+        "windowTokens": 1007997
+      }
+    },
+    {
+      "row": 29,
+      "method": "session/contextUsage",
+      "params": {
+        "pressure": "normal",
+        "sessionId": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+        "sourceRange": {
+          "first": {
+            "id": "01a1bf8b-7503-7a81-b99f-2abb7a274c1c",
+            "sequence": 65
+          },
+          "last": {
+            "id": "01a1bf8b-7503-7a81-b99f-2abb7a274c1c",
+            "sequence": 65
+          },
+          "stream": {
+            "id": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+            "kind": "session"
+          }
+        },
+        "usedTokens": 28809,
+        "viewCursor": "v4:01a1bf8b-6078-7723-9930-4a3deea65f9e:13",
+        "windowTokens": 1007997
+      }
+    },
+    {
+      "row": 34,
+      "method": "session/tokenUsage",
+      "params": {
+        "cumulative": {
+          "cacheReadTokens": 28148,
+          "outputTokens": 200,
+          "promptTokens": 56614,
+          "totalTokens": 56814
+        },
+        "durationMs": 2656,
+        "modelId": "muse-wonder-1.0",
+        "promptTokens": 28405,
+        "sessionId": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+        "sourceRange": {
+          "first": {
+            "id": "01a1bf8b-7f7a-7410-ba0c-d3c662dcda90",
+            "sequence": 83
+          },
+          "last": {
+            "id": "01a1bf8b-7f7a-7410-ba0c-d3c662dcda90",
+            "sequence": 83
+          },
+          "stream": {
+            "id": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+            "kind": "session"
+          }
+        },
+        "totalTokens": 28452,
+        "turnId": "01a1bf8b-619c-7e78-b4c4-8d1f92adfbc6",
+        "usage": {
+          "cacheReadTokens": 28148,
+          "cacheWriteTokens": 0,
+          "cachedTokens": 28148,
+          "inputTokens": 28405,
+          "outputTokens": 47,
+          "reasoningTokens": 36
+        },
+        "viewCursor": "v4:01a1bf8b-6078-7723-9930-4a3deea65f9e:15"
+      }
+    },
+    {
+      "row": 35,
+      "method": "session/contextUsage",
+      "params": {
+        "pressure": "normal",
+        "sessionId": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+        "sourceRange": {
+          "first": {
+            "id": "01a1bf8b-7f7a-7410-ba0c-d3c662dcda90",
+            "sequence": 83
+          },
+          "last": {
+            "id": "01a1bf8b-7f7a-7410-ba0c-d3c662dcda90",
+            "sequence": 83
+          },
+          "stream": {
+            "id": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+            "kind": "session"
+          }
+        },
+        "usedTokens": 28674,
+        "viewCursor": "v4:01a1bf8b-6078-7723-9930-4a3deea65f9e:16",
+        "windowTokens": 1007997
+      }
+    },
+    {
+      "row": 51,
+      "method": "session/tokenUsage",
+      "params": {
+        "cumulative": {
+          "cacheReadTokens": 56552,
+          "outputTokens": 470,
+          "promptTokens": 85103,
+          "totalTokens": 85573
+        },
+        "durationMs": 2908,
+        "finishReason": "tool_calls",
+        "modelId": "muse-wonder-1.0",
+        "promptTokens": 28489,
+        "sessionId": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+        "sourceRange": {
+          "first": {
+            "id": "01a1bf8b-bc21-7a30-a9f7-2c54830a9a06",
+            "sequence": 151
+          },
+          "last": {
+            "id": "01a1bf8b-bc21-7a30-a9f7-2c54830a9a06",
+            "sequence": 151
+          },
+          "stream": {
+            "id": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+            "kind": "session"
+          }
+        },
+        "totalTokens": 28759,
+        "turnId": "01a1bf8b-b07a-770a-b373-932c2abbb04f",
+        "usage": {
+          "cacheReadTokens": 28404,
+          "cacheWriteTokens": 0,
+          "cachedTokens": 28404,
+          "inputTokens": 28489,
+          "outputTokens": 270,
+          "reasoningTokens": 145
+        },
+        "viewCursor": "v4:01a1bf8b-6078-7723-9930-4a3deea65f9e:27"
+      }
+    },
+    {
+      "row": 52,
+      "method": "session/contextUsage",
+      "params": {
+        "pressure": "normal",
+        "sessionId": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+        "sourceRange": {
+          "first": {
+            "id": "01a1bf8b-bc21-7a30-a9f7-2c54830a9a06",
+            "sequence": 151
+          },
+          "last": {
+            "id": "01a1bf8b-bc21-7a30-a9f7-2c54830a9a06",
+            "sequence": 151
+          },
+          "stream": {
+            "id": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+            "kind": "session"
+          }
+        },
+        "usedTokens": 28759,
+        "viewCursor": "v4:01a1bf8b-6078-7723-9930-4a3deea65f9e:28",
+        "windowTokens": 1007997
+      }
+    },
+    {
+      "row": 63,
+      "method": "session/contextUsage",
+      "params": {
+        "pressure": "normal",
+        "sessionId": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+        "sourceRange": {
+          "first": {
+            "id": "01a1bf8b-bcb9-76a3-a228-8da2b91766fb",
+            "sequence": 166
+          },
+          "last": {
+            "id": "01a1bf8b-bcb9-76a3-a228-8da2b91766fb",
+            "sequence": 166
+          },
+          "stream": {
+            "id": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+            "kind": "session"
+          }
+        },
+        "usedTokens": 28865,
+        "viewCursor": "v4:01a1bf8b-6078-7723-9930-4a3deea65f9e:33",
+        "windowTokens": 1007997
+      }
+    },
+    {
+      "row": 67,
+      "method": "session/tokenUsage",
+      "params": {
+        "cumulative": {
+          "cacheReadTokens": 84956,
+          "outputTokens": 487,
+          "promptTokens": 113905,
+          "totalTokens": 114392
+        },
+        "durationMs": 1932,
+        "modelId": "muse-wonder-1.0",
+        "promptTokens": 28802,
+        "sessionId": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+        "sourceRange": {
+          "first": {
+            "id": "01a1bf8b-c478-75c0-862f-d4cfe480f76e",
+            "sequence": 184
+          },
+          "last": {
+            "id": "01a1bf8b-c478-75c0-862f-d4cfe480f76e",
+            "sequence": 184
+          },
+          "stream": {
+            "id": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+            "kind": "session"
+          }
+        },
+        "totalTokens": 28819,
+        "turnId": "01a1bf8b-b07a-770a-b373-932c2abbb04f",
+        "usage": {
+          "cacheReadTokens": 28404,
+          "cacheWriteTokens": 0,
+          "cachedTokens": 28404,
+          "inputTokens": 28802,
+          "outputTokens": 17,
+          "reasoningTokens": 7
+        },
+        "viewCursor": "v4:01a1bf8b-6078-7723-9930-4a3deea65f9e:35"
+      }
+    },
+    {
+      "row": 68,
+      "method": "session/contextUsage",
+      "params": {
+        "pressure": "normal",
+        "sessionId": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+        "sourceRange": {
+          "first": {
+            "id": "01a1bf8b-c478-75c0-862f-d4cfe480f76e",
+            "sequence": 184
+          },
+          "last": {
+            "id": "01a1bf8b-c478-75c0-862f-d4cfe480f76e",
+            "sequence": 184
+          },
+          "stream": {
+            "id": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+            "kind": "session"
+          }
+        },
+        "usedTokens": 29071,
+        "viewCursor": "v4:01a1bf8b-6078-7723-9930-4a3deea65f9e:36",
+        "windowTokens": 1007997
+      }
+    },
+    {
+      "row": 84,
+      "method": "session/tokenUsage",
+      "params": {
+        "cumulative": {
+          "cacheReadTokens": 113744,
+          "outputTokens": 614,
+          "promptTokens": 142768,
+          "totalTokens": 143382
+        },
+        "durationMs": 3163,
+        "finishReason": "tool_calls",
+        "modelId": "muse-wonder-1.0",
+        "promptTokens": 28863,
+        "sessionId": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+        "sourceRange": {
+          "first": {
+            "id": "01a1bf8b-e8d3-7983-8a88-93de804c3a57",
+            "sequence": 252
+          },
+          "last": {
+            "id": "01a1bf8b-e8d3-7983-8a88-93de804c3a57",
+            "sequence": 252
+          },
+          "stream": {
+            "id": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+            "kind": "session"
+          }
+        },
+        "totalTokens": 28990,
+        "turnId": "01a1bf8b-dc09-7241-a36f-464cbda28674",
+        "usage": {
+          "cacheReadTokens": 28788,
+          "cacheWriteTokens": 0,
+          "cachedTokens": 28788,
+          "inputTokens": 28863,
+          "outputTokens": 127,
+          "reasoningTokens": 12
+        },
+        "viewCursor": "v4:01a1bf8b-6078-7723-9930-4a3deea65f9e:47"
+      }
+    },
+    {
+      "row": 85,
+      "method": "session/contextUsage",
+      "params": {
+        "pressure": "normal",
+        "sessionId": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+        "sourceRange": {
+          "first": {
+            "id": "01a1bf8b-e8d3-7983-8a88-93de804c3a57",
+            "sequence": 252
+          },
+          "last": {
+            "id": "01a1bf8b-e8d3-7983-8a88-93de804c3a57",
+            "sequence": 252
+          },
+          "stream": {
+            "id": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+            "kind": "session"
+          }
+        },
+        "usedTokens": 29119,
+        "viewCursor": "v4:01a1bf8b-6078-7723-9930-4a3deea65f9e:48",
+        "windowTokens": 1007997
+      }
+    },
+    {
+      "row": 108,
+      "method": "session/contextUsage",
+      "params": {
+        "pressure": "normal",
+        "sessionId": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+        "sourceRange": {
+          "first": {
+            "id": "01a1bf8b-eb59-7922-8c96-b6f3c7fbf95b",
+            "sequence": 280
+          },
+          "last": {
+            "id": "01a1bf8b-eb59-7922-8c96-b6f3c7fbf95b",
+            "sequence": 280
+          },
+          "stream": {
+            "id": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+            "kind": "session"
+          }
+        },
+        "usedTokens": 29248,
+        "viewCursor": "v4:01a1bf8b-6078-7723-9930-4a3deea65f9e:55",
+        "windowTokens": 1007997
+      }
+    },
+    {
+      "row": 114,
+      "method": "session/reasoningEffortChanged",
+      "params": {
+        "reasoningEffort": "low",
+        "sessionId": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+        "source": "user",
+        "sourceRange": {
+          "first": {
+            "id": "01a1bf8b-eb6d-7a13-8a7c-ac9ddf28f695",
+            "sequence": 288
+          },
+          "last": {
+            "id": "01a1bf8b-eb6d-7a13-8a7c-ac9ddf28f695",
+            "sequence": 288
+          },
+          "stream": {
+            "id": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+            "kind": "session"
+          }
+        },
+        "viewCursor": "v4:01a1bf8b-6078-7723-9930-4a3deea65f9e:58"
+      }
+    },
+    {
+      "row": 121,
+      "method": "session/modelChanged",
+      "params": {
+        "modelId": "muse-spark-1.3",
+        "providerId": "meta",
+        "sessionId": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+        "source": "user",
+        "sourceRange": {
+          "first": {
+            "id": "01a1bf8b-ebf5-7f62-be9c-3d4dc1df2555",
+            "sequence": 317
+          },
+          "last": {
+            "id": "01a1bf8b-ebf5-7f62-be9c-3d4dc1df2555",
+            "sequence": 317
+          },
+          "stream": {
+            "id": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+            "kind": "session"
+          }
+        },
+        "viewCursor": "v4:01a1bf8b-6078-7723-9930-4a3deea65f9e:62"
+      }
+    },
+    {
+      "row": 124,
+      "method": "session/modelChanged",
+      "params": {
+        "modelId": "muse-wonder-1.0",
+        "providerId": "meta",
+        "sessionId": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+        "source": "user",
+        "sourceRange": {
+          "first": {
+            "id": "01a1bf8b-eca7-74f1-9eda-3f1fdeed3a4b",
+            "sequence": 318
+          },
+          "last": {
+            "id": "01a1bf8b-eca7-74f1-9eda-3f1fdeed3a4b",
+            "sequence": 318
+          },
+          "stream": {
+            "id": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+            "kind": "session"
+          }
+        },
+        "viewCursor": "v4:01a1bf8b-6078-7723-9930-4a3deea65f9e:63"
+      }
+    },
+    {
+      "row": 141,
+      "method": "session/tokenUsage",
+      "params": {
+        "cumulative": {
+          "cacheReadTokens": 142532,
+          "outputTokens": 636,
+          "promptTokens": 171876,
+          "totalTokens": 172512
+        },
+        "durationMs": 2606,
+        "modelId": "muse-wonder-1.0",
+        "promptTokens": 29108,
+        "sessionId": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+        "sourceRange": {
+          "first": {
+            "id": "01a1bf8b-f602-76a0-bafd-1881c616479a",
+            "sequence": 327
+          },
+          "last": {
+            "id": "01a1bf8b-f602-76a0-bafd-1881c616479a",
+            "sequence": 327
+          },
+          "stream": {
+            "id": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+            "kind": "session"
+          }
+        },
+        "totalTokens": 29130,
+        "turnId": "01a1bf8b-e92d-78e4-915f-f34d3422e86a",
+        "usage": {
+          "cacheReadTokens": 28788,
+          "cacheWriteTokens": 0,
+          "cachedTokens": 28788,
+          "inputTokens": 29108,
+          "outputTokens": 22,
+          "reasoningTokens": 10
+        },
+        "viewCursor": "v4:01a1bf8b-6078-7723-9930-4a3deea65f9e:65"
+      }
+    },
+    {
+      "row": 142,
+      "method": "session/contextUsage",
+      "params": {
+        "pressure": "normal",
+        "sessionId": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+        "sourceRange": {
+          "first": {
+            "id": "01a1bf8b-f602-76a0-bafd-1881c616479a",
+            "sequence": 327
+          },
+          "last": {
+            "id": "01a1bf8b-f602-76a0-bafd-1881c616479a",
+            "sequence": 327
+          },
+          "stream": {
+            "id": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+            "kind": "session"
+          }
+        },
+        "usedTokens": 29377,
+        "viewCursor": "v4:01a1bf8b-6078-7723-9930-4a3deea65f9e:66",
+        "windowTokens": 1007997
+      }
+    },
+    {
+      "row": 152,
+      "method": "session/closed",
+      "params": {
+        "reason": "hostShutdown",
+        "sessionId": "00000000-0000-70cb-8049-a198b161947c",
+        "viewCursor": "v4:00000000-0000-70cb-8049-a198b161947c:23"
+      }
+    },
+    {
+      "row": 154,
+      "method": "session/closed",
+      "params": {
+        "reason": "hostShutdown",
+        "sessionId": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+        "viewCursor": "v4:01a1bf8b-6078-7723-9930-4a3deea65f9e:73"
+      }
+    },
+    {
+      "row": 156,
+      "method": "session/closed",
+      "params": {
+        "reason": "hostShutdown",
+        "sessionId": "01a1bf87-da7f-7ce0-a4ff-bab34925049f",
+        "viewCursor": "v4:01a1bf87-da7f-7ce0-a4ff-bab34925049f:95"
+      }
+    }
+  ],
+  "child-follow": [
+    {
+      "row": 18,
+      "method": "session/tokenUsage",
+      "params": {
+        "cumulative": {
+          "cacheReadTokens": 18676,
+          "outputTokens": 533,
+          "promptTokens": 28212,
+          "totalTokens": 28745
+        },
+        "durationMs": 5177,
+        "finishReason": "tool_calls",
+        "modelId": "muse-wonder-1.0",
+        "promptTokens": 28212,
+        "sessionId": "01a1bf90-40db-7421-867e-cd81010d38a3",
+        "sourceRange": {
+          "first": {
+            "id": "01a1bf90-5775-7192-9abe-e51f7d7b4ea0",
+            "sequence": 54
+          },
+          "last": {
+            "id": "01a1bf90-5775-7192-9abe-e51f7d7b4ea0",
+            "sequence": 54
+          },
+          "stream": {
+            "id": "01a1bf90-40db-7421-867e-cd81010d38a3",
+            "kind": "session"
+          }
+        },
+        "totalTokens": 28745,
+        "turnId": "01a1bf90-425f-705d-ae74-8108a10b933b",
+        "usage": {
+          "cacheReadTokens": 18676,
+          "cacheWriteTokens": 0,
+          "cachedTokens": 18676,
+          "inputTokens": 28212,
+          "outputTokens": 533,
+          "reasoningTokens": 326
+        },
+        "viewCursor": "v4:01a1bf90-40db-7421-867e-cd81010d38a3:8"
+      }
+    },
+    {
+      "row": 19,
+      "method": "session/contextUsage",
+      "params": {
+        "pressure": "normal",
+        "sessionId": "01a1bf90-40db-7421-867e-cd81010d38a3",
+        "sourceRange": {
+          "first": {
+            "id": "01a1bf90-5775-7192-9abe-e51f7d7b4ea0",
+            "sequence": 54
+          },
+          "last": {
+            "id": "01a1bf90-5775-7192-9abe-e51f7d7b4ea0",
+            "sequence": 54
+          },
+          "stream": {
+            "id": "01a1bf90-40db-7421-867e-cd81010d38a3",
+            "kind": "session"
+          }
+        },
+        "usedTokens": 29407,
+        "viewCursor": "v4:01a1bf90-40db-7421-867e-cd81010d38a3:9",
+        "windowTokens": 1007997
+      }
+    },
+    {
+      "row": 23,
+      "method": "session/contextUsage",
+      "params": {
+        "pressure": "normal",
+        "sessionId": "01a1bf90-40db-7421-867e-cd81010d38a3",
+        "sourceRange": {
+          "first": {
+            "id": "01a1bf90-57ca-73d2-b8fc-b36b23819f01",
+            "sequence": 69
+          },
+          "last": {
+            "id": "01a1bf90-57ca-73d2-b8fc-b36b23819f01",
+            "sequence": 69
+          },
+          "stream": {
+            "id": "01a1bf90-40db-7421-867e-cd81010d38a3",
+            "kind": "session"
+          }
+        },
+        "usedTokens": 30128,
+        "viewCursor": "v4:01a1bf90-40db-7421-867e-cd81010d38a3:13",
+        "windowTokens": 1007997
+      }
+    },
+    {
+      "row": 48,
+      "method": "session/closed",
+      "params": {
+        "reason": "hostShutdown",
+        "sessionId": "01a1bf90-40db-7421-867e-cd81010d38a3",
+        "viewCursor": "v4:01a1bf90-40db-7421-867e-cd81010d38a3:31"
+      }
+    }
+  ],
+  "mcp": [
+    {
+      "row": 15,
+      "method": "session/tokenUsage",
+      "params": {
+        "cumulative": {
+          "outputTokens": 90,
+          "promptTokens": 28274,
+          "totalTokens": 28364
+        },
+        "durationMs": 2647,
+        "finishReason": "tool_calls",
+        "modelId": "muse-wonder-1.0",
+        "promptTokens": 28274,
+        "sessionId": "01a1bf8c-4a8c-7d31-a3ac-4ed0e5f80c6d",
+        "sourceRange": {
+          "first": {
+            "id": "01a1bf8c-59ed-7d52-a058-3edf96751511",
+            "sequence": 66
+          },
+          "last": {
+            "id": "01a1bf8c-59ed-7d52-a058-3edf96751511",
+            "sequence": 66
+          },
+          "stream": {
+            "id": "01a1bf8c-4a8c-7d31-a3ac-4ed0e5f80c6d",
+            "kind": "session"
+          }
+        },
+        "totalTokens": 28364,
+        "turnId": "01a1bf8c-4b8c-7a12-8e9b-3a1d9e2dd847",
+        "usage": {
+          "cacheReadTokens": 0,
+          "cacheWriteTokens": 0,
+          "cachedTokens": 0,
+          "inputTokens": 28274,
+          "outputTokens": 90,
+          "reasoningTokens": 33
+        },
+        "viewCursor": "v4:01a1bf8c-4a8c-7d31-a3ac-4ed0e5f80c6d:7"
+      }
+    },
+    {
+      "row": 16,
+      "method": "session/contextUsage",
+      "params": {
+        "pressure": "normal",
+        "sessionId": "01a1bf8c-4a8c-7d31-a3ac-4ed0e5f80c6d",
+        "sourceRange": {
+          "first": {
+            "id": "01a1bf8c-59ed-7d52-a058-3edf96751511",
+            "sequence": 66
+          },
+          "last": {
+            "id": "01a1bf8c-59ed-7d52-a058-3edf96751511",
+            "sequence": 66
+          },
+          "stream": {
+            "id": "01a1bf8c-4a8c-7d31-a3ac-4ed0e5f80c6d",
+            "kind": "session"
+          }
+        },
+        "usedTokens": 28786,
+        "viewCursor": "v4:01a1bf8c-4a8c-7d31-a3ac-4ed0e5f80c6d:8",
+        "windowTokens": 1007997
+      }
+    },
+    {
+      "row": 19,
+      "method": "session/contextUsage",
+      "params": {
+        "pressure": "normal",
+        "sessionId": "01a1bf8c-4a8c-7d31-a3ac-4ed0e5f80c6d",
+        "sourceRange": {
+          "first": {
+            "id": "01a1bf8c-5a0a-7da2-9c21-57b1f3428a93",
+            "sequence": 80
+          },
+          "last": {
+            "id": "01a1bf8c-5a0a-7da2-9c21-57b1f3428a93",
+            "sequence": 80
+          },
+          "stream": {
+            "id": "01a1bf8c-4a8c-7d31-a3ac-4ed0e5f80c6d",
+            "kind": "session"
+          }
+        },
+        "usedTokens": 28824,
+        "viewCursor": "v4:01a1bf8c-4a8c-7d31-a3ac-4ed0e5f80c6d:11",
+        "windowTokens": 1007997
+      }
+    },
+    {
+      "row": 23,
+      "method": "session/tokenUsage",
+      "params": {
+        "cumulative": {
+          "cacheReadTokens": 28148,
+          "outputTokens": 110,
+          "promptTokens": 56671,
+          "totalTokens": 56781
+        },
+        "durationMs": 2137,
+        "modelId": "muse-wonder-1.0",
+        "promptTokens": 28397,
+        "sessionId": "01a1bf8c-4a8c-7d31-a3ac-4ed0e5f80c6d",
+        "sourceRange": {
+          "first": {
+            "id": "01a1bf8c-6279-7ca2-a52c-f7763eb7a96b",
+            "sequence": 98
+          },
+          "last": {
+            "id": "01a1bf8c-6279-7ca2-a52c-f7763eb7a96b",
+            "sequence": 98
+          },
+          "stream": {
+            "id": "01a1bf8c-4a8c-7d31-a3ac-4ed0e5f80c6d",
+            "kind": "session"
+          }
+        },
+        "totalTokens": 28417,
+        "turnId": "01a1bf8c-4b8c-7a12-8e9b-3a1d9e2dd847",
+        "usage": {
+          "cacheReadTokens": 28148,
+          "cacheWriteTokens": 0,
+          "cachedTokens": 28148,
+          "inputTokens": 28397,
+          "outputTokens": 20,
+          "reasoningTokens": 8
+        },
+        "viewCursor": "v4:01a1bf8c-4a8c-7d31-a3ac-4ed0e5f80c6d:13"
+      }
+    },
+    {
+      "row": 24,
+      "method": "session/contextUsage",
+      "params": {
+        "pressure": "normal",
+        "sessionId": "01a1bf8c-4a8c-7d31-a3ac-4ed0e5f80c6d",
+        "sourceRange": {
+          "first": {
+            "id": "01a1bf8c-6279-7ca2-a52c-f7763eb7a96b",
+            "sequence": 98
+          },
+          "last": {
+            "id": "01a1bf8c-6279-7ca2-a52c-f7763eb7a96b",
+            "sequence": 98
+          },
+          "stream": {
+            "id": "01a1bf8c-4a8c-7d31-a3ac-4ed0e5f80c6d",
+            "kind": "session"
+          }
+        },
+        "usedTokens": 28666,
+        "viewCursor": "v4:01a1bf8c-4a8c-7d31-a3ac-4ed0e5f80c6d:14",
+        "windowTokens": 1007997
+      }
+    },
+    {
+      "row": 34,
+      "method": "session/closed",
+      "params": {
+        "reason": "hostShutdown",
+        "sessionId": "01a1bf8c-4a8c-7d31-a3ac-4ed0e5f80c6d",
+        "viewCursor": "v4:01a1bf8c-4a8c-7d31-a3ac-4ed0e5f80c6d:21"
+      }
+    }
+  ],
+  "resume-compact": [
+    {
+      "row": 9,
+      "method": "session/contextUsage",
+      "params": {
+        "pressure": "normal",
+        "sessionId": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+        "sourceRange": {
+          "first": {
+            "id": "01a1bf8c-95e7-72a2-95c7-69fd9d50f72a",
+            "sequence": 383
+          },
+          "last": {
+            "id": "01a1bf8c-95e7-72a2-95c7-69fd9d50f72a",
+            "sequence": 383
+          },
+          "stream": {
+            "id": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+            "kind": "session"
+          }
+        },
+        "usedTokens": 28990,
+        "viewCursor": "v4:01a1bf8b-6078-7723-9930-4a3deea65f9e:76",
+        "windowTokens": 1007997
+      }
+    },
+    {
+      "row": 11,
+      "method": "session/closed",
+      "params": {
+        "reason": "hostShutdown",
+        "sessionId": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+        "viewCursor": "v4:01a1bf8b-6078-7723-9930-4a3deea65f9e:77"
+      }
+    }
+  ]
+}

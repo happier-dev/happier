@@ -1,0 +1,583 @@
+{
+  "pid": 1820351,
+  "exit": 0,
+  "rows": [
+    {
+      "direction": "send",
+      "message": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+          "clientInfo": {
+            "name": "muse_probe",
+            "version": "1"
+          },
+          "capabilities": {
+            "userInputDialogs": true,
+            "experimentalApi": true,
+            "requestedCapabilities": [
+              "sessionMcp",
+              "userShell"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "id": 1,
+        "jsonrpc": "2.0",
+        "result": {
+          "experimentalApi": true,
+          "grantedCapabilities": [
+            "userShell",
+            "sessionMcp"
+          ],
+          "museHome": "[TEMP]/login/data/muse",
+          "platformFamily": "unix",
+          "platformOs": "linux",
+          "sandboxAvailability": "available",
+          "schema": {
+            "fingerprint": "sha256:c94c3d1f2f51e6424074b9ec43eac3eedcf532d3dcd77351ec1383a87d3049c6",
+            "version": 1
+          },
+          "serverInfo": {
+            "name": "muse",
+            "version": "1.4.14"
+          },
+          "sessionDurability": "durable",
+          "userAgent": "muse-build/1.4.14 (serve; linux-x86_64; build dec7d7497fecdad135ec5835a8161dbc92e55b58)"
+        }
+      }
+    },
+    {
+      "direction": "send",
+      "message": {
+        "jsonrpc": "2.0",
+        "method": "initialized",
+        "params": {}
+      }
+    },
+    {
+      "direction": "send",
+      "message": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "session/resume",
+        "params": {
+          "commandId": "01a1bf8c-70f3-7f5f-b61c-6cef75f2b939",
+          "sessionId": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+          "history": "inline"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794215014758,
+        "jsonrpc": "2.0",
+        "method": "session/branchChanged",
+        "params": {
+          "branch": "master",
+          "sessionId": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+          "sourceRange": {
+            "first": {
+              "id": "01a1bf8c-7166-7b83-b629-35c18bed7d09",
+              "sequence": 362
+            },
+            "last": {
+              "id": "01a1bf8c-7166-7b83-b629-35c18bed7d09",
+              "sequence": 362
+            },
+            "stream": {
+              "id": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+              "kind": "session"
+            }
+          },
+          "vcs": "git",
+          "viewCursor": "v4:01a1bf8b-6078-7723-9930-4a3deea65f9e:74",
+          "workspaceRoot": "[TEMP]/login/workspace"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "id": 2,
+        "jsonrpc": "2.0",
+        "result": {
+          "history": {
+            "items": [
+              {
+                "commandId": "01a1bf8b-619c-7e78-b4c4-8d1f92adfbc6",
+                "itemId": "eddbebe1-70e8-4607-9b48-9ca00da53187",
+                "kind": "userMessage",
+                "recordedAt": "2026-11-09T09:02:25.21934Z",
+                "revision": 1,
+                "status": "completed",
+                "text": "Run exactly: printf DENY > ../rejected-marker. Request human approval with sandbox_permissions=require_escalated. If rejected stop; do not retry or use another tool. Reply DENIED.",
+                "turnId": "01a1bf8b-619c-7e78-b4c4-8d1f92adfbc6"
+              },
+              {
+                "childSessionId": "01a1bf8b-6233-7832-ac21-078df2a20713",
+                "fallbackText": "Reminder child session",
+                "generationId": 1,
+                "itemId": "01a1bf8b-6244-79f3-b984-e02ae8b09f41",
+                "kind": "reminderChild",
+                "recordedAt": "2026-11-09T09:02:45.307045Z",
+                "reminderAgentId": "skill-reminder",
+                "revision": 2,
+                "status": "completed",
+                "taskId": "01a1bf8b-6233-7832-ac21-07711490fc14",
+                "turnId": "01a1bf8b-619c-7e78-b4c4-8d1f92adfbc6"
+              },
+              {
+                "args": "{\"command\":\"printf DENY > ../rejected-marker\",\"description\":\"Write rejected marker file\",\"sandbox_permissions\":\"require_escalated\"}",
+                "callId": "call_01a1bf8b6e2c72b8bdfdca70e4c64263",
+                "failureKind": "approval_denied",
+                "failureReason": "approval aborted",
+                "itemId": "01a1bf8b-74ca-78e3-94e2-94aec04f85de",
+                "kind": "toolCall",
+                "recordedAt": "2026-11-09T09:02:30.147331Z",
+                "revision": 2,
+                "status": "rejected",
+                "tool": "bash",
+                "turnId": "01a1bf8b-619c-7e78-b4c4-8d1f92adfbc6",
+                "visibleOutput": "tool denied: approval aborted\nThe user rejected this action. Don't retry it unless they ask."
+              },
+              {
+                "itemId": "8a719475-72d8-4aaf-8684-c02ec87a61e4",
+                "kind": "agentMessage",
+                "messagePhase": "finalAnswer",
+                "recordedAt": "2026-11-09T09:02:32.807136Z",
+                "revision": 2,
+                "status": "completed",
+                "text": "DENIED",
+                "turnId": "01a1bf8b-619c-7e78-b4c4-8d1f92adfbc6"
+              },
+              {
+                "blocking": true,
+                "childSessionId": "01a1bf8b-7f7e-7030-86d0-bbcca510a075",
+                "childSessionLogPath": "subagent/01a1bf8b-7f7e-7030-86d0-bbcca510a075/session.jsonl",
+                "fallbackText": "Reminder child session",
+                "generationId": 1,
+                "itemId": "01a1bf8b-7f83-78b2-b9c9-25be707d19eb",
+                "kind": "reminderChild",
+                "recordedAt": "2026-11-09T09:02:45.31949Z",
+                "reminderAgentId": "goal-reminder",
+                "revision": 2,
+                "status": "completed",
+                "taskId": "01a1bf8b-7f7e-7030-86d0-bbbf48f8f9ab",
+                "turnId": "01a1bf8b-619c-7e78-b4c4-8d1f92adfbc6"
+              },
+              {
+                "blocking": true,
+                "childSessionId": "01a1bf8b-7f86-7292-afe7-928df97b50ea",
+                "childSessionLogPath": "subagent/01a1bf8b-7f86-7292-afe7-928df97b50ea/session.jsonl",
+                "fallbackText": "Reminder child session",
+                "generationId": 1,
+                "itemId": "01a1bf8b-7f8c-7d52-ab13-085af91006b3",
+                "kind": "reminderChild",
+                "recordedAt": "2026-11-09T09:02:45.329277Z",
+                "reminderAgentId": "verify-reminder",
+                "revision": 2,
+                "status": "completed",
+                "taskId": "01a1bf8b-7f86-7292-afe7-9272c867e8b2",
+                "turnId": "01a1bf8b-619c-7e78-b4c4-8d1f92adfbc6"
+              },
+              {
+                "commandId": "01a1bf8b-b07a-770a-b373-932c2abbb04f",
+                "itemId": "27ed880d-e7a6-4943-a8b4-f3b251c39c34",
+                "kind": "userMessage",
+                "recordedAt": "2026-11-09T09:02:45.3811Z",
+                "revision": 1,
+                "status": "completed",
+                "text": "Use request_user_input now to ask one question with options Blue and Green. Wait for the selection and reply only with its color. No other tools.",
+                "turnId": "01a1bf8b-b07a-770a-b373-932c2abbb04f"
+              },
+              {
+                "childSessionId": "01a1bf8b-b0a4-7231-a629-73285b3db19c",
+                "fallbackText": "Reminder child session",
+                "generationId": 1,
+                "itemId": "01a1bf8b-b0b0-7de2-a93f-1a304b0c969b",
+                "kind": "reminderChild",
+                "recordedAt": "2026-11-09T09:02:56.483421Z",
+                "reminderAgentId": "skill-reminder",
+                "revision": 2,
+                "status": "completed",
+                "taskId": "01a1bf8b-b0a4-7231-a629-73184a2f0df5",
+                "turnId": "01a1bf8b-b07a-770a-b373-932c2abbb04f"
+              },
+              {
+                "args": "{\"questions\":[{\"header\":\"Color\",\"id\":\"color\",\"options\":[{\"description\":\"Blue color option\",\"label\":\"Blue\",\"preview\":null},{\"description\":\"Green color option\",\"label\":\"Green\",\"preview\":null}],\"question\":\"Which color do you prefer?\",\"selection\":{\"mode\":\"single\"}}]}",
+                "callId": "call_01a1bf8bb96d71deb3bfccc8c3c8e273",
+                "itemId": "01a1bf8b-bc54-7a10-a15f-b5d8c6dec069",
+                "kind": "toolCall",
+                "recordedAt": "2026-11-09T09:02:48.494508Z",
+                "revision": 2,
+                "status": "completed",
+                "tool": "request_user_input",
+                "turnId": "01a1bf8b-b07a-770a-b373-932c2abbb04f",
+                "visibleOutput": "{\"status\":\"answered\",\"answers\":[{\"id\":\"color\",\"selected_label\":\"Blue\"}]}"
+              },
+              {
+                "itemId": "ca2e6fd9-a358-4eaf-b7a3-d4a77cd694f3",
+                "kind": "agentMessage",
+                "messagePhase": "finalAnswer",
+                "recordedAt": "2026-11-09T09:02:50.461798Z",
+                "revision": 2,
+                "status": "completed",
+                "text": "Blue",
+                "turnId": "01a1bf8b-b07a-770a-b373-932c2abbb04f"
+              },
+              {
+                "blocking": true,
+                "childSessionId": "01a1bf8b-c47c-7561-81e5-4da8eb37d166",
+                "childSessionLogPath": "subagent/01a1bf8b-c47c-7561-81e5-4da8eb37d166/session.jsonl",
+                "fallbackText": "Reminder child session",
+                "generationId": 1,
+                "itemId": "01a1bf8b-c490-7ee1-984f-c716203c6c95",
+                "kind": "reminderChild",
+                "recordedAt": "2026-11-09T09:02:56.484881Z",
+                "reminderAgentId": "goal-reminder",
+                "revision": 2,
+                "status": "completed",
+                "taskId": "01a1bf8b-c47c-7561-81e5-4d94dc764e05",
+                "turnId": "01a1bf8b-b07a-770a-b373-932c2abbb04f"
+              },
+              {
+                "blocking": true,
+                "childSessionId": "01a1bf8b-c4a3-7022-8e60-ea26d589d76c",
+                "childSessionLogPath": "subagent/01a1bf8b-c4a3-7022-8e60-ea26d589d76c/session.jsonl",
+                "fallbackText": "Reminder child session",
+                "generationId": 1,
+                "itemId": "01a1bf8b-c4b7-7a63-86a0-eaa608ee09f9",
+                "kind": "reminderChild",
+                "recordedAt": "2026-11-09T09:02:56.486497Z",
+                "reminderAgentId": "verify-reminder",
+                "revision": 2,
+                "status": "completed",
+                "taskId": "01a1bf8b-c4a3-7022-8e60-ea1bda852be3",
+                "turnId": "01a1bf8b-b07a-770a-b373-932c2abbb04f"
+              },
+              {
+                "commandId": "01a1bf8b-dc09-7241-a36f-464cbda28674",
+                "itemId": "725701d5-04fe-445c-a3e4-a51af064d1d6",
+                "kind": "userMessage",
+                "recordedAt": "2026-11-09T09:02:56.536605Z",
+                "revision": 1,
+                "status": "completed",
+                "text": "Run exactly this one shell command with sandbox_permissions=require_escalated: printf RUNNING > ../running-marker; sleep 30. Request approval and wait. Do not run anything else.",
+                "turnId": "01a1bf8b-dc09-7241-a36f-464cbda28674"
+              },
+              {
+                "childSessionId": "01a1bf8b-dc4b-79d2-bdaf-dc89149ff611",
+                "failureReason": "main run cancelled",
+                "fallbackText": "Reminder child session",
+                "generationId": 1,
+                "itemId": "01a1bf8b-dc52-78f0-a88d-ebea34f9514e",
+                "kind": "reminderChild",
+                "recordedAt": "2026-11-09T09:03:00.44421Z",
+                "reminderAgentId": "skill-reminder",
+                "revision": 2,
+                "status": "cancelled",
+                "taskId": "01a1bf8b-dc4b-79d2-bdaf-dc74fc2fd7ce",
+                "turnId": "01a1bf8b-dc09-7241-a36f-464cbda28674"
+              },
+              {
+                "args": "{\"command\":\"printf RUNNING > ../running-marker; sleep 30\",\"description\":\"Write running marker and sleep\",\"sandbox_permissions\":\"require_escalated\",\"yield_time_ms\":35000}",
+                "callId": "call_01a1bf8be27b70a586a09cacbdd6b5ab",
+                "failureReason": "cancelled by tool cancellation",
+                "itemId": "01a1bf8b-e8ed-7c40-a3df-0d1c8857f843",
+                "kind": "toolCall",
+                "recordedAt": "2026-11-09T09:03:00.437047Z",
+                "revision": 3,
+                "status": "cancelled",
+                "tool": "bash",
+                "turnId": "01a1bf8b-dc09-7241-a36f-464cbda28674",
+                "visibleOutput": "{\n  \"chunk_id\": \"exec-1-1\",\n  \"command\": \"printf RUNNING > ../running-marker; sleep 30\",\n  \"description\": \"Write running marker and sleep\",\n  \"terminal_status\": \"cancelled\",\n  \"terminal_reason\": \"cancelled by tool cancellation\",\n  \"output\": \"\",\n  \"original_output_bytes\": 0,\n  \"original_output_tokens\": 0,\n  \"truncated\": false\n}"
+              },
+              {
+                "commandId": "01a1bf8b-e92d-78e4-915f-f34d3422e86a",
+                "itemId": "cc854ad0-e796-5744-a67b-e3af2871129d",
+                "kind": "userMessage",
+                "recordedAt": "2026-11-09T09:03:00.471499Z",
+                "revision": 1,
+                "status": "completed",
+                "steered": true,
+                "text": "After the shell finishes reply STEERED only.",
+                "turnId": "01a1bf8b-e92d-78e4-915f-f34d3422e86a"
+              },
+              {
+                "childSessionId": "01a1bf8b-eba4-7b21-8f34-cfda1d013ac9",
+                "fallbackText": "Reminder child session",
+                "generationId": 1,
+                "itemId": "01a1bf8b-ebad-7000-9aa9-c46f8cbd6ee8",
+                "kind": "reminderChild",
+                "recordedAt": "2026-11-09T09:03:10.2469Z",
+                "reminderAgentId": "skill-reminder",
+                "revision": 2,
+                "status": "completed",
+                "taskId": "01a1bf8b-eba4-7b21-8f34-cfc141b6d21f",
+                "turnId": "01a1bf8b-e92d-78e4-915f-f34d3422e86a"
+              },
+              {
+                "itemId": "5a386fd6-0d5e-44f8-aa80-814984ae0cd5",
+                "kind": "agentMessage",
+                "messagePhase": "finalAnswer",
+                "recordedAt": "2026-11-09T09:03:03.129275Z",
+                "revision": 2,
+                "status": "completed",
+                "text": "STEERED",
+                "turnId": "01a1bf8b-e92d-78e4-915f-f34d3422e86a"
+              },
+              {
+                "blocking": true,
+                "childSessionId": "01a1bf8b-f606-7730-a745-64c171d4de0c",
+                "childSessionLogPath": "subagent/01a1bf8b-f606-7730-a745-64c171d4de0c/session.jsonl",
+                "fallbackText": "Reminder child session",
+                "generationId": 1,
+                "itemId": "01a1bf8b-f60b-77d0-a208-58fa597f3c6c",
+                "kind": "reminderChild",
+                "recordedAt": "2026-11-09T09:03:10.248257Z",
+                "reminderAgentId": "goal-reminder",
+                "revision": 2,
+                "status": "completed",
+                "taskId": "01a1bf8b-f606-7730-a745-64bad331f2b6",
+                "turnId": "01a1bf8b-e92d-78e4-915f-f34d3422e86a"
+              },
+              {
+                "blocking": true,
+                "childSessionId": "01a1bf8b-f610-7c80-bc8e-07d7c6081e9a",
+                "childSessionLogPath": "subagent/01a1bf8b-f610-7c80-bc8e-07d7c6081e9a/session.jsonl",
+                "fallbackText": "Reminder child session",
+                "generationId": 1,
+                "itemId": "01a1bf8b-f630-7323-9f10-6b7d267d66a7",
+                "kind": "reminderChild",
+                "recordedAt": "2026-11-09T09:03:10.249856Z",
+                "reminderAgentId": "verify-reminder",
+                "revision": 2,
+                "status": "completed",
+                "taskId": "01a1bf8b-f610-7c80-bc8e-07c1d22781f1",
+                "turnId": "01a1bf8b-e92d-78e4-915f-f34d3422e86a"
+              }
+            ],
+            "mode": "inline",
+            "snapshot": null
+          },
+          "lastTurn": {
+            "terminal": "completed",
+            "turnId": "01a1bf8b-e92d-78e4-915f-f34d3422e86a"
+          },
+          "pendingRequests": [],
+          "session": {
+            "activeTurnId": null,
+            "approvalMode": {
+              "lastCommandId": null,
+              "mode": "promptUnmatched",
+              "source": "replay"
+            },
+            "branch": "master",
+            "createdAt": "2026-11-09T09:02:24.888679Z",
+            "createdByClient": {
+              "name": "muse_probe",
+              "version": "1"
+            },
+            "firstUserPrompt": "Run exactly: printf DENY > ../rejected-marker. Request human approval with sandbox_permissions=require_escalated. If rejected stop; do not retry or use another tool. Reply DENIED.",
+            "forkedFrom": null,
+            "kind": "root",
+            "lastActivityAt": "2026-11-09T09:03:10.259617Z",
+            "modelId": "muse-wonder-1.0",
+            "path": "[TEMP]/login/data/muse/sessions/2026/11/09/01a1bf8b-6078-7723-9930-4a3deea65f9e/session.jsonl",
+            "permissionState": {
+              "axes": {
+                "approval": "onRequest",
+                "filesystem": "sandboxed",
+                "network": "off",
+                "reviewer": "human"
+              },
+              "profileId": ":ask-me",
+              "reviewerAttached": true,
+              "reviewerAuthority": "human"
+            },
+            "providerId": "meta",
+            "resumedByClient": {
+              "name": "muse_probe",
+              "version": "1"
+            },
+            "sessionId": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+            "sideFrom": null,
+            "status": "idle",
+            "title": "Run exactly: printf DENY > ../rejected-marker. Request human approval with sandbox_permissions=require_escalated. If rejected stop; do not retry or use another tool. Reply DENIED.",
+            "turnCount": 4,
+            "updatedAt": "2026-11-09T09:03:34.76202Z",
+            "workspaceRoot": "[TEMP]/login/workspace"
+          },
+          "viewCursor": "v4:01a1bf8b-6078-7723-9930-4a3deea65f9e:74"
+        }
+      }
+    },
+    {
+      "direction": "send",
+      "message": {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "session/compact",
+        "params": {
+          "commandId": "01a1bf8c-72ed-7a8a-873b-8780e9366bcf",
+          "sessionId": "01a1bf8b-6078-7723-9930-4a3deea65f9e"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "id": 3,
+        "jsonrpc": "2.0",
+        "result": {
+          "commandId": "01a1bf8c-72ed-7a8a-873b-8780e9366bcf",
+          "status": "accepted"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794215016961,
+        "jsonrpc": "2.0",
+        "method": "item/started",
+        "params": {
+          "item": {
+            "fallbackText": "Context compaction",
+            "itemId": "01a1bf8c-7a00-7751-8f49-28e65960b66a",
+            "kind": "compaction",
+            "recordedAt": "2026-11-09T09:03:36.960101Z",
+            "revision": 1,
+            "status": "inProgress",
+            "tokensBefore": 22446,
+            "trigger": "manual",
+            "turnId": "01a1bf8b-dc09-7241-a36f-464cbda28674"
+          },
+          "sessionId": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+          "sourceRange": {
+            "first": {
+              "id": "01a1bf8c-7a00-7751-8f49-28e65960b66a",
+              "sequence": 379
+            },
+            "last": {
+              "id": "01a1bf8c-7a00-7751-8f49-28e65960b66a",
+              "sequence": 379
+            },
+            "stream": {
+              "id": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+              "kind": "session"
+            }
+          },
+          "viewCursor": "v4:01a1bf8b-6078-7723-9930-4a3deea65f9e:75"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794215024213,
+        "jsonrpc": "2.0",
+        "method": "session/contextUsage",
+        "params": {
+          "pressure": "normal",
+          "sessionId": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+          "sourceRange": {
+            "first": {
+              "id": "01a1bf8c-95e7-72a2-95c7-69fd9d50f72a",
+              "sequence": 383
+            },
+            "last": {
+              "id": "01a1bf8c-95e7-72a2-95c7-69fd9d50f72a",
+              "sequence": 383
+            },
+            "stream": {
+              "id": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+              "kind": "session"
+            }
+          },
+          "usedTokens": 28990,
+          "viewCursor": "v4:01a1bf8b-6078-7723-9930-4a3deea65f9e:76",
+          "windowTokens": 1007997
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794215024249,
+        "jsonrpc": "2.0",
+        "method": "item/completed",
+        "params": {
+          "item": {
+            "fallbackText": "Context compaction",
+            "itemId": "01a1bf8c-7a00-7751-8f49-28e65960b66a",
+            "kind": "compaction",
+            "outcome": "compacted",
+            "recordedAt": "2026-11-09T09:03:44.103281Z",
+            "revision": 2,
+            "status": "completed",
+            "strategyId": "summary-preserved-suffix/v1",
+            "summarizedThrough": "run:01a1bf8b-dc09-7241-a36f-464cbda28674:seq:21",
+            "tokensAfter": 21963,
+            "tokensBefore": 22446,
+            "trigger": "manual",
+            "turnId": "01a1bf8b-dc09-7241-a36f-464cbda28674"
+          },
+          "sessionId": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+          "sourceRange": {
+            "first": {
+              "id": "01a1bf8c-7a00-7751-8f49-28e65960b66a",
+              "sequence": 379
+            },
+            "last": {
+              "id": "10a373d8-df7e-54a9-ab14-db667c299a67",
+              "sequence": 385
+            },
+            "stream": {
+              "id": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+              "kind": "session"
+            }
+          },
+          "viewCursor": "v4:01a1bf8b-6078-7723-9930-4a3deea65f9e:77"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794215024298,
+        "jsonrpc": "2.0",
+        "method": "session/closed",
+        "params": {
+          "reason": "hostShutdown",
+          "sessionId": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+          "viewCursor": "v4:01a1bf8b-6078-7723-9930-4a3deea65f9e:77"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794215024298,
+        "jsonrpc": "2.0",
+        "method": "session/statusChanged",
+        "params": {
+          "sessionId": "01a1bf8b-6078-7723-9930-4a3deea65f9e",
+          "status": "notLoaded",
+          "viewCursor": "v4:01a1bf8b-6078-7723-9930-4a3deea65f9e:77"
+        }
+      }
+    },
+    {
+      "direction": "stderr",
+      "message": "muse serve: exit reason recorded: stdin_closed"
+    }
+  ]
+}

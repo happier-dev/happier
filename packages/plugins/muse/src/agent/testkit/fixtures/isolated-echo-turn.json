@@ -1,0 +1,979 @@
+{
+  "evidence": {
+    "kind": "observed-native-isolated-characterization",
+    "source": "/tmp/happier-muse-isolated-skill-tghb8eif/recording.json",
+    "log": "/tmp/happier-L-MUSE-AGENT/native-echo-characterization.log",
+    "nativeVersion": "1.4.14",
+    "envelopeVersion": 1,
+    "note": "Observed built-in echo provider stream only. Not Meta, account, credential, subscription or external model evidence; no production echo mode.",
+    "sanitization": "Temporary root replaced with [TEMP]/isolated-echo-turn; native UUID identities replaced consistently with fixture UUIDv7 values; direction labels normalized to send/recv. Native message fields otherwise preserved."
+  },
+  "rows": [
+    {
+      "direction": "send",
+      "message": {
+        "jsonrpc": "2.0",
+        "method": "initialize",
+        "params": {
+          "clientInfo": {
+            "name": "happier_muse",
+            "version": "0.3.0"
+          },
+          "capabilities": {
+            "experimentalApi": true
+          }
+        },
+        "id": 1
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "id": 1,
+        "jsonrpc": "2.0",
+        "result": {
+          "experimentalApi": true,
+          "grantedCapabilities": [],
+          "museHome": "[TEMP]/isolated-echo-turn/data/muse",
+          "platformFamily": "unix",
+          "platformOs": "linux",
+          "sandboxAvailability": "available",
+          "schema": {
+            "fingerprint": "sha256:c94c3d1f2f51e6424074b9ec43eac3eedcf532d3dcd77351ec1383a87d3049c6",
+            "version": 1
+          },
+          "serverInfo": {
+            "name": "muse",
+            "version": "1.4.14"
+          },
+          "sessionDurability": "durable",
+          "userAgent": "muse-build/1.4.14 (serve; linux-x86_64; build dec7d7497fecdad135ec5835a8161dbc92e55b58)"
+        }
+      }
+    },
+    {
+      "direction": "send",
+      "message": {
+        "jsonrpc": "2.0",
+        "method": "initialized",
+        "params": {}
+      }
+    },
+    {
+      "direction": "send",
+      "message": {
+        "jsonrpc": "2.0",
+        "method": "session/start",
+        "params": {
+          "commandId": "00000000-0000-7000-8000-000000000001",
+          "workspaceRoot": "[TEMP]/isolated-echo-turn/workspace",
+          "permissionProfile": ":ask-me",
+          "approvalMode": "promptUnmatched"
+        },
+        "id": 3
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239438844,
+        "jsonrpc": "2.0",
+        "method": "session/started",
+        "params": {
+          "session": {
+            "activeTurnId": null,
+            "approvalMode": {
+              "lastCommandId": null,
+              "mode": "promptUnmatched",
+              "source": "startup"
+            },
+            "createdAt": "2026-11-09T15:50:38.725645Z",
+            "createdByClient": {
+              "name": "happier_muse",
+              "version": "0.3.0"
+            },
+            "forkedFrom": null,
+            "kind": "root",
+            "modelId": null,
+            "path": "[TEMP]/isolated-echo-turn/data/muse/sessions/2026/11/09/00000000-0000-7000-8000-000000000002/session.jsonl",
+            "permissionState": {
+              "axes": {
+                "approval": "onRequest",
+                "filesystem": "sandboxed",
+                "network": "off",
+                "reviewer": "human"
+              },
+              "profileId": ":ask-me",
+              "reviewerAttached": true,
+              "reviewerAuthority": "human"
+            },
+            "providerId": "echo",
+            "sessionId": "00000000-0000-7000-8000-000000000002",
+            "sideFrom": null,
+            "status": "idle",
+            "turnCount": 0,
+            "updatedAt": "2026-11-09T15:50:38.727091Z",
+            "workspaceRoot": "[TEMP]/isolated-echo-turn/workspace"
+          }
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "id": 3,
+        "jsonrpc": "2.0",
+        "result": {
+          "session": {
+            "activeTurnId": null,
+            "approvalMode": {
+              "lastCommandId": null,
+              "mode": "promptUnmatched",
+              "source": "startup"
+            },
+            "createdAt": "2026-11-09T15:50:38.725645Z",
+            "createdByClient": {
+              "name": "happier_muse",
+              "version": "0.3.0"
+            },
+            "forkedFrom": null,
+            "kind": "root",
+            "modelId": null,
+            "path": "[TEMP]/isolated-echo-turn/data/muse/sessions/2026/11/09/00000000-0000-7000-8000-000000000002/session.jsonl",
+            "permissionState": {
+              "axes": {
+                "approval": "onRequest",
+                "filesystem": "sandboxed",
+                "network": "off",
+                "reviewer": "human"
+              },
+              "profileId": ":ask-me",
+              "reviewerAttached": true,
+              "reviewerAuthority": "human"
+            },
+            "providerId": "echo",
+            "sessionId": "00000000-0000-7000-8000-000000000002",
+            "sideFrom": null,
+            "status": "idle",
+            "turnCount": 0,
+            "updatedAt": "2026-11-09T15:50:38.727091Z",
+            "workspaceRoot": "[TEMP]/isolated-echo-turn/workspace"
+          },
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:1"
+        }
+      }
+    },
+    {
+      "direction": "send",
+      "message": {
+        "jsonrpc": "2.0",
+        "method": "skill/list",
+        "params": {
+          "sessionId": "00000000-0000-7000-8000-000000000002"
+        },
+        "id": 4
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239438851,
+        "jsonrpc": "2.0",
+        "method": "session/approvalModeChanged",
+        "params": {
+          "clientName": "happier_muse",
+          "commandId": "00000000-0000-7000-8000-000000000001",
+          "mode": "promptUnmatched",
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "source": "approvalReconfigure",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-000000000003",
+              "sequence": 7
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-000000000003",
+              "sequence": 7
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:1"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "id": 4,
+        "jsonrpc": "2.0",
+        "result": {
+          "skills": [
+            {
+              "description": "Build, edit, animate and render 3D content in Blender with Python (bpy), usually headless. Covers modeling objects and assemblies from a description or reference image, recreating a photographed scene, laying out environments from a tabletop to a landscape or city, animation (keyframes, paths, physics, camera moves), lighting, materials and still or video renders, each checked with renders. Use whenever a task involves Blender, bpy, a .blend file, 3D modeling, a procedural 3D scene, or rendering a 3D image or animation. Matching a reference image requires its critic loop: when the workflow tool is available, launch the shipped workflows/critic_loop.js right after viewing the reference (it builds, then runs blind critic rounds and fixes); otherwise an observation sheet, then every round a blind review and seven specific critics, until `critic.py check` passes.",
+              "displayName": "blender",
+              "selector": "blender",
+              "source": "bundled"
+            },
+            {
+              "description": "Create and validate a new native Muse plugin package in the current workspace. Use ONLY when the user explicitly asks to create a Muse plugin or invokes the create-plugin skill. Do NOT use for application/library plugin classes, third-party plugin systems, or ordinary code changes.",
+              "displayName": "create-plugin",
+              "selector": "create-plugin",
+              "source": "bundled"
+            },
+            {
+              "description": "Create and validate a new Muse skill \u2014 project-local in the current workspace by default, or a personal skill staged for `muse skills install` into the managed personal root. Use ONLY when the user explicitly asks to create a Muse skill or invokes the create-skill skill. Do NOT use for ordinary skill usage, code changes, benchmark tasks, or third-party skill/plugin systems.",
+              "displayName": "create-skill",
+              "selector": "create-skill",
+              "source": "bundled"
+            },
+            {
+              "description": "Diagnose Muse Code product/runtime issues from installed binary evidence. Use ONLY when the user explicitly invokes the doctor skill, asks to debug/troubleshoot Muse Code itself, asks what happened earlier in the current Muse Code session, or explicitly selects an earlier Muse Code session. Do NOT use for ordinary repository code failures or history, benchmark tasks, implementation debugging, build/test hangs, or third-party project issues.",
+              "displayName": "doctor",
+              "selector": "doctor",
+              "source": "bundled"
+            },
+            {
+              "description": "Use for 3D work where the user wants a polished, art-directed look: recreating an object or scene from reference image(s), modeling and rendering in Blender, or an explicit ask for high visual fidelity in a three.js, WebGL/WebGPU or game-engine scene. It adds consistent reference images, a detailed visual PRD, a blockout gate and a render-vs-reference acceptance loop, run as a fixed Workflow script when the workflow tool is available, which takes much longer than a direct build. Skip it for quick prototypes or playable pages where a fast working result matters more, small edits, and 2D work. When it applies, read it before tool-specific skills such as blender or threejs and use those for technique.",
+              "displayName": "game-3d-visuals",
+              "selector": "game-3d-visuals",
+              "source": "bundled"
+            },
+            {
+              "description": "Run an explicitly requested decision interview and record each settled decision in durable project documentation.",
+              "displayName": "grill",
+              "selector": "grill",
+              "source": "bundled"
+            },
+            {
+              "description": "Isolated native catalog characterization.",
+              "displayName": "happier-isolated-probe",
+              "selector": "happier-isolated-probe",
+              "source": "user"
+            },
+            {
+              "argumentHint": "<session-id-or-path>",
+              "description": "Import a Claude Code, Codex, or Grok session",
+              "displayName": "import",
+              "selector": "import",
+              "source": "bundled"
+            },
+            {
+              "description": "Any explicit Muse Code setting question or change (model, reasoning effort, /settings) requires a silent read_skill call for bundled:manage-settings as FIRST ACTION\u2014no assistant text or other tool first. Never use for repository, app, eval, or other non-Muse configuration.",
+              "displayName": "manage-settings",
+              "selector": "manage-settings",
+              "source": "bundled"
+            },
+            {
+              "argumentHint": "[memory|mcp] [claude|codex]",
+              "description": "Migrate Claude Code / Codex memory and MCP servers into Muse",
+              "displayName": "migrate",
+              "selector": "migrate",
+              "source": "bundled"
+            },
+            {
+              "description": "On an explicit planning request, always call `read_skill` for this skill before answering. Research first, then return one concise inline plan; do not create a plan file unless the user explicitly asks or a governing workflow requires one. Start and end the reply by saying this is not a special mode and `go` executes the plan; do not implement in the planning turn. When the user asks for the plan in a file and says what the chat reply should contain, save the file and reply only as asked, without that handoff or an inline copy of the plan. For ordinary implement, build, fix, debug, or refactor requests, work directly. When an explicit plan divides work into separate diffs, commits, or PRs and the user asks to publish, preserve that split and tell the user before deviating.",
+              "displayName": "plan",
+              "selector": "plan",
+              "source": "bundled"
+            },
+            {
+              "argumentHint": "[session-id-or-log-path]",
+              "description": "Continue a Claude Code session here",
+              "displayName": "resume-claude",
+              "selector": "resume-claude",
+              "source": "bundled"
+            },
+            {
+              "argumentHint": "[session-id-or-log-path]",
+              "description": "Continue a Codex session here",
+              "displayName": "resume-codex",
+              "selector": "resume-codex",
+              "source": "bundled"
+            },
+            {
+              "description": "Three.js 3D reference hub. Use when working with Three.js: pick the topic below and read its file for patterns and API guidance.",
+              "displayName": "threejs",
+              "pluginId": "threejs",
+              "selector": "threejs",
+              "source": "plugin"
+            },
+            {
+              "description": "Three.js 3D reference hub. Use when working with Three.js: pick the topic below and read its file for patterns and API guidance.",
+              "displayName": "threejs",
+              "pluginId": "threejs",
+              "selector": "threejs:threejs",
+              "source": "plugin"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "direction": "send",
+      "message": {
+        "jsonrpc": "2.0",
+        "method": "turn/start",
+        "params": {
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "commandId": "00000000-0000-7000-8000-000000000004",
+          "input": [
+            {
+              "type": "text",
+              "text": "PEBBLE"
+            }
+          ]
+        },
+        "id": 5
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "id": 5,
+        "jsonrpc": "2.0",
+        "result": {
+          "commandId": "00000000-0000-7000-8000-000000000004",
+          "disposition": "started",
+          "startedNewTurn": true,
+          "status": "accepted",
+          "turnId": "00000000-0000-7000-8000-000000000004"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239438869,
+        "jsonrpc": "2.0",
+        "method": "session/statusChanged",
+        "params": {
+          "permissionState": {
+            "axes": {
+              "approval": "onRequest",
+              "filesystem": "sandboxed",
+              "network": "off",
+              "reviewer": "human"
+            },
+            "profileId": ":ask-me",
+            "reviewerAttached": true,
+            "reviewerAuthority": "human"
+          },
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "status": "running",
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:2"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239438870,
+        "jsonrpc": "2.0",
+        "method": "turn/started",
+        "params": {
+          "commandId": "00000000-0000-7000-8000-000000000004",
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-000000000005",
+              "sequence": 15
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-000000000005",
+              "sequence": 15
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "turnId": "00000000-0000-7000-8000-000000000004",
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:2"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239438870,
+        "jsonrpc": "2.0",
+        "method": "item/completed",
+        "params": {
+          "item": {
+            "commandId": "00000000-0000-7000-8000-000000000004",
+            "itemId": "00000000-0000-7000-8000-000000000006",
+            "kind": "userMessage",
+            "recordedAt": "2026-11-09T15:50:38.86409Z",
+            "revision": 1,
+            "status": "completed",
+            "text": "PEBBLE",
+            "turnId": "00000000-0000-7000-8000-000000000004"
+          },
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-000000000005",
+              "sequence": 15
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-000000000005",
+              "sequence": 15
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:3"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239438884,
+        "jsonrpc": "2.0",
+        "method": "item/started",
+        "params": {
+          "item": {
+            "childSessionId": "00000000-0000-7000-8000-000000000007",
+            "fallbackText": "Reminder child session",
+            "generationId": 1,
+            "itemId": "00000000-0000-7000-8000-000000000008",
+            "kind": "reminderChild",
+            "recordedAt": "2026-11-09T15:50:38.883492Z",
+            "reminderAgentId": "skill-reminder",
+            "revision": 1,
+            "status": "inProgress",
+            "taskId": "00000000-0000-7000-8000-000000000009",
+            "turnId": "00000000-0000-7000-8000-000000000004"
+          },
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-000000000008",
+              "sequence": 33
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-000000000008",
+              "sequence": 33
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:4"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239438897,
+        "jsonrpc": "2.0",
+        "method": "item/started",
+        "params": {
+          "item": {
+            "itemId": "00000000-0000-7000-8000-00000000000a",
+            "kind": "agentMessage",
+            "revision": 1,
+            "status": "inProgress",
+            "text": "",
+            "turnId": "00000000-0000-7000-8000-000000000004"
+          },
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:4.1"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239438897,
+        "jsonrpc": "2.0",
+        "method": "item/delta",
+        "params": {
+          "delta": "echo: PEBBLE",
+          "field": "text",
+          "itemId": "00000000-0000-7000-8000-00000000000a",
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:4.2"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239438898,
+        "jsonrpc": "2.0",
+        "method": "session/tokenUsage",
+        "params": {
+          "cumulative": {
+            "outputTokens": 0,
+            "promptTokens": 0,
+            "totalTokens": 0
+          },
+          "durationMs": 3,
+          "modelId": null,
+          "promptTokens": 0,
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-00000000000b",
+              "sequence": 45
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-00000000000b",
+              "sequence": 45
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "totalTokens": 0,
+          "turnId": "00000000-0000-7000-8000-000000000004",
+          "usage": {
+            "cachedTokens": 0,
+            "inputTokens": 0,
+            "outputTokens": 0,
+            "reasoningTokens": 0
+          },
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:5"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239438900,
+        "jsonrpc": "2.0",
+        "method": "item/completed",
+        "params": {
+          "item": {
+            "itemId": "00000000-0000-7000-8000-00000000000a",
+            "kind": "agentMessage",
+            "messagePhase": "finalAnswer",
+            "recordedAt": "2026-11-09T15:50:38.900102Z",
+            "revision": 2,
+            "status": "completed",
+            "text": "echo: PEBBLE",
+            "turnId": "00000000-0000-7000-8000-000000000004"
+          },
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-00000000000c",
+              "sequence": 47
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-00000000000c",
+              "sequence": 47
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:6"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239438905,
+        "jsonrpc": "2.0",
+        "method": "turn/foregroundCompleted",
+        "params": {
+          "blockingAgents": [
+            "goal-reminder",
+            "verify-reminder"
+          ],
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-00000000000d",
+              "sequence": 53
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-00000000000d",
+              "sequence": 53
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "turnId": "00000000-0000-7000-8000-000000000004",
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:7"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239438905,
+        "jsonrpc": "2.0",
+        "method": "item/started",
+        "params": {
+          "item": {
+            "blocking": true,
+            "childSessionId": "00000000-0000-7000-8000-00000000000e",
+            "childSessionLogPath": "subagent/00000000-0000-7000-8000-00000000000e/session.jsonl",
+            "fallbackText": "Reminder child session",
+            "generationId": 1,
+            "itemId": "00000000-0000-7000-8000-00000000000d",
+            "kind": "reminderChild",
+            "recordedAt": "2026-11-09T15:50:38.904812Z",
+            "reminderAgentId": "goal-reminder",
+            "revision": 1,
+            "status": "inProgress",
+            "taskId": "00000000-0000-7000-8000-00000000000f",
+            "turnId": "00000000-0000-7000-8000-000000000004"
+          },
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-00000000000d",
+              "sequence": 53
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-00000000000d",
+              "sequence": 53
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:8"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239438909,
+        "jsonrpc": "2.0",
+        "method": "item/started",
+        "params": {
+          "item": {
+            "blocking": true,
+            "childSessionId": "00000000-0000-7000-8000-000000000010",
+            "childSessionLogPath": "subagent/00000000-0000-7000-8000-000000000010/session.jsonl",
+            "fallbackText": "Reminder child session",
+            "generationId": 1,
+            "itemId": "00000000-0000-7000-8000-000000000011",
+            "kind": "reminderChild",
+            "recordedAt": "2026-11-09T15:50:38.909004Z",
+            "reminderAgentId": "verify-reminder",
+            "revision": 1,
+            "status": "inProgress",
+            "taskId": "00000000-0000-7000-8000-000000000012",
+            "turnId": "00000000-0000-7000-8000-000000000004"
+          },
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-000000000011",
+              "sequence": 60
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-000000000011",
+              "sequence": 60
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:9"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239438936,
+        "jsonrpc": "2.0",
+        "method": "item/completed",
+        "params": {
+          "item": {
+            "childSessionId": "00000000-0000-7000-8000-000000000007",
+            "fallbackText": "Reminder child session",
+            "generationId": 1,
+            "itemId": "00000000-0000-7000-8000-000000000008",
+            "kind": "reminderChild",
+            "recordedAt": "2026-11-09T15:50:38.936Z",
+            "reminderAgentId": "skill-reminder",
+            "revision": 2,
+            "status": "completed",
+            "taskId": "00000000-0000-7000-8000-000000000009",
+            "turnId": "00000000-0000-7000-8000-000000000004"
+          },
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-000000000008",
+              "sequence": 33
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-000000000013",
+              "sequence": 62
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:10"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239438937,
+        "jsonrpc": "2.0",
+        "method": "item/completed",
+        "params": {
+          "item": {
+            "blocking": true,
+            "childSessionId": "00000000-0000-7000-8000-00000000000e",
+            "childSessionLogPath": "subagent/00000000-0000-7000-8000-00000000000e/session.jsonl",
+            "failureReason": "invalid run configuration: provider does not support base instructions",
+            "fallbackText": "Reminder child session",
+            "generationId": 1,
+            "itemId": "00000000-0000-7000-8000-00000000000d",
+            "kind": "reminderChild",
+            "recordedAt": "2026-11-09T15:50:38.936686Z",
+            "reminderAgentId": "goal-reminder",
+            "revision": 2,
+            "status": "failed",
+            "taskId": "00000000-0000-7000-8000-00000000000f",
+            "turnId": "00000000-0000-7000-8000-000000000004"
+          },
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-00000000000d",
+              "sequence": 53
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-000000000014",
+              "sequence": 63
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:11"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239438937,
+        "jsonrpc": "2.0",
+        "method": "item/completed",
+        "params": {
+          "item": {
+            "blocking": true,
+            "childSessionId": "00000000-0000-7000-8000-000000000010",
+            "childSessionLogPath": "subagent/00000000-0000-7000-8000-000000000010/session.jsonl",
+            "failureReason": "invalid run configuration: provider does not support base instructions",
+            "fallbackText": "Reminder child session",
+            "generationId": 1,
+            "itemId": "00000000-0000-7000-8000-000000000011",
+            "kind": "reminderChild",
+            "recordedAt": "2026-11-09T15:50:38.93732Z",
+            "reminderAgentId": "verify-reminder",
+            "revision": 2,
+            "status": "failed",
+            "taskId": "00000000-0000-7000-8000-000000000012",
+            "turnId": "00000000-0000-7000-8000-000000000004"
+          },
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-000000000011",
+              "sequence": 60
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-000000000015",
+              "sequence": 64
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:12"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239438938,
+        "jsonrpc": "2.0",
+        "method": "session/statusChanged",
+        "params": {
+          "permissionState": {
+            "axes": {
+              "approval": "onRequest",
+              "filesystem": "sandboxed",
+              "network": "off",
+              "reviewer": "human"
+            },
+            "profileId": ":ask-me",
+            "reviewerAttached": true,
+            "reviewerAuthority": "human"
+          },
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "status": "idle",
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:13"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239438941,
+        "jsonrpc": "2.0",
+        "method": "turn/completed",
+        "params": {
+          "durationMs": 74,
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "sourceRange": {
+            "first": {
+              "id": "00000000-0000-7000-8000-000000000016",
+              "sequence": 65
+            },
+            "last": {
+              "id": "00000000-0000-7000-8000-000000000016",
+              "sequence": 65
+            },
+            "stream": {
+              "id": "00000000-0000-7000-8000-000000000002",
+              "kind": "session"
+            }
+          },
+          "terminal": "completed",
+          "timeToFirstTokenMs": 33,
+          "turnId": "00000000-0000-7000-8000-000000000004",
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:13"
+        }
+      }
+    },
+    {
+      "direction": "send",
+      "message": {
+        "jsonrpc": "2.0",
+        "method": "session/read",
+        "params": {
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "excludeItems": true
+        },
+        "id": 6
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "id": 6,
+        "jsonrpc": "2.0",
+        "result": {
+          "history": {
+            "items": null,
+            "mode": "none",
+            "noneReason": "excluded",
+            "snapshot": null
+          },
+          "lastTurn": {
+            "terminal": "completed",
+            "turnId": "00000000-0000-7000-8000-000000000004"
+          },
+          "pendingRequests": [],
+          "session": {
+            "activeTurnId": null,
+            "approvalMode": {
+              "lastCommandId": null,
+              "mode": "promptUnmatched",
+              "source": "startup"
+            },
+            "createdAt": "2026-11-09T15:50:38.719536Z",
+            "createdByClient": {
+              "name": "happier_muse",
+              "version": "0.3.0"
+            },
+            "driveHolder": {
+              "name": "happier_muse",
+              "version": "0.3.0"
+            },
+            "firstUserPrompt": "PEBBLE",
+            "forkedFrom": null,
+            "kind": "root",
+            "lastActivityAt": "2026-11-09T15:50:38.938178Z",
+            "logBytes": 105015,
+            "modelId": null,
+            "path": "[TEMP]/isolated-echo-turn/data/muse/sessions/2026/11/09/00000000-0000-7000-8000-000000000002/session.jsonl",
+            "permissionState": {
+              "axes": {
+                "approval": "onRequest",
+                "filesystem": "sandboxed",
+                "network": "off",
+                "reviewer": "human"
+              },
+              "profileId": ":ask-me",
+              "reviewerAttached": true,
+              "reviewerAuthority": "human"
+            },
+            "providerId": "echo",
+            "sessionId": "00000000-0000-7000-8000-000000000002",
+            "sideFrom": null,
+            "status": "idle",
+            "title": "PEBBLE",
+            "turnCount": 1,
+            "updatedAt": "2026-11-09T15:50:38.938178Z",
+            "workspaceRoot": "[TEMP]/isolated-echo-turn/workspace"
+          },
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:13"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239439010,
+        "jsonrpc": "2.0",
+        "method": "session/closed",
+        "params": {
+          "reason": "hostShutdown",
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:13"
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239439010,
+        "jsonrpc": "2.0",
+        "method": "session/statusChanged",
+        "params": {
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "status": "notLoaded",
+          "viewCursor": "v4:00000000-0000-7000-8000-000000000002:13"
+        }
+      }
+    }
+  ]
+}

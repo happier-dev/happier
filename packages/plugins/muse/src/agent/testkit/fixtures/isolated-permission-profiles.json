@@ -1,0 +1,426 @@
+{
+  "evidence": {
+    "kind": "observed-native-no-turn-policy",
+    "source": "/tmp/happier-muse-isolated-skill-8i2219p4/recording.json",
+    "log": "/tmp/happier-L-MUSE-AGENT/native-profile-characterization.log",
+    "nativeVersion": "1.4.14",
+    "envelopeVersion": 1,
+    "sanitization": "Temporary root replaced with [TEMP]/isolated-permission-profiles; native UUID identities replaced consistently with fixture UUIDv7 values; direction labels normalized to send/recv. Native message fields otherwise preserved."
+  },
+  "rows": [
+    {
+      "direction": "send",
+      "message": {
+        "jsonrpc": "2.0",
+        "method": "initialize",
+        "params": {
+          "clientInfo": {
+            "name": "happier_muse",
+            "version": "0.3.0"
+          },
+          "capabilities": {
+            "experimentalApi": true
+          }
+        },
+        "id": 1
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "id": 1,
+        "jsonrpc": "2.0",
+        "result": {
+          "experimentalApi": true,
+          "grantedCapabilities": [],
+          "museHome": "[TEMP]/isolated-permission-profiles/data/muse",
+          "platformFamily": "unix",
+          "platformOs": "linux",
+          "sandboxAvailability": "available",
+          "schema": {
+            "fingerprint": "sha256:c94c3d1f2f51e6424074b9ec43eac3eedcf532d3dcd77351ec1383a87d3049c6",
+            "version": 1
+          },
+          "serverInfo": {
+            "name": "muse",
+            "version": "1.4.14"
+          },
+          "sessionDurability": "durable",
+          "userAgent": "muse-build/1.4.14 (serve; linux-x86_64; build dec7d7497fecdad135ec5835a8161dbc92e55b58)"
+        }
+      }
+    },
+    {
+      "direction": "send",
+      "message": {
+        "jsonrpc": "2.0",
+        "method": "initialized",
+        "params": {}
+      }
+    },
+    {
+      "direction": "send",
+      "message": {
+        "jsonrpc": "2.0",
+        "method": "permissionProfile/list",
+        "params": {},
+        "id": 3
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "id": 3,
+        "jsonrpc": "2.0",
+        "result": {
+          "profiles": [
+            {
+              "available": true,
+              "description": "Reads files only.",
+              "label": "Read only",
+              "profileId": ":read-only",
+              "reviewerAuthority": "human"
+            },
+            {
+              "available": true,
+              "description": "Edits workspace and temporary files; requires approval for protected writes, new network targets, and other restricted actions.",
+              "label": "Ask me",
+              "profileId": ":ask-me",
+              "reviewerAuthority": "human"
+            },
+            {
+              "available": true,
+              "description": "Same access as Ask me; AI reviews eligible actions; trusted permission hooks may decide approval requests first.",
+              "label": "Auto-review",
+              "profileId": ":auto-review",
+              "reviewerAuthority": "autoReview"
+            },
+            {
+              "available": true,
+              "description": "No filesystem sandbox or approval prompts; local commands have direct network access; project trust is unchanged.",
+              "label": "Unrestricted",
+              "profileId": ":unrestricted",
+              "reviewerAuthority": "none"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "direction": "send",
+      "message": {
+        "jsonrpc": "2.0",
+        "method": "session/start",
+        "params": {
+          "commandId": "00000000-0000-7000-8000-000000000001",
+          "workspaceRoot": "[TEMP]/isolated-permission-profiles/workspace",
+          "permissionProfile": ":ask-me"
+        },
+        "id": 4
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239234292,
+        "jsonrpc": "2.0",
+        "method": "session/started",
+        "params": {
+          "session": {
+            "activeTurnId": null,
+            "approvalMode": {
+              "lastCommandId": null,
+              "mode": "onRequest",
+              "source": "startup"
+            },
+            "createdAt": "2026-11-09T15:47:14.268548Z",
+            "createdByClient": {
+              "name": "happier_muse",
+              "version": "0.3.0"
+            },
+            "forkedFrom": null,
+            "kind": "root",
+            "modelId": null,
+            "path": "[TEMP]/isolated-permission-profiles/data/muse/sessions/2026/11/09/00000000-0000-7000-8000-000000000002/session.jsonl",
+            "permissionState": {
+              "axes": {
+                "approval": "onRequest",
+                "filesystem": "sandboxed",
+                "network": "off",
+                "reviewer": "human"
+              },
+              "profileId": ":ask-me",
+              "reviewerAttached": false,
+              "reviewerAuthority": "human"
+            },
+            "providerId": "muse",
+            "sessionId": "00000000-0000-7000-8000-000000000002",
+            "sideFrom": null,
+            "status": "idle",
+            "turnCount": 0,
+            "updatedAt": "2026-11-09T15:47:14.270532Z",
+            "workspaceRoot": "[TEMP]/isolated-permission-profiles/workspace"
+          }
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "id": 4,
+        "jsonrpc": "2.0",
+        "result": {
+          "session": {
+            "activeTurnId": null,
+            "approvalMode": {
+              "lastCommandId": null,
+              "mode": "onRequest",
+              "source": "startup"
+            },
+            "createdAt": "2026-11-09T15:47:14.268548Z",
+            "createdByClient": {
+              "name": "happier_muse",
+              "version": "0.3.0"
+            },
+            "forkedFrom": null,
+            "kind": "root",
+            "modelId": null,
+            "path": "[TEMP]/isolated-permission-profiles/data/muse/sessions/2026/11/09/00000000-0000-7000-8000-000000000002/session.jsonl",
+            "permissionState": {
+              "axes": {
+                "approval": "onRequest",
+                "filesystem": "sandboxed",
+                "network": "off",
+                "reviewer": "human"
+              },
+              "profileId": ":ask-me",
+              "reviewerAttached": false,
+              "reviewerAuthority": "human"
+            },
+            "providerId": "muse",
+            "sessionId": "00000000-0000-7000-8000-000000000002",
+            "sideFrom": null,
+            "status": "idle",
+            "turnCount": 0,
+            "updatedAt": "2026-11-09T15:47:14.270532Z",
+            "workspaceRoot": "[TEMP]/isolated-permission-profiles/workspace"
+          },
+          "viewCursor": ""
+        }
+      }
+    },
+    {
+      "direction": "send",
+      "message": {
+        "jsonrpc": "2.0",
+        "method": "skill/list",
+        "params": {
+          "sessionId": "00000000-0000-7000-8000-000000000002"
+        },
+        "id": 5
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "id": 5,
+        "jsonrpc": "2.0",
+        "result": {
+          "skills": [
+            {
+              "description": "Build, edit, animate and render 3D content in Blender with Python (bpy), usually headless. Covers modeling objects and assemblies from a description or reference image, recreating a photographed scene, laying out environments from a tabletop to a landscape or city, animation (keyframes, paths, physics, camera moves), lighting, materials and still or video renders, each checked with renders. Use whenever a task involves Blender, bpy, a .blend file, 3D modeling, a procedural 3D scene, or rendering a 3D image or animation. Matching a reference image requires its critic loop: when the workflow tool is available, launch the shipped workflows/critic_loop.js right after viewing the reference (it builds, then runs blind critic rounds and fixes); otherwise an observation sheet, then every round a blind review and seven specific critics, until `critic.py check` passes.",
+              "displayName": "blender",
+              "selector": "blender",
+              "source": "bundled"
+            },
+            {
+              "description": "Create and validate a new native Muse plugin package in the current workspace. Use ONLY when the user explicitly asks to create a Muse plugin or invokes the create-plugin skill. Do NOT use for application/library plugin classes, third-party plugin systems, or ordinary code changes.",
+              "displayName": "create-plugin",
+              "selector": "create-plugin",
+              "source": "bundled"
+            },
+            {
+              "description": "Create and validate a new Muse skill \u2014 project-local in the current workspace by default, or a personal skill staged for `muse skills install` into the managed personal root. Use ONLY when the user explicitly asks to create a Muse skill or invokes the create-skill skill. Do NOT use for ordinary skill usage, code changes, benchmark tasks, or third-party skill/plugin systems.",
+              "displayName": "create-skill",
+              "selector": "create-skill",
+              "source": "bundled"
+            },
+            {
+              "description": "Diagnose Muse Code product/runtime issues from installed binary evidence. Use ONLY when the user explicitly invokes the doctor skill, asks to debug/troubleshoot Muse Code itself, asks what happened earlier in the current Muse Code session, or explicitly selects an earlier Muse Code session. Do NOT use for ordinary repository code failures or history, benchmark tasks, implementation debugging, build/test hangs, or third-party project issues.",
+              "displayName": "doctor",
+              "selector": "doctor",
+              "source": "bundled"
+            },
+            {
+              "description": "Use for 3D work where the user wants a polished, art-directed look: recreating an object or scene from reference image(s), modeling and rendering in Blender, or an explicit ask for high visual fidelity in a three.js, WebGL/WebGPU or game-engine scene. It adds consistent reference images, a detailed visual PRD, a blockout gate and a render-vs-reference acceptance loop, run as a fixed Workflow script when the workflow tool is available, which takes much longer than a direct build. Skip it for quick prototypes or playable pages where a fast working result matters more, small edits, and 2D work. When it applies, read it before tool-specific skills such as blender or threejs and use those for technique.",
+              "displayName": "game-3d-visuals",
+              "selector": "game-3d-visuals",
+              "source": "bundled"
+            },
+            {
+              "description": "Run an explicitly requested decision interview and record each settled decision in durable project documentation.",
+              "displayName": "grill",
+              "selector": "grill",
+              "source": "bundled"
+            },
+            {
+              "description": "Isolated native catalog characterization.",
+              "displayName": "happier-isolated-probe",
+              "selector": "happier-isolated-probe",
+              "source": "user"
+            },
+            {
+              "argumentHint": "<session-id-or-path>",
+              "description": "Import a Claude Code, Codex, or Grok session",
+              "displayName": "import",
+              "selector": "import",
+              "source": "bundled"
+            },
+            {
+              "description": "Any explicit Muse Code setting question or change (model, reasoning effort, /settings) requires a silent read_skill call for bundled:manage-settings as FIRST ACTION\u2014no assistant text or other tool first. Never use for repository, app, eval, or other non-Muse configuration.",
+              "displayName": "manage-settings",
+              "selector": "manage-settings",
+              "source": "bundled"
+            },
+            {
+              "argumentHint": "[memory|mcp] [claude|codex]",
+              "description": "Migrate Claude Code / Codex memory and MCP servers into Muse",
+              "displayName": "migrate",
+              "selector": "migrate",
+              "source": "bundled"
+            },
+            {
+              "description": "On an explicit planning request, always call `read_skill` for this skill before answering. Research first, then return one concise inline plan; do not create a plan file unless the user explicitly asks or a governing workflow requires one. Start and end the reply by saying this is not a special mode and `go` executes the plan; do not implement in the planning turn. When the user asks for the plan in a file and says what the chat reply should contain, save the file and reply only as asked, without that handoff or an inline copy of the plan. For ordinary implement, build, fix, debug, or refactor requests, work directly. When an explicit plan divides work into separate diffs, commits, or PRs and the user asks to publish, preserve that split and tell the user before deviating.",
+              "displayName": "plan",
+              "selector": "plan",
+              "source": "bundled"
+            },
+            {
+              "argumentHint": "[session-id-or-log-path]",
+              "description": "Continue a Claude Code session here",
+              "displayName": "resume-claude",
+              "selector": "resume-claude",
+              "source": "bundled"
+            },
+            {
+              "argumentHint": "[session-id-or-log-path]",
+              "description": "Continue a Codex session here",
+              "displayName": "resume-codex",
+              "selector": "resume-codex",
+              "source": "bundled"
+            },
+            {
+              "description": "Three.js 3D reference hub. Use when working with Three.js: pick the topic below and read its file for patterns and API guidance.",
+              "displayName": "threejs",
+              "pluginId": "threejs",
+              "selector": "threejs",
+              "source": "plugin"
+            },
+            {
+              "description": "Three.js 3D reference hub. Use when working with Three.js: pick the topic below and read its file for patterns and API guidance.",
+              "displayName": "threejs",
+              "pluginId": "threejs",
+              "selector": "threejs:threejs",
+              "source": "plugin"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "direction": "send",
+      "message": {
+        "jsonrpc": "2.0",
+        "method": "session/read",
+        "params": {
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "excludeItems": true
+        },
+        "id": 6
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "id": 6,
+        "jsonrpc": "2.0",
+        "result": {
+          "history": {
+            "items": null,
+            "mode": "none",
+            "noneReason": "excluded",
+            "snapshot": null
+          },
+          "pendingRequests": [],
+          "session": {
+            "activeTurnId": null,
+            "approvalMode": {
+              "lastCommandId": null,
+              "mode": "onRequest",
+              "source": "startup"
+            },
+            "createdAt": "2026-11-09T15:47:14.262853Z",
+            "createdByClient": {
+              "name": "happier_muse",
+              "version": "0.3.0"
+            },
+            "driveHolder": {
+              "name": "happier_muse",
+              "version": "0.3.0"
+            },
+            "forkedFrom": null,
+            "kind": "root",
+            "logBytes": 7302,
+            "modelId": null,
+            "path": "[TEMP]/isolated-permission-profiles/data/muse/sessions/2026/11/09/00000000-0000-7000-8000-000000000002/session.jsonl",
+            "permissionState": {
+              "axes": {
+                "approval": "onRequest",
+                "filesystem": "sandboxed",
+                "network": "off",
+                "reviewer": "human"
+              },
+              "profileId": ":ask-me",
+              "reviewerAttached": false,
+              "reviewerAuthority": "human"
+            },
+            "providerId": "muse",
+            "sessionId": "00000000-0000-7000-8000-000000000002",
+            "sideFrom": null,
+            "status": "idle",
+            "turnCount": 0,
+            "updatedAt": "2026-11-09T15:47:14.270532Z",
+            "workspaceRoot": "[TEMP]/isolated-permission-profiles/workspace"
+          },
+          "viewCursor": ""
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239234329,
+        "jsonrpc": "2.0",
+        "method": "session/closed",
+        "params": {
+          "reason": "hostShutdown",
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "viewCursor": ""
+        }
+      }
+    },
+    {
+      "direction": "recv",
+      "message": {
+        "emittedAtMs": 1794239234329,
+        "jsonrpc": "2.0",
+        "method": "session/statusChanged",
+        "params": {
+          "sessionId": "00000000-0000-7000-8000-000000000002",
+          "status": "notLoaded",
+          "viewCursor": ""
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,61 @@
+{
+  "evidence": {
+    "kind": "observed-native-isolated-characterization",
+    "source": "/tmp/happier-muse-isolated-long-history-bwle786a/summary.json",
+    "log": "/tmp/happier-L-MUSE-AGENT/native-long-history-characterization.log",
+    "nativeVersion": "1.4.14",
+    "envelopeVersion": 1,
+    "note": "Complete native reader evidence:260 turns,1300 inline items,3121 unique view events. Reader never attaches,starts,resumes or sends a turn. Live-reader list empty and post-EOF reopened list visibility are observed native index boundaries.",
+    "sanitization": "Temporary root replaced with [TEMP]/isolated-long-history; native UUID identities replaced consistently across companion fixtures with fixture UUIDv7 values; direction labels normalized to send/recv. Native message fields, cursor structure and provenance relations otherwise preserved."
+  },
+  "summary": {
+    "root": "[TEMP]/isolated-long-history",
+    "sessionId": "00000000-0000-7000-8000-000000000001",
+    "native": {
+      "name": "muse",
+      "version": "1.4.14"
+    },
+    "envelope": 1,
+    "turnsWritten": 260,
+    "listCount": 0,
+    "listedExactSession": false,
+    "before": {
+      "turnCount": 20,
+      "historyMode": "inline",
+      "items": 100,
+      "viewCursor": "v4:00000000-0000-7000-8000-000000000001:241"
+    },
+    "after": {
+      "turnCount": 260,
+      "historyMode": "inline",
+      "items": 1300,
+      "viewCursor": "v4:00000000-0000-7000-8000-000000000001:3121"
+    },
+    "forwardPageSizes": [
+      1000,
+      1000,
+      1000,
+      121
+    ],
+    "forwardNextCursors": [
+      "v4:00000000-0000-7000-8000-000000000001:1000",
+      "v4:00000000-0000-7000-8000-000000000001:2000",
+      "v4:00000000-0000-7000-8000-000000000001:3000",
+      null
+    ],
+    "eventCount": 3121,
+    "uniqueEventCount": 3121,
+    "backwardEvents": 7,
+    "incrementalEvents": 1000,
+    "incrementalNextCursor": "v4:00000000-0000-7000-8000-000000000001:1241",
+    "unchangedEvents": 0,
+    "unchangedNextCursor": null,
+    "readerSentMethods": [
+      "initialize",
+      "initialized",
+      "session/list",
+      "session/read",
+      "view/page"
+    ]
+  }
+}

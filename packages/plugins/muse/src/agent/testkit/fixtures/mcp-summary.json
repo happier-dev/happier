@@ -1,0 +1,110 @@
+{
+  "init": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+      "experimentalApi": true,
+      "grantedCapabilities": [
+        "userShell",
+        "sessionMcp"
+      ],
+      "museHome": "[TEMP]/mcp/data/muse",
+      "platformFamily": "unix",
+      "platformOs": "linux",
+      "sandboxAvailability": "available",
+      "schema": {
+        "fingerprint": "sha256:c94c3d1f2f51e6424074b9ec43eac3eedcf532d3dcd77351ec1383a87d3049c6",
+        "version": 1
+      },
+      "serverInfo": {
+        "name": "muse",
+        "version": "1.4.14"
+      },
+      "sessionDurability": "durable",
+      "userAgent": "muse-build/1.4.14 (serve; linux-x86_64; build dec7d7497fecdad135ec5835a8161dbc92e55b58)"
+    }
+  },
+  "start": {
+    "id": 2,
+    "jsonrpc": "2.0",
+    "result": {
+      "session": {
+        "activeTurnId": null,
+        "approvalMode": {
+          "lastCommandId": null,
+          "mode": "allowAll",
+          "source": "startup"
+        },
+        "createdAt": "2026-11-09T09:03:24.824712Z",
+        "createdByClient": {
+          "name": "muse_probe",
+          "version": "1"
+        },
+        "forkedFrom": null,
+        "kind": "root",
+        "modelId": "muse-wonder-1.0",
+        "path": "[TEMP]/mcp/data/muse/sessions/2026/11/09/01a1bf8c-4a8c-7d31-a3ac-4ed0e5f80c6d/session.jsonl",
+        "permissionState": {
+          "axes": {
+            "approval": "onRequest",
+            "filesystem": "sandboxed",
+            "network": "off",
+            "reviewer": "autoReview"
+          },
+          "profileId": ":auto-review",
+          "reviewerAttached": true,
+          "reviewerAuthority": "autoReview"
+        },
+        "providerId": "meta",
+        "sessionId": "01a1bf8c-4a8c-7d31-a3ac-4ed0e5f80c6d",
+        "sideFrom": null,
+        "status": "idle",
+        "turnCount": 0,
+        "updatedAt": "2026-11-09T09:03:24.82658Z",
+        "workspaceRoot": "[TEMP]/mcp/workspace"
+      },
+      "viewCursor": "v4:01a1bf8c-4a8c-7d31-a3ac-4ed0e5f80c6d:2"
+    }
+  },
+  "turn": {
+    "id": 3,
+    "jsonrpc": "2.0",
+    "result": {
+      "commandId": "01a1bf8c-4b8c-7a12-8e9b-3a1d9e2dd847",
+      "disposition": "started",
+      "startedNewTurn": true,
+      "status": "accepted",
+      "turnId": "01a1bf8c-4b8c-7a12-8e9b-3a1d9e2dd847"
+    }
+  },
+  "terminal": {
+    "direction": "recv",
+    "message": {
+      "emittedAtMs": 1794215021916,
+      "jsonrpc": "2.0",
+      "method": "turn/completed",
+      "params": {
+        "durationMs": 16628,
+        "sessionId": "01a1bf8c-4a8c-7d31-a3ac-4ed0e5f80c6d",
+        "sourceRange": {
+          "first": {
+            "id": "01a1bf8c-8d51-7160-b60a-ead6efd098b6",
+            "sequence": 127
+          },
+          "last": {
+            "id": "01a1bf8c-8d51-7160-b60a-ead6efd098b6",
+            "sequence": 127
+          },
+          "stream": {
+            "id": "01a1bf8c-4a8c-7d31-a3ac-4ed0e5f80c6d",
+            "kind": "session"
+          }
+        },
+        "terminal": "completed",
+        "timeToFirstTokenMs": 5652,
+        "turnId": "01a1bf8c-4b8c-7a12-8e9b-3a1d9e2dd847",
+        "viewCursor": "v4:01a1bf8c-4a8c-7d31-a3ac-4ed0e5f80c6d:21"
+      }
+    }
+  }
+}

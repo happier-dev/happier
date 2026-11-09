@@ -1,0 +1,262 @@
+{
+  "evidence": {
+    "kind": "schema-derived-characterization",
+    "source": "/tmp/muse-harness.Plf36d/schema/msp.schema.json",
+    "nativeVersion": "1.4.14",
+    "envelopeVersion": 1,
+    "note": "Exact selected native schema definitions; not evidence of observed image or skill invocation."
+  },
+  "$defs": {
+    "TurnInputPart": {
+      "dependentRequired": {
+        "height": [
+          "width"
+        ],
+        "width": [
+          "height"
+        ]
+      },
+      "description": "One ordered content part of a turn submission (tdd SS3.2). File mentions\nare text, not a part type: write `@relative/path` in a text part. A\nstructured `mention` part is reserved and currently rejected, and an\nunknown part type is `invalidParams` (tdd SS3.1.2, SS3.2) \u2014 which is what\ncloses [`TurnInputPartType`].\n\nModelled as a discriminated flat object rather than a Rust `enum`, the\nconvention [`crate::view::approval::ApprovalSubject`] already established\nfor a wire union in this crate: the v1 schema model names no\nobject-variant union shape and fails closed on one. The serialized JSON is\nthe same either way; what a flat object cannot express is \"`mediaType` is\nrequired exactly when `type` is `image`\".",
+      "properties": {
+        "arguments": {
+          "description": "Free-text skill arguments, optional on a `skill` part \u2014 the wire twin\nof what the TUI accepts after the shortcut token (tdd SS3.22.3).",
+          "type": "string"
+        },
+        "base64Data": {
+          "description": "Base64 payload, required on an `image` part. Invalid base64 or an\nempty payload is rejected with invalid params.",
+          "type": "string"
+        },
+        "height": {
+          "description": "Pixel height; must be provided together with `width` or not at all\n(tdd SS3.2, #22785 E6c).",
+          "type": "integer"
+        },
+        "mediaType": {
+          "description": "Media type, required on an `image` part.",
+          "type": "string"
+        },
+        "selector": {
+          "description": "The skill to invoke, required on a `skill` part (tdd SS3.2, SS3.22.3;\nADR 32471 D4): a bare or plugin-qualified shortcut token from\n`skill/list`. The HOST resolves and expands; an unknown selector is\nthe typed `-32032 skillNotFound` request error.",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/SkillInvocationSource",
+          "description": "The picked copy's source, optional on a `skill` part: one of the catalog\nrows' `source` values. When present the host resolves the exact\n`(selector, source)` row; when absent it resolves the selector, bare or\nplugin-qualified, against the session's skill catalog, as the TUI\nshortcut does. Closed: an unknown value is `invalidParams`, never a\nfall-through."
+        },
+        "text": {
+          "description": "User prompt text, on a `text` part. Multiple text parts are joined in\norder into the turn's prompt.",
+          "type": "string"
+        },
+        "type": {
+          "$ref": "#/$defs/TurnInputPartType",
+          "description": "The part type."
+        },
+        "uploadId": {
+          "description": "The upload receipt, required on a `video` part (tdd SS3.2, SS3.33;\nADR 45443 D5): the client-minted id `media/upload` echoed.",
+          "type": "string"
+        },
+        "width": {
+          "description": "Pixel width; must be provided together with `height` or not at all.\nPublished as a `dependentRequired` pair.",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "TurnInputPartType": {
+      "description": "The `type` discriminator of a turn input part (tdd SS3.2). Closed: an\nunknown part type is `invalidParams` (tdd SS3.1.2).",
+      "enum": [
+        "text",
+        "image",
+        "skill",
+        "video"
+      ],
+      "type": "string",
+      "x-msp-openness": "closed"
+    },
+    "SkillInvocationSource": {
+      "description": "A `skill` input part's picked-copy source (tdd SS3.22.3; ADR 32471\nD12): the D2 catalog-row `source` enum values, sent by the TUI on every\nskill submit so the host resolves the exact `(selector, source)` row.\n**Closed**: a client-selected write vocabulary (ADR 45433 D2) \u2014 an\nunknown value is `invalidParams`, never a fall-through to the bare row.\nContrast the open read-side [`SkillSource`].",
+      "enum": [
+        "bundled",
+        "user",
+        "project",
+        "plugin"
+      ],
+      "type": "string",
+      "x-msp-openness": "closed"
+    },
+    "SkillSource": {
+      "description": "A skill row's source scope (tdd SS3.22.1): the projection of the skills\ncrate's `SkillsSourceScope`. Open (server-produced result vocabulary,\nthe #22785 enum-openness rule): a future scope value is additive.",
+      "enum": [
+        "bundled",
+        "user",
+        "project",
+        "plugin"
+      ],
+      "type": "string",
+      "x-msp-openness": "open"
+    },
+    "SkillCatalogEntry": {
+      "description": "One typed-invocable shortcut spelling (tdd SS3.22.1). A plugin skill may\ncontribute two rows: its bare-name winner and its qualified\n`<pluginId>:<skillId>` form.",
+      "properties": {
+        "argumentHint": {
+          "description": "Present when the skill declares an argument hint.",
+          "type": "string"
+        },
+        "description": {
+          "description": "The skill's palette summary.",
+          "type": "string"
+        },
+        "displayName": {
+          "description": "The skill display name the first-party palette shows.",
+          "type": "string"
+        },
+        "pluginId": {
+          "description": "The owning plugin's identifier; present when `source` is `plugin`.",
+          "type": "string"
+        },
+        "selector": {
+          "description": "The shortcut token without the leading slash \u2014 bare (`fix-bug`) or\nplugin-qualified (`acme:deploy`) \u2014 the exact value a `skill` input\npart submits. Unique within one response.",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/SkillSource",
+          "description": "Where the skill comes from."
+        },
+        "title": {
+          "description": "The skill's declared human-readable name (`SKILL.md`\n`metadata.display-name`), for clients to show where people read the\nskill's name; absent when the skill declares none (ADR 56597 D2). The\npalette keeps showing `displayName`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "description",
+        "displayName",
+        "selector",
+        "source"
+      ],
+      "type": "object"
+    },
+    "SkillListParams": {
+      "description": "`skill/list` params (tdd SS3.22.1, SS3.30.3). Per-session because skill\nscope follows the session's workspace and plugin state.",
+      "properties": {
+        "sessionId": {
+          "description": "The target session.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId"
+      ],
+      "type": "object"
+    },
+    "SkillListResult": {
+      "description": "`skill/list` result (tdd SS3.22.1): one row per typed-invocable shortcut\nspelling \u2014 exactly the invocations the first-party typed dispatch accepts\n(spec 11352 INV-007 predicate and the shared shortcut layer's name\nresolution, both by call-through; ADR 32471 D2).",
+      "properties": {
+        "skills": {
+          "description": "The session's user-invocable skill rows.",
+          "items": {
+            "$ref": "#/$defs/SkillCatalogEntry"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "skills"
+      ],
+      "type": "object"
+    },
+    "SessionMcpServerConfig": {
+      "description": "One native MCP server supplied at session construction (ADR 32760 D1).\n\n**Closed union** (#33295 owner ruling A1, extending D-033/D-050 to\n`oneOf`): a validator MUST reject an undeclared `transport` arm \u2014 the\nserver fails `session/start` decode on an unknown transport, and a future\ntransport arrives as an explicit schema addition.",
+      "oneOf": [
+        {
+          "properties": {
+            "args": {
+              "description": "Ordered child arguments.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "command": {
+              "description": "Executable name or path. Configuration diagnostics never echo it.",
+              "type": "string"
+            },
+            "env": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "Explicit child environment additions.",
+              "type": "object"
+            },
+            "framing": {
+              "$ref": "#/$defs/SessionMcpStdioFraming",
+              "description": "Stdio framing mode; defaults to automatic detection."
+            },
+            "mode": {
+              "$ref": "#/$defs/SessionMcpServerMode",
+              "description": "Required/optional startup posture; defaults to required."
+            },
+            "transport": {
+              "const": "stdio",
+              "type": "string"
+            }
+          },
+          "required": [
+            "command",
+            "transport"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "headers": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "Explicit request headers.",
+              "type": "object"
+            },
+            "mode": {
+              "$ref": "#/$defs/SessionMcpServerMode",
+              "description": "Required/optional startup posture; defaults to required."
+            },
+            "transport": {
+              "const": "streamableHttp",
+              "type": "string"
+            },
+            "url": {
+              "description": "HTTP(S) endpoint. Configuration diagnostics never echo it.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "transport",
+            "url"
+          ],
+          "type": "object"
+        }
+      ],
+      "x-msp-openness": "closed"
+    },
+    "SessionMcpServerMode": {
+      "description": "Startup failure posture for a session MCP server.",
+      "enum": [
+        "required",
+        "optional"
+      ],
+      "type": "string",
+      "x-msp-openness": "closed"
+    },
+    "SessionMcpStdioFraming": {
+      "description": "Stdio framing choices exposed by session MCP configuration.",
+      "enum": [
+        "auto",
+        "contentLength",
+        "lineDelimitedJson"
+      ],
+      "type": "string",
+      "x-msp-openness": "closed"
+    }
+  }
+}

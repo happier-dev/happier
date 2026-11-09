@@ -1,0 +1,725 @@
+{
+  "init": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+      "experimentalApi": true,
+      "grantedCapabilities": [
+        "userShell",
+        "sessionMcp"
+      ],
+      "museHome": "[TEMP]/login/data/muse",
+      "platformFamily": "unix",
+      "platformOs": "linux",
+      "sandboxAvailability": "available",
+      "schema": {
+        "fingerprint": "sha256:c94c3d1f2f51e6424074b9ec43eac3eedcf532d3dcd77351ec1383a87d3049c6",
+        "version": 1
+      },
+      "serverInfo": {
+        "name": "muse",
+        "version": "1.4.14"
+      },
+      "sessionDurability": "durable",
+      "userAgent": "muse-build/1.4.14 (serve; linux-x86_64; build dec7d7497fecdad135ec5835a8161dbc92e55b58)"
+    }
+  },
+  "resume": {
+    "id": 2,
+    "jsonrpc": "2.0",
+    "result": {
+      "history": {
+        "items": [
+          {
+            "commandId": "01a1bf87-e037-7cc3-ad73-d6ffffa47b13",
+            "itemId": "7f47879d-2eaa-4970-b4f8-10df050c20ba",
+            "kind": "userMessage",
+            "recordedAt": "2026-11-09T08:58:35.693871Z",
+            "revision": 1,
+            "status": "completed",
+            "text": "Reply with exactly PEBBLE. Do not use tools.",
+            "turnId": "01a1bf87-e037-7cc3-ad73-d6ffffa47b13"
+          },
+          {
+            "childSessionId": "01a1bf87-e390-73f0-91ff-e70b2e8f5e4c",
+            "fallbackText": "Reminder child session",
+            "generationId": 1,
+            "itemId": "01a1bf87-e40d-7232-9bc7-b51c1dee9603",
+            "kind": "reminderChild",
+            "recordedAt": "2026-11-09T08:58:47.358912Z",
+            "reminderAgentId": "skill-reminder",
+            "revision": 2,
+            "status": "completed",
+            "taskId": "01a1bf87-e390-73f0-91ff-e6f0395e0ab3",
+            "turnId": "01a1bf87-e037-7cc3-ad73-d6ffffa47b13"
+          },
+          {
+            "itemId": "bbeccc34-d46b-4a8e-a7d7-39cee6ebce1a",
+            "kind": "agentMessage",
+            "messagePhase": "finalAnswer",
+            "recordedAt": "2026-11-09T08:58:39.767986Z",
+            "revision": 2,
+            "status": "completed",
+            "text": "PEBBLE",
+            "turnId": "01a1bf87-e037-7cc3-ad73-d6ffffa47b13"
+          },
+          {
+            "blocking": true,
+            "childSessionId": "01a1bf87-f139-7e10-8df1-0581c0b61353",
+            "childSessionLogPath": "subagent/01a1bf87-f139-7e10-8df1-0581c0b61353/session.jsonl",
+            "fallbackText": "Reminder child session",
+            "generationId": 1,
+            "itemId": "01a1bf87-f161-7de3-bcc7-d205f77b3799",
+            "kind": "reminderChild",
+            "recordedAt": "2026-11-09T08:58:47.367052Z",
+            "reminderAgentId": "goal-reminder",
+            "revision": 2,
+            "status": "completed",
+            "taskId": "01a1bf87-f139-7e10-8df1-057c7232baff",
+            "turnId": "01a1bf87-e037-7cc3-ad73-d6ffffa47b13"
+          },
+          {
+            "blocking": true,
+            "childSessionId": "01a1bf87-f174-78a3-a631-4aabddbf7b06",
+            "childSessionLogPath": "subagent/01a1bf87-f174-78a3-a631-4aabddbf7b06/session.jsonl",
+            "fallbackText": "Reminder child session",
+            "generationId": 1,
+            "itemId": "01a1bf87-f19a-7ae2-96fb-2c504927d050",
+            "kind": "reminderChild",
+            "recordedAt": "2026-11-09T08:58:47.374387Z",
+            "reminderAgentId": "verify-reminder",
+            "revision": 2,
+            "status": "completed",
+            "taskId": "01a1bf87-f174-78a3-a631-4a92edc251a9",
+            "turnId": "01a1bf87-e037-7cc3-ad73-d6ffffa47b13"
+          }
+        ],
+        "mode": "inline",
+        "snapshot": null
+      },
+      "lastTurn": {
+        "terminal": "completed",
+        "turnId": "01a1bf87-e037-7cc3-ad73-d6ffffa47b13"
+      },
+      "pendingRequests": [],
+      "session": {
+        "activeTurnId": null,
+        "approvalMode": {
+          "lastCommandId": null,
+          "mode": "promptUnmatched",
+          "source": "replay"
+        },
+        "branch": "master",
+        "createdAt": "2026-11-09T08:58:33.993146Z",
+        "createdByClient": {
+          "name": "muse_probe",
+          "version": "1"
+        },
+        "firstUserPrompt": "Reply with exactly PEBBLE. Do not use tools.",
+        "forkedFrom": null,
+        "kind": "root",
+        "lastActivityAt": "2026-11-09T08:58:47.451942Z",
+        "modelId": "muse-wonder-1.0",
+        "path": "[TEMP]/login/data/muse/sessions/2026/11/09/01a1bf87-da7f-7ce0-a4ff-bab34925049f/session.jsonl",
+        "permissionState": {
+          "axes": {
+            "approval": "onRequest",
+            "filesystem": "sandboxed",
+            "network": "off",
+            "reviewer": "human"
+          },
+          "profileId": ":ask-me",
+          "reviewerAttached": true,
+          "reviewerAuthority": "human"
+        },
+        "providerId": "meta",
+        "resumedByClient": {
+          "name": "muse_probe",
+          "version": "1"
+        },
+        "sessionId": "01a1bf87-da7f-7ce0-a4ff-bab34925049f",
+        "sideFrom": null,
+        "status": "idle",
+        "title": "Reply with exactly PEBBLE. Do not use tools.",
+        "turnCount": 1,
+        "updatedAt": "2026-11-09T08:59:57.872684Z",
+        "workspaceRoot": "[TEMP]/login/workspace"
+      },
+      "viewCursor": "v4:01a1bf87-da7f-7ce0-a4ff-bab34925049f:17"
+    }
+  },
+  "read_default": {
+    "id": 3,
+    "jsonrpc": "2.0",
+    "result": {
+      "history": {
+        "items": null,
+        "mode": "none",
+        "noneReason": "excluded",
+        "snapshot": null
+      },
+      "lastTurn": {
+        "terminal": "completed",
+        "turnId": "01a1bf87-e037-7cc3-ad73-d6ffffa47b13"
+      },
+      "pendingRequests": [],
+      "session": {
+        "activeTurnId": null,
+        "approvalMode": {
+          "lastCommandId": null,
+          "mode": "promptUnmatched",
+          "source": "replay"
+        },
+        "branch": "master",
+        "createdAt": "2026-11-09T08:58:33.993146Z",
+        "createdByClient": {
+          "name": "muse_probe",
+          "version": "1"
+        },
+        "driveHolder": {
+          "name": "muse_probe",
+          "version": "1"
+        },
+        "firstUserPrompt": "Reply with exactly PEBBLE. Do not use tools.",
+        "forkedFrom": null,
+        "kind": "root",
+        "lastActivityAt": "2026-11-09T08:58:47.451942Z",
+        "logBytes": 177499,
+        "modelId": "muse-wonder-1.0",
+        "path": "[TEMP]/login/data/muse/sessions/2026/11/09/01a1bf87-da7f-7ce0-a4ff-bab34925049f/session.jsonl",
+        "permissionState": {
+          "axes": {
+            "approval": "onRequest",
+            "filesystem": "sandboxed",
+            "network": "off",
+            "reviewer": "human"
+          },
+          "profileId": ":ask-me",
+          "reviewerAttached": true,
+          "reviewerAuthority": "human"
+        },
+        "providerId": "meta",
+        "resumedByClient": {
+          "name": "muse_probe",
+          "version": "1"
+        },
+        "sessionId": "01a1bf87-da7f-7ce0-a4ff-bab34925049f",
+        "sideFrom": null,
+        "status": "idle",
+        "title": "Reply with exactly PEBBLE. Do not use tools.",
+        "turnCount": 1,
+        "updatedAt": "2026-11-09T08:59:57.872684Z",
+        "workspaceRoot": "[TEMP]/login/workspace"
+      },
+      "viewCursor": "v4:01a1bf87-da7f-7ce0-a4ff-bab34925049f:17"
+    }
+  },
+  "read_items": {
+    "id": 4,
+    "jsonrpc": "2.0",
+    "result": {
+      "history": {
+        "items": [
+          {
+            "commandId": "01a1bf87-e037-7cc3-ad73-d6ffffa47b13",
+            "itemId": "7f47879d-2eaa-4970-b4f8-10df050c20ba",
+            "kind": "userMessage",
+            "recordedAt": "2026-11-09T08:58:35.693871Z",
+            "revision": 1,
+            "status": "completed",
+            "text": "Reply with exactly PEBBLE. Do not use tools.",
+            "turnId": "01a1bf87-e037-7cc3-ad73-d6ffffa47b13"
+          },
+          {
+            "childSessionId": "01a1bf87-e390-73f0-91ff-e70b2e8f5e4c",
+            "fallbackText": "Reminder child session",
+            "generationId": 1,
+            "itemId": "01a1bf87-e40d-7232-9bc7-b51c1dee9603",
+            "kind": "reminderChild",
+            "recordedAt": "2026-11-09T08:58:47.358912Z",
+            "reminderAgentId": "skill-reminder",
+            "revision": 2,
+            "status": "completed",
+            "taskId": "01a1bf87-e390-73f0-91ff-e6f0395e0ab3",
+            "turnId": "01a1bf87-e037-7cc3-ad73-d6ffffa47b13"
+          },
+          {
+            "itemId": "bbeccc34-d46b-4a8e-a7d7-39cee6ebce1a",
+            "kind": "agentMessage",
+            "messagePhase": "finalAnswer",
+            "recordedAt": "2026-11-09T08:58:39.767986Z",
+            "revision": 2,
+            "status": "completed",
+            "text": "PEBBLE",
+            "turnId": "01a1bf87-e037-7cc3-ad73-d6ffffa47b13"
+          },
+          {
+            "blocking": true,
+            "childSessionId": "01a1bf87-f139-7e10-8df1-0581c0b61353",
+            "childSessionLogPath": "subagent/01a1bf87-f139-7e10-8df1-0581c0b61353/session.jsonl",
+            "fallbackText": "Reminder child session",
+            "generationId": 1,
+            "itemId": "01a1bf87-f161-7de3-bcc7-d205f77b3799",
+            "kind": "reminderChild",
+            "recordedAt": "2026-11-09T08:58:47.367052Z",
+            "reminderAgentId": "goal-reminder",
+            "revision": 2,
+            "status": "completed",
+            "taskId": "01a1bf87-f139-7e10-8df1-057c7232baff",
+            "turnId": "01a1bf87-e037-7cc3-ad73-d6ffffa47b13"
+          },
+          {
+            "blocking": true,
+            "childSessionId": "01a1bf87-f174-78a3-a631-4aabddbf7b06",
+            "childSessionLogPath": "subagent/01a1bf87-f174-78a3-a631-4aabddbf7b06/session.jsonl",
+            "fallbackText": "Reminder child session",
+            "generationId": 1,
+            "itemId": "01a1bf87-f19a-7ae2-96fb-2c504927d050",
+            "kind": "reminderChild",
+            "recordedAt": "2026-11-09T08:58:47.374387Z",
+            "reminderAgentId": "verify-reminder",
+            "revision": 2,
+            "status": "completed",
+            "taskId": "01a1bf87-f174-78a3-a631-4a92edc251a9",
+            "turnId": "01a1bf87-e037-7cc3-ad73-d6ffffa47b13"
+          }
+        ],
+        "mode": "inline",
+        "snapshot": null
+      },
+      "lastTurn": {
+        "terminal": "completed",
+        "turnId": "01a1bf87-e037-7cc3-ad73-d6ffffa47b13"
+      },
+      "pendingRequests": [],
+      "session": {
+        "activeTurnId": null,
+        "approvalMode": {
+          "lastCommandId": null,
+          "mode": "promptUnmatched",
+          "source": "replay"
+        },
+        "branch": "master",
+        "createdAt": "2026-11-09T08:58:33.993146Z",
+        "createdByClient": {
+          "name": "muse_probe",
+          "version": "1"
+        },
+        "driveHolder": {
+          "name": "muse_probe",
+          "version": "1"
+        },
+        "firstUserPrompt": "Reply with exactly PEBBLE. Do not use tools.",
+        "forkedFrom": null,
+        "kind": "root",
+        "lastActivityAt": "2026-11-09T08:58:47.451942Z",
+        "modelId": "muse-wonder-1.0",
+        "path": "[TEMP]/login/data/muse/sessions/2026/11/09/01a1bf87-da7f-7ce0-a4ff-bab34925049f/session.jsonl",
+        "permissionState": {
+          "axes": {
+            "approval": "onRequest",
+            "filesystem": "sandboxed",
+            "network": "off",
+            "reviewer": "human"
+          },
+          "profileId": ":ask-me",
+          "reviewerAttached": true,
+          "reviewerAuthority": "human"
+        },
+        "providerId": "meta",
+        "resumedByClient": {
+          "name": "muse_probe",
+          "version": "1"
+        },
+        "sessionId": "01a1bf87-da7f-7ce0-a4ff-bab34925049f",
+        "sideFrom": null,
+        "status": "idle",
+        "title": "Reply with exactly PEBBLE. Do not use tools.",
+        "turnCount": 1,
+        "updatedAt": "2026-11-09T08:59:57.872684Z",
+        "workspaceRoot": "[TEMP]/login/workspace"
+      },
+      "viewCursor": "v4:01a1bf87-da7f-7ce0-a4ff-bab34925049f:17"
+    }
+  },
+  "usage_after_text": {
+    "id": 5,
+    "jsonrpc": "2.0",
+    "result": {}
+  },
+  "cli_usage_after_text": {
+    "exit": 0,
+    "stdout": {
+      "allowance": {
+        "asOfMs": 1794214798395,
+        "source": "mint",
+        "tier": "Muse Code Everyday Usage",
+        "weekly": {
+          "resetsAtMs": 1794787200000,
+          "usedPercent": 2
+        },
+        "window": {
+          "resetsAtMs": 1794232717000,
+          "usedPercent": 6
+        }
+      },
+      "hint": null,
+      "reason": null,
+      "schemaVersion": 1
+    },
+    "stderr": ""
+  },
+  "shell_normal": {
+    "ack": {
+      "id": 6,
+      "jsonrpc": "2.0",
+      "result": {
+        "commandId": "01a1bf89-2acf-7d93-bccd-6f8f5938d9b9",
+        "disposition": "started",
+        "startedNewTurn": true,
+        "status": "accepted",
+        "turnId": "01a1bf89-2acf-7d93-bccd-6f8f5938d9b9"
+      }
+    },
+    "decisions": [
+      {
+        "request": {
+          "approvalId": "01a1bf89-3840-72d2-ae67-8b66a43da495",
+          "availableChoices": [
+            {
+              "choiceId": "allow_once",
+              "decision": "approved",
+              "label": "Allow once",
+              "scope": "once"
+            },
+            {
+              "choiceId": "allow_local_prefix",
+              "decision": "approvedPolicyAmendment",
+              "label": "Always allow in this workspace: printf NORMAL ...",
+              "rulePreview": "Always allow in this workspace: printf NORMAL ...",
+              "scope": "localPersistent"
+            },
+            {
+              "acceptsFeedback": true,
+              "choiceId": "abort",
+              "decision": "abort",
+              "label": "Reject",
+              "scope": "once"
+            }
+          ],
+          "currentRequirementId": {
+            "approvalId": "01a1bf89-3840-72d2-ae67-8b66a43da495",
+            "sourceIndex": 0
+          },
+          "itemId": "01a1bf89-3840-72d2-ae67-8b66a43da495",
+          "judgeEscalated": false,
+          "protectedWrite": false,
+          "rawArgs": "{\"command\":\"printf NORMAL\",\"description\":\"Print NORMAL\"}",
+          "sessionId": "01a1bf87-da7f-7ce0-a4ff-bab34925049f",
+          "sourceRange": {
+            "first": {
+              "id": "01a1bf89-3869-7692-bace-430811302b90",
+              "sequence": 135
+            },
+            "last": {
+              "id": "01a1bf89-3869-7692-bace-430811302b90",
+              "sequence": 135
+            },
+            "stream": {
+              "id": "01a1bf87-da7f-7ce0-a4ff-bab34925049f",
+              "kind": "session"
+            }
+          },
+          "subject": {
+            "command": "printf NORMAL",
+            "kind": "shell",
+            "stages": [
+              {
+                "argv": [
+                  "printf",
+                  "NORMAL"
+                ],
+                "argvComplete": true,
+                "position": 1,
+                "requirementId": {
+                  "approvalId": "01a1bf89-3840-72d2-ae67-8b66a43da495",
+                  "sourceIndex": 0
+                },
+                "resolution": {
+                  "kind": "unresolved"
+                },
+                "suggestedPrefix": {
+                  "argvPrefix": [
+                    "printf",
+                    "NORMAL"
+                  ],
+                  "label": "Always allow in this workspace: printf NORMAL ..."
+                },
+                "totalStages": 1
+              }
+            ],
+            "workspaceRoot": "[TEMP]/login/workspace"
+          },
+          "taskId": "01a1bf89-3840-72d2-ae67-8b66a43da495",
+          "toolCallId": "call_01a1bf89349273248ff4c3c06f761dfa",
+          "toolName": "bash",
+          "turnId": "01a1bf89-2acf-7d93-bccd-6f8f5938d9b9",
+          "viewCursor": "v4:01a1bf87-da7f-7ce0-a4ff-bab34925049f:24"
+        },
+        "result": {
+          "id": 7,
+          "jsonrpc": "2.0",
+          "result": {
+            "approvalId": "01a1bf89-3840-72d2-ae67-8b66a43da495",
+            "commandId": "01a1bf89-387f-7711-90d3-f51fd0aba3db",
+            "status": "accepted",
+            "terminal": true
+          }
+        }
+      }
+    ],
+    "terminal": {
+      "durationMs": 19761,
+      "sessionId": "01a1bf87-da7f-7ce0-a4ff-bab34925049f",
+      "sourceRange": {
+        "first": {
+          "id": "01a1bf89-784f-7a61-a696-d9268d32235d",
+          "sequence": 200
+        },
+        "last": {
+          "id": "01a1bf89-784f-7a61-a696-d9268d32235d",
+          "sequence": 200
+        },
+        "stream": {
+          "id": "01a1bf87-da7f-7ce0-a4ff-bab34925049f",
+          "kind": "session"
+        }
+      },
+      "terminal": "completed",
+      "timeToFirstTokenMs": 6474,
+      "turnId": "01a1bf89-2acf-7d93-bccd-6f8f5938d9b9",
+      "viewCursor": "v4:01a1bf87-da7f-7ce0-a4ff-bab34925049f:40"
+    }
+  },
+  "shell_allow": {
+    "ack": {
+      "id": 8,
+      "jsonrpc": "2.0",
+      "result": {
+        "commandId": "01a1bf89-7862-7dfb-8923-3eda75299917",
+        "disposition": "started",
+        "startedNewTurn": true,
+        "status": "accepted",
+        "turnId": "01a1bf89-7862-7dfb-8923-3eda75299917"
+      }
+    },
+    "decisions": [
+      {
+        "request": {
+          "approvalId": "01a1bf89-80ff-76e1-984c-c2f22e0c6b68",
+          "availableChoices": [
+            {
+              "choiceId": "allow_once",
+              "decision": "approved",
+              "label": "Allow once",
+              "scope": "once"
+            },
+            {
+              "acceptsFeedback": true,
+              "choiceId": "abort",
+              "decision": "abort",
+              "label": "Reject",
+              "scope": "once"
+            }
+          ],
+          "currentRequirementId": {
+            "approvalId": "01a1bf89-80ff-76e1-984c-c2f22e0c6b68",
+            "sourceIndex": 0
+          },
+          "itemId": "01a1bf89-80ff-76e1-984c-c2f22e0c6b68",
+          "judgeEscalated": false,
+          "protectedWrite": false,
+          "rawArgs": "{\"command\":\"printf ALLOW > ../allow-marker\",\"description\":\"Write allow marker outside workspace\",\"sandbox_permissions\":\"require_escalated\"}",
+          "sessionId": "01a1bf87-da7f-7ce0-a4ff-bab34925049f",
+          "sourceRange": {
+            "first": {
+              "id": "01a1bf89-810d-75d0-bc2b-963e5b4b3060",
+              "sequence": 245
+            },
+            "last": {
+              "id": "01a1bf89-810d-75d0-bc2b-963e5b4b3060",
+              "sequence": 245
+            },
+            "stream": {
+              "id": "01a1bf87-da7f-7ce0-a4ff-bab34925049f",
+              "kind": "session"
+            }
+          },
+          "subject": {
+            "command": "printf ALLOW > ../allow-marker",
+            "kind": "shell",
+            "stages": [],
+            "workspaceRoot": "[TEMP]/login/workspace"
+          },
+          "taskId": "01a1bf89-80ff-76e1-984c-c2f22e0c6b68",
+          "toolCallId": "call_01a1bf897ee472d7b5ee4e46a20d6042",
+          "toolName": "bash",
+          "turnId": "01a1bf89-7862-7dfb-8923-3eda75299917",
+          "viewCursor": "v4:01a1bf87-da7f-7ce0-a4ff-bab34925049f:46"
+        },
+        "result": {
+          "id": 9,
+          "jsonrpc": "2.0",
+          "result": {
+            "approvalId": "01a1bf89-80ff-76e1-984c-c2f22e0c6b68",
+            "commandId": "01a1bf89-8116-7626-8317-83e92881fa46",
+            "status": "accepted",
+            "terminal": true
+          }
+        }
+      }
+    ],
+    "terminal": {
+      "durationMs": 27400,
+      "sessionId": "01a1bf87-da7f-7ce0-a4ff-bab34925049f",
+      "sourceRange": {
+        "first": {
+          "id": "01a1bf89-e377-7ff0-811a-16a547141d5c",
+          "sequence": 308
+        },
+        "last": {
+          "id": "01a1bf89-e377-7ff0-811a-16a547141d5c",
+          "sequence": 308
+        },
+        "stream": {
+          "id": "01a1bf87-da7f-7ce0-a4ff-bab34925049f",
+          "kind": "session"
+        }
+      },
+      "terminal": "completed",
+      "timeToFirstTokenMs": 5068,
+      "turnId": "01a1bf89-7862-7dfb-8923-3eda75299917",
+      "viewCursor": "v4:01a1bf87-da7f-7ce0-a4ff-bab34925049f:61"
+    }
+  },
+  "shell_deny": {
+    "ack": {
+      "id": 10,
+      "jsonrpc": "2.0",
+      "result": {
+        "commandId": "01a1bf89-e384-715f-ae8e-8226a22ff9ac",
+        "disposition": "started",
+        "startedNewTurn": true,
+        "status": "accepted",
+        "turnId": "01a1bf89-e384-715f-ae8e-8226a22ff9ac"
+      }
+    },
+    "decisions": [
+      {
+        "request": {
+          "approvalId": "01a1bf89-eb47-7f03-893c-1cca0e9fc10f",
+          "availableChoices": [
+            {
+              "choiceId": "allow_once",
+              "decision": "approved",
+              "label": "Allow once",
+              "scope": "once"
+            },
+            {
+              "acceptsFeedback": true,
+              "choiceId": "abort",
+              "decision": "abort",
+              "label": "Reject",
+              "scope": "once"
+            }
+          ],
+          "currentRequirementId": {
+            "approvalId": "01a1bf89-eb47-7f03-893c-1cca0e9fc10f",
+            "sourceIndex": 0
+          },
+          "itemId": "01a1bf89-eb47-7f03-893c-1cca0e9fc10f",
+          "judgeEscalated": false,
+          "protectedWrite": false,
+          "rawArgs": "{\"command\":\"printf DENY > ../deny-marker\",\"description\":\"Write deny marker outside workspace\",\"sandbox_permissions\":\"require_escalated\"}",
+          "sessionId": "01a1bf87-da7f-7ce0-a4ff-bab34925049f",
+          "sourceRange": {
+            "first": {
+              "id": "01a1bf89-eb4c-7992-af50-9840e16b2cd5",
+              "sequence": 353
+            },
+            "last": {
+              "id": "01a1bf89-eb4c-7992-af50-9840e16b2cd5",
+              "sequence": 353
+            },
+            "stream": {
+              "id": "01a1bf87-da7f-7ce0-a4ff-bab34925049f",
+              "kind": "session"
+            }
+          },
+          "subject": {
+            "command": "printf DENY > ../deny-marker",
+            "kind": "shell",
+            "stages": [],
+            "workspaceRoot": "[TEMP]/login/workspace"
+          },
+          "taskId": "01a1bf89-eb47-7f03-893c-1cca0e9fc10f",
+          "toolCallId": "call_01a1bf89e98873ec86554b670452f92a",
+          "toolName": "bash",
+          "turnId": "01a1bf89-e384-715f-ae8e-8226a22ff9ac",
+          "viewCursor": "v4:01a1bf87-da7f-7ce0-a4ff-bab34925049f:67"
+        },
+        "result": {
+          "id": 11,
+          "jsonrpc": "2.0",
+          "result": {
+            "approvalId": "01a1bf89-eb47-7f03-893c-1cca0e9fc10f",
+            "commandId": "01a1bf89-eb51-718f-9459-8dff529e4653",
+            "status": "accepted",
+            "terminal": true
+          }
+        }
+      }
+    ],
+    "terminal": {
+      "durationMs": 18775,
+      "sessionId": "01a1bf87-da7f-7ce0-a4ff-bab34925049f",
+      "sourceRange": {
+        "first": {
+          "id": "01a1bf8a-2cf5-7fe2-a703-e902d8b9c63d",
+          "sequence": 416
+        },
+        "last": {
+          "id": "01a1bf8a-2cf5-7fe2-a703-e902d8b9c63d",
+          "sequence": 416
+        },
+        "stream": {
+          "id": "01a1bf87-da7f-7ce0-a4ff-bab34925049f",
+          "kind": "session"
+        }
+      },
+      "terminal": "completed",
+      "timeToFirstTokenMs": 4456,
+      "turnId": "01a1bf89-e384-715f-ae8e-8226a22ff9ac",
+      "viewCursor": "v4:01a1bf87-da7f-7ce0-a4ff-bab34925049f:82"
+    },
+    "probe_invalidated": "Driver requested decision=denied, absent among available choices, and incorrectly fell back to allow_once. This is not denial evidence; advanced-summary.deny_corrected is the valid abort path."
+  },
+  "question": {
+    "ack": {
+      "id": 12,
+      "jsonrpc": "2.0",
+      "result": {
+        "commandId": "01a1bf8a-2d0b-79f8-9378-be99d2e83184",
+        "disposition": "started",
+        "startedNewTurn": true,
+        "status": "accepted",
+        "turnId": "01a1bf8a-2d0b-79f8-9378-be99d2e83184"
+      }
+    },
+    "probe_invalidated": "Driver used questionId while the question object exposes id; advanced-summary.question_corrected is the valid answered path."
+  },
+  "error": {
+    "type": "KeyError",
+    "message": "'questionId'"
+  }
+}
